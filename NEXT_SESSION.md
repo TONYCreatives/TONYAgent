@@ -96,6 +96,8 @@ correct and silently did nothing.
 | **Config in the wrong directory** | `failed to watch app\Cargo.toml` | in Tauri v2, `tauri.conf.json` and `capabilities/` belong inside `src-tauri/` | moved |
 | **Three separate naming mismatches** | three distinct runtime errors, all reading as "disconnected" | `externalBin`, `Command.sidecar()` and the capability `allow` list must all carry the *same* string, and Tauri appends the triple itself | all three are `binaries/tonyagent-core` — see section 3 |
 | **stdin rejected by ACL** | sidecar starts, every request fails `plugin:shell\|stdin_write not allowed by ACL` | `stdin_write` is a separate plugin command from `spawn` | added `shell:allow-stdin-write` and `shell:allow-kill` |
+| **Sidecar build script crashed** | `NameError: name 'ensure_external_bin' is not defined` | a rename updated the *call* but left the *definition* on the old name, so the script died after an otherwise successful 45 MB build | both sides renamed; a definition-vs-call check guards it |
+| **`tauri dev` died at startup** | `EBUSY: resource busy or locked, watch '...build_script_build.exe'` | Vite's watcher walks the project root, including `src-tauri/target/`. Cargo holds those `.exe` files open and `fs.watch` fails on Windows, killing Vite and taking the dev command with it | `server.watch.ignored` excludes `src-tauri/**` |
 
 The pattern worth keeping: **the sidecar's stderr is the only place core-side
 failures appear**, because stdout is protocol-only. The React UI now renders it
@@ -237,6 +239,26 @@ a second source of truth about that state is how the Tkinter UI drifted.
   transcript vanishes entirely.
 - Collapsing the rail needs `grid-template-columns: 0 ...` too, or the 70px
   track stays reserved.
+
+### Launchers
+
+Two, and they reach different clients:
+
+- `Start TONYAgent.bat` — Tkinter UI (`python -m tonyagent`). Unchanged.
+- `Start TONYAgent (Tauri).bat` — Tauri + React UI. Checks python, node, npm
+  and cargo; adds `%USERPROFILE%\.cargoin` to PATH if cargo is missing
+  (rustup registers it in the USER path, which a process launched from Explorer
+  does not always inherit); builds the sidecar if it is absent; then
+  `npm run tauri:dev`.
+
+The sidecar check globs `app\src-tauriinaries	onyagent-core-*.exe` because
+the filename carries a target triple that differs per machine. It only tests
+existence — if you change the Python core, delete the exe and re-run.
+
+**Note the parentheses in the filename.** They are cmd metacharacters, so
+`call "Start TONYAgent (Tauri).bat"` from another batch file fails with
+`is not recognized as an internal or external command`. Double-clicking from
+Explorer is unaffected. Invoke it from a script with `Start-Process` instead.
 
 ### Inspecting the UI
 

@@ -105,12 +105,23 @@ def main() -> int:
     return 0
 
 
-def update_external_bin(triple: str) -> None:
-    """Rewrite bundle.externalBin to name this host's sidecar."""
+def ensure_external_bin() -> None:
+    """Keep bundle.externalBin on the bare sidecar name.
+
+    Not host-specific, so this is normally a no-op. It exists to repair a config
+    that has picked up a target triple, which builds fine until the file is
+    missing:
+
+        resource path `binaries\\tonyagent-core-<triple>-<triple>.exe` doesn't exist
+
+    Verified against tauri 2.12.
+    """
     config = json.loads(TAURI_CONF.read_text(encoding="utf-8"))
-    config.setdefault("bundle", {})["externalBin"] = [f"binaries/tonyagent-core-{triple}"]
-    TAURI_CONF.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-    print(f"externalBin -> binaries/tonyagent-core-{triple}")
+    wanted = ["binaries/tonyagent-core"]
+    if config.get("bundle", {}).get("externalBin") != wanted:
+        config.setdefault("bundle", {})["externalBin"] = wanted
+        TAURI_CONF.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        print("externalBin ->", wanted)
 
 
 if __name__ == "__main__":
