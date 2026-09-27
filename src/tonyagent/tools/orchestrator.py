@@ -14,6 +14,41 @@ from tonyagent.folder.manager import folder_manager
 from tonyagent.utils.threading import schedule_on_ui
 
 
+#: Longest argument value reproduced verbatim in a log line.
+#:
+#: 24 characters, not "anything under a line". A path or a glob fits easily;
+#: an API key fits too, and an API key in a log strip is the exact failure
+#: Phase 2 closed. The threshold is set so that the things worth reading
+#: survive and the things that must not be logged cannot.
+_SAFE_ARG_CHARS = 24
+
+
+def _summarise_args(arguments: dict[str, Any]) -> str:
+    """A one-line, bounded description of a tool call's arguments.
+
+    These used to be interpolated whole, which put the *entire contents of
+    every file the agent wrote* into the log stream -- and that stream is
+    rendered in the UI's log strip and written to stderr. So a user who asked
+    the agent to write a config containing a credential would see it echoed
+    back in the panel, which is the same failure Phase 2 fixed for API keys.
+
+    Short values (paths, patterns, flags) are still shown, because "which
+    file" is what makes a log line useful. Anything longer is described by its
+    length instead of its content. Note that a *short* secret is still
+    printed: this is a bound on the log's usefulness, not a secret detector,
+    and it must not be relied on as one.
+    """
+    parts = []
+    for key, value in arguments.items():
+        if isinstance(value, str) and len(value) > _SAFE_ARG_CHARS:
+            parts.append(f"{key}=<{len(value)} chars>")
+        elif isinstance(value, (dict, list)):
+            parts.append(f"{key}=<{type(value).__name__}>")
+        else:
+            parts.append(f"{key}={value!r}")
+    return ", ".join(parts)
+
+
 @dataclass
 class ToolCall:
     """Represents a tool call from the AI."""
@@ -40,6 +75,8 @@ class ToolOrchestrator:
         self._confirmation_callback: Optional[Callable] = None
         self._log_callback: Optional[Callable] = None
         self._trusted_projects: set[str] = set()
+        #: Active mode, or None for unrestricted (the Tkinter UI's behaviour).
+        self._mode: Any = None
 
     def set_trusted(self, project: str, trusted: bool = True) -> None:
         """Mark a project folder as trusted (skip per-command confirmations)."""
@@ -50,6 +87,25 @@ class ToolOrchestrator:
 
     def is_trusted(self, project: str) -> bool:
         return str(project) in self._trusted_projects
+
+    # -- mode permissions ----------------------------------------------------
+    def set_mode(self, mode: Any) -> None:
+        """Restrict this orchestrator to one mode's tools.
+
+        The session pushes its mode here so the *enforcement* lives in the
+        layer that actually runs tools, not in the layer that describes them.
+        Hiding a tool from the schema is a suggestion to a model; this is the
+        check that cannot be argued with. `None` means unrestricted, which is
+        what the Tkinter UI and the tests get.
+        """
+        self._mode = mode
+
+    def tool_permitted(self, name: str) -> bool:
+        """Whether the active mode allows this tool."""
+        mode = self._mode
+        if mode is None:
+            return True
+        return name in mode.allowed_tools
 
     def set_confirmation_callback(self, callback: Callable[[ConfirmationRequest], None]) -> None:
         self._confirmation_callback = callback
@@ -86,7 +142,22 @@ class ToolOrchestrator:
         tool = tool_registry.get(tool_call.name)
         if not tool:
             return ToolResult(status=ToolResultStatus.ERROR, error=f"Unknown tool: {tool_call.name}")
-        
+
+        # Mode enforcement comes FIRST, before argument validation and before
+        # any confirmation prompt. A tool the mode forbids is not a call with
+        # bad arguments, and it must not reach the point where the user is
+        # asked to approve something the mode was meant to make impossible.
+        if not self.tool_permitted(tool_call.name):
+            mode = self._mode
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                error=(
+                    f"{tool_call.name} is not available in {mode.label} mode."
+                    if mode is not None
+                    else f"{tool_call.name} is not available."
+                ),
+            )
+
         valid, error = tool.validate_args(tool_call.arguments)
         if not valid:
             return ToolResult(status=ToolResultStatus.ERROR, error=f"Invalid arguments: {error}")
@@ -112,7 +183,7 @@ class ToolOrchestrator:
                 if result:
                     return result
         
-        self._log(f"Executing {tool_call.name}({tool_call.arguments})", "info")
+        self._log(f"Executing {tool_call.name}({_summarise_args(tool_call.arguments)})", "info")
         
         try:
             result = await tool.execute(**tool_call.arguments)

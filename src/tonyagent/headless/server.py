@@ -74,6 +74,8 @@ class StdioServer:
             "key.delete": self._h_key_delete,
             "state": self._h_state,
             "search": self._h_search,
+            "mode.set": self._h_mode_set,
+            "mode.list": self._h_mode_list,
             "sandbox.start": self._h_sandbox_start,
             "sandbox.stop": self._h_sandbox_stop,
             "sandbox.stats": self._h_sandbox_stats,
@@ -213,6 +215,7 @@ class StdioServer:
             "busy": self.session.busy,
             "messages": len(self.session.messages),
             "project": self.project,
+            "mode": self.session.mode_name,
         }
 
     # -- sandbox -------------------------------------------------------------
@@ -314,6 +317,45 @@ class StdioServer:
                 matches = artifact.get("data") or []
                 break
         return {"matches": matches, "output": result.output}
+
+    # -- modes ---------------------------------------------------------------
+    def _h_mode_set(self, params: dict) -> Any:
+        """Switch the composer mode.
+
+        Returns the mode that is actually in force, not the one that was
+        asked for: an unrecognised name resolves to Build, and a frontend that
+        reported the request back would be lying about what just happened.
+        """
+        requested = str(params.get("mode", ""))
+        mode = self.session.set_mode(requested)
+        return {
+            "mode": mode.name,
+            "label": mode.label,
+            "description": mode.description,
+            "writes": mode.writes,
+        }
+
+    def _h_mode_list(self, params: dict) -> Any:
+        """The available modes, in display order.
+
+        The frontend must not hardcode this list: a mode the UI cannot see is
+        a mode nobody can select, and the tool allow-lists would drift from
+        the labels shown beside them.
+        """
+        from tonyagent.core.modes import MODE_ORDER, MODES
+
+        return {
+            "mode": self.session.mode_name,
+            "modes": [
+                {
+                    "name": MODES[n].name,
+                    "label": MODES[n].label,
+                    "description": MODES[n].description,
+                    "writes": MODES[n].writes,
+                }
+                for n in MODE_ORDER
+            ],
+        }
 
     # -- dispatch ------------------------------------------------------------
     def _dispatch(self, req: dict) -> None:

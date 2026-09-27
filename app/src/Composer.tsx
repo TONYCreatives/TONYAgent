@@ -1,27 +1,44 @@
 import { useState } from "react";
 
+/** One entry in the `mode.list` reply. */
+export interface ModeInfo {
+  name: string;
+  label: string;
+  description: string;
+  writes: boolean;
+}
+
 interface Props {
   busy: boolean;
   disabled: boolean;
   model: string;
+  /** Modes from the core, in display order. Never hardcoded here. */
+  modes: ModeInfo[];
+  /** The mode actually in force, as the core last reported it. */
+  mode: string;
+  onModeChange: (name: string) => void;
   onSend: (text: string) => void;
   onCancel: () => void;
 }
 
-/**
- * Composer modes, matching the reference's selector.
- *
- * These are presentation-only for now: there is no protocol method to set a
- * mode, and inventing one client-side would let the UI claim a capability the
- * core does not have. Only Build is active; the rest render as available-looking
- * but inert, which is honest about the current state.
- */
-const MODES = ["Build", "Plan", "Mission", "Skills"] as const;
-type Mode = (typeof MODES)[number];
-
-export function Composer({ busy, disabled, model, onSend, onCancel }: Props) {
+export function Composer({
+  busy,
+  disabled,
+  model,
+  modes,
+  mode,
+  onModeChange,
+  onSend,
+  onCancel,
+}: Props) {
   const [text, setText] = useState("");
-  const [mode, setMode] = useState<Mode>("Build");
+
+  // Drive the pill highlight from what the core reports, not from local
+  // state. A local `setMode` would paint "Plan" the instant it was clicked
+  // and leave it painted if the switch were refused -- the exact class of
+  // lie this project keeps having to unpick.
+  const active = modes.find((m) => m.name === mode);
+  const readOnly = active !== undefined && !active.writes;
 
   const submit = () => {
     const trimmed = text.trim();
@@ -37,6 +54,7 @@ export function Composer({ busy, disabled, model, onSend, onCancel }: Props) {
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
+          className={readOnly ? "is-readonly" : undefined}
           // Enter sends, Shift+Enter inserts a newline. Matches the Tkinter UI's
           // Ctrl+Enter modifier, minus the modifier, since a web text field
           // already treats Enter as "submit" in the user's mental model.
@@ -53,15 +71,19 @@ export function Composer({ busy, disabled, model, onSend, onCancel }: Props) {
 
         <div className="composer-row">
           <div className="mode-group" role="group" aria-label="Mode">
-            {MODES.map((m) => (
+            {modes.map((m) => (
               <button
-                key={m}
+                key={m.name}
                 type="button"
-                className={`mode${m === mode ? " is-active" : ""}`}
-                onClick={() => setMode(m)}
-                aria-pressed={m === mode}
+                className={`mode${m.name === mode ? " is-active" : ""}`}
+                // The description is the whole point of the mode, and the
+                // permission difference is not visible from the label.
+                title={m.description}
+                onClick={() => onModeChange(m.name)}
+                aria-pressed={m.name === mode}
+                disabled={disabled}
               >
-                {m}
+                {m.label}
               </button>
             ))}
           </div>
@@ -110,7 +132,15 @@ export function Composer({ busy, disabled, model, onSend, onCancel }: Props) {
           )}
         </div>
       </div>
-      <p className="hint">Enter to send &middot; Shift+Enter for a new line</p>
+      {/*
+        A read-only mode is a permission, not a suggestion, so it is stated
+        here rather than left to be discovered when a write is refused.
+      */}
+      <p className="hint">
+        {readOnly
+          ? `${active.label} mode — the agent can read and search, but writes are refused.`
+          : "Enter to send · Shift+Enter for a new line"}
+      </p>
     </div>
   );
 }

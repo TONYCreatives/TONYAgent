@@ -18,6 +18,19 @@ export interface ToolCall {
   status: "running" | "ok" | "failed";
   /** Human-readable outcome, derived from the core's `result` dict. */
   detail?: string;
+  /**
+   * The file a mutating tool changed, as reported by the core's
+   * `file_change` artifact.
+   *
+   * Read from the artifact rather than parsed out of `detail`: the detail is
+   * an English sentence written for a person ("Written 42 chars to a.py"),
+   * and scraping a path out of it means the Files tree breaks the moment
+   * someone rewords the message. This is the difference between a number the
+   * core measured and a number invented by counting tool calls.
+   */
+  path?: string;
+  added?: number;
+  removed?: number;
 }
 
 export interface ChatMessage {
@@ -98,6 +111,31 @@ function formatArguments(value: unknown): string {
  * tool, so this probes a few conventional keys rather than assuming one. A
  * result it cannot summarise is not an error; the tool row just shows no detail.
  */
+/**
+ * Pull the `file_change` artifact out of a tool result, if it has one.
+ *
+ * The core emits this only from tools that actually changed something, so a
+ * `read_file` returns nothing here and the tree gains no phantom row.
+ */
+function readFileChange(result: unknown): { path: string; added: number; removed: number } | null {
+  if (!result || typeof result !== "object") return null;
+  const artifacts = (result as Record<string, unknown>).artifacts;
+  if (!Array.isArray(artifacts)) return null;
+  for (const artifact of artifacts) {
+    if (!artifact || typeof artifact !== "object") continue;
+    const record = artifact as Record<string, unknown>;
+    if (record.type !== "file_change") continue;
+    const data = record.data as Record<string, unknown> | undefined;
+    if (!data || typeof data.path !== "string") continue;
+    return {
+      path: data.path,
+      added: typeof data.added === "number" ? data.added : 0,
+      removed: typeof data.removed === "number" ? data.removed : 0,
+    };
+  }
+  return null;
+}
+
 function describeResult(result: unknown): string | undefined {
   if (typeof result === "string") return result.slice(0, 200);
   if (!result || typeof result !== "object") return undefined;
@@ -111,10 +149,25 @@ function describeResult(result: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * Copy the message list deeply enough that a reducer branch may edit it.
+ *
+ * A shallow `messages.slice()` copies the *array* but not the messages, so
+ * `target.tools = [...]` in the tool branches writes through to the caller's
+ * state. That happens to be invisible while every caller replaces the whole
+ * object -- and then quietly corrupts anything holding an older reference,
+ * such as a `useMemo` dependency or a replayed event. Copying the messages and
+ * their tool arrays is what makes "returns a new state" true rather than
+ * aspirational.
+ */
+function copyMessages(state: ChatState): ChatMessage[] {
+  return state.messages.map((m) => ({ ...m, tools: m.tools.map((t) => ({ ...t })) }));
+}
+
 export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
   const next: ChatState = {
     ...state,
-    messages: state.messages.slice(),
+    messages: copyMessages(state),
   };
   const { type, turn_id: turnId, payload } = event;
 
@@ -189,6 +242,16 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
         call.status = type === "tool.failed" ? "failed" : "ok";
         const detail = describeResult(payload.result);
         if (detail) call.detail = detail;
+        // Only a success carries a change. A failed write changed nothing,
+        // and a badge the filesystem contradicts is worse than no badge.
+        if (type === "tool.completed") {
+          const change = readFileChange(payload.result);
+          if (change) {
+            call.path = change.path;
+            call.added = change.added;
+            call.removed = change.removed;
+          }
+        }
         upsert(next, target);
       }
       return next;

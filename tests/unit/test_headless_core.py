@@ -650,3 +650,5 @@ def test_search_matches_the_same_rules_the_agent_gets(tmp_path):
             folder_manager.set_folder(previous)
 
     assert files == {"keep.py"}, "node_modules must be skipped for both callers"
+
+

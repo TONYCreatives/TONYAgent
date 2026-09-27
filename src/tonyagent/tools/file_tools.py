@@ -2,12 +2,45 @@
 
 from __future__ import annotations
 
+import difflib
 import os
 from pathlib import Path
 from typing import Any
 
 from tonyagent.tools.base import Tool, ToolResult, ToolResultStatus, ToolCategory, register_tool
 from tonyagent.folder.manager import folder_manager
+
+
+def _line_delta(before: str, after: str) -> tuple[int, int]:
+    """Count lines added and removed between two file contents.
+
+    A real diff, not a length comparison. ``len(after) - len(before)`` says
+    nothing useful: rewriting one line for another looks identical to appending
+    a thousand. The frontend renders these as the +N/-N badges in the Files
+    tree, so a wrong number there is worse than no number -- it looks checked.
+    """
+    before_lines = before.splitlines()
+    after_lines = after.splitlines()
+    added = removed = 0
+    matcher = difflib.SequenceMatcher(None, before_lines, after_lines)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag in ("replace", "delete"):
+            removed += i2 - i1
+        if tag in ("replace", "insert"):
+            added += j2 - j1
+    return added, removed
+
+
+def _change_artifact(path: str, added: int, removed: int) -> dict:
+    """The machine-readable form the Files tree reads.
+
+    Kept separate from `output`, which stays a human sentence, because the
+    transcript and the tree want the same fact in two different shapes.
+    """
+    return {
+        "type": "file_change",
+        "data": {"path": path, "added": added, "removed": removed},
+    }
 
 
 def _resolve_path(path: str) -> Path:
@@ -77,8 +110,28 @@ class WriteFileTool(Tool):
         try:
             target = _resolve_path(path)
             target.parent.mkdir(parents=True, exist_ok=True)
+            # Read the old contents *before* writing. A file that does not
+            # exist yet is all additions, which is the case a naive
+            # "diff against empty" would get right by accident and an existing
+            # one would get badly wrong.
+            previous = ""
+            existed = target.exists()
+            if existed:
+                try:
+                    previous = target.read_text(encoding=encoding)
+                except (OSError, UnicodeDecodeError):
+                    # Unreadable as text (binary, or a different encoding).
+                    # The write is still fine; we just cannot say what changed,
+                    # and reporting a wrong count would be worse than none.
+                    previous = ""
+                    existed = False
             target.write_text(content, encoding=encoding)
-            return ToolResult(status=ToolResultStatus.SUCCESS, output=f"Written {len(content)} chars to {path}")
+            added, removed = _line_delta(previous if existed else "", content)
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                output=f"Written {len(content)} chars to {path}",
+                artifacts=[_change_artifact(path, added, removed)],
+            )
         except Exception as e:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
 
@@ -112,8 +165,16 @@ class EditFileTool(Tool):
                 return ToolResult(status=ToolResultStatus.ERROR, error="old_text not found in file")
             
             new_content = content.replace(old_text, new_text, 1)
+            # Diff the whole file before and after, not just the replaced
+            # block: a replacement can shift surrounding lines, and the tree
+            # badge is about the file, not the span.
+            added, removed = _line_delta(content, new_content)
             target.write_text(new_content, encoding="utf-8")
-            return ToolResult(status=ToolResultStatus.SUCCESS, output=f"Replaced 1 occurrence in {path}")
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                output=f"Replaced 1 occurrence in {path}",
+                artifacts=[_change_artifact(path, added, removed)],
+            )
         except Exception as e:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
 
@@ -139,14 +200,27 @@ class DeleteFileTool(Tool):
             target = _resolve_path(path)
             if not target.exists():
                 return ToolResult(status=ToolResultStatus.ERROR, error=f"File not found: {path}")
-            
+
+            # Count before deleting. A deletion is a pure removal, so the
+            # badge is the whole file's line count -- the Files tree shows a
+            # struck-through -N and a number nobody can reconcile otherwise.
+            removed = 0
+            try:
+                removed = len(target.read_text(encoding="utf-8", errors="ignore").splitlines())
+            except OSError:
+                pass
+
             try:
                 import send2trash
                 send2trash.send2trash(str(target))
             except ImportError:
                 target.unlink()
-            
-            return ToolResult(status=ToolResultStatus.SUCCESS, output=f"Deleted {path}")
+
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                output=f"Deleted {path}",
+                artifacts=[_change_artifact(path, 0, removed)],
+            )
         except Exception as e:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
 

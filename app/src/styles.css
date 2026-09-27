@@ -719,6 +719,16 @@ body {
   filter: brightness(1.06);
 }
 
+/*
+ * A read-only mode marks the composer field itself, not just the hint text.
+ * The hint is at the bottom of the window and easy to miss; the field is
+ * where the user is looking when they decide what to type.
+ */
+.composer-inner textarea.is-readonly {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--input) 70%, var(--bg));
+}
+
 .hint {
   max-width: 860px;
   margin: 7px auto 0;

@@ -21,6 +21,7 @@ from loguru import logger
 
 from tonyagent.api import LLMError
 from tonyagent.core.events import Event, EventType, bus as default_bus
+from tonyagent.core.modes import DEFAULT_MODE, Mode, get_mode
 from tonyagent.providers import (
     ChatCompletionChunk,
     ChatMessage,
@@ -55,6 +56,8 @@ class AgentSession:
         self.provider: Any = None
         self._cancel: Optional[asyncio.Event] = None
         self._busy = False
+        #: Composer mode. Governs the system prompt and which tools exist.
+        self._mode: Mode = get_mode(DEFAULT_MODE)
 
     # -- provider ------------------------------------------------------------
     def bind_provider(self, provider_name: str, model: str = "") -> Any:
@@ -294,9 +297,55 @@ class AgentSession:
             raise SessionCancelled()
 
     def _tool_schemas(self) -> list[ToolSchema]:
+        """The tools this mode is allowed to see.
+
+        Filtering the schema is advisory: it stops the model asking for a tool
+        it was never shown. The guarantee lives in the orchestrator, which
+        refuses the call even if the model hallucinates it anyway.
+        """
         # ALL_SCHEMAS entries carry extra UI-only keys, so use the dedicated
         # converter rather than **schema.
-        return [ToolSchema.from_tool_schema_dict(s) for s in ALL_SCHEMAS]
+        allowed = self._mode.allowed_tools
+        return [
+            ToolSchema.from_tool_schema_dict(s)
+            for s in ALL_SCHEMAS
+            if s.get("name") in allowed
+        ]
+
+    # -- mode ----------------------------------------------------------------
+    @property
+    def mode_name(self) -> str:
+        return self._mode.name
+
+    def set_mode(self, name: str) -> Mode:
+        """Switch mode and return the mode that ended up active.
+
+        Returns the resolved mode rather than the string asked for, because an
+        unrecognised name resolves to Build -- the caller must report what is
+        actually in force, not what it hoped for.
+        """
+        self._mode = get_mode(name)
+        # Push the restriction to the layer that enforces it. Setting it only
+        # here would filter the schema and nothing else, which is advice rather
+        # than a rule.
+        tool_orchestrator.set_mode(self._mode)
+        # A mode change re-shapes the conversation, and the old system prompt
+        # would otherwise linger and contradict the new one. The history is
+        # user and assistant turns; dropping it is honest ("this is a new
+        # conversation under different rules") and avoids a model that read
+        # "you cannot write files" in turn 3 and is still trying to obey it
+        # after the user switched to Build.
+        self.clear()
+        return self._mode
+
+    def _messages_with_system(self) -> list[ChatMessage]:
+        """The conversation with the active mode's system prompt in front.
+
+        Built per request rather than stored, so the prompt always matches the
+        mode in force. `self.messages` stays exactly what the user and the
+        model said, which keeps `clear()` and the history tests honest.
+        """
+        return [ChatMessage(role="system", content=self._mode.system_prompt), *self.messages]
 
     async def _iter_chunks(self, tools: list[ToolSchema]):
         """Yield chunks, normalising the providers' three call shapes.
@@ -307,7 +356,7 @@ class AgentSession:
         never have to care which provider is in use.
         """
         result = self.provider.chat_completion(
-            messages=self.messages,
+            messages=self._messages_with_system(),
             tools=tools,
             tool_choice=ToolChoice.AUTO,
             stream=True,

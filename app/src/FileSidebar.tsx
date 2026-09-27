@@ -229,11 +229,21 @@ export function FileSidebar({
                 )}
                 <Glyph kind={entry.kind} />
                 <span className="tree-name">{entry.name}</span>
+                {/*
+                  A zero/zero badge is the *absence* of a change, and showing
+                  "+0 -0" next to a file would claim it was edited. The counts
+                  come from a real line diff in the core, so silence genuinely
+                  means the write was a no-op.
+                */}
                 {entry.added !== undefined && entry.added > 0 && (
-                  <span className="tree-add">+{entry.added}</span>
+                  <span className="tree-add" title={`${entry.added} lines added`}>
+                    +{entry.added}
+                  </span>
                 )}
                 {entry.removed !== undefined && entry.removed > 0 && (
-                  <span className="tree-del">-{entry.removed}</span>
+                  <span className="tree-del" title={`${entry.removed} lines removed`}>
+                    -{entry.removed}
+                  </span>
                 )}
               </div>
             );

@@ -99,6 +99,9 @@ correct and silently did nothing.
 | **Sidecar build script crashed** | `NameError: name 'ensure_external_bin' is not defined` | a rename updated the *call* but left the *definition* on the old name, so the script died after an otherwise successful 45 MB build | both sides renamed; a definition-vs-call check guards it |
 | **Window stuck on "disconnected" under StrictMode** | banner `Backend is not running`, while a working sidecar ran unowned in the background | React 19 StrictMode mounts, unmounts and remounts every effect, so `start -> stop -> start` genuinely races. A sidecar's exit event is delivered *asynchronously*, so the one just killed reported "exited" **after** its replacement was assigned, and `onExit` nulled `this.transport` unconditionally - disposing the healthy new backend. | `onExit` returns early unless `this.transport` is still its own transport; `start`/`stop` are serialised through one promise chain |
 | **Sandbox ran but could not read its own workspace** | `search` and every file tool answered `No project folder selected` while the container was mounted and healthy | `start_sandbox(path)` mounts the container but never called `folder_manager.set_folder`. Only the Tkinter UI did, so the sidecar had a sandbox and no project | `_h_sandbox_start` registers the folder **before** starting, so a bad path fails before a container exists |
+| **Tool arguments were echoed into the on-screen log** | the log strip showed `write_file({'path': 'a.py', 'content': <the entire file>})` | the orchestrator interpolated `tool_call.arguments` whole, and that log is rendered in the React UI *and* written to stderr. A user who asked the agent to write a config holding a credential saw it echoed back -- the same leak Phase 2 closed for API keys | `_summarise_args`: values over 24 chars become `<N chars>`, containers become `<dict>`. Paths survive, contents do not |
+| **Every `schedule_on_ui` callback was silently dropped under the sidecar** | LOG events never reached the React UI; the log strip only showed stderr and looked fine | the queue is drained only by `process_ui_queue`, which returns immediately when `_ui_root` is None -- and there is no Tk root under Tauri. It *looked* correct because loguru writes the same message to stderr independently | call through immediately when there is no UI root. This is the second time this layer ate a callback |
+| **`events.ts` mutated the state it was given** | invisible while every caller replaced the whole object; corrupts any `useMemo` dependency or replayed event | `applyEvent` did `messages.slice()`, copying the array but not the messages, so `target.tools = [...]` wrote through to the caller's state | `copyMessages` deep-copies each message and its tools. Found by the first `events.test.ts` |
 | **`tauri dev` died at startup** | `EBUSY: resource busy or locked, watch '...build_script_build.exe'` | Vite's watcher walks the project root, including `src-tauri/target/`. Cargo holds those `.exe` files open and `fs.watch` fails on Windows, killing Vite and taking the dev command with it | `server.watch.ignored` excludes `src-tauri/**` |
 
 The pattern worth keeping: **the sidecar's stderr is the only place core-side
@@ -171,6 +174,49 @@ questions. `test_search_matches_the_same_rules_the_agent_gets` fails if the
 protocol ever grows its own scanner. The panel also cannot start before a
 folder is chosen, because grep resolves paths against the project root.
 
+### 1.5 Phase 3: real modes and real diff stats
+
+**Modes are enforced, not requested.** A mode sets a system prompt *and* an
+allow-list, and only the second one is a permission. Prompt text produces a
+model that says "I will not modify that file" and then modifies it. So the
+schema is filtered (advisory -- it stops the model wanting the tool) *and* the
+orchestrator refuses the call (the guarantee -- it holds even if the model
+hallucinates a tool it was never shown). The refusal happens **before**
+argument validation and **before** the confirmation prompt: asking the user to
+approve something a mode was meant to make impossible is worse than the tool
+running.
+
+`test_the_orchestrator_refuses_a_tool_the_mode_forbids` asserts the file does
+not exist afterwards, not merely that an error came back -- otherwise the test
+would also pass if `write_file` were simply broken.
+`test_the_same_call_succeeds_once_the_mode_allows_it` exists to rule out that
+false pass.
+
+Two other decisions worth keeping:
+
+- **Switching mode clears the conversation.** A "you cannot write files" system
+  prompt that outlives Plan leaves the model obeying a rule the user has
+  already switched off.
+- **`mode.set` replies with the mode actually in force**, not the one asked
+  for. An unknown name resolves to Build, and echoing the request would leave
+  the UI showing a mode that is not active.
+- **The pills come from `mode.list`.** Same reasoning as `providers.list`: a
+  hardcoded list drifts from the allow-lists behind it. There is also a test
+  that every registered tool is reachable in *some* mode -- it immediately
+  caught `http_request` being in no allow-list, i.e. dead code.
+
+**Diff stats are a real line diff.** `write_file` used to report only a char
+count, so the Files tree invented a badge by counting tool invocations and
+scraped the path out of an English sentence -- which meant a file the agent
+merely *read* appeared in the tree. Now the mutating tools emit a
+`file_change` artifact with a `difflib` line diff, and the tree reads that.
+`test_rewriting_a_file_reports_a_real_line_diff` is the case a length
+comparison gets wrong: same character count, one line changed, a length diff
+reports nothing at all.
+
+A `0/0` change is passed through and the sidebar hides it. Showing "+0 -0"
+would claim a file was edited when a no-op write touched nothing.
+
 ---
 
 ## 2. The wire protocol (contract for the future UI)
@@ -204,6 +250,8 @@ stdout is protocol-only, or the frontend will parse log lines as JSON.
 | `key.save` | `{provider, api_key}` | `{provider, saved}` |
 | `key.delete` | `{provider}` | `{provider, deleted}` |
 | `search` | `{pattern, path?, include?, case_sensitive?, max_results?, context_lines?}` | `{matches, output}` |
+| `mode.list` | — | `{mode, modes: [{name, label, description, writes}]}` |
+| `mode.set` | `{mode}` | `{mode, label, description, writes}` |
 | `sandbox.start` | `{path?}` | `{running, project}` |
 | `sandbox.stop` | — | `{running}` |
 | `sandbox.stats` | — | stats dict |
@@ -535,9 +583,9 @@ not delete the test.**
 
 ### 7.2 Next, in the Tauri UI
 
-**Done in Phase 1** (see 1.3): the project folder picker, the settings panel
-with provider/model binding, sandbox start/stop, and search. All five rail
-buttons are now live.
+**Done across Phases 1-3** (see 1.3-1.5): folder picker, settings panel,
+sandbox start/stop, API keys, search, and the four composer modes. All five
+rail buttons are live and no control is presentation-only any more.
 
 1. ~~**Project folder picker.**~~ Done - `@tauri-apps/plugin-dialog`, wired to
    `sandbox.start({path})`, reachable from both the rail and the Files panel.
@@ -548,8 +596,8 @@ buttons are now live.
    a password field in the settings panel. See the security note in 1.4.
 4. **Markdown rendering** for assistant text. Currently plain text; the core
    already depends on `markdown2` for the Tkinter UI.
-6. **`events.ts` has no tests.** It is pure and easy to cover; the 20 existing
-   tests only cover `backend.ts` framing.
+6. ~~**`events.ts` has no tests.**~~ Done in Phase 3 - 15 tests, which found
+   the reducer mutating its input. 35 frontend tests total now.
 
 ### 7.2 Not blocked — do these any time
 

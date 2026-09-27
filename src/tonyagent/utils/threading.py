@@ -55,7 +55,24 @@ def run_async(coro: Coroutine[Any, Any, Any]) -> Future:
 
 
 def schedule_on_ui(func: Callable[..., Any], *args, **kwargs) -> None:
-    """Schedule a function to run on the UI thread."""
+    """Run a callback on the UI thread, or immediately if there is no UI.
+
+    The queue is drained only by ``process_ui_queue``, which returns
+    immediately when ``_ui_root`` is None -- and under the Tauri sidecar there
+    is no Tk root at all. Queueing unconditionally therefore *dropped every
+    callback*: the log bridge installed by ``install_confirmation_bridge``
+    pushed LOG events onto a queue nobody read, so the React UI's log strip
+    only ever showed stderr. It looked like it worked because loguru writes
+    the same message to stderr independently.
+
+    Calling straight through when there is no UI root keeps the Tkinter
+    behaviour byte for byte and makes the headless path deliver what it
+    promises. The alternative -- dropping, as before -- is the silent
+    callback loss this project has already been bitten by once.
+    """
+    if _ui_root is None:
+        func(*args, **kwargs)
+        return
     _ui_queue.put((func, args, kwargs))
 
 

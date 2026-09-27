@@ -76,6 +76,9 @@ export interface CoreMethods {
    */
   "key.save": { provider: string; api_key: string };
   "key.delete": { provider: string };
+  /** Available composer modes and which one is in force. */
+  "mode.list": Record<string, never>;
+  "mode.set": { mode: string };
   search: {
     pattern: string;
     path?: string;

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TauriBackend } from "./backend";
 import { applyEvent, appendUserMessage, initialState, type ChatState } from "./events";
-import { Composer } from "./Composer";
+import { Composer, type ModeInfo } from "./Composer";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { pickFolder } from "./dialog";
 import { FileSidebar, type TreeEntry } from "./FileSidebar";
@@ -23,6 +23,8 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [modes, setModes] = useState<ModeInfo[]>([]);
+  const [mode, setMode] = useState("build");
   /**
    * Folders this window has trusted.
    *
@@ -40,27 +42,31 @@ export function App() {
   const [fileFilter, setFileFilter] = useState("");
 
   /**
-   * Files touched this session, derived from the tool calls the core reported.
+   * Files changed this session, from the core's own `file_change` artifacts.
    *
-   * The core is the only thing that knows what it changed, so the tree is built
-   * from its own tool events rather than by walking the filesystem from the UI --
-   * a second source of truth about state the core owns.
+   * Two things this deliberately does not do. It does not walk the
+   * filesystem -- the core owns what changed, and a second source of truth
+   * about the core's state is how the two drift. And it does not scrape a
+   * path out of the tool's human-readable `detail`, which is how this worked
+   * before Phase 3: a file the agent merely *read* appeared in the tree, and
+   * the "+N" badge counted tool invocations rather than lines.
+   *
+   * The counts are summed, not overwritten, so a file edited three times
+   * shows the session total rather than only the last edit -- which is what
+   * makes the badge a summary of the session instead of a snapshot of it.
    */
   const treeEntries = useMemo<TreeEntry[]>(() => {
     const byName = new Map<string, TreeEntry>();
     for (const message of state.messages) {
       for (const tool of message.tools) {
-        // Only file tools carry a path worth listing.
-        const match = /\b(read|write|edit|delete)_file\b/.test(tool.name);
-        if (!match) continue;
-        const detail = tool.detail ?? "";
-        const path = detail.split(/[\s,:]/).find((t) => t.includes(".")) ?? detail;
-        if (!path) continue;
-        const existing = byName.get(path);
-        byName.set(path, existing ? { ...existing, added: (existing.added ?? 0) + 1 } : {
-          name: path,
+        if (!tool.path) continue;
+        const existing = byName.get(tool.path);
+        byName.set(tool.path, {
+          name: tool.path,
           kind: "file",
           depth: 0,
+          added: (existing?.added ?? 0) + (tool.added ?? 0),
+          removed: (existing?.removed ?? 0) + (tool.removed ?? 0),
         });
       }
     }
@@ -116,6 +122,7 @@ export function App() {
           provider?: string;
           model?: string;
           project?: string;
+          mode?: string;
         };
         // Provider names come from the core's registry. A local copy would
         // drift the moment a provider is added or renamed, and the panel would
@@ -128,6 +135,17 @@ export function App() {
         setModel(snapshot.model ?? "");
         setProject(snapshot.project ?? "");
         setProviders(listed.providers ?? []);
+        setMode(snapshot.mode ?? "build");
+        // Modes come from the core for the same reason providers do: a pill
+        // list hardcoded here would drift from the tool allow-lists behind
+        // it, and the user would be offered a mode that does not exist.
+        const modeList = (await backend.call("mode.list")) as {
+          modes?: ModeInfo[];
+          mode?: string;
+        };
+        if (cancelled) return;
+        setModes(modeList.modes ?? []);
+        if (modeList.mode) setMode(modeList.mode);
       } catch (error) {
         if (!cancelled) {
           setConnected(false);
@@ -310,6 +328,38 @@ export function App() {
     return result.matches ?? [];
   }, []);
 
+  const changeMode = useCallback((name: string) => {
+    // Optimistic on purpose: the pills feel dead otherwise. The reply then
+    // corrects the state to whatever the core actually resolved -- including
+    // falling back to Build for a name it does not know, which is the case a
+    // local-only update would get permanently wrong.
+    setMode(name);
+    void backendRef.current!
+      .call("mode.set", { mode: name })
+      .then((result) => {
+        const applied = result as { mode?: string };
+        if (applied.mode && applied.mode !== name) setMode(applied.mode);
+        // The core clears the conversation on a mode change, so the view has
+        // to follow or the transcript would show turns the core has dropped.
+        setState((prev) => ({ ...prev, messages: [], error: null }));
+      })
+      .catch((error: unknown) => {
+        setState((prev) => ({
+          ...prev,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+        void backendRef.current!
+          .call("mode.list")
+          .then((list) => {
+            const current = (list as { mode?: string }).mode;
+            if (current) setMode(current);
+          })
+          .catch(() => {
+            /* The banner already says the switch failed. */
+          });
+      });
+  }, []);
+
   const respond = useCallback((id: string, confirmed: boolean) => {
     // Clear locally first. The core will also emit confirmation.resolved, but
     // waiting on it would leave the modal up during the round trip.
@@ -365,6 +415,9 @@ export function App() {
           busy={state.busy}
           disabled={!connected}
           model={model}
+          modes={modes}
+          mode={mode}
+          onModeChange={changeMode}
           onSend={send}
           onCancel={cancel}
         />
