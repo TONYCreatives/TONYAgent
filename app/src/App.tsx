@@ -3,8 +3,10 @@ import { TauriBackend } from "./backend";
 import { applyEvent, appendUserMessage, initialState, type ChatState } from "./events";
 import { Composer } from "./Composer";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { IconRail } from "./IconRail";
 import { MessageList } from "./MessageList";
 import { StatusBar } from "./StatusBar";
+import { TopBar } from "./TopBar";
 
 export function App() {
   const [state, setState] = useState<ChatState>(initialState);
@@ -13,6 +15,7 @@ export function App() {
   const [model, setModel] = useState("");
   const [sandbox, setSandbox] = useState("stopped");
   const [logLines, setLogLines] = useState<string[]>([]);
+  const [railOpen, setRailOpen] = useState(true);
 
   // One backend per window. Held in a ref rather than state: it is not
   // renderable, and recreating it would spawn a second sidecar.
@@ -110,6 +113,31 @@ export function App() {
     });
   }, []);
 
+  /**
+   * Clear the conversation.
+   *
+   * Both sides have to agree: the core owns the real history, so dropping the
+   * local list alone would leave the next turn replaying messages the user can
+   * no longer see. Clear the core first, then the view.
+   */
+  const clear = useCallback(() => {
+    void backendRef.current!
+      .call("clear")
+      .then(() => {
+        setState(initialState);
+      })
+      .catch((error: unknown) => {
+        setState((prev) => ({
+          ...prev,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      });
+  }, []);
+
+  // "New chat" and "clear" are the same operation for a single-conversation
+  // app: there is no session list yet, so a new chat *is* a cleared one.
+  const newChat = clear;
+
   const respond = useCallback((id: string, confirmed: boolean) => {
     // Clear locally first. The core will also emit confirmation.resolved, but
     // waiting on it would leave the modal up during the round trip.
@@ -123,30 +151,51 @@ export function App() {
   }, []);
 
   return (
-    <div className="app">
-      <MessageList messages={state.messages} busy={state.busy} />
-
-      {state.error && <div className="error-banner">{state.error}</div>}
-
-      <Composer busy={state.busy} disabled={!connected} onSend={send} onCancel={cancel} />
-
-      {state.pendingConfirm && <ConfirmDialog request={state.pendingConfirm} onRespond={respond} />}
-
-      {logLines.length > 0 && (
-        <div className="logstrip">
-          {logLines.map((line, i) => (
-            <div key={i}>{line}</div>
-          ))}
-        </div>
+    <div className={`app${railOpen ? "" : " rail-collapsed"}`}>
+      {railOpen && (
+        <IconRail
+          connected={connected}
+          busy={state.busy}
+          messageCount={state.messages.length}
+          onNewChat={newChat}
+          onClear={clear}
+          onCancel={cancel}
+        />
       )}
 
-      <StatusBar
-        provider={provider}
-        model={model}
-        sandbox={sandbox}
-        connected={connected}
-        busy={state.busy}
-      />
+      <div className="main">
+        <TopBar
+          busy={state.busy}
+          connected={connected}
+          onNewChat={newChat}
+          onClear={clear}
+          onToggleRail={() => setRailOpen((open) => !open)}
+        />
+
+        <MessageList messages={state.messages} busy={state.busy} />
+
+        {state.error && <div className="banner">{state.error}</div>}
+
+        {logLines.length > 0 && (
+          <div className="logstrip">
+            {logLines.map((line, i) => (
+              <div key={i}>{line}</div>
+            ))}
+          </div>
+        )}
+
+        <Composer busy={state.busy} disabled={!connected} onSend={send} onCancel={cancel} />
+
+        {state.pendingConfirm && <ConfirmDialog request={state.pendingConfirm} onRespond={respond} />}
+
+        <StatusBar
+          provider={provider}
+          model={model}
+          sandbox={sandbox}
+          connected={connected}
+          busy={state.busy}
+        />
+      </div>
     </div>
   );
 }

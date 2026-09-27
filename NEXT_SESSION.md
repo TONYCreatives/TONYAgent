@@ -171,7 +171,9 @@ app/
     Composer.tsx            input, Enter to send
     ConfirmDialog.tsx       destructive-action prompt
     StatusBar.tsx           provider / sandbox / connection
-    styles.css              light+dark tokens
+    IconRail.tsx            left rail (new chat, clear, stop, placeholders)
+    TopBar.tsx              toggle, conversation tab, new chat
+    styles.css              dark-only tokens sampled from the Freebuff app
     backend.ts              the protocol client (13 tests)
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
@@ -180,6 +182,68 @@ app/
     icons/                  generated from icons/icon.svg
     binaries/               PyInstaller sidecar output (gitignored)
 ```
+
+### Visual design
+
+The Tauri UI's look is sampled from the **Freebuff desktop app**, not invented.
+Colours were read off a screenshot of the running window rather than guessed,
+so the two read as the same family of product. The greys are strictly neutral
+(every channel equal), which is what stops the near-black surfaces looking
+blue-ish.
+
+```
+--bg       #0a0a0a    app background, the dominant colour
+--surface  #141414    composer field, log strip
+--raised   #212121    active tab, user bubbles, icon wells
+--hover    #292929    hover state
+--border   #2f2f2f    hairlines
+--fg       #ebebeb    primary text
+--fg-dim   #a8a8a8    assistant body copy
+--fg-mute  #7a7a7a    metadata and inactive icons
+--accent   #7c6cf0    Send button, focus ring, active rail marker
+```
+
+Layout: 60px icon rail, 44px top bar with a pill-shaped conversation tab,
+transcript inset to an 860px column, 26px status bar.
+
+**Dark only, deliberately.** The reference is dark-only, and a light theme here
+would need a second full palette to be worth shipping. `prefers-color-scheme` is
+not consulted. The Tkinter UI keeps its own light/dark system, so the two
+clients no longer match on this point.
+
+Rail items with no protocol method yet (sandbox, search, settings) render
+**disabled** rather than wired to a stub. A control that looks live and does
+nothing is exactly how the Tkinter UI ended up.
+
+Two layout bugs worth remembering, both found by measuring the DOM rather than
+looking at a screenshot:
+
+- Collapsing the rail needs `grid-template-columns: 0 1fr`, or the 60px track
+  stays reserved and the transcript is squeezed into it.
+- `.main` must be pinned to `grid-column: 2`. Without it, removing the rail
+  makes `.main` the first grid item, so it auto-places into the collapsed
+  0-width track and the transcript vanishes entirely. Grid placement must not
+  depend on which siblings happen to be rendered.
+
+### Inspecting the UI
+
+`scripts/probe_webview.py` evaluates JS in the running webview and can
+screenshot it:
+
+```bash
+# launch with a debug port
+WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9333" ./tonyagent-app.exe
+python scripts/probe_webview.py -e "document.title"
+python scripts/probe_webview.py --screenshot shot.png
+```
+
+Prefer this over a Win32 screenshot. `PrintWindow` on a WebView2 window only
+paints regions the app recently invalidated, so it returns large black bands
+that look exactly like a broken layout -- which sent me chasing a non-existent
+CSS bug. `Page.captureScreenshot` asks the compositor for the real frame.
+
+Note that `vite build` alone is not enough to see a change in the packaged app:
+`tauri build` embeds `dist/` into the binary.
 
 The Rust side is deliberately tiny: it opens a window and registers the shell
 plugin. All protocol logic is in `src/backend.ts`, already covered by tests.

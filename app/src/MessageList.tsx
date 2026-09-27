@@ -44,7 +44,7 @@ function Bubble({ message }: { message: ChatMessage }) {
 }
 
 export function MessageList({ messages, busy }: Props) {
-  // Pin to the bottom as tokens stream in. `messages.length` rather than the
+  // Pin to the bottom as tokens stream in. Keyed on message count rather than
   // text, so this does not fire on every delta.
   const endRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -62,10 +62,12 @@ export function MessageList({ messages, busy }: Props) {
 
   return (
     <div className="transcript">
-      {messages.map((message) => (
-        <Bubble key={message.id} message={message} />
-      ))}
-      <div ref={endRef} />
+      <div className="transcript-inner">
+        {messages.map((message) => (
+          <Bubble key={message.id} message={message} />
+        ))}
+        <div ref={endRef} />
+      </div>
     </div>
   );
 }
