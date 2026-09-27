@@ -1,0 +1,28 @@
+[package]
+name = "tonyagent-app"
+version = "0.1.0"
+description = "TONYAgent desktop shell"
+authors = ["TONYAgent"]
+edition = "2021"
+rust-version = "1.77.2"
+
+# The library is what the mobile entry points link against. On desktop the
+# binary below is what actually runs, but Tauri expects this shape.
+[lib]
+name = "tonyagent_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+# The sidecar is a separate process; the Rust shell is a thin window manager
+# around it, so an optimised build is small and fast to link.
+panic = "abort"
+strip = true

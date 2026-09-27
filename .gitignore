@@ -61,3 +61,12 @@ scripts/k2.py
 
 # Freebuff's own project metadata
 /.freebuff/
+
+# PyInstaller intermediate output (the sidecar exe itself is ignored above)
+build/
+scripts/build/
+
+# `tauri icon` also emits Android and iOS rasters. TONYAgent is desktop-only,
+# so those are not regenerated or shipped.
+app/src-tauri/icons/android/
+app/src-tauri/icons/ios/

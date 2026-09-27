@@ -250,29 +250,81 @@ export interface LineTransport {
  * plain Node: importing backend.ts must not require Tauri to be installed.
  */
 function makeSidecarTransport(): LineTransport {
-  // Lazily resolved, and via an injected require so the protocol tests can
-  // exercise this file without Tauri installed.
-  const requireFn: (id: string) => any =
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    typeof require === "function" ? require : (globalThis as any).__tauriRequire;
-  const { Command } = requireFn("@tauri-apps/plugin-shell");
-  const decoder = new TextDecoder();
-  let cmd: InstanceType<typeof Command> | null = null;
+  // Resolved lazily, and via a dynamic import() rather than a top-level one.
+  //
+  // A top-level `import` would be hoisted and evaluated when this module loads,
+  // which would make the protocol tests need Tauri installed -- the exact
+  // coupling this layout exists to avoid.
+  //
+  // A bare `require()` is not an option: it does not exist in an ES module, and
+  // Vite does not define one. `typeof require === "function"` is therefore
+  // false in the bundled app, and the previous fallback to
+  // `globalThis.__tauriRequire` was never defined either, so the spawn threw
+  // and the window silently showed "disconnected" forever.
+  //
+  // `import()` works in both worlds: Node resolves it for the tests, and Vite
+  // turns it into a real chunked import for the app.
+  // Tauri decodes the child's bytes for us (the default, non-raw encoding), so
+  // no TextDecoder belongs here.
+  let shellModule: typeof import("@tauri-apps/plugin-shell") | null = null;
+  const loadShell = async () => {
+    if (!shellModule) {
+      shellModule = await import("@tauri-apps/plugin-shell");
+    }
+    return shellModule;
+  };
+
+  // `Command` is generic over its output encoding; `string` is the variant the
+  // sidecar speaks, since stdout is JSONL text.
+  let cmd: import("@tauri-apps/plugin-shell").Command<string> | null = null;
+  // `spawn()` returns the Child handle that owns stdin and kill(). The Command
+  // itself only emits output and lifecycle events. Keeping these separate
+  // matters: writing to `cmd` was a type error that the previous `any` hid.
+  let child: import("@tauri-apps/plugin-shell").Child | null = null;
   let stdout: ((text: string) => void) | null = null;
   let stderr: ((text: string) => void) | null = null;
   let exit: (() => void) | null = null;
 
   return {
     async start() {
+      // Bare sidecar name, no `binaries/` prefix and no target-triple suffix.
+      // Tauri resolves those itself: it matches the name against the
+      // `externalBin` entries in tauri.conf.json and appends
+      // `-<target-triple>`. Naming it "binaries/tonyagent-core" fails to
+      // resolve and the spawn is rejected with no obvious error.
+      const { Command } = await loadShell();
+      // Must match a `bundle.externalBin` entry in tauri.conf.json, which is
+      // "binaries/tonyagent-core". Tauri compares this string against those
+      // entries directly (also accepting the same name minus a trailing ".exe"),
+      // and rejects anything else with:
+      //   sidecar not configured under `tauri.conf.json > bundle > externalBin`
+      // The target triple is appended by Tauri when it resolves the file, so
+      // it must not appear here.
       cmd = Command.sidecar("binaries/tonyagent-core");
-      cmd.stdout.on("data", (chunk: Uint8Array) => stdout?.(decoder.decode(chunk)));
-      cmd.stderr.on("data", (chunk: Uint8Array) => stderr?.(decoder.decode(chunk)));
-      const child = await cmd.spawn();
-      await child.onExit(() => exit?.());
+
+      // With the default (non-raw) encoding, `data` carries one line per
+      // event, newline already stripped. TauriBackend's ingest() buffers
+      // partial lines, so passing a line straight through is correct and
+      // avoids re-splitting text that is already framed.
+      cmd.stdout.on("data", (line: string) => stdout?.(line));
+      cmd.stderr.on("data", (line: string) => stderr?.(line));
+
+      // The Child handle is what owns stdin and kill(); `Command` does not.
+      child = await cmd.spawn();
+
+      // Process exit is reported on the Command's own `close` event, not on
+      // the Child. Without this the UI would sit on "connected" after the core
+      // died, and every later request would hang instead of failing.
+      cmd.on("close", () => exit?.());
+      cmd.on("error", (message: string) => {
+        // Surface a spawn failure rather than leaving the window blank.
+        stderr?.(`[sidecar] ${message}`);
+        exit?.();
+      });
     },
     async write(line: string) {
-      if (!cmd) throw new Error("sidecar not started");
-      await cmd.write(line);
+      if (!child) throw new Error("sidecar not started");
+      await child.write(line);
     },
     onStdout(fn) {
       stdout = fn;
@@ -284,7 +336,8 @@ function makeSidecarTransport(): LineTransport {
       exit = fn;
     },
     async kill() {
-      await cmd?.kill();
+      await child?.kill();
+      child = null;
       cmd = null;
     },
   };

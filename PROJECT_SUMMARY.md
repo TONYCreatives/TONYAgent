@@ -1,6 +1,7 @@
 # TONYAgent — Project Summary
 
 **Updated:** 2026-09-27 · **Tests:** Python 197 passed, TypeScript 13 passed
+**Build:** Tauri MSI + NSIS installers produced; app verified running end to end
 
 ---
 
@@ -46,7 +47,7 @@ Tauri + React 프론트엔드가 이 경계에 맞춰 개발 중이며, 기존 T
 | Docker 샌드박스 / Sandbox | ✅ | 단일 프로세스 RPC, pids/cap/tmpfs/ulimit 강화 |
 | 헤드리스 코어 / Headless Core | ✅ | `AgentSession` + `EventBus`, GUI 무의존 |
 | IPC 프로토콜 / Sidecar | ✅ | stdio JSONL, 11개 메서드, 16개 이벤트 |
-| Tauri 프론트엔드 / Tauri UI | 🚧 | 스캐폴드 완료, **빌드 블로커 (§ Blocker)** |
+| Tauri 프론트엔드 / Tauri UI | ✅ | 빌드됨, 사이드카 스폰, 전체 왕복 경로 검증 |
 | 테마 / Theme | ✅ | 라이트/다크/시스템, 토큰 기반 |
 | 키링 보안 / Keyring | ✅ | OS 키링, 정확한 키 길이 검증 |
 
@@ -99,21 +100,19 @@ Tkinter는 단일 스레드 강제 모델이라 UI 갱신을 전부 큐로 밀�
 
 ---
 
-## Blocker: MSVC 빌드 도구
+## Tauri 앱: 빌드된 상태
 
-Rust는 설치됨 (`rustc 1.98.1`, `~/.cargo/bin` PATH 등록). WebView2 런타임도
-있음 (154.0.4258.37).
+MSVC 블로커는 **해결됨** (Visual Studio Community 2026, VC tools 14.51.36231).
+`cargo build`가 링크되고, `tauri build`가 MSI + NSIS 설치 파일을 만듭니다.
 
-하지만 **`link.exe`가 없어 Tauri 빌드가 불가능**합니다:
+앱은 실제로 동작하며, 사이드카를 스폰한 뒤 완전한 왕복 경로까지 검증했습니다.
+`NEXT_SESSION.md` §3에 Tauri v2 레이아웃 규칙 6개를 정리해 두었습니다.
 
-```
-error: linker `link.exe` not found
-  = note: please ensure that Visual Studio 2017 or later, or Build Tools for
-          Visual Studio were installed with the Visual C++ option
-```
-
-**해결:** Visual Studio Build Tools for VS 2022 — "데스크톱 개발을 위한 C++"
-워크로드. 상세 절차는 `NEXT_SESSION.md` §4 참고.
+주의할 점은 이 규칙들 중 여러 개가 **빌드는 성공하는데 런타임에서 조용히
+실패한다**는 것입니다. 증상은 언제나 같습니다 — 창은 열리지만 "disconnected"라고만
+표시됩니다. 사이드카의 stderr는 코어 오류가 나타나는 유일한 자리(stdout은
+프로토콜 전용)이므로, UI에 로그 스트립을 두고 정확한 오류 메시지를 띄우는 것이
+중요합니다.
 
 ---
 
@@ -134,11 +133,11 @@ TypeScript 프로토콜 테스트가 Rust·Tauri·Python 없이 도는 것은 �
 
 ## 다음 단계 / Next Steps
 
-**MSVC 설치 완료 후**
-1. `cargo build` 스모크 테스트
-2. `app/src-tauri/` 작성
-3. PyInstaller로 sidecar 번들링
-4. React UI 작성 → `npm run tauri dev`
+**Tauri UI에 남은 것** (코어는 이미 지원 — UI 배선만 필요)
+1. 프로젝트 폴더 선택기 (`sandbox.start`의 `path`)
+2. provider/model 설정 패널 (`bind_provider`)
+3. 샌드박스 시작/중지 버튼
+4. 어시스턴트 텍스트 마크다운 렌더링
 
 **대기 없이 가능**
 - `read_file` offset/limit, `edit_file` replace_all
@@ -146,4 +145,5 @@ TypeScript 프로토콜 테스트가 Rust·Tauri·Python 없이 도는 것은 �
 - `http_request` 파일 다운로드
 - 스키마/레지스트리 단일 소스화
 - 턴별 출력 예산
-- **채팅 버블 폭 수정** (미완료 — 픽셀 측정 필요)
+- `events.ts` 테스트 추가 (순수 함수, 미커버)
+- **Tkinter 채팅 버블 폭 수정** — React UI는 `fit-content`로 이미 해결됨

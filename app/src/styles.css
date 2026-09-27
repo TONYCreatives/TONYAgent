@@ -1,0 +1,366 @@
+/*
+ * TONYAgent React UI.
+ *
+ * Tokens mirror the Tkinter theme (src/tonyagent/ui) so both clients read as
+ * the same product. `prefers-color-scheme` is the only theme source here; the
+ * core's config has a theme setting, but honouring it would need a round trip
+ * before first paint, and a flash of the wrong theme is worse than following
+ * the OS.
+ */
+
+:root {
+  --bg: #ffffff;
+  --bg-raised: #f4f5f7;
+  --bg-sunken: #ebedf0;
+  --fg: #14161a;
+  --fg-muted: #5b6472;
+  --border: #d8dce3;
+  --accent: #2f6feb;
+  --accent-fg: #ffffff;
+  --danger: #c0392b;
+  --ok: #1e8e5a;
+  --radius: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181d;
+    --bg-raised: #1e2127;
+    --bg-sunken: #101216;
+    --fg: #e8eaed;
+    --fg-muted: #9aa3b2;
+    --border: #2c313a;
+    --accent: #5b8def;
+    --accent-fg: #0d0f13;
+    --danger: #e06c5c;
+    --ok: #4cc38a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* --- transcript ---------------------------------------------------------- */
+
+.transcript {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-muted);
+  text-align: center;
+  padding: 24px;
+}
+
+.empty h1 {
+  font-size: 22px;
+  margin: 0 0 8px;
+  color: var(--fg);
+}
+
+.row {
+  display: flex;
+}
+
+.row-user {
+  justify-content: flex-end;
+}
+
+.row-assistant {
+  justify-content: flex-start;
+}
+
+/*
+ * Bubbles hug their text. `max-width` caps the line length for readability;
+ * `width: fit-content` is what actually stops a short message from spanning
+ * the column. The Tkinter chat hit the same problem and failed it -- there,
+ * `grid_columnconfigure(weight=0)` did not constrain the frame, and the fix had
+ * to be a pixel measurement. In flexbox, fit-content plus max-width is the
+ * declarative equivalent, so no measurement is needed.
+ */
+.bubble {
+  width: fit-content;
+  max-width: min(680px, 82%);
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bubble-user {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: transparent;
+}
+
+.bubble-assistant {
+  background: var(--bg-raised);
+}
+
+.bubble-text:empty {
+  display: none;
+}
+
+/* --- tool calls ---------------------------------------------------------- */
+
+.tools {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tool {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.tool-mark {
+  width: 12px;
+  text-align: center;
+}
+
+.tool-running .tool-mark {
+  color: var(--accent);
+}
+
+.tool-ok .tool-mark {
+  color: var(--ok);
+}
+
+.tool-failed .tool-mark {
+  color: var(--danger);
+}
+
+.tool-name {
+  color: var(--fg);
+}
+
+.tool-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* --- composer ------------------------------------------------------------ */
+
+.composer {
+  border-top: 1px solid var(--border);
+  padding: 12px 24px;
+  background: var(--bg-raised);
+}
+
+.composer textarea {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+.composer textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.hint {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.btn {
+  font: inherit;
+  padding: 7px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: transparent;
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: #fff;
+  border-color: transparent;
+}
+
+/* --- error --------------------------------------------------------------- */
+
+.error-banner {
+  margin: 0 24px 8px;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+/* --- confirmation modal -------------------------------------------------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 45%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modal {
+  width: min(520px, 100%);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+}
+
+.modal h2 {
+  margin: 0 0 14px;
+  font-size: 16px;
+}
+
+.confirm-detail {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  margin: 0 0 14px;
+}
+
+.confirm-detail dt {
+  color: var(--fg-muted);
+}
+
+.confirm-detail dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.confirm-detail code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+}
+
+.warn {
+  color: var(--danger);
+  margin: 0 0 14px;
+}
+
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* --- status bar ---------------------------------------------------------- */
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-sunken);
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.sep {
+  color: var(--border);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dot-ok {
+  background: var(--ok);
+}
+
+.dot-bad {
+  background: var(--danger);
+}
+
+.busy {
+  color: var(--accent);
+}
+
+/*
+ * Sidecar stderr. The core logs to stderr because stdout is protocol-only, so
+ * this is the only place a core-side failure can surface in the UI. Kept to the
+ * last 40 lines by App.tsx so a chatty core cannot grow the DOM without bound.
+ */
+.logstrip {
+  max-height: 140px;
+  overflow-y: auto;
+  padding: 8px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-sunken);
+  color: var(--fg-muted);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+}
