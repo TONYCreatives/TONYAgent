@@ -1,14 +1,22 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-09-27, after the Tauri app built and ran end to end
-**Status:** Core is UI-independent and fully tested. The Tkinter UI is a thin
-client over `AgentSession`. **The Tauri app now builds, launches, spawns the
-core sidecar, and completes a round trip.** Everything green: **Python 197
-passed, TypeScript 13 passed, Tauri MSI + NSIS installers produced.**
+**Last updated:** 2026-09-27, after Phase 3 (real modes + real diff stats)
+**Status:** Core is UI-independent and fully tested. **The Tauri app builds,
+launches, spawns the core sidecar, and every control in it is wired to a real
+protocol method.** Everything green: **Python 238 passed, TypeScript 35 passed,
+Tauri MSI + NSIS installers produced.**
 
-The MSVC blocker from the previous handoff is resolved: Visual Studio Community
-2026 is installed and `cargo build` links. See section 4.
+Three phases of work landed since the MSVC blocker was cleared:
+
+| Phase | What it did |
+|---|---|
+| 1 | Folder picker, settings panel, provider binding, sandbox start/stop. All three greyed rail icons went live |
+| 2 | `key.save`/`key.delete` (OS keyring, with a real no-leak design) and a `search` method that delegates to the agent's own grep |
+| 3 | The four composer modes became real permissions, and the Files tree reports diffs the core measured instead of counting tool calls |
+
+The Tkinter UI is untouched throughout and still the mature path. See
+sections 1.3-1.5 for what each phase changed and why.
 
 ---
 
@@ -32,16 +40,25 @@ Tauri one is new and thinner (chat, sandbox status, confirmations).
 
 ```bash
 python -m compileall -q src            # syntax
-python -m pytest tests -q              # 197 passed
+python -m pytest tests -q              # 238 passed
 python scripts/check_all.py --fast     # 3 checks incl. GUI launch
 
-cd app && npm test                     # 13 passed (protocol, no Rust needed)
+cd app && npm test                     # 35 passed (protocol + reducer, no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
 `npm run build` runs `tsc --noEmit && vite build`, so a type error in a
-component fails the build. `npm test` deliberately still compiles only the two
-protocol files, which is what keeps it runnable without Tauri installed.
+component fails the build. `npm test` compiles only the two protocol modules
+(`backend.ts`, `events.ts`) and their tests, which is what keeps it runnable
+without Tauri or Rust installed. It is no longer just `backend.ts` — the
+reducer gained its own suite in Phase 3, and that suite found a real bug.
+
+**One test is flaky, and it is not yours.** `check_all.py --fast` will
+occasionally report FAIL from
+`test_phase4_ux.py::test_key_hint_and_forget_button_do_not_overlap`. It passes
+in isolation and in most full runs. It has been failing in 2 of ~6 full-suite
+runs since before Phase 1. Section 8 has the details; re-run before believing
+it.
 
 `check_all.py` without `--fast` opens a real window and will exceed a 30s
 command timeout. Use `--fast`, then run the launch check separately.
@@ -123,7 +140,11 @@ What was added:
 | Piece | Why it exists |
 |---|---|
 | `app/src/dialog.ts` | `pickFolder()` over `@tauri-apps/plugin-dialog`, lazily imported for the same reason `backend.ts` does it - a top-level import would make the protocol tests require Tauri |
-| `app/src/SettingsPanel.tsx` | folder picker, sandbox start/stop, trust toggle, provider + model selects |
+| `app/src/SettingsPanel.tsx` | folder picker, sandbox start/stop, trust toggle, provider + model selects, API key field (Phase 2) |
+| `app/src/SearchPanel.tsx` | project-wide regex search (Phase 2) |
+| `src/tonyagent/core/modes.py` | the four modes: system prompt + tool allow-list (Phase 3) |
+| `app/src/events.test.ts` | the reducer's suite (Phase 3) - found the mutation bug on its first run |
+| `tests/unit/test_modes_and_diffs.py` | modes + diff stats (Phase 3) |
 | `providers.list` (core) | so the panel asks the registry instead of carrying a hardcoded provider list that would drift the moment a provider is added or renamed |
 | `project` in `state`/`sandbox.start` | a reloaded window otherwise cannot tell what folder the core is attached to |
 
@@ -257,6 +278,23 @@ stdout is protocol-only, or the frontend will parse log lines as JSON.
 | `sandbox.stats` | — | stats dict |
 | `confirm.respond` | `{id, confirmed}` | `{id, confirmed}` |
 | `trust.set` | `{project, trusted}` | `{project, trusted}` |
+
+### Artifacts inside a `tool.completed` result
+
+`result.artifacts` is a list. One type is load-bearing for the UI:
+
+```json
+{"type": "file_change", "data": {"path": "src/app.py", "added": 12, "removed": 3}}
+```
+
+Emitted by `write_file`, `edit_file` and `delete_file`, and by nothing else.
+`read_file` deliberately emits nothing, so a file the agent merely looked at
+gains no row in the Files tree. `added`/`removed` are a real `difflib` line
+diff, and a `0/0` pair means the write was a no-op -- the sidebar hides that
+rather than showing a badge claiming an edit that did not happen.
+
+**A failed tool emits no artifact.** Nothing changed on disk, and a badge the
+filesystem contradicts is worse than no badge.
 
 ### Event types
 
@@ -443,7 +481,22 @@ Note that `vite build` alone is not enough to see a change in the packaged app:
 `tauri build` embeds `dist/` into the binary.
 
 The Rust side is deliberately tiny: it opens a window and registers the shell
-plugin. All protocol logic is in `src/backend.ts`, already covered by tests.
+and dialog plugins. All protocol logic is in `src/backend.ts`, already covered
+by tests.
+
+**The native folder dialog cannot be driven over CDP.** `pickFolder()` opens a
+real OS dialog, which blocks the webview and is invisible to
+`probe_webview.py` - a call to it just times out. To test the paths behind it,
+either drive the protocol directly (`sandbox.start` with a path) or render the
+panel against a stub. Do not conclude the picker is broken from a probe
+timeout.
+
+**The preview panel will not composite an image-only page.** Serving a bare
+`<img>` of a screenshot through `register_preview` rendered a blank frame
+several times this session; inlining it as a data URI in a tiny HTML file
+worked once and then stopped. When it misbehaves, verify the UI through
+computed styles via `probe_webview.py` instead - that is dependable and was
+enough to confirm every token.
 
 ### Building the sidecar
 
@@ -460,6 +513,24 @@ The frozen binary speaks the protocol correctly. Verified directly against the
 built exe: `ping`, `state`, an unknown method, a malformed line, and a second
 `ping` all behave per section 2 - a bad line replies `bad_request` and the
 server keeps serving.
+
+**REBUILD THE SIDECAR AFTER EVERY PYTHON CHANGE.** This is the single most
+expensive trap here, and it cost two wrong diagnoses this session. The
+`Start TONYAgent (Tauri).bat` launcher only checks that the sidecar *exists*,
+not that it is current, so:
+
+- You edit `server.py`, add a protocol method, restart `tauri dev`, and the
+  method comes back `unknown_method` - or, worse, keeps its old behaviour.
+- Meanwhile `python -m tonyagent.headless.server` (which runs from **source**)
+  works perfectly, so a CLI test passes and proves nothing about the app.
+
+If a protocol change "isn't taking effect", rebuild before investigating
+anything else. Same applies to the Rust side: `tauri dev` does rebuild that
+itself, so the Python side is the asymmetric one.
+
+```bash
+cd app && python ../scripts/build_sidecar.py    # ~40s
+```
 
 ### Layout rules that cost real time (tauri 2.12)
 
@@ -550,6 +621,17 @@ sidecar included).
    `tools.fallback_to_local=true` (env `TONYAGENT_TOOLS__FALLBACK_TO_LOCAL`).
 8. `orchestrator.execute_tool()` is **sync** and raises if called from async
    context. From a coroutine use `await tool_orchestrator.execute_tool_async()`.
+9. **There is no working groq key any more.** Phase 2 overwrote the real one
+   with a canary while testing `key.save` by hand, and it was deleted rather
+   than restored. So `test_chat_path_streams_end_to_end[groq]` fails with
+   "The groq key does not start with 'gsk_'". **Ask the user to re-enter it in
+   Settings, or ignore that one test.** An environment gap, not a regression -
+   do not "fix" it in code.
+10. **A real end-to-end turn has not been run since Phase 1**, because no
+   usable provider key is available. Everything since was verified at the
+   protocol level against the real sidecar, plus the reducer and the rendered
+   styles. So the *wiring* is proven; a genuine model completion through the
+   Tauri UI is not. That is the first thing to do once a key works.
 
 ---
 
@@ -587,17 +669,37 @@ not delete the test.**
 sandbox start/stop, API keys, search, and the four composer modes. All five
 rail buttons are live and no control is presentation-only any more.
 
-1. ~~**Project folder picker.**~~ Done - `@tauri-apps/plugin-dialog`, wired to
-   `sandbox.start({path})`, reachable from both the rail and the Files panel.
-2. ~~**Settings panel.**~~ Done - `SettingsPanel.tsx`, driven by `bind_provider`,
-   `sandbox.start`/`.stop`, `trust.set`, and (Phase 2) `key.save`/`key.delete`.
-5. ~~**Search.**~~ Done in Phase 2 - `SearchPanel.tsx` over the core `search`.
-3. ~~**API key entry.**~~ Done - `key.save` / `key.delete` on the protocol, and
-   a password field in the settings panel. See the security note in 1.4.
-4. **Markdown rendering** for assistant text. Currently plain text; the core
-   already depends on `markdown2` for the Tkinter UI.
-6. ~~**`events.ts` has no tests.**~~ Done in Phase 3 - 15 tests, which found
-   the reducer mutating its input. 35 frontend tests total now.
+1. ~~**Project folder picker.**~~ Done (Phase 1) - `@tauri-apps/plugin-dialog`,
+   wired to `sandbox.start({path})`, reachable from the rail and the Files panel.
+2. ~~**Settings panel.**~~ Done (Phase 1) - `SettingsPanel.tsx`, driven by
+   `bind_provider`, `sandbox.start`/`.stop` and `trust.set`.
+3. ~~**API key entry.**~~ Done (Phase 2) - `key.save` / `key.delete` plus a
+   password field. See the security note in 1.4 before touching it.
+4. ~~**Sandbox controls.**~~ Done (Phase 1) - start/stop in the settings panel.
+5. ~~**Search.**~~ Done (Phase 2) - `SearchPanel.tsx` over the core `search`.
+6. ~~**`events.ts` has no tests.**~~ Done (Phase 3) - 15 tests, which found the
+   reducer mutating its input. 35 frontend tests total.
+7. ~~**Composer modes.**~~ Done (Phase 3) - see 1.5. Enforced in the
+   orchestrator, not just the prompt.
+
+**Still open, in the order I would do them:**
+
+1. **Run one real end-to-end turn.** Everything since Phase 1 was verified
+   against the protocol rather than against a live model, because no usable
+   key was available. This is the one gap that matters and it needs the user
+   to re-enter a key. See section 5 item 10.
+2. **Markdown rendering** for assistant text. Currently plain text; the core
+   already depends on `markdown2` for the Tkinter UI, so this is frontend
+   work reusing an existing dependency.
+3. **The composer's model chip and Attach button are still disabled**, and
+   the `/` skills and `@` threads hints in the placeholder are not
+   implemented. Either wire them or remove the hints - a placeholder that
+   advertises syntax nothing handles is the same class of problem as the
+   presentation-only mode pills were.
+4. **The Files tree has no grouping.** Paths are a flat list; a real tree
+   wants directory rows. The `TreeEntry.kind` field already carries `"dir"`
+   and the collapse logic is written, so this is a change to how entries are
+   built in `App.tsx`, not new infrastructure.
 
 ### 7.2 Not blocked — do these any time
 
@@ -642,6 +744,16 @@ signature of a timing/state dependency rather than a real layout regression.
 `check_all.py --fast` therefore reports FAIL intermittently; that is this, not
 a new break.
 
+Re-confirmed again during Phase 3: it also failed one full run there while
+passing in isolation and on the immediate re-run. A *different* test in the
+same file (`test_key_entry_is_empty_not_prefilled`) failed once in the same
+way. So the file is flaky as a file, not just that one test - re-run before
+diagnosing anything.
+
+**`test_chat_path_streams_end_to_end[groq]` fails until the user re-enters
+their groq key.** Phase 2 destroyed it; see section 5 item 9. The other
+provider cases in that file pass.
+
 **`RuntimeWarning: coroutine ... was never awaited`** in
 `tests/unit/test_tool_sandbox_routing.py:875` — two occurrences, pre-existing.
 
@@ -651,7 +763,7 @@ a new break.
 
 - **Keep the Python core, replace only the UI.** A survey of comparable
   projects found the closest precedent is Goose (Block): a native core plus a
-  TypeScript UI. A full core rewrite would discard 197 tests and 22 tools.
+  TypeScript UI. A full core rewrite would discard 238 tests and 22 tools.
 - **JSONL over stdio, not a local HTTP server.** Tauri owns the sidecar
   lifecycle, so it starts and dies with the app. No port to collide with, no
   auth, no CORS, and a dead pipe is an unambiguous failure signal.
@@ -661,6 +773,21 @@ a new break.
   a truncated key through and produced a baffling server-side error.
 - **Injectable transport in the TS client.** Keeps the protocol verifiable
   without the build toolchain, and keeps Tauri out of the business logic.
+- **The frontend asks the core what exists; it never hardcodes a list.**
+  `providers.list` and `mode.list` exist so provider names and mode labels
+  cannot drift from the registries behind them. Both were worth it: the
+  mode test immediately caught `http_request` being in no allow-list.
+- **Search delegates to the agent's grep rather than scanning again.** Two
+  scanners means two sets of skip rules and path confinement, and the search
+  a user runs slowly stops matching the search the agent runs.
+- **A mode is a permission, not a prompt.** Enforced in the orchestrator
+  before argument validation and before the confirmation dialog, because a
+  prompt produces a model that claims compliance and then writes the file.
+- **No protocol method returns a secret.** There is no `key.get`, and a test
+  fails if one is added. A method that returns a secret is a method whose
+  secret can reach a screenshot.
+- **Self-hosted fonts.** The system stack renders differently per machine,
+  which defeats the point of tuning a desktop layout.
 
 
 
