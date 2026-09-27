@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TauriBackend } from "./backend";
 import { applyEvent, appendUserMessage, initialState, type ChatState } from "./events";
 import { Composer } from "./Composer";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { FileSidebar, type TreeEntry } from "./FileSidebar";
 import { IconRail } from "./IconRail";
 import { MessageList } from "./MessageList";
 import { StatusBar } from "./StatusBar";
@@ -16,6 +17,36 @@ export function App() {
   const [sandbox, setSandbox] = useState("stopped");
   const [logLines, setLogLines] = useState<string[]>([]);
   const [railOpen, setRailOpen] = useState(true);
+  const [filesOpen, setFilesOpen] = useState(true);
+  const [fileFilter, setFileFilter] = useState("");
+
+  /**
+   * Files touched this session, derived from the tool calls the core reported.
+   *
+   * The core is the only thing that knows what it changed, so the tree is built
+   * from its own tool events rather than by walking the filesystem from the UI --
+   * a second source of truth about state the core owns.
+   */
+  const treeEntries = useMemo<TreeEntry[]>(() => {
+    const byName = new Map<string, TreeEntry>();
+    for (const message of state.messages) {
+      for (const tool of message.tools) {
+        // Only file tools carry a path worth listing.
+        const match = /\b(read|write|edit|delete)_file\b/.test(tool.name);
+        if (!match) continue;
+        const detail = tool.detail ?? "";
+        const path = detail.split(/[\s,:]/).find((t) => t.includes(".")) ?? detail;
+        if (!path) continue;
+        const existing = byName.get(path);
+        byName.set(path, existing ? { ...existing, added: (existing.added ?? 0) + 1 } : {
+          name: path,
+          kind: "file",
+          depth: 0,
+        });
+      }
+    }
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [state.messages]);
 
   // One backend per window. Held in a ref rather than state: it is not
   // renderable, and recreating it would spawn a second sidecar.
@@ -184,7 +215,13 @@ export function App() {
           </div>
         )}
 
-        <Composer busy={state.busy} disabled={!connected} onSend={send} onCancel={cancel} />
+        <Composer
+          busy={state.busy}
+          disabled={!connected}
+          model={model}
+          onSend={send}
+          onCancel={cancel}
+        />
 
         {state.pendingConfirm && <ConfirmDialog request={state.pendingConfirm} onRespond={respond} />}
 
@@ -196,6 +233,14 @@ export function App() {
           busy={state.busy}
         />
       </div>
+
+      <FileSidebar
+        entries={treeEntries}
+        filter={fileFilter}
+        onFilterChange={setFileFilter}
+        onToggle={() => setFilesOpen((v) => !v)}
+        open={filesOpen}
+      />
     </div>
   );
 }

@@ -185,45 +185,58 @@ app/
 
 ### Visual design
 
-The Tauri UI's look is sampled from the **Freebuff desktop app**, not invented.
-Colours were read off a screenshot of the running window rather than guessed,
-so the two read as the same family of product. The greys are strictly neutral
-(every channel equal), which is what stops the near-black surfaces looking
-blue-ish.
+Every value is sampled from a full-resolution screenshot of the Freebuff
+desktop app (2879x1714, ~2x DPI), not eyeballed. **A partial capture is not
+enough** — the first pass here was built from one and got the accent colour
+wrong, because the chromatic element was outside the captured region.
 
 ```
---bg       #0a0a0a    app background, the dominant colour
---surface  #141414    composer field, log strip
---raised   #212121    active tab, user bubbles, icon wells
---hover    #292929    hover state
---border   #2f2f2f    hairlines
---fg       #ebebeb    primary text
---fg-dim   #a8a8a8    assistant body copy
---fg-mute  #7a7a7a    metadata and inactive icons
---accent   #7c6cf0    Send button, focus ring, active rail marker
+--bg       #0a0a0a   rail and transcript, the dominant colour
+--chrome   #0f0f0f   top bar — a hair lighter, so the window is not one flat field
+--surface  #171717   composer field, files sidebar
+--input    #1c1c1c   filter fields, inset wells
+--raised   #212121   tab pill, user bubbles
+--hover    #292929   the active rail well
+--fg       #ebebeb   body text
+--fg-dim   #9e9e9e   secondary (file tree)
+--fg-mute  #7a7a7a   metadata
+--accent   #bacda9   the ONE chromatic element
 ```
 
-Layout: 60px icon rail, 44px top bar with a pill-shaped conversation tab,
-transcript inset to an 860px column, 26px status bar.
+**The accent is a desaturated sage, not a brand colour.** Do not "tidy" it
+towards saturation — the reference is almost monochrome and the single quiet
+hue is deliberate. A purple was tried first and was wrong.
 
-**Dark only, deliberately.** The reference is dark-only, and a light theme here
-would need a second full palette to be worth shipping. `prefers-color-scheme` is
-not consulted. The Tkinter UI keeps its own light/dark system, so the two
-clients no longer match on this point.
+Layout: `70px | 1fr | 425px` grid, 42px top bar, transcript inset to 860px.
 
-Rail items with no protocol method yet (sandbox, search, settings) render
-**disabled** rather than wired to a stub. A control that looks live and does
-nothing is exactly how the Tkinter UI ended up.
+**Dark only.** The reference is dark-only and a light theme would need a second
+full palette to be worth shipping. The Tkinter UI keeps its own light/dark
+system, so the two clients no longer match on this point — a deliberate trade,
+recorded here rather than left to be discovered.
 
-Two layout bugs worth remembering, both found by measuring the DOM rather than
-looking at a screenshot:
+The composer is **two rows in one field**: textarea on top, controls beneath
+(Build/Plan/Mission/Skills, model chip, Continue). Putting the buttons beside
+the input would steal line length. Mode pills are presentation-only — there is
+no protocol method to set a mode, and inventing one client-side would let the
+UI claim a capability the core lacks.
 
-- Collapsing the rail needs `grid-template-columns: 0 1fr`, or the 60px track
-  stays reserved and the transcript is squeezed into it.
-- `.main` must be pinned to `grid-column: 2`. Without it, removing the rail
-  makes `.main` the first grid item, so it auto-places into the collapsed
-  0-width track and the transcript vanishes entirely. Grid placement must not
-  depend on which siblings happen to be rendered.
+The Files sidebar is populated from tool events the core reported, not by
+walking the filesystem from the UI. The core owns the sandbox and the folder;
+a second source of truth about that state is how the Tkinter UI drifted.
+
+### CSS traps hit here
+
+- **Rule order beats intent at equal specificity.** `.btn-accent` and `.btn`
+  are both single-class selectors, so the later rule wins. `.btn-accent` was
+  declared first and the grey `.btn` background silently overrode it — the
+  button rendered grey with no error anywhere. Variants must come after the
+  base rule.
+- **The rail must be pinned with `grid-column: 1` and `.main` with
+  `grid-column: 2`.** Otherwise removing the rail makes `.main` the first grid
+  item, so it auto-places into the collapsed zero-width track and the
+  transcript vanishes entirely.
+- Collapsing the rail needs `grid-template-columns: 0 ...` too, or the 70px
+  track stays reserved.
 
 ### Inspecting the UI
 

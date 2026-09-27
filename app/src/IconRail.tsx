@@ -92,6 +92,7 @@ export function IconRail({
           aria-label="Stop generating"
         >
           <Icon path={PATHS.stop} />
+          <span className="rail-badge">{messageCount || 1}</span>
         </button>
       )}
 
@@ -130,7 +131,6 @@ export function IconRail({
 
       <div className="rail-spacer" />
 
-      {messageCount > 0 && <span className="rail-badge">{messageCount}</span>}
       <div className="rail-avatar" title="Local session">
         TA
       </div>
