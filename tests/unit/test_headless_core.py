@@ -9,6 +9,7 @@ import io
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 from tonyagent.core.events import EventBus, EventType
 from tonyagent.core.session import AgentSession
@@ -303,6 +304,67 @@ def test_trust_set_requires_a_project():
         [{"id": 1, "method": "trust.set", "params": {"trusted": True}}]
     )
     assert frames[0]["error"]["code"] == "rejected"
+
+
+# --- provider discovery ----------------------------------------------------
+def test_providers_list_comes_from_the_registry():
+    """The frontend must not carry its own copy of the provider names.
+
+    A hardcoded list would drift the moment a provider is added or renamed,
+    and the UI would offer a provider the core cannot build.
+    """
+    from tonyagent.providers import ProviderFactory
+
+    frames = _drive([{"id": 1, "method": "providers.list"}])
+    providers = frames[0]["result"]["providers"]
+    expected = {p["name"] for p in ProviderFactory.get_available_providers()}
+    assert {p["name"] for p in providers} == expected
+    assert expected, "the registry must not be empty"
+    assert "models" in providers[0]
+    assert "has_credentials" in providers[0]
+
+
+def test_providers_list_never_returns_key_material():
+    """A credential flag is fine; the credential itself must never cross."""
+    frames = _drive([{"id": 1, "method": "providers.list"}])
+    for provider in frames[0]["result"]["providers"]:
+        assert set(provider) == {
+            "name", "models", "has_credentials",
+            "supports_streaming", "supports_function_calling",
+        }
+        assert isinstance(provider["has_credentials"], bool)
+
+
+def test_sandbox_start_remembers_the_project_for_state(monkeypatch):
+    """A reloaded window must learn which folder the core is attached to.
+
+    The real ``start_sandbox`` would need Docker; only the bookkeeping this
+    handler does on top of it is under test.
+    """
+    session = _session()
+    project = str(Path.cwd())
+
+    async def fake_start(path=""):
+        session.emit(EventType.SANDBOX_STATUS, {"status": "running"})
+        return True
+
+    monkeypatch.setattr(session, "start_sandbox", fake_start)
+
+    stdin = io.StringIO(
+        json.dumps({"id": 1, "method": "sandbox.start", "params": {"path": project}})
+        + "\n"
+        + json.dumps({"id": 2, "method": "state"}) + "\n"
+    )
+    stdout = io.StringIO()
+    asyncio.run(StdioServer(session, stdin, stdout).serve())
+    frames = [json.loads(l) for l in stdout.getvalue().splitlines() if l.strip()]
+    # Look replies up by id: an async handler replies after the events it
+    # causes, so frame order is not reply order.
+    replies = {f["id"]: f["result"] for f in frames if "id" in f}
+
+    assert replies[1]["running"] is True
+    assert replies[1]["project"] == project
+    assert replies[2]["project"] == project
 
 
 def test_confirm_respond_requires_an_id():

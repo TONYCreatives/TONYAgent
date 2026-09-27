@@ -17,6 +17,7 @@ interface Props {
   onNewChat: () => void;
   onClear: () => void;
   onCancel: () => void;
+  onSettings: () => void;
 }
 
 /** Inline SVG so the rail needs no icon dependency or network fetch. */
@@ -54,6 +55,7 @@ export function IconRail({
   onNewChat,
   onClear,
   onCancel,
+  onSettings,
 }: Props) {
   return (
     <nav className="rail" aria-label="Primary">
@@ -102,14 +104,17 @@ export function IconRail({
         </button>
       )}
 
-      {/* Sandbox and search are in the reference design but have no protocol
-          method for a project path yet, so they are shown disabled rather than
-          pretending to work. See NEXT_SESSION.md section 7.2. */}
+      {/* Sandbox and settings both open the one settings panel: the project
+          folder and the model are both "what is this window working on", and
+          two modals reaching the same core methods would be two places to
+          keep in sync. Search is still disabled -- it needs a real core
+          method, not a UI that filters its own transcript. */}
       <button
         type="button"
         className="rail-btn"
-        disabled
-        title="Sandbox — coming soon"
+        onClick={onSettings}
+        disabled={!connected}
+        title="Sandbox"
         aria-label="Sandbox"
       >
         <Icon>
@@ -132,8 +137,9 @@ export function IconRail({
       <button
         type="button"
         className="rail-btn"
-        disabled
-        title="Settings — coming soon"
+        onClick={onSettings}
+        disabled={!connected}
+        title="Settings"
         aria-label="Settings"
       >
         {/* A gear needs two rings plus eight teeth, so it cannot be a single

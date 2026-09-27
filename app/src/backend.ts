@@ -65,6 +65,8 @@ export interface CoreMethods {
   cancel: Record<string, never>;
   send: { text: string };
   bind_provider: { name: string; model?: string };
+  /** Provider names come from the core's registry, never from a local copy. */
+  "providers.list": Record<string, never>;
   "sandbox.start": { path?: string };
   "sandbox.stop": Record<string, never>;
   "sandbox.stats": Record<string, never>;
@@ -88,6 +90,22 @@ export class TauriBackend {
   private logListeners = new Set<(line: string) => void>();
   private onExit: (() => void) | null = null;
   private readonly makeTransport: () => LineTransport;
+  /**
+   * Serialises start/stop.
+   *
+   * React 19's StrictMode mounts, unmounts and remounts every effect in
+   * development, so `start()` and `stop()` genuinely race: cleanup runs
+   * before the second mount's start. `stop()` used to null `this.transport`
+   * only after awaiting `kill()`, so the second `start()` saw a non-null
+   * transport, returned early having spawned nothing, and every later request
+   * died with "sidecar not started" while a real sidecar ran on, unowned.
+   *
+   * Chaining the whole lifecycle through one promise makes the order
+   * start -> stop -> start an actual sequence instead of a race. Both
+   * branches of `then` are needed: one rejected lifecycle must not wedge
+   * every later call.
+   */
+  private lifecycle: Promise<void> = Promise.resolve();
 
   /**
    * @param makeTransport builds the transport. Defaults to a real Tauri
@@ -103,7 +121,11 @@ export class TauriBackend {
   }
 
   /** Start the backend. Safe to call once per window. */
-  async start(): Promise<void> {
+  start(): Promise<void> {
+    return this.enqueue(() => this.doStart());
+  }
+
+  private async doStart(): Promise<void> {
     if (this.transport) return;
     const transport = this.makeTransport();
     this.transport = transport;
@@ -116,11 +138,38 @@ export class TauriBackend {
       }
     });
     transport.onExit(() => {
+      // Only tear down if this is still the *current* transport.
+      //
+      // A sidecar's exit event is delivered asynchronously, so the one we just
+      // killed reports "exited" after the replacement has already been
+      // assigned. An unconditional `this.transport = null` here therefore
+      // killed the brand-new backend a moment after it started: the window
+      // showed "disconnected" while a working sidecar ran, unowned, and every
+      // request failed with "Backend is not running".
+      if (this.transport !== transport) return;
       this.failAll(new Error("The TONYAgent backend exited."));
       this.transport = null;
       this.onExit?.();
     });
-    await transport.start();
+    try {
+      await transport.start();
+    } catch (error) {
+      // Clear the half-built transport before rethrowing. Leaving it set makes
+      // every later start() a silent no-op that returns "successfully" while
+      // writes go to a process that does not exist, so the failure surfaces as
+      // a hang instead of an error.
+      this.transport = null;
+      throw error;
+    }
+  }
+
+  /** Queue work so start and stop can never interleave. */
+  private enqueue(work: () => Promise<void>): Promise<void> {
+    const next = this.lifecycle.then(work, work);
+    // Keep the chain alive after a failure; the caller still sees the
+    // rejection through its own reference.
+    this.lifecycle = next.catch(() => {});
+    return next;
   }
 
   /** Register a listener for pushed core events. Returns an unsubscribe fn. */
@@ -140,15 +189,21 @@ export class TauriBackend {
   }
 
   /** Stop the backend. */
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
+    return this.enqueue(() => this.doStop());
+  }
+
+  private async doStop(): Promise<void> {
     this.failAll(new Error("The TONYAgent backend was stopped."));
-    if (this.transport) {
-      try {
-        await this.transport.kill();
-      } catch {
-        // Already gone.
-      }
-      this.transport = null;
+    // Detach before awaiting: a start() queued behind this one must not find
+    // a transport that is on its way out.
+    const transport = this.transport;
+    this.transport = null;
+    if (!transport) return;
+    try {
+      await transport.kill();
+    } catch {
+      // Already gone.
     }
   }
 
@@ -157,14 +212,25 @@ export class TauriBackend {
     method: M,
     params?: CoreMethods[M],
   ): Promise<unknown> {
-    if (!this.transport) {
-      throw new Error("Backend is not running. Start it before sending messages.");
-    }
     const id = this.nextId++;
     const request: CoreRequest = { id, method: String(method), params };
     const promise = new Promise<unknown>((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
     });
+
+    // Write synchronously whenever a transport is already up. Awaiting first
+    // would push the write a microtask into the future, which is observable:
+    // a caller that starts a request and immediately inspects what was sent
+    // would see nothing. Only the no-transport case waits, and that wait is
+    // what lets a request issued mid-teardown find the transport the *next*
+    // start() creates instead of failing against a disposed one.
+    if (!this.transport) {
+      await this.lifecycle;
+      if (!this.transport) {
+        this.pending.delete(id);
+        throw new Error("Backend is not running. Start it before sending messages.");
+      }
+    }
     await this.transport.write(JSON.stringify(request) + "\n");
     return promise;
   }

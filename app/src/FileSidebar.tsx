@@ -27,6 +27,9 @@ interface Props {
   filter: string;
   onFilterChange: (value: string) => void;
   onToggle: () => void;
+  onChooseFolder: () => void;
+  /** True once a folder is selected, so the empty state can say which. */
+  hasProject: boolean;
   open: boolean;
 }
 
@@ -70,7 +73,15 @@ function Glyph({ kind }: { kind: "dir" | "file" }) {
   );
 }
 
-export function FileSidebar({ entries, filter, onFilterChange, onToggle, open }: Props) {
+export function FileSidebar({
+  entries,
+  filter,
+  onFilterChange,
+  onToggle,
+  onChooseFolder,
+  hasProject,
+  open,
+}: Props) {
   // Folders open by default; the depth is capped at 1 because the core has no
   // method for enumerating a subtree yet, and inventing a fake tree would be
   // worse than showing a flat list.
@@ -169,11 +180,28 @@ export function FileSidebar({ entries, filter, onFilterChange, onToggle, open }:
       </label>
 
       {visible.length === 0 ? (
-        <p className="sidebar-empty">
-          {entries.length === 0
-            ? "No folder selected. Start the sandbox to choose a project directory."
-            : "Nothing matches that filter."}
-        </p>
+        entries.length === 0 ? (
+          // The pick button lives here, not only in settings: an empty panel
+          // that merely explains itself is the dead end this replaces.
+          <div className="sidebar-empty">
+            <p>
+              {hasProject
+                ? "No files touched yet. Files the agent reads or writes show up here."
+                : "No folder selected."}
+            </p>
+            {!hasProject && (
+              <button
+                type="button"
+                className="btn"
+                onClick={onChooseFolder}
+              >
+                Choose folder...
+              </button>
+            )}
+          </div>
+        ) : (
+          <p className="sidebar-empty">Nothing matches that filter.</p>
+        )
       ) : (
         <div className="sidebar-tree">
           {visible.map((entry) => {

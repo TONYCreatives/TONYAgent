@@ -241,3 +241,118 @@ test("stop kills the transport", async () => {
   await backend.stop();
   assert.equal(transport.killed, true);
 });
+
+test("start/stop/start leaves a working transport, not a stale one", async () => {
+  /**
+   * Regression: React 19 StrictMode mounts, unmounts and remounts every
+   * effect in development, so start -> stop -> start really does happen.
+   *
+   * `stop()` used to null `this.transport` only after awaiting `kill()`, so
+   * the second `start()` saw a non-null transport and returned early without
+   * spawning. Every later request then failed with "sidecar not started" while
+   * a real, unowned sidecar kept running. The window showed "disconnected"
+   * forever and the only symptom in the console was a rejected promise.
+   */
+  const made: FakeTransport[] = [];
+  const backend = new TauriBackend(() => {
+    const transport = new FakeTransport();
+    made.push(transport);
+    return transport;
+  });
+
+  await backend.start();
+  await backend.stop();
+  await backend.start();
+
+  assert.equal(made.length, 2, "the second start must spawn its own sidecar");
+  assert.equal(made[0].killed, true, "the first sidecar must be reaped");
+
+  // The real proof: a request must reach the live transport, not a dead one.
+  const call = backend.call("ping");
+  assert.equal(made[1].written.length, 1);
+  made[1].push(`${JSON.stringify({ id: 1, result: { pong: true } })}
+`);
+  assert.deepEqual(await call, { pong: true });
+});
+
+test("a replaced sidecar's late exit does not kill its replacement", async () => {
+  /**
+   * Regression: the actual cause of "Backend is not running" under
+   * StrictMode, found by tracing the live window.
+   *
+   * A sidecar's exit event arrives asynchronously, so the transport killed by
+   * `stop()` reports "exited" *after* its replacement is already assigned.
+   * `onExit` used to null `this.transport` unconditionally, so the stale event
+   * disposed of the healthy new backend. The window sat on "disconnected"
+   * while a working sidecar ran unowned, and the only trace was a rejected
+   * promise in the console.
+   */
+  const made: FakeTransport[] = [];
+  const backend = new TauriBackend(() => {
+    const transport = new FakeTransport();
+    made.push(transport);
+    return transport;
+  });
+
+  await backend.start();
+  await backend.stop();
+  await backend.start();
+
+  // The stale sidecar finally reports in, late, after its replacement is up.
+  made[0].simulateExit();
+
+  const call = backend.call("ping");
+  assert.equal(made[1].written.length, 1, "the live transport must still be usable");
+  made[1].push(`${JSON.stringify({ id: 1, result: { pong: true } })}
+`);
+  assert.deepEqual(await call, { pong: true });
+});
+
+test("the live sidecar's exit still tears the backend down", async () => {
+  /**
+   * The staleness guard must not become a way to survive a real crash: when
+   * the *current* transport dies, in-flight calls have to reject rather than
+   * hang forever.
+   */
+  const transport = new FakeTransport();
+  const backend = new TauriBackend(() => transport);
+  await backend.start();
+
+  const call = backend.call("ping");
+  transport.simulateExit();
+  await assert.rejects(call, /exited/);
+  await assert.rejects(backend.call("ping"), /not running/);
+});
+
+test("a failed start does not wedge later starts", async () => {
+  /**
+   * The lifecycle is a promise chain, so a rejection must not poison it --
+   * otherwise one failed spawn would make every later start a silent no-op.
+   */
+  let attempt = 0;
+  const good = new FakeTransport();
+  const backend = new TauriBackend(() => {
+    attempt += 1;
+    if (attempt === 1) {
+      return {
+        start: async () => {
+          throw new Error("spawn refused");
+        },
+        write: async () => {},
+        onStdout: () => {},
+        onStderr: () => {},
+        onExit: () => {},
+        kill: async () => {},
+      } satisfies LineTransport;
+    }
+    return good;
+  });
+
+  await assert.rejects(backend.start(), /spawn refused/);
+  await backend.start();
+  const call = backend.call("ping");
+  assert.equal(good.written.length, 1);
+  good.push(`${JSON.stringify({ id: 1, result: { pong: true } })}
+`);
+  assert.deepEqual(await call, { pong: true });
+});

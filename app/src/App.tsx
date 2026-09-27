@@ -3,9 +3,11 @@ import { TauriBackend } from "./backend";
 import { applyEvent, appendUserMessage, initialState, type ChatState } from "./events";
 import { Composer } from "./Composer";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { pickFolder } from "./dialog";
 import { FileSidebar, type TreeEntry } from "./FileSidebar";
 import { IconRail } from "./IconRail";
 import { MessageList } from "./MessageList";
+import { SettingsPanel, type ProviderInfo } from "./SettingsPanel";
 import { StatusBar } from "./StatusBar";
 import { TopBar } from "./TopBar";
 
@@ -15,6 +17,21 @@ export function App() {
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [sandbox, setSandbox] = useState("stopped");
+  const [project, setProject] = useState("");
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  /**
+   * Folders this window has trusted.
+   *
+   * The core keeps trust in memory with no getter, so the UI cannot ask. It
+   * remembers what it asked for instead; defaulting to *untrusted* is the safe
+   * direction to be wrong in, because a wrongly-trusted folder would skip the
+   * confirmation prompt.
+   */
+  const [trustedProjects, setTrustedProjects] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [logLines, setLogLines] = useState<string[]>([]);
   const [railOpen, setRailOpen] = useState(true);
   const [filesOpen, setFilesOpen] = useState(true);
@@ -96,10 +113,19 @@ export function App() {
         const snapshot = (await backend.call("state")) as {
           provider?: string;
           model?: string;
+          project?: string;
+        };
+        // Provider names come from the core's registry. A local copy would
+        // drift the moment a provider is added or renamed, and the panel would
+        // offer one the core cannot build.
+        const listed = (await backend.call("providers.list")) as {
+          providers?: ProviderInfo[];
         };
         if (cancelled) return;
         setProvider(snapshot.provider ?? "");
         setModel(snapshot.model ?? "");
+        setProject(snapshot.project ?? "");
+        setProviders(listed.providers ?? []);
       } catch (error) {
         if (!cancelled) {
           setConnected(false);
@@ -169,6 +195,77 @@ export function App() {
   // app: there is no session list yet, so a new chat *is* a cleared one.
   const newChat = clear;
 
+  /**
+   * Point the sandbox at a folder the user picked.
+   *
+   * The picker returns null on cancel, which is a normal outcome and must not
+   * be reported as an error. Anything else the core rejects -- a path that
+   * vanished, a backend that will not start -- surfaces verbatim.
+   */
+  const chooseFolder = useCallback(async () => {
+    const chosen = await pickFolder();
+    if (!chosen) return;
+    setSettingsError(null);
+    try {
+      const result = (await backendRef.current!.call("sandbox.start", {
+        path: chosen,
+      })) as { running: boolean; project?: string };
+      if (!result.running) {
+        setSettingsError("The sandbox did not start. See the log below for the reason.");
+        return;
+      }
+      setProject(result.project ?? chosen);
+      // The Files panel is the view of this folder; opening it here is what
+      // makes the pick feel like it did something.
+      setFilesOpen(true);
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
+
+  const stopSandbox = useCallback(() => {
+    void backendRef.current!.call("sandbox.stop").catch((error: unknown) => {
+      setSettingsError(error instanceof Error ? error.message : String(error));
+    });
+  }, []);
+
+  const bindProvider = useCallback((name: string, model: string) => {
+    setSettingsError(null);
+    void backendRef.current!
+      .call("bind_provider", model ? { name, model } : { name })
+      .then((result) => {
+        const bound = result as { provider?: string; model?: string };
+        setProvider(bound.provider ?? name);
+        setModel(bound.model ?? model);
+        // Close on success: the panel's job is done, and leaving it up after
+        // a successful apply just invites a second click.
+        setSettingsOpen(false);
+      })
+      .catch((error: unknown) => {
+        setSettingsError(error instanceof Error ? error.message : String(error));
+      });
+  }, []);
+
+  const setTrust = useCallback((target: string, trusted: boolean) => {
+    setTrustedProjects((prev) => {
+      const next = new Set(prev);
+      if (trusted) next.add(target);
+      else next.delete(target);
+      return next;
+    });
+    void backendRef.current!.call("trust.set", { project: target, trusted }).catch((error: unknown) => {
+      setTrustedProjects((prev) => {
+        const next = new Set(prev);
+        // Roll the checkbox back: the core refused, so the UI must not claim
+        // the folder is trusted.
+        if (trusted) next.delete(target);
+        else next.add(target);
+        return next;
+      });
+      setSettingsError(error instanceof Error ? error.message : String(error));
+    });
+  }, []);
+
   const respond = useCallback((id: string, confirmed: boolean) => {
     // Clear locally first. The core will also emit confirmation.resolved, but
     // waiting on it would leave the modal up during the round trip.
@@ -191,6 +288,10 @@ export function App() {
           onNewChat={newChat}
           onClear={clear}
           onCancel={cancel}
+          onSettings={() => {
+            setSettingsError(null);
+            setSettingsOpen(true);
+          }}
         />
       )}
 
@@ -225,6 +326,25 @@ export function App() {
 
         {state.pendingConfirm && <ConfirmDialog request={state.pendingConfirm} onRespond={respond} />}
 
+        {settingsOpen && (
+          <SettingsPanel
+            connected={connected}
+            busy={state.busy}
+            providers={providers}
+            provider={provider}
+            model={model}
+            project={project}
+            sandbox={sandbox}
+            trusted={trustedProjects.has(project)}
+            error={settingsError}
+            onClose={() => setSettingsOpen(false)}
+            onChooseFolder={chooseFolder}
+            onStopSandbox={stopSandbox}
+            onBindProvider={bindProvider}
+            onTrust={setTrust}
+          />
+        )}
+
         <StatusBar
           provider={provider}
           model={model}
@@ -239,6 +359,8 @@ export function App() {
         filter={fileFilter}
         onFilterChange={setFileFilter}
         onToggle={() => setFilesOpen((v) => !v)}
+        onChooseFolder={chooseFolder}
+        hasProject={project !== ""}
         open={filesOpen}
       />
     </div>

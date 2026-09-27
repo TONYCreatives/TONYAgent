@@ -2,8 +2,9 @@
 //!
 //! Deliberately thin. The Python core in `tonyagent.core` owns conversation
 //! state, tool execution and sandboxing; the React layer in `app/src` owns
-//! rendering. This crate does exactly two things: open a window and register
-//! the shell plugin so the frontend can spawn the core as a sidecar.
+//! rendering. This crate does exactly three things: open a window, register
+//! the shell plugin so the frontend can spawn the core as a sidecar, and
+//! register the dialog plugin so it can ask for a project folder.
 //!
 //! The wire protocol between them is specified in
 //! `src/tonyagent/headless/server.py` and implemented once, in
@@ -21,6 +22,10 @@
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        // Folder picker for the sandbox. `default` here is the permission set
+        // in capabilities/default.json, not an implicit allow-all: the dialog
+        // plugin's own capabilities gate which calls the frontend may make.
+        .plugin(tauri_plugin_dialog::init())
         .run(tauri::generate_context!())
         .expect("failed to start the TONYAgent window");
 }

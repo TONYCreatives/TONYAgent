@@ -97,12 +97,44 @@ correct and silently did nothing.
 | **Three separate naming mismatches** | three distinct runtime errors, all reading as "disconnected" | `externalBin`, `Command.sidecar()` and the capability `allow` list must all carry the *same* string, and Tauri appends the triple itself | all three are `binaries/tonyagent-core` — see section 3 |
 | **stdin rejected by ACL** | sidecar starts, every request fails `plugin:shell\|stdin_write not allowed by ACL` | `stdin_write` is a separate plugin command from `spawn` | added `shell:allow-stdin-write` and `shell:allow-kill` |
 | **Sidecar build script crashed** | `NameError: name 'ensure_external_bin' is not defined` | a rename updated the *call* but left the *definition* on the old name, so the script died after an otherwise successful 45 MB build | both sides renamed; a definition-vs-call check guards it |
+| **Window stuck on "disconnected" under StrictMode** | banner `Backend is not running`, while a working sidecar ran unowned in the background | React 19 StrictMode mounts, unmounts and remounts every effect, so `start -> stop -> start` genuinely races. A sidecar's exit event is delivered *asynchronously*, so the one just killed reported "exited" **after** its replacement was assigned, and `onExit` nulled `this.transport` unconditionally - disposing the healthy new backend. | `onExit` returns early unless `this.transport` is still its own transport; `start`/`stop` are serialised through one promise chain |
 | **`tauri dev` died at startup** | `EBUSY: resource busy or locked, watch '...build_script_build.exe'` | Vite's watcher walks the project root, including `src-tauri/target/`. Cargo holds those `.exe` files open and `fs.watch` fails on Windows, killing Vite and taking the dev command with it | `server.watch.ignored` excludes `src-tauri/**` |
 
 The pattern worth keeping: **the sidecar's stderr is the only place core-side
 failures appear**, because stdout is protocol-only. The React UI now renders it
 in a log strip, and the error banner shows Tauri's exact message. Without that,
 every one of the above presented as an unexplained "disconnected".
+
+### 1.3 Phase 1: the disabled rail icons
+
+The Sandbox and Settings rail buttons were grey placeholders. Both now open one
+`SettingsPanel`, because the project folder and the model answer the same
+question - "what is this window working on" - and two modals would mean two
+places reaching the same core methods. Search stays disabled: it needs a real
+core method, and a UI that filters its own transcript is the kind of
+presentation-only control this project keeps having to unpick later.
+
+What was added:
+
+| Piece | Why it exists |
+|---|---|
+| `app/src/dialog.ts` | `pickFolder()` over `@tauri-apps/plugin-dialog`, lazily imported for the same reason `backend.ts` does it - a top-level import would make the protocol tests require Tauri |
+| `app/src/SettingsPanel.tsx` | folder picker, sandbox start/stop, trust toggle, provider + model selects |
+| `providers.list` (core) | so the panel asks the registry instead of carrying a hardcoded provider list that would drift the moment a provider is added or renamed |
+| `project` in `state`/`sandbox.start` | a reloaded window otherwise cannot tell what folder the core is attached to |
+
+Two decisions worth keeping:
+
+- **Trust state lives in `App`, not the panel.** The core keeps the trusted set
+  in memory with no getter, so the UI cannot ask. It remembers what it asked
+  for instead, and defaults to *untrusted* - the safe direction to be wrong in,
+  because a wrongly-trusted folder skips the confirmation prompt.
+- **Provider/model are a draft until Apply.** Two round trips per keystroke
+  would be its own bug, and model ids are provider-specific, so changing the
+  provider clears the model.
+
+The Files panel's empty state now offers the picker directly. A panel that only
+explains itself is the dead end this replaces.
 
 ---
 
@@ -128,12 +160,13 @@ stdout is protocol-only, or the frontend will parse log lines as JSON.
 | Method | Params | Result |
 |---|---|---|
 | `ping` | — | `{pong, protocol}` |
-| `state` | — | `{provider, model, busy, messages}` |
+| `state` | — | `{provider, model, busy, messages, project}` |
 | `send` | `{text}` | `{turn_id}` |
 | `cancel` | — | `{cancelled}` |
 | `clear` | — | `{cleared}` |
 | `bind_provider` | `{name, model?}` | `{provider, model}` |
-| `sandbox.start` | `{path?}` | `{running}` |
+| `providers.list` | — | `{providers: [{name, models, has_credentials, ...}]}` |
+| `sandbox.start` | `{path?}` | `{running, project}` |
 | `sandbox.stop` | — | `{running}` |
 | `sandbox.stats` | — | stats dict |
 | `confirm.respond` | `{id, confirmed}` | `{id, confirmed}` |
@@ -421,20 +454,19 @@ not delete the test.**
 
 ### 7.2 Next, in the Tauri UI
 
-These are UI gaps, not core gaps. The core already supports each.
+**Done in Phase 1** (see 1.3): the project folder picker, the settings panel
+with provider/model binding, and sandbox start/stop. The rail's Sandbox and
+Settings buttons are live; only Search is still disabled.
 
-1. **Project folder picker.** `sandbox.start` takes a `path`, but nothing in
-   the UI chooses one, so the sandbox can only ever start on the cwd. Needs
-   `@tauri-apps/plugin-dialog` (already a dependency).
-2. **Settings panel** for provider/model binding (`bind_provider`). The status
-   bar shows the current provider but there is no way to change it from the UI.
+1. ~~**Project folder picker.**~~ Done - `@tauri-apps/plugin-dialog`, wired to
+   `sandbox.start({path})`, reachable from both the rail and the Files panel.
+2. ~~**Settings panel.**~~ Done - `SettingsPanel.tsx`, driven by the existing
+   `bind_provider`, `sandbox.start`/`.stop` and `trust.set`.
 3. **API key entry.** The key lives in the OS keyring and there is no core
    method for setting it, so this needs a new method on the protocol first.
-4. **Sandbox controls** — start/stop buttons. `sandbox.start`/`.stop` are
-   implemented and unwired.
-5. **Markdown rendering** for assistant text. Currently plain text; the core
+4. **Markdown rendering** for assistant text. Currently plain text; the core
    already depends on `markdown2` for the Tkinter UI.
-6. **`events.ts` has no tests.** It is pure and easy to cover; the 13 existing
+5. **`events.ts` has no tests.** It is pure and easy to cover; the 17 existing
    tests only cover `backend.ts` framing.
 
 ### 7.2 Not blocked — do these any time

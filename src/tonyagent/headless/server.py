@@ -58,6 +58,9 @@ class StdioServer:
         self.stdin = stdin
         self.stdout = stdout
         self._running = True
+        # The project folder the sandbox is attached to, echoed back by `state`
+        # so a window that reloads knows what it is working on.
+        self.project: str = ""
         # Async handlers awaiting a reply, keyed by request id.
         self._pending: dict[Any, Any] = {}
         self._handlers: dict[str, Callable[[dict], Any]] = {
@@ -66,6 +69,7 @@ class StdioServer:
             "cancel": self._h_cancel,
             "clear": self._h_clear,
             "bind_provider": self._h_bind_provider,
+            "providers.list": self._h_providers_list,
             "state": self._h_state,
             "sandbox.start": self._h_sandbox_start,
             "sandbox.stop": self._h_sandbox_stop,
@@ -136,18 +140,44 @@ class StdioServer:
             raise RpcError(f"Unknown provider: {name}")
         return {"provider": name, "model": getattr(provider, "model", model)}
 
+    def _h_providers_list(self, params: dict) -> Any:
+        """Report which providers exist, without exposing anything secret.
+
+        The registry is the only place provider names are defined, so the
+        frontend asks rather than carrying its own copy -- a hardcoded list
+        would drift silently the moment a provider is added or renamed.
+
+        ``get_available_providers`` reports ``has_credentials`` as a boolean
+        only; the key itself never leaves the keyring.
+        """
+        from tonyagent.providers import ProviderFactory
+
+        try:
+            return {"providers": ProviderFactory.get_available_providers()}
+        except Exception as exc:  # noqa: BLE001 - an empty list beats a dead UI
+            logger.warning(f"providers.list failed: {exc}")
+            return {"providers": []}
+
     def _h_state(self, params: dict) -> Any:
         return {
             "provider": self.session.provider_name,
             "model": self.session.model,
             "busy": self.session.busy,
             "messages": len(self.session.messages),
+            "project": self.project,
         }
 
     # -- sandbox -------------------------------------------------------------
     async def _h_sandbox_start(self, params: dict) -> Any:
         ok = await self.session.start_sandbox(params.get("path", ""))
-        return {"running": bool(ok)}
+        if ok:
+            # Remember the project so a later `state` call can tell the UI what
+            # it is attached to. Without this a reconnecting window would show
+            # "no folder" while the core was happily sandboxed.
+            from tonyagent.folder import folder_manager
+
+            self.project = str(folder_manager.current_folder or params.get("path", ""))
+        return {"running": bool(ok), "project": self.project}
 
     async def _h_sandbox_stop(self, params: dict) -> Any:
         await self.session.stop_sandbox()

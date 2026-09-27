@@ -792,6 +792,121 @@ body {
   justify-content: flex-end;
 }
 
+/* --- settings panel ------------------------------------------------------ */
+
+.settings-group {
+  padding: 0 0 14px;
+  margin: 0 0 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.settings-group:last-of-type {
+  padding-bottom: 0;
+  margin-bottom: 16px;
+  border-bottom: 0;
+}
+
+.settings-group h3 {
+  margin: 0 0 6px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-note {
+  margin: 0 0 10px;
+  color: var(--fg-mute);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * The select is styled as a real control, not a wrapper: a styled <div> with a
+ * <select> inside it leaves the native control's own chrome visible, and the
+ * result is a grey Windows dropdown sitting on a black panel. Same trap as the
+ * sidebar filter input -- style the element the user actually touches.
+ */
+.settings-select {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--input);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-select:hover:not(:disabled) {
+  background: var(--raised);
+}
+
+.settings-select:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-select option {
+  background: var(--surface);
+  color: var(--fg);
+}
+
+.settings-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0 0;
+  color: var(--fg);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-check input {
+  width: 14px;
+  height: 14px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-check input:disabled {
+  cursor: default;
+}
+
+.settings-check em {
+  display: block;
+  margin-top: 2px;
+  color: var(--fg-mute);
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.sidebar-empty .btn {
+  margin-top: 10px;
+}
+
 /* --- scrollbars ---------------------------------------------------------- */
 
 ::-webkit-scrollbar {
