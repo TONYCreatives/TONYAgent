@@ -7,6 +7,7 @@ import { pickFolder } from "./dialog";
 import { FileSidebar, type TreeEntry } from "./FileSidebar";
 import { IconRail } from "./IconRail";
 import { MessageList } from "./MessageList";
+import { SearchPanel, type SearchMatch } from "./SearchPanel";
 import { SettingsPanel, type ProviderInfo } from "./SettingsPanel";
 import { StatusBar } from "./StatusBar";
 import { TopBar } from "./TopBar";
@@ -21,6 +22,7 @@ export function App() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
   /**
    * Folders this window has trusted.
    *
@@ -266,6 +268,48 @@ export function App() {
     });
   }, []);
 
+  /**
+   * Store an API key in the OS keyring.
+   *
+   * Resolves to a boolean rather than throwing: the panel reports success or
+   * failure inline, and the core's own error text is deliberately vague about
+   * *why* it failed, because the keyring's message can quote the value.
+   */
+  const saveKey = useCallback(async (provider: string, apiKey: string) => {
+    try {
+      await backendRef.current!.call("key.save", { provider, api_key: apiKey });
+      // Re-read the provider list so the "(no key)" marker and the Remove
+      // button reflect the keyring without this component guessing.
+      const listed = (await backendRef.current!.call("providers.list")) as {
+        providers?: ProviderInfo[];
+      };
+      setProviders(listed.providers ?? []);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const deleteKey = useCallback(async (provider: string) => {
+    try {
+      await backendRef.current!.call("key.delete", { provider });
+      const listed = (await backendRef.current!.call("providers.list")) as {
+        providers?: ProviderInfo[];
+      };
+      setProviders(listed.providers ?? []);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const search = useCallback(async (pattern: string): Promise<SearchMatch[]> => {
+    const result = (await backendRef.current!.call("search", { pattern })) as {
+      matches?: SearchMatch[];
+    };
+    return result.matches ?? [];
+  }, []);
+
   const respond = useCallback((id: string, confirmed: boolean) => {
     // Clear locally first. The core will also emit confirmation.resolved, but
     // waiting on it would leave the modal up during the round trip.
@@ -292,6 +336,7 @@ export function App() {
             setSettingsError(null);
             setSettingsOpen(true);
           }}
+          onSearch={() => setSearchOpen(true)}
         />
       )}
 
@@ -342,6 +387,17 @@ export function App() {
             onStopSandbox={stopSandbox}
             onBindProvider={bindProvider}
             onTrust={setTrust}
+            onSaveKey={saveKey}
+            onDeleteKey={deleteKey}
+          />
+        )}
+
+        {searchOpen && (
+          <SearchPanel
+            connected={connected}
+            hasProject={project !== ""}
+            onClose={() => setSearchOpen(false)}
+            onSearch={search}
           />
         )}
 

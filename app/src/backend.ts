@@ -67,11 +67,43 @@ export interface CoreMethods {
   bind_provider: { name: string; model?: string };
   /** Provider names come from the core's registry, never from a local copy. */
   "providers.list": Record<string, never>;
+  /**
+   * Store an API key in the OS keyring.
+   *
+   * The key goes out on stdin and the reply carries only the provider name.
+   * There is deliberately no `key.get`: a method that returns a secret is a
+   * method whose secret can reach a screenshot.
+   */
+  "key.save": { provider: string; api_key: string };
+  "key.delete": { provider: string };
+  search: {
+    pattern: string;
+    path?: string;
+    include?: string;
+    case_sensitive?: boolean;
+    max_results?: number;
+    context_lines?: number;
+  };
   "sandbox.start": { path?: string };
   "sandbox.stop": Record<string, never>;
   "sandbox.stats": Record<string, never>;
   "confirm.respond": { id: string; confirmed: boolean };
   "trust.set": { project: string; trusted: boolean };
+}
+
+/**
+ * Methods whose params carry a secret.
+ *
+ * The request is written to the sidecar verbatim, because the core has to
+ * receive the real key. The list exists so the one place that could leak it --
+ * a debug log of the outgoing frame -- is impossible to add by accident, and
+ * so `backend.test.ts` can assert no diagnostic ever contains the value.
+ */
+const SECRET_METHODS: ReadonlySet<string> = new Set(["key.save"]);
+
+/** True when this request carries a value that must never be displayed. */
+export function carriesSecret(method: string): boolean {
+  return SECRET_METHODS.has(method);
 }
 
 /**

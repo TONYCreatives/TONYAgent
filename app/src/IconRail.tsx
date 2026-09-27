@@ -18,6 +18,7 @@ interface Props {
   onClear: () => void;
   onCancel: () => void;
   onSettings: () => void;
+  onSearch: () => void;
 }
 
 /** Inline SVG so the rail needs no icon dependency or network fetch. */
@@ -56,6 +57,7 @@ export function IconRail({
   onClear,
   onCancel,
   onSettings,
+  onSearch,
 }: Props) {
   return (
     <nav className="rail" aria-label="Primary">
@@ -107,8 +109,8 @@ export function IconRail({
       {/* Sandbox and settings both open the one settings panel: the project
           folder and the model are both "what is this window working on", and
           two modals reaching the same core methods would be two places to
-          keep in sync. Search is still disabled -- it needs a real core
-          method, not a UI that filters its own transcript. */}
+          keep in sync. Search has its own panel because it is a query with
+          results, not a setting. */}
       <button
         type="button"
         className="rail-btn"
@@ -125,8 +127,9 @@ export function IconRail({
       <button
         type="button"
         className="rail-btn"
-        disabled
-        title="Search — coming soon"
+        onClick={onSearch}
+        disabled={!connected}
+        title="Search project"
         aria-label="Search"
       >
         <Icon>

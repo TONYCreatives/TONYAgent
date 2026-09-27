@@ -70,7 +70,10 @@ class StdioServer:
             "clear": self._h_clear,
             "bind_provider": self._h_bind_provider,
             "providers.list": self._h_providers_list,
+            "key.save": self._h_key_save,
+            "key.delete": self._h_key_delete,
             "state": self._h_state,
+            "search": self._h_search,
             "sandbox.start": self._h_sandbox_start,
             "sandbox.stop": self._h_sandbox_stop,
             "sandbox.stats": self._h_sandbox_stats,
@@ -158,6 +161,51 @@ class StdioServer:
             logger.warning(f"providers.list failed: {exc}")
             return {"providers": []}
 
+    # -- credentials ---------------------------------------------------------
+    #
+    # SECURITY: a key arrives here over stdin and must never leave by any other
+    # route. stdout is the protocol, and every line on it is rendered by the
+    # frontend -- replies, error messages and events alike. stderr is no
+    # safer: the React UI shows it verbatim in the log strip. So the rules are:
+    #
+    #   * the reply reports only success/failure and the provider NAME
+    #   * an error is re-raised with a fixed message, never str(exc), because
+    #     keyring's own exceptions can quote the value it was handed
+    #   * nothing logs the key, and the request itself is never logged
+    #
+    # There is deliberately no `key.get`. A protocol method that returns a
+    # secret is a method whose secret can end up in a screenshot.
+
+    def _h_key_save(self, params: dict) -> Any:
+        from tonyagent.config.keyring import KeyringError, save_api_key
+
+        provider = str(params.get("provider", "")).strip()
+        api_key = params.get("api_key", "")
+        if not provider:
+            raise RpcError("missing provider")
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise RpcError("missing api_key")
+        try:
+            save_api_key(provider, api_key)
+        except KeyringError:
+            # The cause is dropped on purpose: `KeyringError` wraps whatever
+            # the keyring backend raised, and quoting it back would put the
+            # rejected value in front of the user and into the log strip.
+            raise RpcError("the system keyring rejected this key") from None
+        return {"provider": provider, "saved": True}
+
+    def _h_key_delete(self, params: dict) -> Any:
+        from tonyagent.config.keyring import KeyringError, delete_api_key
+
+        provider = str(params.get("provider", "")).strip()
+        if not provider:
+            raise RpcError("missing provider")
+        try:
+            delete_api_key(provider)
+        except KeyringError:
+            raise RpcError("the system keyring could not delete this key") from None
+        return {"provider": provider, "deleted": True}
+
     def _h_state(self, params: dict) -> Any:
         return {
             "provider": self.session.provider_name,
@@ -169,7 +217,28 @@ class StdioServer:
 
     # -- sandbox -------------------------------------------------------------
     async def _h_sandbox_start(self, params: dict) -> Any:
-        ok = await self.session.start_sandbox(params.get("path", ""))
+        requested = str(params.get("path", "") or "")
+        if requested:
+            # Register the folder before starting, not after.
+            #
+            # `start_sandbox` takes a path and mounts the container on it, but
+            # it never told `folder_manager` about it. Only the Tkinter UI
+            # called `set_folder`, so under the sidecar the sandbox was running
+            # against one directory while every file tool -- and `search` --
+            # still resolved paths against "no project folder selected". The
+            # symptom was a working sandbox that could not read its own
+            # workspace.
+            #
+            # Doing it first also means a bad path fails before a container is
+            # created, rather than leaving one running against nothing.
+            from pathlib import Path
+
+            from tonyagent.folder import folder_manager
+
+            if not folder_manager.set_folder(Path(requested)):
+                raise RpcError(f"Not a usable folder: {requested}")
+
+        ok = await self.session.start_sandbox(requested)
         if ok:
             # Remember the project so a later `state` call can tell the UI what
             # it is attached to. Without this a reconnecting window would show
@@ -202,6 +271,49 @@ class StdioServer:
         trusted = bool(params.get("trusted"))
         self.session.set_trusted(project, trusted)
         return {"project": project, "trusted": trusted}
+
+    # -- search --------------------------------------------------------------
+    async def _h_search(self, params: dict) -> Any:
+        """Search the project from the UI, using the agent's own grep tool.
+
+        This delegates to ``GrepTool`` rather than scanning here. A second
+        implementation would be a second set of rules about which directories
+        to skip, how big a file may be, and how a path is confined to the
+        project - and the two would drift, so the search the user runs and the
+        search the agent runs would quietly disagree.
+        """
+        from tonyagent.tools import tool_registry
+        from tonyagent.tools.base import ToolResultStatus
+
+        pattern = params.get("pattern", "")
+        if not isinstance(pattern, str) or not pattern.strip():
+            raise RpcError("empty pattern")
+
+        grep = tool_registry.get("grep")
+        if grep is None:
+            # The registry is populated by importing tonyagent.tools; if grep
+            # is genuinely absent that is a broken build, not a user error.
+            raise RpcError("search is unavailable in this build")
+
+        result = await grep.execute(
+            pattern=pattern,
+            path=str(params.get("path", ".")),
+            include=str(params.get("include", "")),
+            case_sensitive=bool(params.get("case_sensitive", True)),
+            max_results=int(params.get("max_results", 100)),
+            context_lines=int(params.get("context_lines", 0)),
+        )
+        if result.status is not ToolResultStatus.SUCCESS:
+            # The tool's own message ("Invalid regex: ...") is safe to return:
+            # it is derived from the pattern the user typed, never from a secret.
+            raise RpcError(result.error or "search failed")
+
+        matches: list[dict] = []
+        for artifact in result.artifacts:
+            if artifact.get("type") == "grep_result":
+                matches = artifact.get("data") or []
+                break
+        return {"matches": matches, "output": result.output}
 
     # -- dispatch ------------------------------------------------------------
     def _dispatch(self, req: dict) -> None:

@@ -953,6 +953,127 @@ body {
   color: var(--fg);
 }
 
+/*
+ * The key field. `type="password"` renders as an actual <input>, so it has to
+ * be styled directly for the same reason the sidebar filter did: a styled
+ * wrapper leaves the native control's own chrome visible on top.
+ */
+.settings-key {
+  margin: 12px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.settings-input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--input);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+.settings-input::placeholder {
+  color: var(--fg-mute);
+  opacity: 1;
+}
+
+.settings-input:hover:not(:disabled) {
+  background: var(--raised);
+}
+
+.settings-input:focus {
+  border-color: var(--hover);
+  outline: none;
+}
+
+.settings-input:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.settings-hint {
+  margin: 7px 0 0;
+  color: var(--fg-mute);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* --- search panel -------------------------------------------------------- */
+
+.search-modal {
+  /* Wider than the settings modal: a hit is a path plus a source line, and
+     truncating either to fit 500px would defeat the point of showing it. */
+  width: min(760px, 100%);
+  display: flex;
+  flex-direction: column;
+  max-height: min(640px, 100%);
+}
+
+.search-results {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 12px;
+}
+
+.search-count {
+  margin-bottom: 6px;
+  color: var(--fg-mute);
+  font-size: 11px;
+}
+
+.search-list {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.search-hit {
+  padding: 6px 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.search-hit-head {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 3px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.search-hit-file {
+  color: var(--fg-dim);
+  overflow-wrap: anywhere;
+}
+
+.search-hit-line {
+  color: var(--fg-mute);
+}
+
+.search-hit-body {
+  margin: 0;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * The matching line inside a context block. The core marks it with a leading
+ * ">" that splitContext turns into this class. The accent is the app's only
+ * chromatic element, and this is one of the two places it is allowed: the
+ * other is the diff stats, where a colour also carries meaning.
+ */
+.search-hit-line-on {
+  color: var(--accent);
+}
+
 .settings-check {
   display: flex;
   align-items: flex-start;

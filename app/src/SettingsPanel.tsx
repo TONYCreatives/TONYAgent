@@ -10,6 +10,13 @@
  * deliberately contains nothing that is presentation-only -- a control the
  * core cannot honour is the failure mode this project keeps running into (see
  * the mode pills in Composer, which are still presentation-only on purpose).
+ *
+ * The API key field is the one place a secret is typed into this app. Two
+ * rules follow from that, and both are load-bearing rather than stylistic:
+ * the input is uncontrolled-then-cleared so the value lives in the DOM for the
+ * shortest possible time, and the panel reports only success or failure --
+ * there is no way here to read a stored key back, because the protocol has no
+ * method that returns one.
  */
 
 import { useEffect, useState } from "react";
@@ -45,6 +52,8 @@ interface Props {
   onStopSandbox: () => void;
   onBindProvider: (name: string, model: string) => void;
   onTrust: (project: string, trusted: boolean) => void;
+  onSaveKey: (provider: string, apiKey: string) => Promise<boolean>;
+  onDeleteKey: (provider: string) => Promise<boolean>;
 }
 
 /** Show the last segment of a path; the full one is in the title attribute. */
@@ -69,12 +78,22 @@ export function SettingsPanel({
   onStopSandbox,
   onBindProvider,
   onTrust,
+  onSaveKey,
+  onDeleteKey,
 }: Props) {
   // Local mirror of the provider selection, so changing the provider does not
   // immediately re-bind: the user picks a provider, then a model, then
   // confirms. Two round trips per keystroke would be its own bug.
   const [draftProvider, setDraftProvider] = useState(provider);
   const [draftModel, setDraftModel] = useState(model);
+
+  // The key being typed. Held in state so the Save button can enable on a
+  // non-empty value, and cleared the instant the save resolves -- a field that
+  // keeps a credential sitting in the DOM after it is stored is a field that
+  // ends up in a screenshot or a support bundle.
+  const [apiKey, setApiKey] = useState("");
+  const [keyBusy, setKeyBusy] = useState(false);
+  const [keyNotice, setKeyNotice] = useState<string | null>(null);
 
   // Adopt whatever the core reports, but only when the panel is not mid-edit:
   // an incoming event must not silently discard a half-made selection.
@@ -197,6 +216,71 @@ export function SettingsPanel({
             >
               Apply
             </button>
+          </div>
+
+          {/*
+            The key field. `type="password"` with the manager's reveal toggle
+            off, and the value is cleared as soon as the save resolves --
+            success or failure. There is deliberately no "show stored key":
+            the protocol has no method that returns one, and adding one would
+            put a live credential one screenshot away.
+          */}
+          <div className="settings-key">
+            <div className="settings-row">
+              <input
+                className="settings-input"
+                type="password"
+                value={apiKey}
+                onChange={(e) => {
+                  setApiKey(e.target.value);
+                  setKeyNotice(null);
+                }}
+                placeholder={`API key for ${draftProvider || "provider"}`}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                disabled={!connected || keyBusy || !draftProvider}
+                aria-label={`API key for ${draftProvider}`}
+              />
+              <button
+                type="button"
+                className="btn"
+                disabled={!connected || keyBusy || !draftProvider || !apiKey.trim()}
+                onClick={async () => {
+                  setKeyBusy(true);
+                  setKeyNotice(null);
+                  const ok = await onSaveKey(draftProvider, apiKey);
+                  // Clear unconditionally. On failure the value is still in
+                  // the DOM, which is no better than on success.
+                  setApiKey("");
+                  setKeyBusy(false);
+                  setKeyNotice(ok ? "Key saved to the system keyring." : "Could not save the key.");
+                }}
+              >
+                {keyBusy ? "Saving..." : "Save key"}
+              </button>
+              {providers.find((p) => p.name === draftProvider)?.has_credentials && (
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={!connected || keyBusy}
+                  onClick={async () => {
+                    setKeyBusy(true);
+                    const ok = await onDeleteKey(draftProvider);
+                    setKeyBusy(false);
+                    setKeyNotice(ok ? "Key removed." : "Could not remove the key.");
+                  }}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            {keyNotice && <p className="settings-hint">{keyNotice}</p>}
+            <p className="settings-hint">
+              Stored by the OS credential manager, never in a config file. It
+              cannot be displayed again after saving.
+            </p>
           </div>
         </section>
 

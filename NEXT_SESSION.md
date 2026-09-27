@@ -98,6 +98,7 @@ correct and silently did nothing.
 | **stdin rejected by ACL** | sidecar starts, every request fails `plugin:shell\|stdin_write not allowed by ACL` | `stdin_write` is a separate plugin command from `spawn` | added `shell:allow-stdin-write` and `shell:allow-kill` |
 | **Sidecar build script crashed** | `NameError: name 'ensure_external_bin' is not defined` | a rename updated the *call* but left the *definition* on the old name, so the script died after an otherwise successful 45 MB build | both sides renamed; a definition-vs-call check guards it |
 | **Window stuck on "disconnected" under StrictMode** | banner `Backend is not running`, while a working sidecar ran unowned in the background | React 19 StrictMode mounts, unmounts and remounts every effect, so `start -> stop -> start` genuinely races. A sidecar's exit event is delivered *asynchronously*, so the one just killed reported "exited" **after** its replacement was assigned, and `onExit` nulled `this.transport` unconditionally - disposing the healthy new backend. | `onExit` returns early unless `this.transport` is still its own transport; `start`/`stop` are serialised through one promise chain |
+| **Sandbox ran but could not read its own workspace** | `search` and every file tool answered `No project folder selected` while the container was mounted and healthy | `start_sandbox(path)` mounts the container but never called `folder_manager.set_folder`. Only the Tkinter UI did, so the sidecar had a sandbox and no project | `_h_sandbox_start` registers the folder **before** starting, so a bad path fails before a container exists |
 | **`tauri dev` died at startup** | `EBUSY: resource busy or locked, watch '...build_script_build.exe'` | Vite's watcher walks the project root, including `src-tauri/target/`. Cargo holds those `.exe` files open and `fs.watch` fails on Windows, killing Vite and taking the dev command with it | `server.watch.ignored` excludes `src-tauri/**` |
 
 The pattern worth keeping: **the sidecar's stderr is the only place core-side
@@ -136,6 +137,40 @@ Two decisions worth keeping:
 The Files panel's empty state now offers the picker directly. A panel that only
 explains itself is the dead end this replaces.
 
+### 1.4 Phase 2: API keys and search
+
+**The key rules, and why they are the way they are.** A key arrives on stdin
+and must not leave by any other route. The problem is that both output streams
+are *displayed*: stdout frames become the transcript, the error banner and the
+event log, and stderr becomes the log strip. So a key that reaches either one
+is a key on screen. Four consequences:
+
+- **The reply carries only the provider name.** Never an echo, never a masked
+  form - a masked prefix still identifies the key to anyone who has seen it.
+- **Errors are re-raised with a fixed message, never `str(exc)`.** The real
+  keyring backend quotes the value it refused inside its own exception, so
+  returning it would put the rejected secret in the error banner. The fake in
+  `test_a_keyring_failure_does_not_echo_the_key` reproduces exactly that.
+- **There is no `key.get`, and there must not be one.** A method that returns a
+  secret is a method whose secret can end up in a screenshot. This is pinned by
+  `test_there_is_no_method_that_returns_a_key`, which fails the moment someone
+  adds one.
+- **The frontend field clears on both success and failure.** A field that keeps
+  a credential in the DOM after storing it is a field that ends up in a support
+  bundle. The client cannot redact what it sends - the core needs the real value
+  - so its only job is never to *display* it.
+
+`carriesSecret()` in `backend.ts` exists so the one place that could leak a key
+(a debug log of an outgoing frame) is hard to add by accident.
+
+**Search delegates to `GrepTool`, it does not reimplement the scan.** A second
+implementation would be a second set of rules about which directories to skip
+and how a path is confined to the project, and the two would drift - so the
+search a user runs and the search the agent runs would quietly answer different
+questions. `test_search_matches_the_same_rules_the_agent_gets` fails if the
+protocol ever grows its own scanner. The panel also cannot start before a
+folder is chosen, because grep resolves paths against the project root.
+
 ---
 
 ## 2. The wire protocol (contract for the future UI)
@@ -166,6 +201,9 @@ stdout is protocol-only, or the frontend will parse log lines as JSON.
 | `clear` | — | `{cleared}` |
 | `bind_provider` | `{name, model?}` | `{provider, model}` |
 | `providers.list` | — | `{providers: [{name, models, has_credentials, ...}]}` |
+| `key.save` | `{provider, api_key}` | `{provider, saved}` |
+| `key.delete` | `{provider}` | `{provider, deleted}` |
+| `search` | `{pattern, path?, include?, case_sensitive?, max_results?, context_lines?}` | `{matches, output}` |
 | `sandbox.start` | `{path?}` | `{running, project}` |
 | `sandbox.stop` | — | `{running}` |
 | `sandbox.stats` | — | stats dict |
@@ -301,6 +339,20 @@ Details that are deliberate, not incidental:
   decode degrades to readable text instead of nothing.
 
 Cost: 176 KB of fonts, and the installer grew 0.16 MiB.
+
+### Do not test `key.save` against a provider that has a real key
+
+`key.save` writes to the **real OS keyring**. A canary value typed into a live
+provider slot overwrites the user's actual credential, and the damage is silent
+until a real request 401s. This happened here: a canary written to `groq` broke
+`test_chat_path_streams_end_to_end[groq]` with "The groq key does not start with
+'gsk_'", which is the only reason it was caught.
+
+The pytest suite is safe - `test_the_key_never_appears_on_stdout` and friends
+monkeypatch a fake `keyring`, so no OS store is touched. Anything run by hand
+against `python -m tonyagent.headless.server` is **not**. Use a provider with no
+stored key (`ollama`, `custom`) and delete it afterwards, or just read the
+code. The UI check was done against `ollama` with `dummy-not-a-real-key`.
 
 ### Launchers
 
@@ -484,18 +536,19 @@ not delete the test.**
 ### 7.2 Next, in the Tauri UI
 
 **Done in Phase 1** (see 1.3): the project folder picker, the settings panel
-with provider/model binding, and sandbox start/stop. The rail's Sandbox and
-Settings buttons are live; only Search is still disabled.
+with provider/model binding, sandbox start/stop, and search. All five rail
+buttons are now live.
 
 1. ~~**Project folder picker.**~~ Done - `@tauri-apps/plugin-dialog`, wired to
    `sandbox.start({path})`, reachable from both the rail and the Files panel.
-2. ~~**Settings panel.**~~ Done - `SettingsPanel.tsx`, driven by the existing
-   `bind_provider`, `sandbox.start`/`.stop` and `trust.set`.
-3. **API key entry.** The key lives in the OS keyring and there is no core
-   method for setting it, so this needs a new method on the protocol first.
+2. ~~**Settings panel.**~~ Done - `SettingsPanel.tsx`, driven by `bind_provider`,
+   `sandbox.start`/`.stop`, `trust.set`, and (Phase 2) `key.save`/`key.delete`.
+5. ~~**Search.**~~ Done in Phase 2 - `SearchPanel.tsx` over the core `search`.
+3. ~~**API key entry.**~~ Done - `key.save` / `key.delete` on the protocol, and
+   a password field in the settings panel. See the security note in 1.4.
 4. **Markdown rendering** for assistant text. Currently plain text; the core
    already depends on `markdown2` for the Tkinter UI.
-5. **`events.ts` has no tests.** It is pure and easy to cover; the 17 existing
+6. **`events.ts` has no tests.** It is pure and easy to cover; the 20 existing
    tests only cover `backend.ts` framing.
 
 ### 7.2 Not blocked — do these any time

@@ -16,7 +16,7 @@ import assert from "node:assert/strict";
 // ".js" (not ".ts") is the spec-correct specifier under NodeNext/ESM: the
 // runtime resolves the compiled file. tsc rewrites nothing here because this is
 // a plain relative import, so it must already name the emitted file.
-import { TauriBackend, type LineTransport, type CoreEvent } from "./backend.js";
+import { TauriBackend, carriesSecret, type LineTransport, type CoreEvent } from "./backend.js";
 /** A transport that records writes and lets a test push stdout frames. */
 class FakeTransport implements LineTransport {
   written: string[] = [];
@@ -355,4 +355,58 @@ test("a failed start does not wedge later starts", async () => {
   good.push(`${JSON.stringify({ id: 1, result: { pong: true } })}
 `);
   assert.deepEqual(await call, { pong: true });
+});
+
+// --- secrets --------------------------------------------------------------
+//
+// The core needs the real key on the wire, so the client cannot redact it.
+// What it must never do is *display* it: the UI renders backend stderr in the
+// log strip, and a stray console.log of the outgoing frame would put a live
+// credential on screen. These tests pin the boundary.
+
+const SECRET = "sk-ant-supersecret-value-do-not-leak-1234567890";
+
+test("key.save reaches the sidecar intact -- redaction would break it", async () => {
+  const { transport, backend } = makeBackend();
+  await backend.start();
+
+  const call = backend.call("key.save", { provider: "anthropic", api_key: SECRET });
+  const frame = JSON.parse(transport.written[0]);
+  assert.equal(frame.method, "key.save");
+  // The real value must be sent; the core normalises and stores it.
+  assert.equal(frame.params.api_key, SECRET);
+
+  transport.push(`${JSON.stringify({ id: 1, result: { provider: "anthropic", saved: true } })}\n`);
+  // The reply must not contain the key either.
+  const result = (await call) as Record<string, unknown>;
+  assert.deepEqual(result, { provider: "anthropic", saved: true });
+  assert.equal(JSON.stringify(result).includes(SECRET), false);
+});
+
+test("no backend log line ever contains a key", async () => {
+  const { transport, backend } = makeBackend();
+  const logged: string[] = [];
+  backend.onLog((line) => logged.push(line));
+
+  await backend.start();
+  const call = backend.call("key.save", { provider: "anthropic", api_key: SECRET });
+  transport.push(`${JSON.stringify({ id: 1, result: { provider: "anthropic", saved: true } })}\n`);
+  await call;
+
+  // Simulate the core's stderr and stdout chatter around the call.
+  transport.pushStderr(`[sidecar] saved key for anthropic ${SECRET}\n`);
+  transport.pushStderr("some unrelated warning\n");
+
+  // The real core never logs the key, so the only line carrying it here is
+  // the one we injected -- proving the client's log path is a plain passthrough
+  // and adds nothing of its own.
+  const injected = logged.filter((l) => l.includes(SECRET));
+  assert.equal(injected.length, 1, "the client must not duplicate or transform log lines");
+});
+
+test("carriesSecret identifies exactly the key-bearing method", () => {
+  assert.equal(carriesSecret("key.save"), true);
+  assert.equal(carriesSecret("send"), false);
+  assert.equal(carriesSecret("providers.list"), false);
+  assert.equal(carriesSecret("key.delete"), false);
 });

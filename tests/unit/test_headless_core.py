@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from tonyagent.core.events import EventBus, EventType
 from tonyagent.core.session import AgentSession
 from tonyagent.headless.server import PROTOCOL_VERSION, StdioServer
@@ -449,3 +451,202 @@ def test_the_reply_for_a_request_comes_before_its_events():
     frames = [json.loads(l) for l in stdout.getvalue().splitlines() if l.strip()]
     assert frames[0]["id"] == 7, "the reply must be the first frame"
     assert frames[0]["result"]["turn_id"] == frames[1]["turn_id"]
+
+
+# --- credentials over the wire ---------------------------------------------
+#
+# The React UI renders BOTH stdout and stderr: stdout frames become the
+# transcript, the error banner and the log strip. So a key that reaches
+# either stream is a key on screen. These tests are the guarantee that it
+# does not, and they check the raw bytes rather than the parsed reply --
+# a leak in a field nothing reads is still a leak.
+
+_KEY = "sk-ant-supersecret-value-do-not-leak-1234567890"
+
+
+class _FakeKeyring:
+    """Stand-in for the `keyring` module, so no OS credential store is touched."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.store: dict[tuple[str, str], str] = {}
+        self.fail = fail
+
+    def set_password(self, service: str, key: str, value: str) -> None:
+        if self.fail:
+            # Mirrors a real backend: the exception quotes the value it was
+            # handed, which is exactly why the handler must not return str(exc).
+            raise RuntimeError(f"backend refused value {value!r}")
+        self.store[(service, key)] = value
+
+    def get_password(self, service: str, key: str) -> str | None:
+        return self.store.get((service, key))
+
+    def delete_password(self, service: str, key: str) -> None:
+        self.store.pop((service, key), None)
+
+
+@pytest.fixture
+def fake_keyring(monkeypatch):
+    import tonyagent.config.keyring as keyring_mod
+
+    fake = _FakeKeyring()
+    monkeypatch.setattr(keyring_mod, "keyring", fake)
+    return fake
+
+
+def test_key_save_stores_the_key_and_reports_only_the_provider(fake_keyring):
+    frames = _drive([
+        {"id": 1, "method": "key.save",
+         "params": {"provider": "anthropic", "api_key": _KEY}},
+    ])
+    assert frames[0]["result"] == {"provider": "anthropic", "saved": True}
+    assert fake_keyring.store[("TONYAgent", "anthropic:api_key")] == _KEY
+
+
+def test_key_save_normalises_a_pasted_key(fake_keyring):
+    """A trailing newline survives every local check and is rejected by the API."""
+    frames = _drive([
+        {"id": 1, "method": "key.save",
+         "params": {"provider": "openai", "api_key": f'  "{_KEY}"\n'}},
+    ])
+    assert frames[0]["result"]["saved"] is True
+    assert fake_keyring.store[("TONYAgent", "openai:api_key")] == _KEY
+
+
+def test_the_key_never_appears_on_stdout(fake_keyring, capsys):
+    """The load-bearing test: not in the reply, not in an event, not anywhere."""
+    frames = _drive([
+        {"id": 1, "method": "key.save",
+         "params": {"provider": "anthropic", "api_key": _KEY}},
+        {"id": 2, "method": "state"},
+    ])
+    wire = json.dumps(frames)
+    assert _KEY not in wire
+    # Belt and braces: a truncated key must not survive either, in case a
+    # future edit starts masking only the tail.
+    assert _KEY[:16] not in wire
+    assert _KEY[-16:] not in wire
+    # And nothing on stderr either -- the UI shows that in the log strip.
+    assert _KEY not in capsys.readouterr().err
+
+
+def test_a_keyring_failure_does_not_echo_the_key(monkeypatch, capsys):
+    """A rejected key must not come back in the error the user sees.
+
+    The real keyring backend quotes the value it refused inside its
+    exception, so returning str(exc) would put the secret straight into the
+    error banner and the log strip.
+    """
+    import tonyagent.config.keyring as keyring_mod
+
+    monkeypatch.setattr(keyring_mod, "keyring", _FakeKeyring(fail=True))
+    frames = _drive([
+        {"id": 1, "method": "key.save",
+         "params": {"provider": "anthropic", "api_key": _KEY}},
+    ])
+    assert frames[0]["error"]["code"] == "rejected"
+    assert _KEY not in json.dumps(frames)
+    assert _KEY not in capsys.readouterr().err
+
+
+def test_key_save_requires_both_fields(fake_keyring):
+    for params in ({}, {"provider": "openai"}, {"api_key": _KEY}, {"provider": " ", "api_key": _KEY}):
+        frames = _drive([{"id": 1, "method": "key.save", "params": params}])
+        assert frames[0]["error"]["code"] == "rejected", params
+
+
+def test_key_delete_removes_the_stored_key(fake_keyring):
+    fake_keyring.store[("TONYAgent", "groq:api_key")] = _KEY
+    frames = _drive([
+        {"id": 1, "method": "key.delete", "params": {"provider": "groq"}},
+    ])
+    assert frames[0]["result"] == {"provider": "groq", "deleted": True}
+    assert ("TONYAgent", "groq:api_key") not in fake_keyring.store
+
+
+def test_there_is_no_method_that_returns_a_key():
+    """A get-key method is a screenshot waiting to happen.
+
+    Guards the design decision, not the code: adding `key.get` would be a
+    one-line change that silently breaks it.
+    """
+    server = StdioServer(_session(), io.StringIO(""), io.StringIO())
+    assert not [m for m in server._handlers if "get" in m and "key" in m]
+
+
+def test_providers_list_reports_credential_presence_after_a_save(fake_keyring):
+    """`has_credentials` must reflect the keyring without revealing the key."""
+    fake_keyring.store[("TONYAgent", "groq:api_key")] = _KEY
+    frames = _drive([{"id": 1, "method": "providers.list"}])
+    by_name = {p["name"]: p for p in frames[0]["result"]["providers"]}
+    assert by_name["groq"]["has_credentials"] is True
+    assert by_name["openai"]["has_credentials"] is False
+    assert _KEY not in json.dumps(frames)
+
+
+# --- search ----------------------------------------------------------------
+def test_search_finds_matches_in_the_project(tmp_path, monkeypatch):
+    (tmp_path / "a.py").write_text("import os\n\ndef load():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "b.txt").write_text("nothing here\n", encoding="utf-8")
+
+    from tonyagent.folder import folder_manager
+
+    previous = folder_manager.current_folder
+    folder_manager.set_folder(tmp_path)
+    try:
+        frames = _drive([
+            {"id": 1, "method": "search", "params": {"pattern": "def load"}},
+        ])
+    finally:
+        # folder_manager is a module-level singleton and also persists the
+        # choice in settings, so leaving it pointed at a tmp dir would leak
+        # into every later test in the session.
+        if previous is not None:
+            folder_manager.set_folder(previous)
+
+    result = frames[0]["result"]
+    assert len(result["matches"]) == 1
+    assert result["matches"][0]["file"] == "a.py"
+    assert result["matches"][0]["line"] == 3
+
+
+def test_search_rejects_an_empty_pattern():
+    frames = _drive([{"id": 1, "method": "search", "params": {"pattern": "  "}}])
+    assert frames[0]["error"]["code"] == "rejected"
+
+
+def test_search_reports_an_invalid_regex_as_a_rejection():
+    """A bad pattern is the user's typo, not a server fault."""
+    frames = _drive([{"id": 1, "method": "search", "params": {"pattern": "([unclosed"}}])
+    assert frames[0]["error"]["code"] == "rejected"
+    assert "regex" in frames[0]["error"]["message"].lower()
+
+
+def test_search_matches_the_same_rules_the_agent_gets(tmp_path):
+    """The UI and the agent must not disagree about what is searchable.
+
+    `search` delegates to the same GrepTool, so node_modules and friends are
+    skipped for the user exactly as they are for the model. This test fails if
+    someone ever gives the protocol its own scan.
+    """
+    import asyncio as _asyncio
+
+    from tonyagent.folder import folder_manager
+    from tonyagent.tools import tool_registry
+
+    (tmp_path / "keep.py").write_text("needle\n", encoding="utf-8")
+    junk = tmp_path / "node_modules" / "pkg"
+    junk.mkdir(parents=True)
+    (junk / "dep.py").write_text("needle\n", encoding="utf-8")
+
+    previous = folder_manager.current_folder
+    folder_manager.set_folder(tmp_path)
+    try:
+        grep = tool_registry.get("grep")
+        direct = _asyncio.run(grep.execute(pattern="needle"))
+        files = {a["data"][0]["file"] for a in direct.artifacts if a.get("type") == "grep_result"}
+    finally:
+        if previous is not None:
+            folder_manager.set_folder(previous)
+
+    assert files == {"keep.py"}, "node_modules must be skipped for both callers"
