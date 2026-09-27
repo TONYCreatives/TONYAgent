@@ -273,6 +273,35 @@ a second source of truth about that state is how the Tkinter UI drifted.
 - Collapsing the rail needs `grid-template-columns: 0 ...` too, or the 70px
   track stays reserved.
 
+### Typography
+
+`Inter` (body) and `JetBrains Mono` (paths, diff stats, log strip), self-hosted
+as woff2 in `app/src/fonts/`. Do not go back to `system-ui`: the whole point of
+a desktop app is that the layout someone tuned is the layout a user gets, and
+the system stack rendered differently per machine. The fonts ship inside the
+binary, so there is no offline first-launch gap and no CDN to wait on.
+
+Details that are deliberate, not incidental:
+
+- **latin + latin-ext only.** Google's per-script split is kept, so a latin-ext
+  character pulls in the second file only when one actually appears. Verified
+  live: adding `ężł` flipped the second Inter face to `loaded`.
+- **One variable file per family per script.** Weights 400/500/600 are all used,
+  and a variable font covers the range in one download.
+- **`font-display: block`, not `swap`.** A flash of light Segoe before Inter
+  arrives is worse on a dark UI than a brief blank, and the fonts are local, so
+  the block period is a disk read rather than a network wait.
+- **`font-src 'self'` had to be added to the CSP.** `default-src 'self'` does
+  not cover fonts, so without it every face silently fails to load and the app
+  quietly falls back to the system font - which looks like "the change did
+  nothing" rather than like an error.
+- **`tabular-nums` on the status bar and rail badge.** Both show values that
+  change while you watch, and proportional figures make the whole line twitch.
+- The system fonts stay in the stack as a last resort, so a woff2 that fails to
+  decode degrades to readable text instead of nothing.
+
+Cost: 176 KB of fonts, and the installer grew 0.16 MiB.
+
 ### Launchers
 
 Two, and they reach different clients:
