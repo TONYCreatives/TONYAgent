@@ -850,6 +850,17 @@ body {
   flex: 1;
 }
 
+/*
+ * The filter is a <label> wrapping an icon and an <input>. The field chrome
+ * lives on the label, but the input itself must be reset explicitly: a bare
+ * <input> keeps the UA's white background, black text and native border, and
+ * that is what showed through as "the design is not applied".
+ *
+ * For the same reason :focus and ::placeholder are NOT set on the label. A
+ * label cannot receive focus, and its ::placeholder would never reach the
+ * nested input. Both belong on the input; :focus-within carries the focus
+ * treatment up to the wrapper that actually draws the field.
+ */
 .sidebar-filter {
   display: flex;
   align-items: center;
@@ -857,21 +868,40 @@ body {
   height: 32px;
   margin: 10px 12px;
   padding: 0 10px;
-  border: 0;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: var(--input);
   color: var(--fg-mute);
+  cursor: text;
+  transition: border-color 0.12s ease;
+}
+
+.sidebar-filter:focus-within {
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
+
+.sidebar-filter input {
+  /* Take the whole space the label allows, and allow it to shrink so the
+     placeholder truncates instead of forcing the field wider. */
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
   font: inherit;
   font-size: 12px;
 }
 
-.sidebar-filter:focus {
+.sidebar-filter input:focus {
   outline: none;
-  color: var(--fg);
 }
 
-.sidebar-filter::placeholder {
+.sidebar-filter input::placeholder {
   color: var(--fg-mute);
+  opacity: 1;
 }
 
 .sidebar-tree {
