@@ -1,0 +1,1708 @@
+[{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/sandbox/docker_backend.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Unindent amount does not match previous indent",
+	"source": "Pylance",
+	"startLineNumber": 73,
+	"startColumn": 5,
+	"endLineNumber": 73,
+	"endColumn": 5,
+	"modelVersionId": 6,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/sandbox/docker_backend.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Unindent amount does not match previous indent",
+	"source": "Pylance",
+	"startLineNumber": 79,
+	"startColumn": 5,
+	"endLineNumber": 79,
+	"endColumn": 5,
+	"modelVersionId": 6,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/sandbox/docker_backend.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Unindent amount does not match previous indent",
+	"source": "Pylance",
+	"startLineNumber": 85,
+	"startColumn": 5,
+	"endLineNumber": 85,
+	"endColumn": 5,
+	"modelVersionId": 6,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/sandbox/docker_backend.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Unindent amount does not match previous indent",
+	"source": "Pylance",
+	"startLineNumber": 90,
+	"startColumn": 5,
+	"endLineNumber": 90,
+	"endColumn": 5,
+	"modelVersionId": 6,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/sandbox/docker_backend.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Unindent amount does not match previous indent",
+	"source": "Pylance",
+	"startLineNumber": 103,
+	"startColumn": 5,
+	"endLineNumber": 103,
+	"endColumn": 5,
+	"modelVersionId": 6,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/sandbox/docker_backend.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Unindent amount does not match previous indent",
+	"source": "Pylance",
+	"startLineNumber": 108,
+	"startColumn": 5,
+	"endLineNumber": 108,
+	"endColumn": 5,
+	"modelVersionId": 6,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/sandbox/docker_backend.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Unindent amount does not match previous indent",
+	"source": "Pylance",
+	"startLineNumber": 121,
+	"startColumn": 5,
+	"endLineNumber": 121,
+	"endColumn": 5,
+	"modelVersionId": 6,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Unexpected indentation",
+	"source": "Pylance",
+	"startLineNumber": 161,
+	"startColumn": 1,
+	"endLineNumber": 161,
+	"endColumn": 17,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "\"return\" can be used only within a function",
+	"source": "Pylance",
+	"startLineNumber": 165,
+	"startColumn": 9,
+	"endLineNumber": 165,
+	"endColumn": 15,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "\"return\" can be used only within a function",
+	"source": "Pylance",
+	"startLineNumber": 167,
+	"startColumn": 9,
+	"endLineNumber": 167,
+	"endColumn": 15,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "\"return\" can be used only within a function",
+	"source": "Pylance",
+	"startLineNumber": 168,
+	"startColumn": 5,
+	"endLineNumber": 168,
+	"endColumn": 11,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"SandboxManager\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 12,
+	"startColumn": 28,
+	"endLineNumber": 12,
+	"endColumn": 42,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"register_tool\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 18,
+	"startColumn": 2,
+	"endLineNumber": 18,
+	"endColumn": 15,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolCategory\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 22,
+	"startColumn": 16,
+	"endLineNumber": 22,
+	"endColumn": 28,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 30,
+	"startColumn": 26,
+	"endLineNumber": 30,
+	"endColumn": 36,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 30,
+	"startColumn": 44,
+	"endLineNumber": 30,
+	"endColumn": 60,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 36,
+	"startColumn": 24,
+	"endLineNumber": 36,
+	"endColumn": 34,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 36,
+	"startColumn": 42,
+	"endLineNumber": 36,
+	"endColumn": 58,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 38,
+	"startColumn": 24,
+	"endLineNumber": 38,
+	"endColumn": 34,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 38,
+	"startColumn": 42,
+	"endLineNumber": 38,
+	"endColumn": 58,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 40,
+	"startColumn": 20,
+	"endLineNumber": 40,
+	"endColumn": 30,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 40,
+	"startColumn": 38,
+	"endLineNumber": 40,
+	"endColumn": 54,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"register_tool\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 42,
+	"startColumn": 2,
+	"endLineNumber": 42,
+	"endColumn": 15,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolCategory\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 46,
+	"startColumn": 16,
+	"endLineNumber": 46,
+	"endColumn": 28,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 54,
+	"startColumn": 26,
+	"endLineNumber": 54,
+	"endColumn": 36,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 54,
+	"startColumn": 44,
+	"endLineNumber": 54,
+	"endColumn": 60,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 60,
+	"startColumn": 24,
+	"endLineNumber": 60,
+	"endColumn": 34,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 60,
+	"startColumn": 42,
+	"endLineNumber": 60,
+	"endColumn": 58,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 62,
+	"startColumn": 24,
+	"endLineNumber": 62,
+	"endColumn": 34,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 62,
+	"startColumn": 42,
+	"endLineNumber": 62,
+	"endColumn": 58,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 64,
+	"startColumn": 20,
+	"endLineNumber": 64,
+	"endColumn": 30,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 64,
+	"startColumn": 38,
+	"endLineNumber": 64,
+	"endColumn": 54,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"register_tool\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 66,
+	"startColumn": 2,
+	"endLineNumber": 66,
+	"endColumn": 15,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolCategory\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 70,
+	"startColumn": 16,
+	"endLineNumber": 70,
+	"endColumn": 28,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 78,
+	"startColumn": 26,
+	"endLineNumber": 78,
+	"endColumn": 36,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 78,
+	"startColumn": 44,
+	"endLineNumber": 78,
+	"endColumn": 60,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 84,
+	"startColumn": 24,
+	"endLineNumber": 84,
+	"endColumn": 34,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 84,
+	"startColumn": 42,
+	"endLineNumber": 84,
+	"endColumn": 58,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 86,
+	"startColumn": 24,
+	"endLineNumber": 86,
+	"endColumn": 34,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 86,
+	"startColumn": 42,
+	"endLineNumber": 86,
+	"endColumn": 58,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 88,
+	"startColumn": 20,
+	"endLineNumber": 88,
+	"endColumn": 30,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 88,
+	"startColumn": 38,
+	"endLineNumber": 88,
+	"endColumn": 54,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"register_tool\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 90,
+	"startColumn": 2,
+	"endLineNumber": 90,
+	"endColumn": 15,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolCategory\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 94,
+	"startColumn": 16,
+	"endLineNumber": 94,
+	"endColumn": 28,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 102,
+	"startColumn": 26,
+	"endLineNumber": 102,
+	"endColumn": 36,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 102,
+	"startColumn": 44,
+	"endLineNumber": 102,
+	"endColumn": 60,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 108,
+	"startColumn": 24,
+	"endLineNumber": 108,
+	"endColumn": 34,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 108,
+	"startColumn": 42,
+	"endLineNumber": 108,
+	"endColumn": 58,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 110,
+	"startColumn": 24,
+	"endLineNumber": 110,
+	"endColumn": 34,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 110,
+	"startColumn": 42,
+	"endLineNumber": 110,
+	"endColumn": 58,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 112,
+	"startColumn": 20,
+	"endLineNumber": 112,
+	"endColumn": 30,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 112,
+	"startColumn": 38,
+	"endLineNumber": 112,
+	"endColumn": 54,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"register_tool\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 114,
+	"startColumn": 2,
+	"endLineNumber": 114,
+	"endColumn": 15,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolCategory\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 118,
+	"startColumn": 16,
+	"endLineNumber": 118,
+	"endColumn": 28,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 126,
+	"startColumn": 26,
+	"endLineNumber": 126,
+	"endColumn": 36,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 126,
+	"startColumn": 44,
+	"endLineNumber": 126,
+	"endColumn": 60,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 132,
+	"startColumn": 24,
+	"endLineNumber": 132,
+	"endColumn": 34,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 132,
+	"startColumn": 42,
+	"endLineNumber": 132,
+	"endColumn": 58,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 134,
+	"startColumn": 24,
+	"endLineNumber": 134,
+	"endColumn": 34,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 134,
+	"startColumn": 42,
+	"endLineNumber": 134,
+	"endColumn": 58,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 136,
+	"startColumn": 20,
+	"endLineNumber": 136,
+	"endColumn": 30,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 136,
+	"startColumn": 38,
+	"endLineNumber": 136,
+	"endColumn": 54,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"register_tool\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 138,
+	"startColumn": 2,
+	"endLineNumber": 138,
+	"endColumn": 15,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolCategory\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 142,
+	"startColumn": 16,
+	"endLineNumber": 142,
+	"endColumn": 28,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 150,
+	"startColumn": 26,
+	"endLineNumber": 150,
+	"endColumn": 36,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 150,
+	"startColumn": 44,
+	"endLineNumber": 150,
+	"endColumn": 60,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 156,
+	"startColumn": 24,
+	"endLineNumber": 156,
+	"endColumn": 34,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 156,
+	"startColumn": 42,
+	"endLineNumber": 156,
+	"endColumn": 58,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 158,
+	"startColumn": 24,
+	"endLineNumber": 158,
+	"endColumn": 34,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 158,
+	"startColumn": 42,
+	"endLineNumber": 158,
+	"endColumn": 58,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 160,
+	"startColumn": 20,
+	"endLineNumber": 160,
+	"endColumn": 30,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 160,
+	"startColumn": 38,
+	"endLineNumber": 160,
+	"endColumn": 54,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResult\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 163,
+	"startColumn": 20,
+	"endLineNumber": 163,
+	"endColumn": 30,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"ToolResultStatus\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 163,
+	"startColumn": 38,
+	"endLineNumber": 163,
+	"endColumn": 54,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"backend\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 164,
+	"startColumn": 12,
+	"endLineNumber": 164,
+	"endColumn": 19,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"backend\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 166,
+	"startColumn": 8,
+	"endLineNumber": 166,
+	"endColumn": 15,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/browser_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"backend\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 167,
+	"startColumn": 48,
+	"endLineNumber": 167,
+	"endColumn": 55,
+	"modelVersionId": 10,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "\"(\" was not closed",
+	"source": "Pylance",
+	"startLineNumber": 12,
+	"startColumn": 36,
+	"endLineNumber": 12,
+	"endColumn": 37,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Statements must be separated by newlines or semicolons",
+	"source": "Pylance",
+	"startLineNumber": 14,
+	"startColumn": 1,
+	"endLineNumber": 14,
+	"endColumn": 6,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Statements must be separated by newlines or semicolons",
+	"source": "Pylance",
+	"startLineNumber": 17,
+	"startColumn": 5,
+	"endLineNumber": 17,
+	"endColumn": 8,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Statements must be separated by newlines or semicolons",
+	"source": "Pylance",
+	"startLineNumber": 19,
+	"startColumn": 9,
+	"endLineNumber": 19,
+	"endColumn": 13,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Statements must be separated by newlines or semicolons",
+	"source": "Pylance",
+	"startLineNumber": 20,
+	"startColumn": 9,
+	"endLineNumber": 20,
+	"endColumn": 13,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Statements must be separated by newlines or semicolons",
+	"source": "Pylance",
+	"startLineNumber": 21,
+	"startColumn": 1,
+	"endLineNumber": 21,
+	"endColumn": 6,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Expected expression",
+	"source": "Pylance",
+	"startLineNumber": 22,
+	"startColumn": 9,
+	"endLineNumber": 22,
+	"endColumn": 12,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"self\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 19,
+	"startColumn": 9,
+	"endLineNumber": 19,
+	"endColumn": 13,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"self\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 20,
+	"startColumn": 9,
+	"endLineNumber": 20,
+	"endColumn": 13,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/providers/openai.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportMissingImports",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportMissingImports.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "Import \"tiktoken\" could not be resolved",
+	"source": "Pylance",
+	"startLineNumber": 52,
+	"startColumn": 20,
+	"endLineNumber": 52,
+	"endColumn": 28,
+	"modelVersionId": 2,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/file_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportMissingModuleSource",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportMissingModuleSource.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "Import \"send2trash\" could not be resolved from source",
+	"source": "Pylance",
+	"startLineNumber": 144,
+	"startColumn": 24,
+	"endLineNumber": 144,
+	"endColumn": 34,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/ui/views/main_window.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"Any\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 763,
+	"startColumn": 60,
+	"endLineNumber": 763,
+	"endColumn": 63,
+	"modelVersionId": 20,
+	"origin": "extHost3"
+}]

@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Testing / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / Vite / TypeScript
+node_modules/
+app/.tmp/
+app/dist/
+*.tsbuildinfo
+
+# Rust / Tauri
+app/src-tauri/target/
+app/src-tauri/gen/
+
+# PyInstaller output. The sidecar binary is a build product: reproduce it
+# with scripts/build_sidecar.py rather than committing a 20 MB exe.
+app/src-tauri/binaries/
+
+# Local logs and scratch output
+*.log
+scripts/probe_*.jsonl
+scripts/k2.py
+
+# Environment / secrets. API keys belong in the OS keyring, never on disk.
+.env
+.env.*
+!.env.example
+
+# Stray zero-byte files at the repo root, created by mistyped shell redirects
+# (e.g. `... > dict` or `... > AsyncOpenAI`). Every one of these is a type name
+# where a filename was expected, and all are empty. Listed explicitly rather
+# than deleted so the accidental origin stays documented; safe to remove.
+# NOTE: the brackets must be backslash-escaped, since an unescaped `[` opens a
+# gitignore character class and silently matches nothing.
+/AsyncIterator\[ChatCompletionChunk]
+/AsyncOpenAI
+/BaseLLMProvider
+/ChatMessage
+/None
+/bool
+/dict
+/dict\[str
+/int
+/list\[dict]
+/list\[str]
+/str
+/type\[BaseLLMProvider]
+
+# Freebuff's own project metadata
+/.freebuff/

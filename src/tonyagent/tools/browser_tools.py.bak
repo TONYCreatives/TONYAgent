@@ -1,0 +1,171 @@
+"""Browser automation tools for TONYAgent."""
+
+from __future__ import annotations
+
+from typing import Any
+
+_sandbox_manager = None
+
+def get_sandbox_manager():
+    global _sandbox_manager
+    if _sandbox_manager is None:
+        _sandbox_manager = SandboxManager()
+    return _sandbox_manager
+
+def _check_sandbox():
+    manager = get_sandbox_manager()
+    backend = manager.get_backend()
+@register_tool
+class BrowserNavigateTool:
+    name = "browser_navigate"
+    description = "Navigate browser to a URL in the sandbox."
+    category = ToolCategory.BROWSER
+    parameters = {"type": "object", "properties": {"url": {"type": "string", "description": "URL to navigate to"}}, "required": ["url"], "additionalProperties": False}
+    destructive = False
+    requires_confirmation = True
+    sandbox_required = True
+
+    async def execute(self, url: str):
+        error = _check_sandbox()
+        if error: return ToolResult(status=ToolResultStatus.ERROR, error=error)
+        try:
+            manager = get_sandbox_manager()
+            backend = manager.get_backend()
+            result = await backend.browser_navigate(url)
+            if result.success:
+                return ToolResult(status=ToolResultStatus.SUCCESS, output=f"Navigated to {url}", artifacts=[{"type": "browser_navigate", "url": url}])
+            else:
+                return ToolResult(status=ToolResultStatus.ERROR, error=result.error)
+        except Exception as e:
+            return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
+
+@register_tool
+class BrowserClickTool:
+    name = "browser_click"
+    description = "Click an element on the page by CSS selector."
+    category = ToolCategory.BROWSER
+    parameters = {"type": "object", "properties": {"selector": {"type": "string", "description": "CSS selector of element to click"}}, "required": ["selector"], "additionalProperties": False}
+    destructive = False
+    requires_confirmation = True
+    sandbox_required = True
+
+    async def execute(self, selector: str):
+        error = _check_sandbox()
+        if error: return ToolResult(status=ToolResultStatus.ERROR, error=error)
+        try:
+            manager = get_sandbox_manager()
+            backend = manager.get_backend()
+            result = await backend.browser_click(selector)
+            if result.success:
+                return ToolResult(status=ToolResultStatus.SUCCESS, output=f"Clicked {selector}")
+            else:
+                return ToolResult(status=ToolResultStatus.ERROR, error=result.error)
+        except Exception as e:
+            return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
+
+@register_tool
+class BrowserTypeTool:
+    name = "browser_type"
+    description = "Type text into an element by CSS selector."
+    category = ToolCategory.BROWSER
+    parameters = {"type": "object", "properties": {"selector": {"type": "string", "description": "CSS selector of element"}, "text": {"type": "string", "description": "Text to type"}}, "required": ["selector", "text"], "additionalProperties": False}
+    destructive = False
+    requires_confirmation = True
+    sandbox_required = True
+
+    async def execute(self, selector: str, text: str):
+        error = _check_sandbox()
+        if error: return ToolResult(status=ToolResultStatus.ERROR, error=error)
+        try:
+            manager = get_sandbox_manager()
+            backend = manager.get_backend()
+            result = await backend.browser_type(selector, text)
+            if result.success:
+                return ToolResult(status=ToolResultStatus.SUCCESS, output=f"Typed into {selector}")
+            else:
+                return ToolResult(status=ToolResultStatus.ERROR, error=result.error)
+        except Exception as e:
+            return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
+
+@register_tool
+class BrowserEvalTool:
+    name = "browser_eval"
+    description = "Evaluate JavaScript in the browser page context."
+    category = ToolCategory.BROWSER
+    parameters = {"type": "object", "properties": {"script": {"type": "string", "description": "JavaScript code to evaluate"}}, "required": ["script"], "additionalProperties": False}
+    destructive = False
+    requires_confirmation = False
+    sandbox_required = True
+
+    async def execute(self, script: str):
+        error = _check_sandbox()
+        if error: return ToolResult(status=ToolResultStatus.ERROR, error=error)
+        try:
+            manager = get_sandbox_manager()
+            backend = manager.get_backend()
+            result = await backend.browser_eval(script)
+            if result.success:
+                return ToolResult(status=ToolResultStatus.SUCCESS, output=str(result.data), artifacts=[{"type": "browser_eval", "result": result.data}])
+            else:
+                return ToolResult(status=ToolResultStatus.ERROR, error=result.error)
+        except Exception as e:
+            return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
+
+@register_tool
+class BrowserScreenshotTool:
+    name = "browser_screenshot"
+    description = "Capture a screenshot of the current browser page."
+    category = ToolCategory.BROWSER
+    parameters = {"type": "object", "properties": {"path": {"type": "string", "description": "Path to save screenshot (relative to project root)", "default": ""}}, "additionalProperties": False}
+    destructive = False
+    requires_confirmation = False
+    sandbox_required = True
+
+    async def execute(self, path: str = ""):
+        error = _check_sandbox()
+        if error: return ToolResult(status=ToolResultStatus.ERROR, error=error)
+        try:
+            manager = get_sandbox_manager()
+            backend = manager.get_backend()
+            result = await backend.browser_screenshot(path)
+            if result.success:
+                return ToolResult(status=ToolResultStatus.SUCCESS, output=f"Screenshot saved to {result.data.get('path', path)}", artifacts=[{"type": "screenshot", "path": result.data.get("path", path)}])
+            else:
+                return ToolResult(status=ToolResultStatus.ERROR, error=result.error)
+        except Exception as e:
+            return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
+
+@register_tool
+class ExecuteJsTool:
+    name = "execute_js"
+    description = "Execute JavaScript in Node.js context in the sandbox."
+    category = ToolCategory.BROWSER
+    parameters = {"type": "object", "properties": {"script": {"type": "string", "description": "JavaScript code to execute"}, "timeout": {"type": "integer", "description": "Timeout in seconds", "default": 10}}, "required": ["script"], "additionalProperties": False}
+    destructive = False
+    requires_confirmation = True
+    sandbox_required = True
+
+    async def execute(self, script: str, timeout: int = 10):
+        error = _check_sandbox()
+        if error: return ToolResult(status=ToolResultStatus.ERROR, error=error)
+        try:
+            manager = get_sandbox_manager()
+            backend = manager.get_backend()
+            result = await backend.execute_js(script, timeout)
+            if result.success:
+                return ToolResult(status=ToolResultStatus.SUCCESS, output=str(result.data), artifacts=[{"type": "execute_js", "result": result.data}])
+            else:
+                return ToolResult(status=ToolResultStatus.ERROR, error=result.error)
+        except Exception as e:
+            return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
+                return ToolResult(status=ToolResultStatus.ERROR, error=result.error)
+        except Exception as e:
+            return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
+    if not backend:
+        return "Sandbox not started. Please start sandbox first."
+    if backend.status != "running":
+        return f"Sandbox not running (status: {backend.status})"
+    return None
+from tonyagent.tools.base import Tool, ToolResult, ToolResultStatus, ToolCategory, register_tool
+from tonyagent.sandbox import SandboxManager
+from tonyagent.folder.manager import folder_manager

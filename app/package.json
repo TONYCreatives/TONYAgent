@@ -1,0 +1,32 @@
+{
+  "name": "tonyagent-app",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "typecheck": "tsc --noEmit",
+    "build:proto": "tsc src/backend.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && tsc src/backend.test.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && node --test .tmp/backend.test.js",
+    "test": "npm run build:proto"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-shell": "^2",
+    "react": "^19",
+    "react-dom": "^19"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^24",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^5",
+    "tsx": "^4",
+    "typescript": "^5",
+    "vite": "^7"
+  }
+}

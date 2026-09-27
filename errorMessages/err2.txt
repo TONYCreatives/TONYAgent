@@ -1,0 +1,190 @@
+[{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "\"(\" was not closed",
+	"source": "Pylance",
+	"startLineNumber": 12,
+	"startColumn": 36,
+	"endLineNumber": 12,
+	"endColumn": 37,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Statements must be separated by newlines or semicolons",
+	"source": "Pylance",
+	"startLineNumber": 14,
+	"startColumn": 1,
+	"endLineNumber": 14,
+	"endColumn": 6,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Statements must be separated by newlines or semicolons",
+	"source": "Pylance",
+	"startLineNumber": 17,
+	"startColumn": 5,
+	"endLineNumber": 17,
+	"endColumn": 8,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Statements must be separated by newlines or semicolons",
+	"source": "Pylance",
+	"startLineNumber": 19,
+	"startColumn": 9,
+	"endLineNumber": 19,
+	"endColumn": 13,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Statements must be separated by newlines or semicolons",
+	"source": "Pylance",
+	"startLineNumber": 20,
+	"startColumn": 9,
+	"endLineNumber": 20,
+	"endColumn": 13,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Statements must be separated by newlines or semicolons",
+	"source": "Pylance",
+	"startLineNumber": 21,
+	"startColumn": 1,
+	"endLineNumber": 21,
+	"endColumn": 6,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"severity": 8,
+	"message": "Expected expression",
+	"source": "Pylance",
+	"startLineNumber": 22,
+	"startColumn": 9,
+	"endLineNumber": 22,
+	"endColumn": 12,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"self\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 19,
+	"startColumn": 9,
+	"endLineNumber": 19,
+	"endColumn": 13,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/write_db.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"self\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 20,
+	"startColumn": 9,
+	"endLineNumber": 20,
+	"endColumn": 13,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/providers/openai.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportMissingImports",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportMissingImports.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "Import \"tiktoken\" could not be resolved",
+	"source": "Pylance",
+	"startLineNumber": 52,
+	"startColumn": 20,
+	"endLineNumber": 52,
+	"endColumn": 28,
+	"modelVersionId": 2,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/tools/file_tools.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportMissingModuleSource",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportMissingModuleSource.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "Import \"send2trash\" could not be resolved from source",
+	"source": "Pylance",
+	"startLineNumber": 144,
+	"startColumn": 24,
+	"endLineNumber": 144,
+	"endColumn": 34,
+	"modelVersionId": 4,
+	"origin": "extHost3"
+},{
+	"resource": "/c:/Users/iig2y/Desktop/TONYAgent/src/tonyagent/ui/views/main_window.py",
+	"owner": "Pylance",
+	"code": {
+		"value": "reportUndefinedVariable",
+		"target": {
+			"$mid": 1,
+			"path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportUndefinedVariable.md",
+			"scheme": "https",
+			"authority": "github.com"
+		}
+	},
+	"severity": 4,
+	"message": "\"Any\" is not defined",
+	"source": "Pylance",
+	"startLineNumber": 840,
+	"startColumn": 60,
+	"endLineNumber": 840,
+	"endColumn": 63,
+	"modelVersionId": 25,
+	"origin": "extHost3"
+}]r

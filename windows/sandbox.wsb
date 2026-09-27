@@ -1,0 +1,19 @@
+<Configuration>
+    <VGpu>Enable</VGpu>
+    <Networking>Default</Networking>
+    <MemoryInMB>2048</MemoryInMB>
+    <MappedFolders>
+        <MappedFolder>
+            <HostFolder>{PROJECT_PATH}</HostFolder>
+            <SandboxFolder>C:\workspace</SandboxFolder>
+            <ReadOnly>false</ReadOnly>
+        </MappedFolder>
+    </MappedFolders>
+    <LogonCommand>
+        <Command>cmd /c python -m tonyagent_sandbox.rpc_server</Command>
+    </LogonCommand>
+    <ProtectedClient>true</ProtectedClient>
+    <PrinterRedirection>Disable</PrinterRedirection>
+    <AudioRedirection>Disable</AudioRedirection>
+    <VideoRedirection>Disable</VideoRedirection>
+</Configuration>
