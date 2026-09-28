@@ -1,22 +1,25 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-09-27, after Phase 3 (real modes + real diff stats)
+**Last updated:** 2026-09-27, after Phase 5 (custom model + endpoint, first live
+turn check)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 238 passed, TypeScript 35 passed,
+protocol method.** Everything green: **Python 244 passed, TypeScript 54 passed,
 Tauri MSI + NSIS installers produced.**
 
-Three phases of work landed since the MSVC blocker was cleared:
+Five phases of work landed since the MSVC blocker was cleared:
 
 | Phase | What it did |
 |---|---|
 | 1 | Folder picker, settings panel, provider binding, sandbox start/stop. All three greyed rail icons went live |
 | 2 | `key.save`/`key.delete` (OS keyring, with a real no-leak design) and a `search` method that delegates to the agent's own grep |
 | 3 | The four composer modes became real permissions, and the Files tree reports diffs the core measured instead of counting tool calls |
+| 4 | Assistant text is rendered as Markdown, parsed to a token tree and built as React elements so untrusted model output never becomes raw HTML |
+| 5 | The model field is free text (OpenRouter's namespaced ids, any self-hosted gateway) and `bind_provider` accepts an optional `base_url`, which is what makes the `custom` provider reachable from the UI at all |
 
 The Tkinter UI is untouched throughout and still the mature path. See
-sections 1.3-1.5 for what each phase changed and why.
+sections 1.3-1.6 for what each phase changed and why.
 
 ---
 
@@ -40,10 +43,10 @@ Tauri one is new and thinner (chat, sandbox status, confirmations).
 
 ```bash
 python -m compileall -q src            # syntax
-python -m pytest tests -q              # 238 passed
+python -m pytest tests -q              # 244 passed
 python scripts/check_all.py --fast     # 3 checks incl. GUI launch
 
-cd app && npm test                     # 35 passed (protocol + reducer, no Rust needed)
+cd app && npm test                     # 54 passed (protocol + reducer + markdown, no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -120,6 +123,10 @@ correct and silently did nothing.
 | **Every `schedule_on_ui` callback was silently dropped under the sidecar** | LOG events never reached the React UI; the log strip only showed stderr and looked fine | the queue is drained only by `process_ui_queue`, which returns immediately when `_ui_root` is None -- and there is no Tk root under Tauri. It *looked* correct because loguru writes the same message to stderr independently | call through immediately when there is no UI root. This is the second time this layer ate a callback |
 | **`events.ts` mutated the state it was given** | invisible while every caller replaced the whole object; corrupts any `useMemo` dependency or replayed event | `applyEvent` did `messages.slice()`, copying the array but not the messages, so `target.tools = [...]` wrote through to the caller's state | `copyMessages` deep-copies each message and its tools. Found by the first `events.test.ts` |
 | **`tauri dev` died at startup** | `EBUSY: resource busy or locked, watch '...build_script_build.exe'` | Vite's watcher walks the project root, including `src-tauri/target/`. Cargo holds those `.exe` files open and `fs.watch` fails on Windows, killing Vite and taking the dev command with it | `server.watch.ignored` excludes `src-tauri/**` |
+| **A saved key had no effect** | after saving the OpenRouter key, the first message was rejected `no provider configured`, while `state` cheerfully reported provider `openrouter` | the core session starts with a provider *name* but no provider *object*; only the settings panel's Apply button ever called `bind_provider`. Neither startup nor a key save bound one, so the UI showed a provider it could not actually use | `App` binds on startup and rebinds after a key save (which also rebuilds the provider, clearing an HTTP client cached before the key existed) |
+| **`No models provided` when no model was chosen** | binding a provider without picking a model sent an empty model id and the API rejected the request | `ProviderRegistry.create` passed `model=""` explicitly, clobbering every provider's constructor default (`openrouter/auto`, `gpt-4o-mini`, `claude-3-5-sonnet-20241022`, ...) | omit an empty model so the class default applies; `session.bind_provider` now records the *resolved* model so `state` agrees |
+| **"Request URL is missing an 'http://' or 'https://' protocol"** | a scheme-less Base URL ("openrouter.ai/api/v1") surfaced as a network error on the first message, with a hint about VPNs and firewalls | the value was passed straight to httpx as the request URL. `LLMClient` only substitutes the dialect's default when the base URL is *empty* | `normalize_base_url()` rejects a scheme-less value at bind time with an actionable message and strips a trailing slash |
+| **A failed turn left an empty assistant bubble** | with a rejected key the error banner rendered correctly *and* an empty bubble sat under it, so the transcript read as a broken UI | `turn.started` creates the assistant bubble eagerly so the first delta has a home, and `turn.finished` dropped a placeholder the core never wrote to. `turn.failed` and `error` did not -- and those are the paths a new user hits first, because a wrong key is the first thing a new user has | one `dropEmptyAssistantMessages` helper called by all three terminal events. Found by driving the **packaged** app with a credit-exhausted key, not by a test |
 
 The pattern worth keeping: **the sidecar's stderr is the only place core-side
 failures appear**, because stdout is protocol-only. The React UI now renders it
@@ -238,6 +245,119 @@ reports nothing at all.
 A `0/0` change is passed through and the sidebar hides it. Showing "+0 -0"
 would claim a file was edited when a no-op write touched nothing.
 
+### 1.6 Phase 4: assistant text is Markdown
+
+Assistant messages were plain text with `white-space: pre-wrap`. They are now
+parsed and rendered as Markdown. Two decisions carried it:
+
+- **A dependency-free parser, not a library.** The `NEXT_SESSION` note that
+  preceded this said the core "already depends on `markdown2` for the Tkinter
+  UI". That is not true and was worth checking: `markdown2` is declared in
+  `pyproject.toml` but imported nowhere, in either UI. So there was nothing to
+  reuse, and the choice was a new dependency or a parser. The parser won: the
+  frontend's protocol tests must keep running in plain Node with no build
+  toolchain and no network install, and a new package would have broken that on
+  the first `npm ci` without a network.
+
+- **Token tree, never an HTML string.** The obvious shortcut -- build an HTML
+  string and hand it to `dangerouslySetInnerHTML` -- turns every model
+  completion into an XSS surface. Assistant text is untrusted output from a
+  remote model. `markdown.ts` is pure and returns a typed tree of blocks and
+  inlines; `MarkdownText.tsx` maps that tree to React elements, so React escapes
+  every string and the only place a URL reaches the DOM is a sanitised `<a>`.
+  `markdown.test.ts` pins the security cases: a `javascript:` link keeps its
+  text and loses its href, and a remote image renders as its alt text rather
+  than becoming a tracking beacon.
+
+It implements a deliberate subset -- fenced code (with an unterminated fence
+running to the end, which is the streaming case), headings, ordered/unordered
+lists, blockquotes, rules, and inline code/strong/em/strike/links. A missing
+feature degrades to plain text, which is exactly what rendered before. Only
+*assistant* text is parsed; a user's message is shown as typed, because someone
+who pasted `**not bold**` meant the asterisks.
+
+Two smaller things this surfaced:
+
+- **`markdown.ts` and `Markdown.tsx` differ only in case**, which collides on a
+  case-insensitive filesystem. `tsc` refused the whole program with TS1149. The
+  component is `MarkdownText.tsx` now. Any future module pair here must not
+  differ only in case.
+- **The assistant bubble must reset `white-space`.** `.bubble` sets `pre-wrap`
+  for user text and tool output; leaving it on for rendered Markdown makes the
+  whitespace between block elements significant.
+
+### 1.7 Phase 5: custom model and endpoint, and the first live turn check
+
+A provider's `models` list is a set of *suggestions*, not a closed set. The
+settings panel used to render it as a `<select>`, so the only bindable OpenRouter
+models were the four the registry happens to list -- and OpenRouter serves
+hundreds of namespaced ids (`anthropic/claude-sonnet-4.5`,
+`deepseek/deepseek-chat:free`). Self-hosted gateways are worse: their ids are
+ones the registry has never heard of.
+
+What changed:
+
+- **The model field is free text.** It became `<input list="model-suggestions">`
+  with a `<datalist>` of the provider's known ids -- native combobox behaviour,
+  no dependency, and any typed id binds as-is. (The Tkinter `PillComboBox`
+  already allowed typing, so only the React panel needed this.)
+- **`bind_provider` takes an optional `base_url`,** echoed back in the reply;
+  `state` reports it too. The panel grew an optional Base URL row.
+- **This is what makes `custom` usable.** That provider raises `ValueError`
+  without a `base_url`; the handler now converts that into a `rejected` reply
+  with the provider's own message instead of an opaque `internal` error.
+- **No new protocol surface beyond one optional field.** `session.bind_provider`
+  gained a third argument (defaulting to `""`, so the Tkinter call site is
+  untouched) and `ProviderFactory.create_provider` already accepted `base_url`.
+
+**The first live turn check.** Two runs, both worth recording:
+
+1. *Through the real protocol, against OpenRouter.* Spawned the sidecar,
+   `ping`, `bind_provider {name: openrouter, model: <a custom id>}`, `send`.
+   The custom model id round-tripped exactly, `message.started` streamed, and
+   then `turn.failed` carried the provider's own error verbatim (`403 Key limit
+   exceeded (total limit)`, and for free slugs `rate_limit`). The core path is
+   *sound*; the failure was billing. This is the first time the whole sidecar
+   turn path has been driven against a live endpoint.
+2. *A complete successful turn, against a local mock.* Stood up a tiny
+   OpenAI-compatible SSE server and bound the `custom` provider to it through
+   the new `base_url` field (with a dummy in-memory key, so the OS keyring was
+   never touched). The full lifecycle ran: `turn.started` -> `message.started`
+   -> six `message.delta`s -> `message.completed` -> `turn.finished`, and the
+   deltas reassembled into the expected text. That is the new endpoint feature
+   working end to end, and the turn machinery proven to *complete*.
+
+Still missing: one successful reply from a **hosted** model. That needs the
+user to raise or replace the OpenRouter key; it is the only remaining gap in
+this phase (see section 5 item 10).
+
+### 1.8 Checking the packaged app, and what that found
+
+The release build was verified by running it, not by trusting the suite. MSI
+48.36 MiB / NSIS 47.43 MiB, then `tonyagent-app.exe` launched with
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9333"` and read
+over CDP. Confirmed *in the packaged build* rather than in `vite dev`:
+
+- sidecar spawns, `state` reports `openrouter / openrouter/auto` -- the Phase 5
+  startup bind and the empty-model fix, working from the embedded binary;
+- the Settings modal carries the free-text Model input with its `datalist` and
+  the Base URL row; `Remove` is present, so a real key is in the keyring;
+- `document.fonts` reports Inter and JetBrains Mono as **loaded**, so the
+  `font-src 'self'` CSP entry still works after packaging -- worth re-checking
+  every time, because a missing font-src fails silently as a system-font
+  fallback rather than as an error;
+- `markdown.ts` and the `.md-*` rules are present in the shipped
+  `dist/assets` bundle and CSS;
+- a real turn: the request reached OpenRouter and was rejected with
+  `Key limit exceeded (total limit)`, and the error surfaced with a message
+  about the user's own key. That is the send path verified live; the only
+  thing still unproven live is a **successful** assistant reply.
+
+That last point is why the empty-bubble bug above is worth recording: it was
+invisible to 54 TypeScript tests and to a real turn, and appeared only because
+the app was actually run against a failing key.
+
+
 ---
 
 ## 2. The wire protocol (contract for the future UI)
@@ -262,11 +382,11 @@ stdout is protocol-only, or the frontend will parse log lines as JSON.
 | Method | Params | Result |
 |---|---|---|
 | `ping` | — | `{pong, protocol}` |
-| `state` | — | `{provider, model, busy, messages, project}` |
+| `state` | — | `{provider, model, base_url, busy, messages, project}` |
 | `send` | `{text}` | `{turn_id}` |
 | `cancel` | — | `{cancelled}` |
 | `clear` | — | `{cleared}` |
-| `bind_provider` | `{name, model?}` | `{provider, model}` |
+| `bind_provider` | `{name, model?, base_url?}` | `{provider, model, base_url}` |
 | `providers.list` | — | `{providers: [{name, models, has_credentials, ...}]}` |
 | `key.save` | `{provider, api_key}` | `{provider, saved}` |
 | `key.delete` | `{provider}` | `{provider, deleted}` |
@@ -382,6 +502,14 @@ UI claim a capability the core lacks.
 The Files sidebar is populated from tool events the core reported, not by
 walking the filesystem from the UI. The core owns the sandbox and the folder;
 a second source of truth about that state is how the Tkinter UI drifted.
+
+**The Files panel is closed by default; the icon rail is open.** A 425px panel
+was eating the transcript on a normal window before the agent had touched a
+single file, so `filesOpen` starts `false` and the collapsed panel leaves a
+small folder button at the top-right to reopen it. The rail stays open: it is
+the app's only navigation, and the reference design keeps it visible.
+`railOpen` and `filesOpen` are independent, and each has its own button (the
+top-bar "Toggle sidebar" and the panel's own hide/show).
 
 ### CSS traps hit here
 
@@ -627,11 +755,16 @@ sidecar included).
    "The groq key does not start with 'gsk_'". **Ask the user to re-enter it in
    Settings, or ignore that one test.** An environment gap, not a regression -
    do not "fix" it in code.
-10. **A real end-to-end turn has not been run since Phase 1**, because no
-   usable provider key is available. Everything since was verified at the
-   protocol level against the real sidecar, plus the reducer and the rendered
-   styles. So the *wiring* is proven; a genuine model completion through the
-   Tauri UI is not. That is the first thing to do once a key works.
+10. **A real end-to-end turn now has its first live exercise (Phase 5), but no
+   successful hosted reply yet.** The sidecar turn path was driven against
+   OpenRouter with a custom model id and reached the provider, which answered
+   `403 Key limit exceeded (total limit)` (free slugs: `rate_limit`) -- a
+   provider error surfaced correctly, not a code failure. A *successful*
+   complete turn was then proven against a local mock OpenAI-compatible
+   endpoint bound through the new `base_url` field. What remains is a
+   successful reply from a hosted model: raise or replace the OpenRouter key
+   (item 6) and re-run. The full Python suite is green (244 passed, including
+   the groq chat test, which stubs its transport).
 
 ---
 
@@ -663,11 +796,24 @@ not delete the test.**
 5. `npm run tauri dev` and `npm run tauri:build` both work; the app was
    confirmed running, connected, and completing a send.
 
+### 7.1b Phase 5: custom model and endpoint
+
+`bind_provider` now takes `{name, model?, base_url?}` and echoes `base_url`
+back; `state` reports it too, so a reloaded window reopens the panel
+pre-filled. The settings panel's model field became a free-text input with a
+`<datalist>` of the provider's known ids instead of a `<select>`, and an
+optional Base URL row sits under it. This is what makes the `custom` provider
+usable: it raises `ValueError` without a `base_url`, and the handler now turns
+that into a clean `rejected` reply instead of an opaque internal error. Three
+new tests in `test_headless_core.py` cover the arbitrary model id, the
+`base_url` round trip through `state`, and that rejection.
+
 ### 7.2 Next, in the Tauri UI
 
-**Done across Phases 1-3** (see 1.3-1.5): folder picker, settings panel,
-sandbox start/stop, API keys, search, and the four composer modes. All five
-rail buttons are live and no control is presentation-only any more.
+**Done across Phases 1-4** (see 1.3-1.6): folder picker, settings panel,
+sandbox start/stop, API keys, search, the four composer modes, and Markdown
+rendering. All five rail buttons are live and no control is
+presentation-only any more.
 
 1. ~~**Project folder picker.**~~ Done (Phase 1) - `@tauri-apps/plugin-dialog`,
    wired to `sandbox.start({path})`, reachable from the rail and the Files panel.
@@ -681,22 +827,31 @@ rail buttons are live and no control is presentation-only any more.
    reducer mutating its input. 35 frontend tests total.
 7. ~~**Composer modes.**~~ Done (Phase 3) - see 1.5. Enforced in the
    orchestrator, not just the prompt.
+8. ~~**Markdown rendering.**~~ Done (Phase 4) - see 1.6. Parser + renderer +
+   16 tests, no new dependency.
 
 **Still open, in the order I would do them:**
 
-1. **Run one real end-to-end turn.** Everything since Phase 1 was verified
-   against the protocol rather than against a live model, because no usable
-   key was available. This is the one gap that matters and it needs the user
-   to re-enter a key. See section 5 item 10.
-2. **Markdown rendering** for assistant text. Currently plain text; the core
-   already depends on `markdown2` for the Tkinter UI, so this is frontend
-   work reusing an existing dependency.
-3. **The composer's model chip and Attach button are still disabled**, and
+1. **Run one real end-to-end turn.** *Partially done (Phase 5).* The turn
+   machinery now has its first live exercise: spawn the real sidecar, `ping`,
+   `bind_provider` with a custom OpenRouter model id, `send`, and read the
+   streamed events. It reached `message.started` and then `turn.failed` with
+   the provider's own error surfaced verbatim -- the core path is sound, the
+   failure was billing (`403 Key limit exceeded (total limit)`), not code. A
+   complete *successful* reply was then proven separately against a local mock
+   OpenAI-compatible SSE endpoint bound through the new `base_url` field: the
+   full lifecycle ran (`turn.started` -> `message.started` -> deltas ->
+   `message.completed` -> `turn.finished`). **What is still missing is a
+   successful reply from a real hosted model**, which needs the user to raise
+   or replace the OpenRouter key. See section 5 item 10. (Markdown rendering,
+   section 1.6, is verified down to the token tree, the type checker and a
+   served render; it still wants one look at a live transcript.)
+2. **The composer's model chip and Attach button are still disabled**, and
    the `/` skills and `@` threads hints in the placeholder are not
    implemented. Either wire them or remove the hints - a placeholder that
    advertises syntax nothing handles is the same class of problem as the
    presentation-only mode pills were.
-4. **The Files tree has no grouping.** Paths are a flat list; a real tree
+3. **The Files tree has no grouping.** Paths are a flat list; a real tree
    wants directory rows. The `TreeEntry.kind` field already carries `"dir"`
    and the collapse logic is written, so this is a change to how entries are
    built in `App.tsx`, not new infrastructure.
@@ -750,9 +905,19 @@ same file (`test_key_entry_is_empty_not_prefilled`) failed once in the same
 way. So the file is flaky as a file, not just that one test - re-run before
 diagnosing anything.
 
+Re-confirmed during Phase 5: `check_all.py --fast` reported FAIL from a third
+distinct test (`test_ghost_buttons_are_transparent_not_white`), which passed on
+its own immediately afterwards, while a plain `pytest tests -q` on the same
+tree was green (244 passed). Same signature: the Tk-root churn in one process,
+not a regression. Root cause on this machine is that Tcl is not installed
+properly (`invalid command name "tcl_findLibrary"`), so any test that builds a
+real window can lose the race.
+
 **`test_chat_path_streams_end_to_end[groq]` fails until the user re-enters
 their groq key.** Phase 2 destroyed it; see section 5 item 9. The other
-provider cases in that file pass.
+provider cases in that file pass. (In the Phase 5 runs the whole file passed,
+which is expected: that test stubs its transport rather than using a stored
+key, so its result does not depend on the keyring.)
 
 **`RuntimeWarning: coroutine ... was never awaited`** in
 `tests/unit/test_tool_sandbox_routing.py:875` — two occurrences, pre-existing.
