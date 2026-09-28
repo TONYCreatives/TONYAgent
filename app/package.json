@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "typecheck": "tsc --noEmit",
-    "build:proto": "tsc src/backend.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && tsc src/events.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && tsc src/backend.test.ts src/events.test.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && node --test .tmp/backend.test.js .tmp/events.test.js",
+    "build:proto": "tsc src/backend.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && tsc src/events.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && tsc src/markdown.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && tsc src/backend.test.ts src/events.test.ts src/markdown.test.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && node --test .tmp/backend.test.js .tmp/events.test.js .tmp/markdown.test.js",
     "test": "npm run build:proto",
     "tauri:build": "tauri build",
     "tauri:dev": "tauri dev",

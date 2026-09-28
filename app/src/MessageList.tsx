@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { ChatMessage } from "./events";
+import { MarkdownText } from "./MarkdownText";
 
 interface Props {
   messages: ChatMessage[];
@@ -30,7 +31,16 @@ function Bubble({ message }: { message: ChatMessage }) {
   return (
     <div className={`row ${isUser ? "row-user" : "row-assistant"}`}>
       <div className={`bubble ${isUser ? "bubble-user" : "bubble-assistant"}`}>
-        {message.text && <div className="bubble-text">{message.text}</div>}
+        {/*
+          Only assistant text is Markdown. A user's message is shown exactly as
+          typed -- someone pasting `**not bold**` meant the asterisks.
+        */}
+        {message.text &&
+          (isUser ? (
+            <div className="bubble-text">{message.text}</div>
+          ) : (
+            <MarkdownText text={message.text} />
+          ))}
         {message.tools.length > 0 && (
           <div className="tools">
             {message.tools.map((tool) => (

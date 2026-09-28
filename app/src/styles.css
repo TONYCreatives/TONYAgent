@@ -1317,3 +1317,121 @@ body {
   color: var(--fg);
   background: var(--input);
 }
+
+/* --- rendered markdown (assistant text) ---------------------------------- */
+
+/*
+ * Assistant messages are Markdown, so their container is body copy rather
+ * than a pre-wrapped bubble. `.bubble` sets `white-space: pre-wrap` for user
+ * text and tool output; here that would make the whitespace between rendered
+ * elements significant, so it is reset and structure comes from the block
+ * rules below instead. This override must stay after the `.bubble` rule.
+ */
+.bubble-assistant {
+  white-space: normal;
+}
+
+.md {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.md > :first-child {
+  margin-top: 0;
+}
+
+.md > :last-child {
+  margin-bottom: 0;
+}
+
+.md-p {
+  margin: 0 0 10px;
+}
+
+.md-h {
+  margin: 14px 0 8px;
+  color: var(--fg);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.md-h1 {
+  font-size: 19px;
+}
+
+.md-h2 {
+  font-size: 17px;
+}
+
+.md-h3 {
+  font-size: 15px;
+}
+
+.md-h4,
+.md-h5,
+.md-h6 {
+  font-size: 14px;
+}
+
+.md-list {
+  margin: 0 0 10px;
+  padding-left: 22px;
+}
+
+.md-list li {
+  margin: 2px 0;
+}
+
+.md-quote {
+  margin: 0 0 10px;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--border);
+  color: var(--fg-mute);
+}
+
+.md-hr {
+  margin: 14px 0;
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+/* Inline code: a quiet well, not a syntax-highlighted block. */
+.md-code {
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--input);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+/*
+ * Fenced blocks. `white-space: pre` is deliberate and inherited-nullifying:
+ * the parser already stripped the fence, so the only whitespace here is the
+ * code's own, which must be preserved exactly.
+ */
+.md-pre {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--input);
+  overflow-x: auto;
+}
+
+.md-pre code {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--fg);
+  white-space: pre;
+}
+
+.md-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.md-link:hover {
+  text-decoration: underline;
+}
