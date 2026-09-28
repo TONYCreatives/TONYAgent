@@ -17,6 +17,9 @@ export function App() {
   const [connected, setConnected] = useState(false);
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
+  // Endpoint override last bound, or "" for the provider default. Kept beside
+  // the model because both are "what is this window talking to", not chat state.
+  const [baseUrl, setBaseUrl] = useState("");
   const [sandbox, setSandbox] = useState("stopped");
   const [project, setProject] = useState("");
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -38,7 +41,11 @@ export function App() {
   );
   const [logLines, setLogLines] = useState<string[]>([]);
   const [railOpen, setRailOpen] = useState(true);
-  const [filesOpen, setFilesOpen] = useState(true);
+  // Closed by default. The Files panel is 425px of a three-column window, and
+  // opening it by default squeezed the transcript on a normal laptop width for
+  // no benefit until the agent has actually touched a file. It still opens
+  // itself the moment a folder is chosen, which is when it has something to say.
+  const [filesOpen, setFilesOpen] = useState(false);
   const [fileFilter, setFileFilter] = useState("");
 
   /**
@@ -109,6 +116,34 @@ export function App() {
     };
   }, []);
 
+  /**
+   * Bind a provider/model/endpoint on the core and mirror the result locally.
+   *
+   * One primitive, three callers: app startup, the panel's Apply button, and a
+   * key save. It deliberately does not close the panel -- that is Apply's job,
+   * and closing it the instant a key is stored would be jarring.
+   *
+   * Only what the user actually set is sent. An empty field means "provider
+   * default", and the core reads a missing key the same way, so omitting it
+   * keeps the request minimal and the reply honest.
+   */
+  const applyBinding = useCallback(
+    async (name: string, model: string, endpoint: string) => {
+      const params: { name: string; model?: string; base_url?: string } = { name };
+      if (model) params.model = model;
+      if (endpoint) params.base_url = endpoint;
+      const bound = (await backendRef.current!.call("bind_provider", params)) as {
+        provider?: string;
+        model?: string;
+        base_url?: string;
+      };
+      setProvider(bound.provider ?? name);
+      setModel(bound.model ?? model);
+      setBaseUrl(bound.base_url ?? endpoint);
+    },
+    [],
+  );
+
   useEffect(() => {
     const backend = backendRef.current!;
     let cancelled = false;
@@ -121,6 +156,7 @@ export function App() {
         const snapshot = (await backend.call("state")) as {
           provider?: string;
           model?: string;
+          base_url?: string;
           project?: string;
           mode?: string;
         };
@@ -133,6 +169,7 @@ export function App() {
         if (cancelled) return;
         setProvider(snapshot.provider ?? "");
         setModel(snapshot.model ?? "");
+        setBaseUrl(snapshot.base_url ?? "");
         setProject(snapshot.project ?? "");
         setProviders(listed.providers ?? []);
         setMode(snapshot.mode ?? "build");
@@ -146,6 +183,25 @@ export function App() {
         if (cancelled) return;
         setModes(modeList.modes ?? []);
         if (modeList.mode) setMode(modeList.mode);
+        // Bind immediately so the session is usable. The core reports a
+        // provider *name* in `state` (its own default) but starts with no
+        // provider object, so without this the first message is rejected with
+        // "no provider configured" until the user opens Settings and presses
+        // Apply -- which is exactly the trap of saving a key and finding it has
+        // no effect.
+        if (snapshot.provider) {
+          try {
+            await applyBinding(
+              snapshot.provider,
+              snapshot.model ?? "",
+              snapshot.base_url ?? "",
+            );
+          } catch {
+            // e.g. the `custom` provider with no base_url yet. Leave it
+            // unbound; the settings panel is where that gets fixed, and a
+            // banner here would be noise on every launch.
+          }
+        }
       } catch (error) {
         if (!cancelled) {
           setConnected(false);
@@ -249,22 +305,21 @@ export function App() {
     });
   }, []);
 
-  const bindProvider = useCallback((name: string, model: string) => {
-    setSettingsError(null);
-    void backendRef.current!
-      .call("bind_provider", model ? { name, model } : { name })
-      .then((result) => {
-        const bound = result as { provider?: string; model?: string };
-        setProvider(bound.provider ?? name);
-        setModel(bound.model ?? model);
-        // Close on success: the panel's job is done, and leaving it up after
-        // a successful apply just invites a second click.
-        setSettingsOpen(false);
-      })
-      .catch((error: unknown) => {
-        setSettingsError(error instanceof Error ? error.message : String(error));
-      });
-  }, []);
+  /**
+   * The panel's Apply button. Closes the panel on success -- its job is done,
+   * and leaving it up after a successful apply just invites a second click.
+   */
+  const bindProvider = useCallback(
+    (name: string, model: string, endpoint: string) => {
+      setSettingsError(null);
+      void applyBinding(name, model, endpoint)
+        .then(() => setSettingsOpen(false))
+        .catch((error: unknown) => {
+          setSettingsError(error instanceof Error ? error.message : String(error));
+        });
+    },
+    [applyBinding],
+  );
 
   const setTrust = useCallback((target: string, trusted: boolean) => {
     setTrustedProjects((prev) => {
@@ -293,20 +348,35 @@ export function App() {
    * failure inline, and the core's own error text is deliberately vague about
    * *why* it failed, because the keyring's message can quote the value.
    */
-  const saveKey = useCallback(async (provider: string, apiKey: string) => {
-    try {
-      await backendRef.current!.call("key.save", { provider, api_key: apiKey });
-      // Re-read the provider list so the "(no key)" marker and the Remove
-      // button reflect the keyring without this component guessing.
-      const listed = (await backendRef.current!.call("providers.list")) as {
-        providers?: ProviderInfo[];
-      };
-      setProviders(listed.providers ?? []);
-      return true;
-    } catch {
-      return false;
-    }
-  }, []);
+  const saveKey = useCallback(
+    async (saved: string, apiKey: string) => {
+      try {
+        await backendRef.current!.call("key.save", {
+          provider: saved,
+          api_key: apiKey,
+        });
+        // Re-read the provider list so the "(no key)" marker and the Remove
+        // button reflect the keyring without this component guessing.
+        const listed = (await backendRef.current!.call("providers.list")) as {
+          providers?: ProviderInfo[];
+        };
+        setProviders(listed.providers ?? []);
+        // Rebind, so a freshly saved key takes effect immediately instead of
+        // silently doing nothing until the user finds Apply. This also
+        // reconstructs the provider, which clears any HTTP client cached from
+        // an earlier request that was built before the key existed. The model
+        // and endpoint are carried over only if they belong to this provider;
+        // model ids are provider-specific, so applying another provider's
+        // model here would be wrong.
+        const same = provider === saved;
+        await applyBinding(saved, same ? model : "", same ? baseUrl : "");
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [provider, model, baseUrl, applyBinding],
+  );
 
   const deleteKey = useCallback(async (provider: string) => {
     try {
@@ -431,6 +501,7 @@ export function App() {
             providers={providers}
             provider={provider}
             model={model}
+            baseUrl={baseUrl}
             project={project}
             sandbox={sandbox}
             trusted={trustedProjects.has(project)}

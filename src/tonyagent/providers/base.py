@@ -362,11 +362,21 @@ class ProviderRegistry:
         model: str = "",
         **kwargs
     ) -> BaseLLMProvider | None:
-        """Create a provider instance."""
+        """Create a provider instance.
+
+        An empty ``model`` is *omitted* rather than passed as ``""``. Every
+        provider but ``custom`` declares a sensible default in its constructor
+        (openrouter -> ``openrouter/auto``, openai -> ``gpt-4o-mini``, ...), and
+        passing the empty string explicitly clobbered it: the request then went
+        out with no model at all and the provider answered "No models
+        provided". Omitting the keyword lets the class default stand.
+        """
         provider_class = self.get(name)
         if not provider_class:
             return None
-        return provider_class(api_key=api_key, model=model, **kwargs)
+        if model:
+            return provider_class(api_key=api_key, model=model, **kwargs)
+        return provider_class(api_key=api_key, **kwargs)
 
     def list_providers(self) -> list[str]:
         """List all registered provider names."""

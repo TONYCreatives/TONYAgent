@@ -337,6 +337,78 @@ def test_providers_list_never_returns_key_material():
         assert isinstance(provider["has_credentials"], bool)
 
 
+# --- custom model / endpoint (bind_provider) -------------------------------
+def test_bind_provider_accepts_a_model_the_registry_has_never_heard_of():
+    """A provider's `models` is a suggestion list, not a closed set.
+
+    OpenRouter serves hundreds of namespaced ids beyond the handful the
+    registry lists; the UI has to be able to bind one by hand.
+    """
+    frames = _drive([
+        {"id": 1, "method": "bind_provider",
+         "params": {"name": "openrouter", "model": "anthropic/claude-sonnet-4.5"}},
+    ])
+    assert frames[0]["result"]["model"] == "anthropic/claude-sonnet-4.5"
+    assert frames[0]["result"]["provider"] == "openrouter"
+
+
+def test_bind_provider_reports_a_custom_base_url_and_state_remembers_it():
+    """The endpoint override must survive a window reload via `state`."""
+    frames = _drive([
+        {"id": 1, "method": "bind_provider",
+         "params": {"name": "openrouter", "model": "x/y",
+                    "base_url": "https://gateway.internal/v1"}},
+        {"id": 2, "method": "state"},
+    ])
+    replies = {f["id"]: f["result"] for f in frames if "id" in f}
+    assert replies[1]["base_url"] == "https://gateway.internal/v1"
+    assert replies[2]["base_url"] == "https://gateway.internal/v1"
+
+
+def test_bind_provider_rejects_a_scheme_less_base_url():
+    """Regression: a base_url with no scheme reached httpx and surfaced as
+    "Request URL is missing an 'http://' or 'https://' protocol".
+
+    That reads like a network failure; it is a typo, and it belongs at bind
+    time as an actionable message.
+    """
+    frames = _drive([
+        {"id": 1, "method": "bind_provider",
+         "params": {"name": "openrouter", "base_url": "openrouter.ai/api/v1"}},
+    ])
+    assert frames[0]["error"]["code"] == "rejected"
+    assert "http://" in frames[0]["error"]["message"]
+
+
+def test_bind_provider_accepts_a_base_url_with_a_scheme():
+    frames = _drive([
+        {"id": 1, "method": "bind_provider",
+         "params": {"name": "openrouter", "base_url": "https://gateway.internal/v1/"}},
+    ])
+    # Trailing slash normalised away so the provider does not build "//chat/...".
+    assert frames[0]["result"]["base_url"] == "https://gateway.internal/v1"
+
+
+def test_bind_provider_turns_a_missing_base_url_into_a_rejection(monkeypatch):
+    """`custom` raises without a base_url; that must be a clean rejection.
+
+    The message is the user's own missing field, so it is safe to show -- it
+    must not surface as an opaque internal error.
+    """
+    session = _session()
+
+    def boom(*args, **kwargs):
+        raise ValueError("Custom provider requires base_url")
+
+    monkeypatch.setattr(session, "bind_provider", boom)
+    frames = _drive(
+        [{"id": 1, "method": "bind_provider", "params": {"name": "custom"}}],
+        session=session,
+    )
+    assert frames[0]["error"]["code"] == "rejected"
+    assert "base_url" in frames[0]["error"]["message"]
+
+
 def test_sandbox_start_remembers_the_project_for_state(monkeypatch):
     """A reloaded window must learn which folder the core is attached to.
 

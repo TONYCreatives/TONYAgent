@@ -117,6 +117,28 @@ def test_factory_never_passes_a_widget_name_as_the_model():
     assert "CTkComboBox" not in str(prov.model)
 
 
+def test_an_omitted_model_falls_back_to_the_provider_default():
+    """Regression: an empty model was sent as-is and the API answered
+    "No models provided".
+
+    Binding a provider without choosing a model must use the provider's own
+    default, not an empty string.
+    """
+    from tonyagent.providers.factory import ProviderFactory
+
+    for name, expected in (
+        ("openrouter", "openrouter/auto"),
+        ("openai", "gpt-4o-mini"),
+        ("anthropic", "claude-3-5-sonnet-20241022"),
+        ("gemini", "gemini-1.5-pro"),
+        ("groq", "llama-3.1-70b-versatile"),
+        ("ollama", "llama3.1"),
+    ):
+        prov = ProviderFactory.create_provider(name, model="")
+        assert prov is not None, name
+        assert prov.model == expected, f"{name}: {prov.model!r} != {expected!r}"
+
+
 # --- key validation (the bug that caused the 401 confusion) -------------------
 
 def test_truncated_key_is_rejected_locally():

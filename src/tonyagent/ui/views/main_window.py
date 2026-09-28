@@ -811,7 +811,15 @@ class MainWindow:
         """
         provider_name = self.provider_combo.get() or settings.provider.name
         model = self.model_combo.get() or settings.provider.model
-        self._current_provider = ProviderFactory.create_provider(provider_name, model=model)
+        try:
+            self._current_provider = ProviderFactory.create_provider(
+                provider_name, model=model
+            )
+        except ValueError as exc:
+            # A base_url in config with no http(s):// scheme. Report it and run
+            # with no provider rather than letting the window fail to open.
+            self._current_provider = None
+            self._set_connection_state("error", f"● {exc}")
         if self._session is not None:
             # Share the very instance the UI inspected, so a key saved later is
             # picked up without re-creating it here.

@@ -140,10 +140,35 @@ class StdioServer:
     def _h_bind_provider(self, params: dict) -> Any:
         name = params.get("name", "")
         model = params.get("model", "")
-        provider = self.session.bind_provider(name, model)
+        base_url = params.get("base_url", "")
+        if not isinstance(model, str):
+            model = ""
+        if not isinstance(base_url, str):
+            base_url = ""
+        from tonyagent.providers.factory import normalize_base_url
+
+        try:
+            # Normalise before storing, so `state` and the reply agree with the
+            # endpoint the provider actually uses (and a trailing slash is gone).
+            base_url = normalize_base_url(base_url)
+            provider = self.session.bind_provider(name, model, base_url)
+        except ValueError as exc:
+            # Two user errors land here: `CustomProvider` refusing to load with
+            # no base_url, and a base_url with no http(s):// scheme. Both
+            # messages describe the user's own field, never a secret, so they
+            # are safe to surface as a rejection rather than an opaque 500.
+            raise RpcError(str(exc)) from None
         if provider is None:
             raise RpcError(f"Unknown provider: {name}")
-        return {"provider": name, "model": getattr(provider, "model", model)}
+        return {
+            "provider": name,
+            "model": getattr(provider, "model", model),
+            # Echo back the *requested* override, not the provider's resolved
+            # default. The panel prefills from this, and pinning a default that
+            # the provider may later change would be a lie about what the user
+            # configured.
+            "base_url": base_url,
+        }
 
     def _h_providers_list(self, params: dict) -> Any:
         """Report which providers exist, without exposing anything secret.
@@ -212,6 +237,7 @@ class StdioServer:
         return {
             "provider": self.session.provider_name,
             "model": self.session.model,
+            "base_url": self.session.base_url,
             "busy": self.session.busy,
             "messages": len(self.session.messages),
             "project": self.project,

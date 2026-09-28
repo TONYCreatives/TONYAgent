@@ -52,6 +52,11 @@ class AgentSession:
         self.bus = bus or default_bus
         self.provider_name = provider_name
         self.model = model
+        #: Optional endpoint override typed by the user. Empty means "use the
+        #: provider default" (OpenRouter's own API, the `custom` section's
+        #: base_url, ...). Stored so `state` can report it back to a window
+        #: that reloaded, and so the settings panel reopens pre-filled.
+        self.base_url: str = ""
         self.messages: list[ChatMessage] = []
         self.provider: Any = None
         self._cancel: Optional[asyncio.Event] = None
@@ -60,13 +65,31 @@ class AgentSession:
         self._mode: Mode = get_mode(DEFAULT_MODE)
 
     # -- provider ------------------------------------------------------------
-    def bind_provider(self, provider_name: str, model: str = "") -> Any:
-        """Point this session at a provider. Returns the provider or None."""
+    def bind_provider(
+        self, provider_name: str, model: str = "", base_url: str = ""
+    ) -> Any:
+        """Point this session at a provider. Returns the provider or None.
+
+        ``model`` and ``base_url`` are both free text: the model list a provider
+        ships with is a set of suggestions, not a closed set. OpenRouter alone
+        carries hundreds of namespaced ids (``anthropic/claude-sonnet-4.5``,
+        ``deepseek/deepseek-chat:free``) and self-hosted gateways use ids the
+        registry has never heard of, so the UI must be able to type one in.
+        """
         self.provider_name = provider_name
-        self.model = model
-        self.provider = ProviderFactory.create_provider(provider_name, model=model)
+        self.base_url = base_url
+        self.provider = ProviderFactory.create_provider(
+            provider_name, model=model, base_url=base_url
+        )
         if self.provider is None:
+            self.model = model
             self.emit(EventType.ERROR, {"message": f"Unknown provider: {provider_name}"})
+            return None
+        # Record the model actually in force, not the one that was requested.
+        # An empty request falls back to the provider's own default, and if
+        # `state` echoed the empty request a reloaded window would show a model
+        # that is not the one being sent.
+        self.model = getattr(self.provider, "model", "") or model
         return self.provider
 
     @property

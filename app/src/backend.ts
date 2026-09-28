@@ -64,7 +64,7 @@ export interface CoreMethods {
   clear: Record<string, never>;
   cancel: Record<string, never>;
   send: { text: string };
-  bind_provider: { name: string; model?: string };
+  bind_provider: { name: string; model?: string; base_url?: string };
   /** Provider names come from the core's registry, never from a local copy. */
   "providers.list": Record<string, never>;
   /**

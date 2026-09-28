@@ -19,6 +19,33 @@ from tonyagent.config.keyring import load_api_key
 #: unset Tk widget whose class name was stringified).
 _MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 
+#: A base URL must carry a scheme. httpx reports a scheme-less one as
+#: "Request URL is missing an 'http://' or 'https://' protocol", which reads
+#: like a network failure and is really a typo in one field.
+_BASE_URL_SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
+
+
+def normalize_base_url(url: str) -> str:
+    """Return a usable base URL, or raise ``ValueError`` for an unusable one.
+
+    Empty is allowed (the caller falls back to the provider default). A
+    non-empty value with no ``http://``/``https://`` scheme is not usable: the
+    request goes out as ``host/v1/chat/completions`` and httpx fails with
+    "Request URL is missing an 'http://' or 'https://' protocol". Rejecting
+    here surfaces that at bind time, as an actionable message, instead of a
+    mysterious network error on the first message. A trailing slash is removed
+    so the provider does not build ``//chat/completions``.
+    """
+    candidate = (url or "").strip()
+    if not candidate:
+        return ""
+    if not _BASE_URL_SCHEME_RE.match(candidate):
+        raise ValueError(
+            "Base URL must start with http:// or https:// "
+            f"(got {candidate!r})"
+        )
+    return candidate.rstrip("/")
+
 
 class ProviderFactory:
     @staticmethod
@@ -67,14 +94,19 @@ class ProviderFactory:
 
         api_key = load_api_key(name)
 
+        # Validate the caller's value first, then the configured one: a bad
+        # value the user just typed should be reported even if the config has
+        # a good one waiting behind it, and vice versa.
+        base_url = normalize_base_url(base_url)
+
         if name == "custom":
             model = model or settings.custom_provider.model
-            base_url = base_url or settings.custom_provider.base_url
+            base_url = base_url or normalize_base_url(settings.custom_provider.base_url)
             extra_headers = extra_headers or settings.custom_provider.extra_headers
             api_key = api_key or load_api_key("custom")
         else:
             model = model or settings.provider.model
-            base_url = base_url or settings.provider.base_url
+            base_url = base_url or normalize_base_url(settings.provider.base_url)
 
         return provider_registry.create(
             name, api_key=api_key, model=model, base_url=base_url,
