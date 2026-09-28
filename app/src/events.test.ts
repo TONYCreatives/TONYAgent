@@ -135,6 +135,44 @@ test("a turn that produced nothing leaves no empty bubble", () => {
   assert.deepEqual(state.messages, []);
 });
 
+test("a failed turn leaves no empty bubble either", () => {
+  // Found by running the packaged app with a credit-exhausted key: the error
+  // banner rendered correctly and an empty assistant bubble sat under it,
+  // which reads as a broken UI rather than as a rejected key. `turn.finished`
+  // already cleaned up; the two failure paths did not.
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(state, event("turn.failed", { message: "Key limit exceeded" }));
+  assert.deepEqual(state.messages, []);
+  assert.equal(state.error, "Key limit exceeded");
+
+  // A bare `error` event, which is how a failure outside a turn arrives, is
+  // the same story and must be treated the same way.
+  state = applyEvent(initialState, event("turn.started", {}, "t2"));
+  state = applyEvent(state, event("error", { message: "Backend error." }, "t2"));
+  assert.deepEqual(state.messages, []);
+  assert.equal(state.error, "Backend error.");
+});
+
+test("a failed turn that did produce text keeps its message", () => {
+  // The cleanup is about empty placeholders, not about hiding failures. A turn
+  // that streamed an answer and then failed must keep the answer.
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(state, event("message.delta", { text: "partial answer" }));
+  state = applyEvent(state, event("turn.failed", { message: "upstream 500" }));
+  assert.equal(state.messages.length, 1);
+  assert.equal(state.messages[0].text, "partial answer");
+  assert.equal(state.error, "upstream 500");
+});
+
+test("a tool call with no prose is not an empty bubble", () => {
+  // A turn that only ran a tool carries no assistant text, and deleting it
+  // would erase the tool row -- the one thing the turn actually did.
+  const state = turnWithTool("read_file", { status: "success" });
+  assert.equal(state.messages.length, 1);
+  assert.equal(state.messages[0].tools.length, 1);
+  assert.equal(state.messages[0].text, "");
+});
+
 test("turn.finished clears busy and turn.failed reports the message", () => {
   let state = applyEvent(initialState, event("turn.started"));
   assert.equal(state.busy, true);

@@ -164,6 +164,29 @@ function copyMessages(state: ChatState): ChatMessage[] {
   return state.messages.map((m) => ({ ...m, tools: m.tools.map((t) => ({ ...t })) }));
 }
 
+/**
+ * Drop an assistant placeholder the core never wrote to.
+ *
+ * `turn.started` creates the bubble eagerly so the first delta has somewhere
+ * to land, which means any turn that produces no assistant text leaves an
+ * empty bubble in the transcript. An empty bubble is worse than no bubble: it
+ * reads as a rendering fault, so a user whose key was rejected sees a broken
+ * UI next to the error that explains the rejection.
+ *
+ * Every terminal event routes through here, not just `turn.finished`. That
+ * asymmetry was a real bug: a rejected key emits `turn.failed` (or `error`),
+ * and the placeholder survived both, so the failure path -- the one a new user
+ * hits first -- was the one path that kept the empty bubble.
+ *
+ * A message that has text *or* tools is kept. A tool call with no assistant
+ * prose is a legitimate, informative turn.
+ */
+function dropEmptyAssistantMessages(next: ChatState): void {
+  next.messages = next.messages.filter(
+    (m) => m.text.trim() !== "" || m.tools.length > 0,
+  );
+}
+
 export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
   const next: ChatState = {
     ...state,
@@ -276,9 +299,7 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
 
     case "turn.finished": {
       next.busy = false;
-      // Drop an assistant placeholder the core never wrote to, so an
-      // immediately-rejected turn does not leave an empty bubble behind.
-      next.messages = next.messages.filter((m) => m.text.trim() !== "" || m.tools.length > 0);
+      dropEmptyAssistantMessages(next);
       return next;
     }
 
@@ -286,12 +307,14 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
       next.busy = false;
       next.error =
         payloadString(payload, "message") ?? payloadString(payload, "error") ?? "The turn failed.";
+      dropEmptyAssistantMessages(next);
       return next;
     }
 
     case "error": {
       next.busy = false;
       next.error = payloadString(payload, "message") ?? "Backend error.";
+      dropEmptyAssistantMessages(next);
       return next;
     }
 
