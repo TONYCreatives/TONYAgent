@@ -39,25 +39,10 @@ scripts/k2.py
 .env.*
 !.env.example
 
-# Stray zero-byte files at the repo root, created by mistyped shell redirects
-# (e.g. `... > dict` or `... > AsyncOpenAI`). Every one of these is a type name
-# where a filename was expected, and all are empty. Listed explicitly rather
-# than deleted so the accidental origin stays documented; safe to remove.
-# NOTE: the brackets must be backslash-escaped, since an unescaped `[` opens a
-# gitignore character class and silently matches nothing.
-/AsyncIterator\[ChatCompletionChunk]
-/AsyncOpenAI
-/BaseLLMProvider
-/ChatMessage
-/None
-/bool
-/dict
-/dict\[str
-/int
-/list\[dict]
-/list\[str]
-/str
-/type\[BaseLLMProvider]
+# The stray zero-byte files that used to live here (type names such as `dict`,
+# `AsyncOpenAI`, `list[str]` created by mistyped shell redirects) were removed.
+# They are deliberately NOT ignored any more: a future stray file should show up
+# as untracked rather than be silently hidden by a name on this list.
 
 # Freebuff's own project metadata
 /.freebuff/
