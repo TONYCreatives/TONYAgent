@@ -307,6 +307,71 @@ def test_every_theme_token_resolves_to_something_sane():
 
 # --- Live UI: build the real window and assert it is usable -------------------
 
+#: The one Tk interpreter this module uses, created on first use.
+_TK_ROOT = None
+
+
+def _tk_root():
+    """Return the module's shared Tk root, creating it on first use.
+
+    Deliberately a plain lazy singleton rather than a fixture argument:
+    ``real_window`` is a context manager called directly by the tests, so
+    pytest has no way to inject a fixture into it.
+    """
+    global _TK_ROOT
+    if _TK_ROOT is None:
+        import customtkinter as ctk
+
+        _TK_ROOT = ctk.CTk()
+        _TK_ROOT.withdraw()
+    return _TK_ROOT
+
+
+def _cancel_pending_after(root) -> None:
+    """Cancel every ``after`` callback still queued on ``root``.
+
+    ``MainWindow`` schedules two: a one-shot start at 500ms and a sandbox
+    status poll that reschedules *itself* every 5s. They are ordinary
+    interpreter commands, so a root that goes away leaves them behind, and the
+    next root created in the same process sometimes fails with
+    ``invalid command name "tcl_findLibrary"`` while other times it does not.
+    That is the whole reason this file used to fail roughly two runs in four,
+    and why it failed in a full-suite run but passed in isolation: the
+    interpreter teardown races the callbacks, so the outcome depends on what
+    else the process did in between rather than on what this file asserts.
+    """
+    try:
+        pending = list(root.after_info())
+    except Exception:  # pragma: no cover - only if Tk itself is unhappy
+        return
+    for widget_id in pending:
+        try:
+            root.after_cancel(widget_id)
+        except Exception:  # pragma: no cover - already fired
+            pass
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _tk_interpreter():
+    """Own the module's single Tk interpreter, and finalise it at the end.
+
+    Creating and destroying a root per test is what made this file flaky, so
+    the root outlives the tests and each test tears down only its own widgets.
+    The interpreter is finalised once, at the end, where nothing follows it.
+    """
+    global _TK_ROOT
+    root = _tk_root()
+    try:
+        yield root
+    finally:
+        _cancel_pending_after(root)
+        try:
+            root.destroy()
+        except Exception:  # pragma: no cover
+            pass
+        _TK_ROOT = None
+
+
 @contextmanager
 def real_window(monkeypatch, provider="openrouter", stored_key="sk-or-v1-" + "a" * 64):
     """Build an actual MainWindow so widget states can be asserted.
@@ -320,8 +385,6 @@ def real_window(monkeypatch, provider="openrouter", stored_key="sk-or-v1-" + "a"
     "sk-or-EXISTING-KEY" is correctly rejected as malformed, which would fail
     these widget-state tests for a reason unrelated to what they check.
     """
-    import customtkinter as ctk
-
     import tonyagent.config.keyring as kr
     from tonyagent.config.settings import settings
     from tonyagent.ui.theme import theme_manager
@@ -331,17 +394,22 @@ def real_window(monkeypatch, provider="openrouter", stored_key="sk-or-v1-" + "a"
     monkeypatch.setattr(kr, "load_api_key", lambda name: stored_key)
     monkeypatch.setattr(settings.provider, "name", provider)
 
-    root = ctk.CTk()
+    root = _tk_root()
     root.withdraw()
     try:
         win = MainWindow(root)
         root.update_idletasks()
         yield win, root
     finally:
-        try:
-            root.destroy()
-        except Exception:
-            pass
+        # Tear down this window's widgets, not the interpreter. Destroying the
+        # root here is what used to strand the queued `after` callbacks.
+        for child in root.winfo_children():
+            try:
+                child.destroy()
+            except Exception:  # pragma: no cover
+                pass
+        _cancel_pending_after(root)
+        root.withdraw()
 
 
 def test_api_key_entry_and_save_button_are_usable(monkeypatch):

@@ -56,12 +56,16 @@ component fails the build. `npm test` compiles only the two protocol modules
 without Tauri or Rust installed. It is no longer just `backend.ts` — the
 reducer gained its own suite in Phase 3, and that suite found a real bug.
 
-**One test is flaky, and it is not yours.** `check_all.py --fast` will
-occasionally report FAIL from
-`test_phase4_ux.py::test_key_hint_and_forget_button_do_not_overlap`. It passes
-in isolation and in most full runs. It has been failing in 2 of ~6 full-suite
-runs since before Phase 1. Section 8 has the details; re-run before believing
-it.
+**The Tk flake is fixed.** `test_phase4_ux.py` used to fail in roughly two
+full-suite runs out of four -- a *different* test each time, always with
+`invalid command name "tcl_findLibrary"`. The cause was the fixture, not Tcl
+and not the layout: it created and destroyed a real root per test, and
+`MainWindow` leaves two `after` callbacks behind, one of which reschedules
+itself every 5s. Destroying the root stranded them against a finalised
+interpreter, and whether the *next* `Tk()` then failed was a race. The module
+now shares one root and tears down only its own widgets, cancelling the queued
+callbacks. Verified 4/4 full-suite runs, 6/6 file runs, and 15/15 on the two
+tests that used to be the usual casualties. Section 8 has the full account.
 
 `check_all.py` without `--fast` opens a real window and will exceed a 30s
 command timeout. Use `--fast`, then run the launch check separately.
@@ -884,40 +888,59 @@ Note this is a **Tkinter-only** problem. The React UI gets it right with
 inside a 1152 px column. If the Tkinter UI is ever retired, this item goes with
 it. See section 3.
 
-**`test_phase4_ux.py` is intermittently flaky.** Multiple Tk roots created and
-destroyed in one process can leave Tcl in a bad state
-(`invalid command name "tcl_findLibrary"`). It passes alone and per-file. Not
-caused by the refactor. A session-scoped root fixture would fix it.
+**`test_phase4_ux.py` was flaky as a file. Root cause found, fixed.**
 
-Re-confirmed 2026-09-27 while building the Tauri app, and it is **pre-existing**
-(`git diff HEAD -- src tests` was empty at the time, so no Python had changed).
-The test that actually fails is
-`test_key_hint_and_forget_button_do_not_overlap`, which asserts real widget
-geometry from `winfo_rootx/rooty` — so it depends on layout having settled. It
-passed 6/6 in isolation and failed 2 of 4 full-suite runs, which is the
-signature of a timing/state dependency rather than a real layout regression.
-`check_all.py --fast` therefore reports FAIL intermittently; that is this, not
-a new break.
+The signature was always the same and always misleading: a *different* test in
+the file failed each time (`test_key_hint_and_forget_button_do_not_overlap`,
+`test_collapsible_sections_toggle_without_error`,
+`test_ghost_buttons_are_transparent_not_white`,
+`test_key_entry_is_empty_not_prefilled`), always with
+`invalid command name "tcl_findLibrary"` from `ctk.CTk()`, always passing in
+isolation and on immediate re-run. A test that fails only in company and
+never alone is a state problem, and earlier notes here blamed a broken Tcl
+install. That was wrong.
 
-Re-confirmed again during Phase 3: it also failed one full run there while
-passing in isolation and on the immediate re-run. A *different* test in the
-same file (`test_key_entry_is_empty_not_prefilled`) failed once in the same
-way. So the file is flaky as a file, not just that one test - re-run before
-diagnosing anything.
+`real_window` built a real `ctk.CTk()` root per test and destroyed it in a
+`finally`. `MainWindow` schedules `root.after(500, self._start_sandbox)` and a
+sandbox poll that reschedules *itself* every 5s, plus CustomTkinter schedules
+its own `after` for the Windows titlebar icon. Those are interpreter commands,
+so destroying the root left them queued against a finalised Tcl, and whether
+the next `Tk()` in the same process then succeeded was a race -- so the failure
+landed on whichever test happened to run next. The way to see the mechanism
+without a test run:
 
-Re-confirmed during Phase 5: `check_all.py --fast` reported FAIL from a third
-distinct test (`test_ghost_buttons_are_transparent_not_white`), which passed on
-its own immediately afterwards, while a plain `pytest tests -q` on the same
-tree was green (244 passed). Same signature: the Tk-root churn in one process,
-not a regression. Root cause on this machine is that Tcl is not installed
-properly (`invalid command name "tcl_findLibrary"`), so any test that builds a
-real window can lose the race.
+```
+python -c "import customtkinter as ctk
+for i in range(8):
+    r = ctk.CTk(); r.withdraw(); r.update_idletasks(); r.destroy()"
+```
 
-**`test_chat_path_streams_end_to_end[groq]` fails until the user re-enters
-their groq key.** Phase 2 destroyed it; see section 5 item 9. The other
-provider cases in that file pass. (In the Phase 5 runs the whole file passed,
-which is expected: that test stubs its transport rather than using a stored
-key, so its result does not depend on the keyring.)
+Eight clean create/destroy cycles, and stderr still prints
+`invalid command name "..._windows_set_titlebar_icon" ... while executing ...
+("after" script)`. The callbacks outlive the root; only the *consequence* is
+nondeterministic.
+
+The fix keeps one interpreter for the module and gives each test only its own
+widgets: a lazy `_tk_root()` singleton, a module-scoped autouse fixture that
+finalises it at the end, and a `_cancel_pending_after()` helper that drains
+`root.after_info()` after every test. Cancelling matters as much as sharing --
+without it the 5-second self-rescheduling poll would keep firing against
+destroyed widgets. The lazy singleton rather than a fixture argument is
+deliberate: `real_window` is a `@contextmanager` the tests call directly, so
+pytest cannot inject anything into it.
+
+Verified after the change: 4/4 `pytest tests -q` (244 passed), 6/6 file runs,
+and 15/15 consecutive runs of the two tests that used to be the usual
+casualties. The general lesson for the rest of the suite: **a Tk test that
+fails only in a full run is a teardown problem until proven otherwise**, and
+creating and destroying a Tk root per test is the thing to stop doing.
+
+**`test_chat_path_streams_end_to_end[groq]` no longer needs a key.** It used
+to fail with `The groq key does not start with 'gsk_'` because Phase 2
+overwrote the real key while hand-testing `key.save`. The test stubs the HTTP
+transport rather than reading the keyring, so it passes for all four providers
+now. The *missing key itself* is still an environment gap, but it is no
+longer a test failure -- do not go looking for a bug here.
 
 **`RuntimeWarning: coroutine ... was never awaited`** in
 `tests/unit/test_tool_sandbox_routing.py:875` — two occurrences, pre-existing.
