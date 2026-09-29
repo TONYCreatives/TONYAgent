@@ -1,11 +1,11 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-09-27, after Phase 5 (custom model + endpoint, first live
-turn check)
+**Last updated:** 2026-09-29, after the bounded tool-loop fix (the first live
+turn succeeded; see 1.9)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 244 passed, TypeScript 54 passed,
+protocol method.** Everything green: **Python 247 passed, TypeScript 54 passed,
 Tauri MSI + NSIS installers produced.**
 
 Five phases of work landed since the MSVC blocker was cleared:
@@ -43,7 +43,7 @@ Tauri one is new and thinner (chat, sandbox status, confirmations).
 
 ```bash
 python -m compileall -q src            # syntax
-python -m pytest tests -q              # 244 passed
+python -m pytest tests -q              # 247 passed
 python scripts/check_all.py --fast     # 3 checks incl. GUI launch
 
 cd app && npm test                     # 54 passed (protocol + reducer + markdown, no Rust needed)
@@ -360,6 +360,36 @@ over CDP. Confirmed *in the packaged build* rather than in `vite dev`:
 That last point is why the empty-bubble bug above is worth recording: it was
 invisible to 54 TypeScript tests and to a real turn, and appeared only because
 the app was actually run against a failing key.
+
+
+### 1.9 The bounded tool loop, and the first successful live turn
+
+The first live end-to-end turn happened: a working key went in via Settings,
+"Hi." was sent, the model called `list_dir`, got "No project folder selected",
+asked for another tool -- and the session answered **"Model requested more
+tools after a tool result."** That banner was not an OpenRouter quirk:
+`_run_turn` deliberately allowed exactly ONE tool round and errored on the
+second. One round is not the honest number for an agent ("list the files, then
+open the one that looks relevant" is a normal request), so the turn now loops:
+
+- `MAX_TOOL_ROUNDS = 6` on `AgentSession` -- a cost bound, not a claim that six
+  is the right number; `_run_tool_calls` numbers the rounds it executes;
+- hitting the cap emits an ERROR that says so ("Stopped after 6 tool rounds.")
+  and still ends the turn with TURN_FINISHED, not TURN_FAILED;
+- two history bugs the loop would have tripped over on its very second request,
+  both found by the new tests rather than by another live failure:
+  - a tool-call pass carrying no text was not appended to history at all, so
+    the next request sent `[user, tool]` -- and OpenAI-compatible APIs reject a
+    tool message whose preceding assistant turn (carrying the matching
+    `tool_calls`) is missing;
+  - a turn whose last act was a tool call left the history ending on a bare
+    tool result. `_append_results_digest()` now closes exactly that shape with
+    an assistant note ("Tool results are above..." plus one `[result N]` per
+    round), and leaves turns that produced a real answer untouched.
+
+Verified: Python 247 passed, TS 54, `tsc --noEmit` clean, sidecar rebuilt.
+Still unproven live: a multi-round turn in the packaged app, and Markdown
+rendering of a real reply.
 
 
 ---

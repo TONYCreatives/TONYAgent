@@ -29,7 +29,22 @@ from tonyagent.providers import (
     ToolChoice,
     ToolSchema,
 )
+from tonyagent.providers.base import MessageRole
 from tonyagent.tools import ALL_SCHEMAS, ToolCall, tool_orchestrator
+
+def _results_digest(orders: list[int]) -> str:
+    """Build the assistant note that stands in for an unanswered tool result.
+
+    ``orders`` is the 1-based numbering of the rounds the turn executed; the
+    note lists them so the model's next call can reference a specific tool
+    result instead of guessing which one it means.
+    """
+    order_note = "".join(f"\n[result {n}]" for n in orders)
+    return (
+        "Tool results are above. The conversation cannot continue with a tool "
+        "result, so this note stands in for the next assistant turn."
+        + order_note
+    )
 
 
 class SessionCancelled(Exception):
@@ -63,6 +78,9 @@ class AgentSession:
         self._busy = False
         #: Composer mode. Governs the system prompt and which tools exist.
         self._mode: Mode = get_mode(DEFAULT_MODE)
+        #: 1-based tool-round numbers executed in the turn in flight, so the
+        #: closing digest can name the results the model just produced.
+        self._round_orders: list[int] = []
 
     # -- provider ------------------------------------------------------------
     def bind_provider(
@@ -279,22 +297,43 @@ class AgentSession:
             self._busy = False
 
     # -- turn execution ------------------------------------------------------
+    #: How many tool rounds one turn may chain. Each round is one assistant
+    #: pass plus the tool calls it asked for; the cap exists so a model stuck
+    #: in a loop costs a bounded amount of money, not because one round is the
+    #: honest number. Two is not: "list the files, then open the one that looks
+    #: relevant" is a normal agent request, and the old single-round behaviour
+    #: answered it with an error instead of an answer.
+    MAX_TOOL_ROUNDS = 6
+
     async def _run_turn(self, turn_id: str) -> None:
         try:
             self.emit(EventType.TURN_STARTED, {"model": self.model}, turn_id=turn_id)
-            tool_calls = await self._stream_assistant(turn_id)
-            if tool_calls:
-                await self._run_tool_calls(tool_calls, turn_id)
+            self._round_orders = []
+            for _round in range(self.MAX_TOOL_ROUNDS):
+                tool_calls = await self._stream_assistant(turn_id)
+                if not tool_calls:
+                    break
+                await self._run_tool_calls(tool_calls, turn_id, len(self._round_orders) + 1)
                 self._check_cancelled()
-                extra = await self._stream_assistant(turn_id)
-                if extra:
-                    # A follow-up that asks for tools again would need a loop.
-                    # Rather than recursing without bound, say so.
-                    self.emit(
-                        EventType.ERROR,
-                        {"message": "Model requested more tools after a tool result."},
-                        turn_id=turn_id,
-                    )
+            else:
+                # The cap ran out while the model still wanted tools. Explain
+                # the state rather than pretending the turn completed: the
+                # model has results it has not yet answered about.
+                self.emit(
+                    EventType.ERROR,
+                    {
+                        "message": (
+                            f"Stopped after {self.MAX_TOOL_ROUNDS} tool rounds. "
+                            "The model kept requesting tools; ask it to "
+                            "summarise what it has, or continue the task."
+                        )
+                    },
+                    turn_id=turn_id,
+                )
+            # A turn whose last act was a tool call must not leave the history
+            # ending on a bare tool result; one that produced a real answer is
+            # left alone. The condition lives in the helper.
+            self._append_results_digest()
             self.emit(EventType.TURN_FINISHED, {}, turn_id=turn_id)
         except SessionCancelled:
             # A user-initiated stop is not a failure.
@@ -417,14 +456,19 @@ class AgentSession:
                 tool_calls = chunk.tool_calls
             if chunk.finish_reason:
                 break
-        if text:
+        # A tool-call pass often carries no text at all, but it MUST still
+        # land in the history: OpenAI-compatible APIs reject a tool message
+        # whose preceding assistant turn (carrying the matching tool_calls)
+        # is missing.
+        if text or tool_calls:
             self.messages.append(
                 ChatMessage(role="assistant", content=text, tool_calls=tool_calls)
             )
         self.emit(EventType.MESSAGE_COMPLETED, {"text": text}, turn_id=turn_id)
         return tool_calls
 
-    async def _run_tool_calls(self, tool_calls: list[dict], turn_id: str) -> None:
+    async def _run_tool_calls(self, tool_calls: list[dict], turn_id: str,
+                              round_no: int) -> None:
         """Execute each requested tool and append its result to the history."""
         for raw in tool_calls:
             self._check_cancelled()
@@ -464,3 +508,23 @@ class AgentSession:
                     tool_call_id=call.id,
                 )
             )
+        # Every round that produced a result gets a number, whether the turn
+        # continues or stops at the cap: the digest references the results by
+        # these numbers.
+        self._round_orders.append(round_no)
+
+    def _append_results_digest(self) -> None:
+        """Close a turn that ended on tool results with an assistant note.
+
+        Some providers reject a history that ends on a tool message, and a
+        history that ends with an unanswered result is ambiguous for the next
+        turn anyway. The note is the assistant speaking; the next call gets a
+        normal prompt to answer from. A turn that ended with a real answer is
+        left untouched -- no synthetic message after it.
+        """
+        if not self._round_orders:
+            return
+        if not self.messages or self.messages[-1].role != MessageRole.TOOL:
+            return
+        digest = _results_digest(self._round_orders)
+        self.messages.append(ChatMessage(role="assistant", content=digest))

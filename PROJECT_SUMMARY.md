@@ -1,6 +1,6 @@
 # TONYAgent — Project Summary
 
-**Updated:** 2026-09-27 · **Tests:** Python 244 passed, TypeScript 54 passed
+**Updated:** 2026-09-29 · **Tests:** Python 247 passed, TypeScript 54 passed
 **Build:** Tauri MSI + NSIS installers produced; app verified running end to end
 
 ---
@@ -126,7 +126,7 @@ MSVC 블로커는 **해결됨** (Visual Studio Community 2026, VC tools 14.51.36
 ```bash
 python -m compileall -q src
 python -m pytest tests -q                    # 238 passed
-python -m pytest tests -q                    # 244 passed
+python -m pytest tests -q                    # 247 passed
 python scripts/check_all.py --fast           # 3 checks
 cd app && npm test                           # 54 passed (Rust 불필요)
 ```

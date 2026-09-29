@@ -246,6 +246,199 @@ async def test_tool_calls_actually_execute(monkeypatch):
     assert any(m.role.value == "tool" for m in session.messages)
 
 
+async def test_a_turn_can_chain_several_tool_rounds():
+    """Regression: the loop allowed exactly ONE round of tools, then errored.
+
+    The first live turn hit it: "Hi." -> the model called list_dir -> got the
+    result -> asked for another tool, and the session answered with
+    "Model requested more tools after a tool result." One round is not the
+    honest number for an agent; the turn now loops up to MAX_TOOL_ROUNDS.
+    """
+    import types
+
+    from tonyagent.core.events import EventBus, EventType
+    from tonyagent.core.session import AgentSession
+    from tonyagent.providers import ChatCompletionChunk
+
+    executed = []
+
+    class _Provider:
+        def __init__(self):
+            self.rounds = 0
+
+        def estimate_tokens(self, messages):
+            return 42
+
+        async def chat_completion(self, messages=None, tools=None, tool_choice=None,
+                                  stream=False, **kw):
+            self.rounds += 1
+            n = self.rounds
+
+            async def gen():
+                if n <= 3:  # three tool rounds, then a plain answer
+                    yield ChatCompletionChunk(
+                        tool_calls=[{"id": f"c{n}", "function": {
+                            "name": f"tool_{n}", "arguments": "{}"}}],
+                        finish_reason="tool_calls",
+                    )
+                else:
+                    yield ChatCompletionChunk(content="done", finish_reason="stop")
+            return gen()
+
+    async def run_tools(self, tool_calls, turn_id, round_no):
+        """Mirror the real executor: one tool message per round."""
+        for raw in tool_calls:
+            executed.append(raw["function"]["name"])
+            session.messages.append(ChatMessage(
+                role="tool", content=f"{raw['function']['name']} ran",
+                tool_call_id=raw["id"],
+            ))
+        self._round_orders.append(round_no)
+
+    bus = EventBus()
+    session = AgentSession(bus=bus)
+    session.provider = _Provider()
+    session.model = "stub"
+    session._run_tool_calls = types.MethodType(run_tools, session)
+
+    seen = []
+    bus.subscribe(seen.append)
+    await session.run_turn("do the thing")
+
+    failures = [e for e in seen if e.type == EventType.TURN_FAILED]
+    errors = [e for e in seen if e.type == EventType.ERROR]
+    assert not failures, [e.payload for e in failures]
+    assert not errors, [e.payload for e in errors]
+    assert executed == ["tool_1", "tool_2", "tool_3"]
+    assert session.messages[-1].role.value == "assistant"
+    assert session.messages[-1].content == "done"
+
+
+async def test_hitting_the_tool_round_cap_is_explained_not_silent():
+    """A model that never stops asking for tools gets a bounded turn whose end
+    says what happened, in words a user can act on."""
+    import types
+
+    from tonyagent.core.events import EventBus, EventType
+    from tonyagent.core.session import AgentSession
+    from tonyagent.providers import ChatCompletionChunk
+
+    class _Provider:
+        def estimate_tokens(self, messages):
+            return 42
+
+        async def chat_completion(self, messages=None, tools=None, tool_choice=None,
+                                  stream=False, **kw):
+            async def gen():
+                yield ChatCompletionChunk(
+                    tool_calls=[{"id": "c1", "function": {
+                        "name": "loop_forever", "arguments": "{}"}}],
+                    finish_reason="tool_calls",
+                )
+            return gen()
+
+    async def run_tools(self, tool_calls, turn_id, round_no):
+        """Mirror the real executor: one tool message per round."""
+        for raw in tool_calls:
+            session.messages.append(ChatMessage(
+                role="tool", content=f"{raw['function']['name']} ran",
+                tool_call_id=raw["id"],
+            ))
+        self._round_orders.append(round_no)
+
+    bus = EventBus()
+    session = AgentSession(bus=bus)
+    session.provider = _Provider()
+    session.model = "stub"
+    session._run_tool_calls = types.MethodType(run_tools, session)
+
+    seen = []
+    bus.subscribe(seen.append)
+    await session.run_turn("keep going")
+
+    assert session._round_orders == list(range(1, AgentSession.MAX_TOOL_ROUNDS + 1))
+    errors = [e for e in seen if e.type == EventType.ERROR]
+    assert errors, "the cap was hit and nothing said so"
+    message = errors[-1].payload["message"]
+    assert str(AgentSession.MAX_TOOL_ROUNDS) in message
+    assert "tool rounds" in message
+    # The turn still ends cleanly rather than as a crash.
+    assert any(e.type == EventType.TURN_FINISHED for e in seen)
+    # And the history does not end on a bare tool result: the digest closes it.
+    assert session.messages[-1].role.value == "assistant"
+    assert "[result 1]" in session.messages[-1].content
+
+
+async def test_a_plain_answer_appends_no_digest():
+    """A turn that never touched a tool must not grow a synthetic message."""
+    from tonyagent.core.events import EventBus
+    from tonyagent.core.session import AgentSession
+    from tonyagent.providers import ChatCompletionChunk
+
+    class _Provider:
+        def estimate_tokens(self, messages):
+            return 42
+
+        async def chat_completion(self, messages=None, tools=None, tool_choice=None,
+                                  stream=False, **kw):
+            async def gen():
+                yield ChatCompletionChunk(content="just an answer", finish_reason="stop")
+            return gen()
+
+    bus = EventBus()
+    session = AgentSession(bus=bus)
+    session.provider = _Provider()
+    session.model = "stub"
+    await session.run_turn("hello")
+    assert [m.role.value for m in session.messages] == ["user", "assistant"]
+    assert session.messages[-1].content == "just an answer"
+
+
+async def test_a_turn_ending_on_a_tool_result_still_closes_with_an_assistant_note():
+    """The model answered with a tool call and nothing else; the next turn must
+    not start from a history that ends on an unanswered tool result."""
+    import types
+
+    from tonyagent.core.events import EventBus
+    from tonyagent.core.session import AgentSession
+    from tonyagent.providers import ChatCompletionChunk
+
+    class _Provider:
+        def estimate_tokens(self, messages):
+            return 42
+
+        async def chat_completion(self, messages=None, tools=None, tool_choice=None,
+                                  stream=False, **kw):
+            async def gen():
+                yield ChatCompletionChunk(
+                    tool_calls=[{"id": "c1", "function": {
+                        "name": "list_files", "arguments": "{}"}}],
+                    finish_reason="tool_calls",
+                )
+            return gen()
+
+    async def run_tools(self, tool_calls, turn_id, round_no):
+        """Mirror the real executor: one tool message per round."""
+        for raw in tool_calls:
+            session.messages.append(ChatMessage(
+                role="tool", content=f"{raw['function']['name']} ran",
+                tool_call_id=raw["id"],
+            ))
+        self._round_orders.append(round_no)
+
+    bus = EventBus()
+    session = AgentSession(bus=bus)
+    session.provider = _Provider()
+    session.model = "stub"
+    session._run_tool_calls = types.MethodType(run_tools, session)
+    await session.run_turn("list")
+
+    roles = [m.role.value for m in session.messages]
+    assert roles[-2] == "tool"
+    assert roles[-1] == "assistant"
+    assert "[result 1]" in session.messages[-1].content
+
+
 def test_provider_error_is_actionable():
     from tonyagent.ui.views.main_window import MainWindow
 
