@@ -53,6 +53,7 @@
   --warn: #c9a45f;
 
   --rail-w: 70px;
+  --rail-w-expanded: 248px;
   --topbar-h: 42px;
   --sidebar-w: 425px;
 
@@ -156,22 +157,17 @@ body {
 
 /* --- app shell ----------------------------------------------------------- */
 
+/*
+ * The rail is always rendered: closed it is the narrow icon strip, expanded
+ * it widens in place. The column therefore never disappears, so the grid
+ * template is fixed and `.main` stays pinned to column 2.
+ */
 .app {
   display: grid;
   grid-template-columns: var(--rail-w) minmax(0, 1fr) auto;
   grid-template-rows: 100%;
   height: 100%;
   overflow: hidden;
-}
-
-/*
- * Collapsing the rail removes the element, so the grid must drop the column
- * too. Without this the rail's 60px track stays reserved and the transcript
- * is squeezed into it -- the rail disappears and the content does not reclaim
- * the space, which reads as a broken window rather than a hidden sidebar.
- */
-.app.rail-collapsed {
-  grid-template-columns: 0 minmax(0, 1fr) auto;
 }
 
 .main {
@@ -201,6 +197,40 @@ body {
   background: var(--bg);
   border-right: 1px solid var(--border-soft);
   overflow: hidden;
+  width: var(--rail-w);
+  transition: width 0.16s ease;
+}
+
+/*
+ * Expanded: the rail grows and each row becomes icon + label. The labels are
+ * real text, not tooltips, so keyboard users get them for free; `title` stays
+ * for the closed rail, where there is no room for text.
+ */
+.rail.rail-expanded {
+  width: var(--rail-w-expanded);
+  align-items: stretch;
+  padding: 10px 10px;
+}
+
+.rail-toggle {
+  align-self: flex-start;
+}
+
+.rail-expanded .rail-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  justify-content: flex-start;
+}
+
+.rail-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
 }
 
 .rail-logo {

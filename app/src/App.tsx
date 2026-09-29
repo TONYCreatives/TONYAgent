@@ -40,7 +40,26 @@ export function App() {
     () => new Set(),
   );
   const [logLines, setLogLines] = useState<string[]>([]);
-  const [railOpen, setRailOpen] = useState(true);
+  /**
+   * The left rail's expanded state. FALSE by default: the closed rail is the
+   * 70px icon strip, and the wide labelled version is the thing the user
+   * opens deliberately. Persisted, because a chrome preference that resets on
+   * every launch reads as broken.
+   */
+  const [railExpanded, setRailExpanded] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("tonyagent.rail-expanded") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("tonyagent.rail-expanded", railExpanded ? "1" : "0");
+    } catch {
+      // Private mode or storage disabled: the preference just does not stick.
+    }
+  }, [railExpanded]);
   // Closed by default. The Files panel is 425px of a three-column window, and
   // opening it by default squeezed the transcript on a normal laptop width for
   // no benefit until the agent has actually touched a file. It still opens
@@ -443,22 +462,22 @@ export function App() {
   }, []);
 
   return (
-    <div className={`app${railOpen ? "" : " rail-collapsed"}`}>
-      {railOpen && (
-        <IconRail
-          connected={connected}
-          busy={state.busy}
-          messageCount={state.messages.length}
-          onNewChat={newChat}
-          onClear={clear}
-          onCancel={cancel}
-          onSettings={() => {
-            setSettingsError(null);
-            setSettingsOpen(true);
-          }}
-          onSearch={() => setSearchOpen(true)}
-        />
-      )}
+    <div className="app">
+      <IconRail
+        connected={connected}
+        busy={state.busy}
+        messageCount={state.messages.length}
+        expanded={railExpanded}
+        onToggle={() => setRailExpanded((open) => !open)}
+        onNewChat={newChat}
+        onClear={clear}
+        onCancel={cancel}
+        onSettings={() => {
+          setSettingsError(null);
+          setSettingsOpen(true);
+        }}
+        onSearch={() => setSearchOpen(true)}
+      />
 
       <div className="main">
         <TopBar
@@ -466,7 +485,7 @@ export function App() {
           connected={connected}
           onNewChat={newChat}
           onClear={clear}
-          onToggleRail={() => setRailOpen((open) => !open)}
+          onToggleRail={() => setRailExpanded((open) => !open)}
         />
 
         <MessageList messages={state.messages} busy={state.busy} />
