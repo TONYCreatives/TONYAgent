@@ -45,6 +45,8 @@ Tauri one is new and thinner (chat, sandbox status, confirmations).
 python -m compileall -q src            # syntax
 python -m pytest tests -q              # 247 passed
 python scripts/check_all.py --fast     # 3 checks incl. GUI launch
+python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refusals (no sandbox needed)
+python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 
 cd app && npm test                     # 54 passed (protocol + reducer + markdown, no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
@@ -390,6 +392,25 @@ open the one that looks relevant" is a normal request), so the turn now loops:
 Verified: Python 247 passed, TS 54, `tsc --noEmit` clean, sidecar rebuilt.
 Still unproven live: a multi-round turn in the packaged app, and Markdown
 rendering of a real reply.
+
+
+### 1.10 Every tool exercised live
+
+`scripts/e2e_all_tools.py` runs all 22 registered tools for real against a
+temp project: 10 host-side tools with their actual side effects (write + diff
+artifact, edit, delete-to-recycle-bin, grep/glob, http_request), the security
+refusals a model will eventually provoke (path escape, SSRF to 127.0.0.1,
+`shutdown` against the command denylist), and -- with Docker up -- all 13
+sandbox tools including a full browser round-trip (navigate a real page,
+snapshot, click a link, type into a form, screenshot saved into the
+workspace). 28/28 checks pass in ~6s; `--fast` skips the sandbox group and
+instead asserts every sandbox tool fails CLOSED with an actionable message.
+
+Two observations worth keeping: `browser_type` against a page with no
+matching element costs a 30s Playwright timeout (the harness navigates to a
+`data:` URL form it controls instead), and `list_dir` recursive output uses
+OS separators, so on Windows the model sees `sub\\deep.txt` -- cosmetic, but
+a cross-platform agent will meet it.
 
 
 ---
