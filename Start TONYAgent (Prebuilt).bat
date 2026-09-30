@@ -35,32 +35,31 @@ REM timestamps is a heuristic -- it cannot know whether a given edit reached the
 REM build -- but it catches the ordinary case, which is the one that wastes
 REM time.
 REM
-REM PowerShell does the comparison because doing it in batch means string-
-REM comparing date formats, which is wrong in a different way per locale.
+REM It only *says* so. It does not ask. This used to stop and read a y/N, and
+REM the default was No, so a double-click on a console that flashed and closed
+REM without the application ever appearing read as "the app starts and quits
+REM immediately" -- a crash report in a place where nothing had crashed.
+REM Anyone who wants the source rebuilt runs "Build TONYAgent.bat"; asking a
+REM second time is what made this feel broken.
+REM
+REM The comparison itself lives in scripts\newest_source.ps1, not inline here.
+REM It used to be a PowerShell one-liner inside this for-loop and it never ran
+REM once: the batch parser counts parentheses even inside a backquoted command,
+REM so a brace-closed block like `if($x){ $x }` leaves it hunting for a
+REM closing paren that is not there, and the file dies with "was unexpected at
+REM this time" before the app is started. A script file has no such rule.
 set "NEWEST="
-for /f "usebackq delims=" %%N in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$app=(Get-Item -LiteralPath '%APP%').LastWriteTime; ^
-   $roots=@('src','app\src','app\src-tauri\src','app\src-tauri\tauri.conf.json'); ^
-   $files=foreach($r in $roots){ if(Test-Path -LiteralPath $r){ Get-ChildItem -LiteralPath $r -Recurse -File -ErrorAction SilentlyContinue } }; ^
-   $newest=$files | Where-Object { $_.Extension -in '.py','.tsx','.ts','.css','.rs' -or $_.Name -eq 'tauri.conf.json' } | Sort-Object LastWriteTime -Descending | Select-Object -First 1; ^
-   if($newest -and $newest.LastWriteTime -gt $app){ $newest.FullName }"`) do set "NEWEST=%%N"
+for /f "usebackq delims=" %%N in (`powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\newest_source.ps1" -AppExe "%APP%"`) do set "NEWEST=%%N"
 
 if not defined NEWEST goto launch
 
-echo [WARN] The source is newer than the build.
+REM Plain `goto`, not `if defined NEWEST ( ... )`. Quoted text inside a
+REM parenthesised block is read as the block's own delimiters, and a file that
+REM does not parse fails silently enough to look like the launcher doing
+REM nothing at all.
+echo [WARN] The source is newer than the build. Running the older build.
 echo        Newest source: %NEWEST%
-echo.
-echo        You are about to run an older build. That is fine if you have not
-echo        changed anything since the last "Build TONYAgent.bat".
-echo.
-set /p "ANSWER=Start the existing build anyway? [y/N] "
-if /i not "%ANSWER%"=="y" (
-    echo.
-    echo Not starting. Run "Build TONYAgent.bat" to rebuild from source.
-    pause
-    endlocal
-    exit /b 0
-)
+echo        To pick the source up, run Build TONYAgent.bat once.
 echo.
 
 :launch
