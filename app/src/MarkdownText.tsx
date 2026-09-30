@@ -10,7 +10,7 @@
  */
 
 import { useMemo } from "react";
-import { parseMarkdown, type Block, type Inline } from "./markdown";
+import { parseMarkdown, type Block, type Inline } from "./markdown.js";
 
 function Inlines({ nodes }: { nodes: Inline[] }) {
   return (

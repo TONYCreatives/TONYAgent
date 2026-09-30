@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatMessage } from "./events";
-import { MarkdownText } from "./MarkdownText";
+import type { ChatMessage } from "./events.js";
+import { MarkdownText } from "./MarkdownText.js";
 
 interface Props {
   messages: ChatMessage[];

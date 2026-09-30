@@ -15,15 +15,21 @@
 
 import "./test-dom.js";
 import assert from "node:assert/strict";
-import { afterEach, describe, test } from "node:test";
+import { describe, test } from "node:test";
 
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-
+import { ConversationList, type ConversationSummary } from "./ConversationList.js";
 import {
-  ConversationList,
-  type ConversationSummary,
-} from "./ConversationList.js";
+  all,
+  blur,
+  click,
+  contextMenu,
+  one,
+  pointerDown,
+  press,
+  render,
+  setValue,
+  texts,
+} from "./test-render.js";
 import { dom } from "./test-dom.js";
 
 const { window } = dom;
@@ -48,21 +54,35 @@ interface Handlers {
   onDuplicate: (id: string) => void;
 }
 
-let root: Root | null = null;
-let calls: Handlers & { renamed: [string, string][]; opened: string[]; deleted: string[]; duplicated: string[]; news: number };
+let calls: Handlers & {
+  renamed: [string, string][];
+  opened: string[];
+  deleted: string[];
+  duplicated: string[];
+  news: number;
+};
 
-/** Mount the list and return its container. Cleaned up after each test. */
-async function render(rows: ConversationSummary[], active = ""): Promise<HTMLElement> {
-  const container = window.document.createElement("div");
-  window.document.body.appendChild(container);
-  root = createRoot(container);
-
+/** Mount the list. Cleaned up after each test by the shared harness. */
+async function renderList(
+  rows: ConversationSummary[],
+  active = "",
+): Promise<HTMLElement> {
   calls = {
-    onNew: () => { calls.news += 1; },
-    onOpen: (id) => { calls.opened.push(id); },
-    onDelete: (id) => { calls.deleted.push(id); },
-    onRename: (id, title) => { calls.renamed.push([id, title]); },
-    onDuplicate: (id) => { calls.duplicated.push(id); },
+    onNew: () => {
+      calls.news += 1;
+    },
+    onOpen: (id) => {
+      calls.opened.push(id);
+    },
+    onDelete: (id) => {
+      calls.deleted.push(id);
+    },
+    onRename: (id, title) => {
+      calls.renamed.push([id, title]);
+    },
+    onDuplicate: (id) => {
+      calls.duplicated.push(id);
+    },
     renamed: [],
     opened: [],
     deleted: [],
@@ -70,88 +90,35 @@ async function render(rows: ConversationSummary[], active = ""): Promise<HTMLEle
     news: 0,
   };
 
-  await act(async () => {
-    root!.render(
-      <ConversationList
-        conversations={rows}
-        active={active}
-        busy={false}
-        connected
-        {...calls}
-      />,
-    );
-  });
-  return container;
+  return render(
+    <ConversationList
+      conversations={rows}
+      active={active}
+      busy={false}
+      connected
+      {...calls}
+    />,
+  );
 }
 
-afterEach(async () => {
-  if (root) {
-    const current = root;
-    root = null;
-    await act(async () => { current.unmount(); });
-  }
-  window.document.body.innerHTML = "";
-});
-
-const rows = (container: HTMLElement) =>
-  [...container.querySelectorAll(".chatrow")] as HTMLElement[];
-
-const titles = (container: HTMLElement) =>
-  [...container.querySelectorAll(".chatrow-title")].map((n) => n.textContent);
-
+const rows = (container: HTMLElement) => all(container, ".chatrow");
+const titles = (container: HTMLElement) => texts(container, ".chatrow-title");
 const input = (container: HTMLElement) =>
-  container.querySelector(".chatrow-input") as HTMLInputElement | null;
+  one(container, ".chatrow-input") as HTMLInputElement | null;
 
 const menuItems = (container: HTMLElement) =>
-  [...container.querySelectorAll(".rowmenu [role='menuitem']")].map(
-    (n) => n.textContent,
-  );
+  texts(container, ".rowmenu [role='menuitem']");
 
 async function rightClick(row: HTMLElement): Promise<void> {
-  await act(async () => {
-    row.dispatchEvent(
-      new window.MouseEvent("contextmenu", {
-        bubbles: true,
-        clientX: 40,
-        clientY: 20,
-      }),
-    );
-  });
+  await contextMenu(row);
 }
 
 async function chooseMenuItem(container: HTMLElement, label: string): Promise<void> {
-  const item = [...container.querySelectorAll(".rowmenu [role='menuitem']")].find(
+  const item = all(container, ".rowmenu [role='menuitem']").find(
     (n) => n.textContent === label,
-  ) as HTMLElement;
+  );
   assert.ok(item, `no "${label}" in the menu`);
-  await act(async () => { item.click(); });
-}
-
-/**
- * Type into the rename field the way a person does.
- *
- * Assigning `input.value` does not notify React -- it patches the DOM node's
- * own property, and React listens for the `input` event -- so the native
- * setter has to be used, exactly as a browser would.
- */
-async function type(value: string): Promise<void> {
-  const field = input(document.body) as HTMLInputElement;
-  const setter = Object.getOwnPropertyDescriptor(
-    window.HTMLInputElement.prototype,
-    "value",
-  )!.set!;
-  await act(async () => {
-    setter.call(field, value);
-    field.dispatchEvent(new window.Event("input", { bubbles: true }));
-  });
-}
-
-async function press(key: string, field: HTMLElement): Promise<void> {
-  await act(async () => {
-    field.dispatchEvent(
-      new window.KeyboardEvent("keydown", { key, bubbles: true }),
-    );
-  });
+  await click(item);
 }
 
 async function openEditor(container: HTMLElement, index = 0): Promise<HTMLInputElement> {
@@ -165,7 +132,7 @@ async function openEditor(container: HTMLElement, index = 0): Promise<HTMLInputE
 // --- the menu -------------------------------------------------------------
 describe("the row menu", () => {
   test("a right-click offers rename, duplicate and delete", async () => {
-    const container = await render([conversation()]);
+    const container = await renderList([conversation()]);
     await rightClick(rows(container)[0]);
     assert.deepEqual(menuItems(container), ["Rename", "Duplicate", "Delete"]);
   });
@@ -173,45 +140,39 @@ describe("the row menu", () => {
   test("it opens on the row that was clicked, not the first one", async () => {
     const first = conversation();
     const second = conversation({ id: "b".repeat(32), title: "Second" });
-    const container = await render([first, second]);
+    const container = await renderList([first, second]);
     await rightClick(rows(container)[1]);
     await chooseMenuItem(container, "Duplicate");
     assert.deepEqual(calls.duplicated, [second.id]);
   });
 
   test("the ... button opens the same menu, for anyone not holding a mouse", async () => {
-    const container = await render([conversation()]);
-    const more = container.querySelector(".chatrow-more") as HTMLElement;
+    const container = await renderList([conversation()]);
+    const more = one(container, ".chatrow-more");
     assert.ok(more, "the row has no keyboard-reachable trigger");
-    await act(async () => { more.click(); });
+    await click(more);
     assert.deepEqual(menuItems(container), ["Rename", "Duplicate", "Delete"]);
   });
 
   test("escape closes it without acting", async () => {
-    const container = await render([conversation()]);
+    const container = await renderList([conversation()]);
     await rightClick(rows(container)[0]);
-    await act(async () => {
-      window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape" }));
-    });
-    assert.equal(container.querySelector(".rowmenu"), null);
+    await press("Escape");
+    assert.equal(one(container, ".rowmenu"), null);
     assert.deepEqual(calls.renamed, []);
     assert.deepEqual(calls.deleted, []);
   });
 
   test("pressing elsewhere closes it", async () => {
-    const container = await render([conversation()]);
+    const container = await renderList([conversation()]);
     await rightClick(rows(container)[0]);
-    assert.ok(container.querySelector(".rowmenu"));
-    await act(async () => {
-      window.document.body.dispatchEvent(
-        new window.Event("pointerdown", { bubbles: true }),
-      );
-    });
-    assert.equal(container.querySelector(".rowmenu"), null);
+    assert.ok(one(container, ".rowmenu"));
+    await pointerDown(window.document.body);
+    assert.equal(one(container, ".rowmenu"), null);
   });
 
   test("delete removes the row it was opened on", async () => {
-    const container = await render([conversation()]);
+    const container = await renderList([conversation()]);
     await rightClick(rows(container)[0]);
     await chooseMenuItem(container, "Delete");
     assert.deepEqual(calls.deleted, [conversation().id]);
@@ -221,43 +182,43 @@ describe("the row menu", () => {
 // --- the inline editor ----------------------------------------------------
 describe("renaming a conversation", () => {
   test("it opens holding the current title, focused", async () => {
-    const container = await render([conversation({ title: "What I said" })]);
+    const container = await renderList([conversation({ title: "What I said" })]);
     const field = await openEditor(container);
     assert.equal(field.value, "What I said");
     assert.equal(window.document.activeElement, field);
-    assert.equal(container.querySelector(".chatrow-title"), null);
+    assert.equal(one(container, ".chatrow-title"), null);
   });
 
   test("enter saves the new title and closes the editor", async () => {
-    const container = await render([conversation()]);
+    const container = await renderList([conversation()]);
     const field = await openEditor(container);
-    await type("Invoice questions");
+    await setValue(field, "Invoice questions");
     await press("Enter", field);
     assert.deepEqual(calls.renamed, [[conversation().id, "Invoice questions"]]);
     assert.equal(input(container), null);
   });
 
   test("blur saves too, because clicking away is also finishing", async () => {
-    const container = await render([conversation()]);
+    const container = await renderList([conversation()]);
     const field = await openEditor(container);
-    await type("Clicked away");
-    await act(async () => { field.blur(); });
+    await setValue(field, "Clicked away");
+    await blur(field);
     assert.deepEqual(calls.renamed, [[conversation().id, "Clicked away"]]);
     assert.equal(input(container), null);
   });
 
   test("surrounding whitespace is trimmed off the name", async () => {
-    const container = await render([conversation()]);
+    const container = await renderList([conversation()]);
     const field = await openEditor(container);
-    await type("   Padded   ");
+    await setValue(field, "   Padded   ");
     await press("Enter", field);
     assert.deepEqual(calls.renamed, [[conversation().id, "Padded"]]);
   });
 
   test("escape abandons the edit and keeps the old title", async () => {
-    const container = await render([conversation({ title: "Keep me" })]);
+    const container = await renderList([conversation({ title: "Keep me" })]);
     const field = await openEditor(container);
-    await type("Discarded");
+    await setValue(field, "Discarded");
     await press("Escape", field);
     assert.deepEqual(calls.renamed, []);
     assert.equal(input(container), null);
@@ -265,9 +226,9 @@ describe("renaming a conversation", () => {
   });
 
   test("a blank name is refused and what was typed is not thrown away", async () => {
-    const container = await render([conversation({ title: "Untouched" })]);
+    const container = await renderList([conversation({ title: "Untouched" })]);
     const field = await openEditor(container);
-    await type("");
+    await setValue(field, "");
     await press("Enter", field);
     assert.deepEqual(calls.renamed, [], "a blank name must not be saved");
     assert.ok(input(container), "the editor closed on a refused name");
@@ -275,11 +236,11 @@ describe("renaming a conversation", () => {
   });
 
   test("a name of only spaces is refused the same way", async () => {
-    const container = await render([conversation({ title: "Untouched" })]);
+    const container = await renderList([conversation({ title: "Untouched" })]);
     const field = await openEditor(container);
-    await type("   \t  ");
+    await setValue(field, "   \t  ");
     await press("Enter", field);
-    assert.deepEqual(calls.renamed, []);
+    assert.deepEqual(calls.renamed, [], "a blank name must not be saved");
     assert.ok(input(container), "the editor closed on a refused name");
     assert.deepEqual(titles(container), []);
   });
@@ -290,18 +251,18 @@ describe("renaming a conversation", () => {
      * screen. That looks exactly like a rename that worked, and the user has no
      * way to tell their name was dropped.
      */
-    const container = await render([conversation({ title: "Untouched" })]);
+    const container = await renderList([conversation({ title: "Untouched" })]);
     const field = await openEditor(container);
-    await type("  ");
+    await setValue(field, "  ");
     await press("Enter", field);
     assert.ok(input(container), "the row fell back to the old title");
-    assert.equal(container.querySelector(".chatrow-title"), null);
+    assert.equal(one(container, ".chatrow-title"), null);
   });
 
   test("escape after a refused name still cancels cleanly", async () => {
-    const container = await render([conversation({ title: "Untouched" })]);
+    const container = await renderList([conversation({ title: "Untouched" })]);
     const field = await openEditor(container);
-    await type("");
+    await setValue(field, "");
     await press("Enter", field);
     await press("Escape", field);
     assert.deepEqual(calls.renamed, []);
@@ -309,9 +270,9 @@ describe("renaming a conversation", () => {
   });
 
   test("a name in another language survives the round trip", async () => {
-    const container = await render([conversation()]);
+    const container = await renderList([conversation()]);
     const field = await openEditor(container);
-    await type("코어 동작 설명");
+    await setValue(field, "코어 동작 설명");
     await press("Enter", field);
     assert.deepEqual(calls.renamed, [[conversation().id, "코어 동작 설명"]]);
   });

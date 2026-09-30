@@ -42,10 +42,25 @@ for (const name of [
   "Element",
   "HTMLElement",
   "HTMLInputElement",
+  "HTMLSelectElement",
   "HTMLButtonElement",
 ]) {
   globals[name] = (dom.window as unknown as Record<string, unknown>)[name];
 }
+
+/**
+ * `scrollIntoView` is a no-op stub, not a missing method.
+ *
+ * `MessageList` pins the transcript to the bottom by calling it on a real
+ * element in an effect. The optional chain there guards the *element* being
+ * null, not the method being undefined -- so without this stub the first render
+ * of a transcript throws a TypeError from inside an effect, which React reports
+ * as a broken component rather than as a test-harness gap. jsdom implements no
+ * layout, so there is no scroll position for it to honour anyway.
+ */
+dom.window.Element.prototype.scrollIntoView = function scrollIntoView(): void {
+  /* nothing to scroll: jsdom has no layout engine */
+};
 
 // `navigator` is a read-only getter on modern Node, so a plain assignment
 // throws. React does not read it for rendering, but jsdom's own focus and
