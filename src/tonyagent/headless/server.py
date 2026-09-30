@@ -516,6 +516,19 @@ def build_session() -> AgentSession:
     session = AgentSession()
     try:
         from tonyagent.config import load_config
+        from tonyagent.config.migration import get_config_path
+
+        # Log which file this is reading. `get_config_dir` resolves `APPDATA`,
+        # and on Windows that value is *different processes' answers to the
+        # question*: a Microsoft Store Python redirects it under
+        # `AppData\Local\Packages\...\LocalCache\Roaming`, while the
+        # packaged sidecar gets the real one. So a launch can report "no saved
+        # provider" while a perfectly good config sits a directory away, and
+        # nothing on screen says which file was asked for.
+        try:
+            logger.info(f"Reading provider selection from {get_config_path()}")
+        except Exception:  # noqa: BLE001 - the path is a diagnostic, not a gate
+            pass
 
         provider = load_config().get("provider") or {}
         name = str(provider.get("name") or "").strip()

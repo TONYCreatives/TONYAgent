@@ -21,6 +21,9 @@ import tomli_w
 from tonyagent.config import migration
 from tonyagent.headless.server import build_session
 
+# Spelled out so the literal newline never has to survive an escape layer.
+NEWLINE = chr(10)
+
 
 @pytest.fixture
 def isolated_config(tmp_path, monkeypatch):
@@ -189,3 +192,32 @@ def test_the_restored_session_can_be_driven_over_the_wire(isolated_config):
     assert state["provider"] == "openrouter"
     assert state["model"] == "stealth/space-bunny-alpha"
     assert state["base_url"] == ""
+
+def test_startup_logs_which_config_file_it_read(isolated_config):
+    """The path is the whole diagnosis when a restore silently finds nothing.
+
+    ``get_config_dir`` resolves ``APPDATA``, and on Windows that is not one
+    answer for all processes: a Microsoft Store Python is redirected under
+    ``AppData/Local/Packages/.../LocalCache/Roaming`` while the packaged
+    sidecar is not. That divergence produced a launch reporting "no saved
+    provider" with a perfectly good config one directory away, and nothing on
+    screen said which file was asked for. The log line is the fix; this keeps it
+    from being removed later as noise.
+    """
+    from loguru import logger
+
+    seen = []
+
+    def capture(message):
+        seen.append(str(message))
+
+    logger.add(capture, level="INFO")
+    try:
+        build_session()
+    finally:
+        logger.remove()
+
+    joined = NEWLINE.join(seen)
+    assert str(isolated_config) in joined, (
+        "startup never named the config file it read: " + joined
+    )

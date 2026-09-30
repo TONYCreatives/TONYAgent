@@ -5,7 +5,7 @@
 tools no longer need a daemon; see 1.12)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 403 passed, TypeScript 54 passed,
+protocol method.** Everything green: **Python 404 passed, TypeScript 54 passed,
 Tauri MSI + NSIS installers produced.**
 
 Five phases of work landed since the MSVC blocker was cleared:
@@ -43,7 +43,7 @@ Tauri one is new and thinner (chat, sandbox status, confirmations).
 
 ```bash
 python -m compileall -q src            # syntax
-python -m pytest tests -q              # 403 passed
+python -m pytest tests -q              # 404 passed
 python scripts/check_all.py --fast     # 3 checks incl. GUI launch
 python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refusals (no sandbox needed)
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
@@ -139,6 +139,7 @@ correct and silently did nothing.
 | **"Request URL is missing an 'http://' or 'https://' protocol"** | a scheme-less Base URL ("openrouter.ai/api/v1") surfaced as a network error on the first message, with a hint about VPNs and firewalls | the value was passed straight to httpx as the request URL. `LLMClient` only substitutes the dialect's default when the base URL is *empty* | `normalize_base_url()` rejects a scheme-less value at bind time with an actionable message and strips a trailing slash |
 | **The test suite overwrote the user's own config.toml** | after Phase A made `bind_provider` persist, running the suite silently reset the saved model to `openrouter/auto` and pointed the next launch at `https://gateway.internal/v1` | `test_bind_provider_reports_a_custom_base_url_and_state_remembers_it` drives the *real* handler, so it is a real writer -- and only the two persistence test files redirected `get_config_path`. There was no `tests/conftest.py` at all, so nothing made it structurally impossible, and a green suite is not a warning | a session-wide autouse fixture redirects `migration.get_config_path`; a test asserts the real file's bytes are unchanged across a real bind. The per-test fixtures stayed: they exist to *inspect* the file, not merely to survive writing it |
 | **A fresh sidecar reported a provider it had not bound** | the status bar showed `openrouter / openrouter/auto` while every message was rejected `no provider configured` | `_h_state` echoed `session.provider_name`, which `AgentSession` sets at construction with `provider = None`. Same user-visible lie as an unsaved key, from the opposite direction -- and it is what made the `gateway.internal` corruption above look like a real setting rather than a bug | `state` reports provider/model/base_url only when `provider is not None`, plus an explicit `bound` flag; the status bar turns "not bound" into a clickable prompt. The frontend's startup rebind, which existed only to paper over this, is gone |
+| **Two processes, two `config.toml` files** | the app launched reporting `No saved provider; starting unbound` while a correct config existed, and pressing Apply in Settings wrote a 101-byte file containing only `[provider]` -- the user's allowlist, theme and sandbox settings were nowhere in it | `get_config_dir()` resolves `APPDATA`, and on Windows that is **not one answer for all processes**. A Microsoft Store Python is a *packaged* app, so Windows redirects it to `AppData\Local\Packages\PythonSoftwareFoundation...\LocalCache\Roaming`; the PyInstaller sidecar is not packaged and gets the real `AppData\Roaming`. Every shell command and every pytest run in this repo therefore edited a file the app never reads -- and it is invisible because both files are valid, both are called `config.toml`, and the failure looks exactly like "nothing was ever saved" | the full settings were merged into the app's real config; `build_session` now logs the path it reads, so the divergence is visible in the log strip instead of needing a filesystem search; a test asserts the log names the file. **Any future store-vs-app config discrepancy: check `AppData\Local\Packages\*\LocalCache\Roaming` before concluding data was lost** |
 | **A failed turn left an empty assistant bubble** | with a rejected key the error banner rendered correctly *and* an empty bubble sat under it, so the transcript read as a broken UI | `turn.started` creates the assistant bubble eagerly so the first delta has a home, and `turn.finished` dropped a placeholder the core never wrote to. `turn.failed` and `error` did not -- and those are the paths a new user hits first, because a wrong key is the first thing a new user has | one `dropEmptyAssistantMessages` helper called by all three terminal events. Found by driving the **packaged** app with a credit-exhausted key, not by a test |
 
 The pattern worth keeping: **the sidecar's stderr is the only place core-side
@@ -396,7 +397,7 @@ open the one that looks relevant" is a normal request), so the turn now loops:
     an assistant note ("Tool results are above..." plus one `[result N]` per
     round), and leaves turns that produced a real answer untouched.
 
-Verified: Python 403 passed, TS 54, `tsc --noEmit` clean, sidecar rebuilt.
+Verified: Python 404 passed, TS 54, `tsc --noEmit` clean, sidecar rebuilt.
 Still unproven live: a multi-round turn in the packaged app, and Markdown
 rendering of a real reply.
 
