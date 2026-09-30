@@ -123,3 +123,52 @@ def test_a_typed_model_id_round_trips(isolated_config):
     _write(isolated_config, {"provider": {"name": "openrouter"}})
     migration.save_provider_selection("openrouter", typed, "")
     assert migration.load_config()["provider"]["model"] == typed
+
+
+# --- the leak the per-test fixture could not stop --------------------------
+#
+# `bind_provider` writes config.toml, so any test driving the real handler over
+# the wire was a writer to the user's own file. That is the wrong altitude for a
+# hazard that reaches outside the test suite, hence the session-wide redirect in
+# tests/conftest.py. The test below is what makes the guard load-bearing.
+
+
+def _bind_over_the_wire(name: str, model: str, base_url: str = "") -> None:
+    """Drive the real handler, persistence included."""
+    import asyncio
+    import io
+    import json
+
+    from tonyagent.core.events import EventBus
+    from tonyagent.core.session import AgentSession
+    from tonyagent.headless.server import StdioServer
+
+    newline = chr(10)
+    request = {"id": 1, "method": "bind_provider",
+               "params": {"name": name, "model": model, "base_url": base_url}}
+    asyncio.run(StdioServer(AgentSession(bus=EventBus()),
+                            io.StringIO(json.dumps(request) + newline),
+                            io.StringIO()).serve())
+
+
+def test_driving_the_real_handler_never_touches_the_users_config_file():
+    """Regression: the test suite overwrote the user's saved provider.
+
+    ``test_bind_provider_reports_a_custom_base_url_and_state_remembers_it`` sends
+    a real ``bind_provider`` frame, so the handler persisted it -- and that test
+    had no idea config.toml was reachable. The user's saved model was replaced by
+    a provider default and their next launch pointed at
+    ``https://gateway.internal/v1``.
+
+    Asserted against the real path rather than a stand-in, because the stand-in
+    is exactly what the bug was: nobody thought to look at the real one.
+    """
+    from tonyagent.config.settings import settings
+
+    user_config = settings.get_config_dir() / "config.toml"
+    before = user_config.read_bytes() if user_config.exists() else None
+
+    _bind_over_the_wire("openrouter", "a/model", "https://gateway.internal/v1")
+
+    after = user_config.read_bytes() if user_config.exists() else None
+    assert after == before, "a test wrote the user's own config.toml"
