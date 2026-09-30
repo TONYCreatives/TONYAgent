@@ -21,7 +21,6 @@ interface Props {
   /** Fully open: wide rail with text labels. Closed is the icon strip. */
   expanded: boolean;
   onToggle: () => void;
-  onNewChat: () => void;
   onClear: () => void;
   onCancel: () => void;
   onSettings: () => void;
@@ -48,7 +47,6 @@ function Icon({ children }: { children: ReactNode }) {
 }
 
 const PATHS = {
-  newChat: "M12 5v14M5 12h14",
   clear: "M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6",
   stop: "M6 6h12v12H6z",
   search: "M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16zM21 21l-4.3-4.3",
@@ -88,7 +86,6 @@ export function IconRail({
   messageCount,
   expanded,
   onToggle,
-  onNewChat,
   onClear,
   onCancel,
   onSettings,
@@ -99,14 +96,9 @@ export function IconRail({
   // choice. The panel already covers the project folder and the sandbox together
   // -- both are "what is this window working on" -- so one entry says that once.
   // Search keeps its own panel because it is a query with results, not a setting.
+  // No "New chat" entry: the conversation list directly above owns that action,
+  // and two controls for one action is duplication rather than choice.
   const items: Item[] = [
-    {
-      key: "new",
-      icon: <path d={PATHS.newChat} />,
-      label: "New chat",
-      onClick: onNewChat,
-      disabled: !connected || busy,
-    },
     {
       key: "clear",
       icon: <path d={PATHS.clear} />,

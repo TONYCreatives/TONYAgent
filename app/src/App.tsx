@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TauriBackend } from "./backend";
 import { applyEvent, appendUserMessage, initialState, type ChatState } from "./events";
+import type { ChatMessage, Role } from "./events";
 import { Composer, type ModeInfo } from "./Composer";
 import { ConfirmDialog } from "./ConfirmDialog";
+import {
+  ConversationList,
+  type ConversationSummary,
+} from "./ConversationList";
 import { pickFolder } from "./dialog";
 import { FileSidebar, type TreeEntry } from "./FileSidebar";
 import { IconRail } from "./IconRail";
@@ -35,6 +40,8 @@ export function App() {
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [conversation, setConversation] = useState("");
   const [modes, setModes] = useState<ModeInfo[]>([]);
   const [mode, setMode] = useState("build");
   /**
@@ -190,6 +197,7 @@ export function App() {
           bound?: boolean;
           project?: string;
           mode?: string;
+          conversation?: string;
         };
         // Provider names come from the core's registry. A local copy would
         // drift the moment a provider is added or renamed, and the panel would
@@ -204,6 +212,8 @@ export function App() {
         setProject(snapshot.project ?? "");
         setProviders(listed.providers ?? []);
         setMode(snapshot.mode ?? "build");
+        if (snapshot.conversation) setConversation(snapshot.conversation);
+        await refreshConversations();
         // Modes come from the core for the same reason providers do: a pill
         // list hardcoded here would drift from the tool allow-lists behind
         // it, and the user would be offered a mode that does not exist.
@@ -285,9 +295,116 @@ export function App() {
       });
   }, []);
 
-  // "New chat" and "clear" are the same operation for a single-conversation
-  // app: there is no session list yet, so a new chat *is* a cleared one.
-  const newChat = clear;
+  /**
+   * Re-read the list from the core.
+   *
+   * The core decides what exists, so the list is always fetched rather than
+   * patched locally. A locally-maintained copy would have to be updated on
+   * create, switch, delete *and* every turn that retitles a conversation, and
+   * the one path someone forgets is the one that leaves a stale row on screen
+   * pointing at a conversation that no longer exists.
+   */
+  const refreshConversations = useCallback(async () => {
+    const listed = (await backendRef.current!.call("conversations.list")) as {
+      conversations?: ConversationSummary[];
+    };
+    setConversations(listed.conversations ?? []);
+  }, []);
+
+  /** Replace the transcript with a conversation's saved messages. */
+  const showMessages = useCallback((raw: unknown[]) => {
+    const restored: ChatMessage[] = [];
+    (raw ?? []).forEach((entry, index) => {
+      const message = entry as { role?: string; content?: string | null };
+      if (!message.role) return;
+      // Tool turns come back as assistant text rather than reconstructed tool
+      // cards. Their results are already flattened into the transcript by the
+      // core, and a tool call with no card behind it would render as an
+      // orphaned heading for work that already happened.
+      const role: Role = message.role === "user" ? "user" : "assistant";
+      restored.push({
+        id: `restored-${index}`,
+        role,
+        text: message.content ?? "",
+        tools: [],
+      });
+    });
+    setState((prev) => ({
+      ...prev,
+      messages: restored,
+      error: null,
+      busy: false,
+    }));
+  }, []);
+
+  /**
+   * Open a conversation, or start a new one.
+   *
+   * Both clear the view first. The core swaps the session underneath us, and
+   * the window would otherwise keep showing the old transcript until the reply
+   * arrives -- so a click that worked still looks broken while it works.
+   */
+  const openConversation = useCallback(
+    async (id: string) => {
+      setState((prev) => ({ ...prev, error: null, busy: true }));
+      try {
+        const result = (await backendRef.current!.call("conversations.switch", {
+          id,
+        })) as {
+          conversation?: ConversationSummary;
+          messages?: unknown[];
+        };
+        showMessages(result.messages ?? []);
+        if (result.conversation) setConversation(result.conversation.id);
+        await refreshConversations();
+      } catch (error: unknown) {
+        setState((prev) => ({
+          ...prev,
+          busy: false,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      }
+    },
+    [showMessages, refreshConversations],
+  );
+
+  const createConversation = useCallback(async () => {
+    setState((prev) => ({ ...prev, error: null, busy: true }));
+    try {
+      const result = (await backendRef.current!.call("conversations.create")) as {
+        conversation?: ConversationSummary;
+      };
+      showMessages([]);
+      if (result.conversation) setConversation(result.conversation.id);
+      await refreshConversations();
+    } catch (error: unknown) {
+      setState((prev) => ({
+        ...prev,
+        busy: false,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    }
+  }, [showMessages, refreshConversations]);
+
+  const deleteConversation = useCallback(
+    async (id: string) => {
+      try {
+        await backendRef.current!.call("conversations.delete", { id });
+        // Deleting the open conversation leaves the window on nothing, which
+        // reads as a failure rather than as the result that was asked for, so
+        // the core clears the transcript and we open a fresh one to replace the
+        // row the user just removed.
+        if (id === conversation) {
+          setConversation("");
+          setState((prev) => ({ ...prev, messages: [], error: null }));
+        }
+        await refreshConversations();
+      } catch (error: unknown) {
+        setSettingsError(error instanceof Error ? error.message : String(error));
+      }
+    },
+    [conversation, refreshConversations],
+  );
 
   /**
    * Point the sandbox at a folder the user picked.
@@ -488,13 +605,22 @@ export function App() {
 
   return (
     <div className={`app${railExpanded ? " rail-open" : ""}`}>
+      <div className={`sidecol${railExpanded ? " rail-open" : ""}`}>
+        <ConversationList
+          conversations={conversations}
+          active={conversation}
+          busy={state.busy}
+          connected={connected}
+          onNew={createConversation}
+          onOpen={(id) => void openConversation(id)}
+          onDelete={(id) => void deleteConversation(id)}
+        />
       <IconRail
         connected={connected}
         busy={state.busy}
         messageCount={state.messages.length}
         expanded={railExpanded}
         onToggle={() => setRailExpanded((open) => !open)}
-        onNewChat={newChat}
         onClear={clear}
         onCancel={cancel}
         onSettings={() => {
@@ -503,6 +629,7 @@ export function App() {
         }}
         onSearch={() => setSearchOpen(true)}
       />
+      </div>
 
       <div className="main">
         <TopBar busy={state.busy} />

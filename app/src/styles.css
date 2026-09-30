@@ -53,7 +53,14 @@
   --warn: #c9a45f;
 
   --rail-w: 70px;
-  --rail-w-expanded: 204px;
+  /*
+   * The expanded column holds conversation titles above the rail's labels, and
+   * at 204px a title got about 24 characters -- which truncated every row to
+   * "Explain the sidecar stdi…". The width is set by the list now, not by the
+   * icons, because a truncated title is useless in the one place where the
+   * title is the entire content.
+   */
+  --rail-w-expanded: 236px;
   --topbar-h: 42px;
   --sidebar-w: 425px;
 
@@ -183,6 +190,23 @@ body {
   grid-template-columns: var(--rail-w-expanded) minmax(0, 1fr) auto;
 }
 
+/*
+ * The conversation list and the icon rail are one column, not two. They are the
+ * same "what can I do here" region split by weight -- history above, actions
+ * below -- and giving each its own track meant the rail could not keep its
+ * width while the list grew.
+ */
+.sidecol {
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  border-right: 1px solid var(--border-soft);
+}
+
 .main {
   display: flex;
   flex-direction: column;
@@ -198,17 +222,161 @@ body {
   grid-column: 2;
 }
 
+/* --- conversation list ---------------------------------------------------- */
+
+/*
+ * Above the rail, not replacing it. The rail is "what can I do" and the list is
+ * "what did I do"; stacking them keeps one place to look, and neither has to be
+ * collapsed to see the other.
+ */
+/*
+ * Hidden while the rail is collapsed. At 70px a conversation title has room for
+ * about six characters, so a list there is not a compact list -- it is a column
+ * of unreadable slivers, and it costs the icons their window. The rail's own
+ * toggle is the way back in.
+ */
+.sidecol:not(.rail-open) .chatlist {
+  display: none;
+}
+
+.chatlist {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* The list takes what it needs; the rail below keeps the rest. Without a cap
+     a hundred conversations push the actions off the bottom of the window. */
+  max-height: 45%;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.chatlist-new {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 10px 10px 8px;
+  padding: 0 10px;
+  height: 34px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.chatlist-new:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--border-strong, var(--border));
+}
+
+.chatlist-new:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.chatlist-empty {
+  padding: 0 14px 8px;
+}
+
+.chatlist-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 8px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.chatrow {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  border-radius: var(--radius-sm);
+}
+
+.chatrow:hover {
+  background: var(--hover);
+}
+
+.chatrow.is-active {
+  background: var(--raised);
+}
+
+.chatrow-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  border: 0;
+  background: none;
+  color: var(--fg-mute);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.chatrow-open:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.chatrow.is-active .chatrow-open {
+  color: var(--fg);
+}
+
+.chatrow-title {
+  font-size: 12.5px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chatrow-meta {
+  font-size: 10.5px;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Delete sits on the row rather than in a menu. A menu would put the only way
+ * to remove a conversation behind two clicks, and removing one is the thing
+ * people need most once the list is long.
+ */
+.chatrow-delete {
+  flex: none;
+  width: 26px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+
+.chatrow:hover .chatrow-delete,
+.chatrow-delete:focus-visible {
+  opacity: 1;
+}
+
+.chatrow-delete:hover {
+  color: var(--danger);
+}
+
 /* --- icon rail ----------------------------------------------------------- */
 
 .rail {
-  grid-column: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
   padding: 10px 0;
-  background: var(--bg);
-  border-right: 1px solid var(--border-soft);
   overflow: hidden;
   width: var(--rail-w);
   /*

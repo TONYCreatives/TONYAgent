@@ -76,6 +76,17 @@ export interface CoreMethods {
    */
   "key.save": { provider: string; api_key: string };
   "key.delete": { provider: string };
+  /**
+   * Conversations.
+   *
+   * Summaries only in `list`: a list row renders a title and a timestamp, so
+   * shipping every transcript to draw a sidebar would move the whole history
+   * across the pipe on every launch.
+   */
+  "conversations.list": Record<string, never>;
+  "conversations.create": { project?: string };
+  "conversations.switch": { id: string };
+  "conversations.delete": { id: string };
   /** Available composer modes and which one is in force. */
   "mode.list": Record<string, never>;
   "mode.set": { mode: string };
