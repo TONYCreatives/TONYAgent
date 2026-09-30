@@ -10,7 +10,15 @@
  * Rows carry a title and a timestamp and nothing else. The transcripts live in
  * the core; pulling them here to render a sidebar would mean moving every
  * conversation's full history to the window on every launch.
+ *
+ * The row menu (rename / duplicate / delete) is the whole management surface.
+ * Right-click is how you get at it, and the "..." button is the same menu for
+ * anyone not holding a mouse button -- a right-click-only control cannot be
+ * reached from the keyboard at all, which would make deleting a conversation
+ * impossible for exactly the people most likely to have a long list of them.
  */
+
+import { useEffect, useRef, useState } from "react";
 
 export interface ConversationSummary {
   id: string;
@@ -30,6 +38,8 @@ interface Props {
   onNew: () => void;
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
+  onRename: (id: string, title: string) => void;
+  onDuplicate: (id: string) => void;
 }
 
 /**
@@ -53,6 +63,12 @@ function when(timestamp: number): string {
   return new Date(timestamp * 1000).toLocaleDateString();
 }
 
+interface Menu {
+  id: string;
+  x: number;
+  y: number;
+}
+
 export function ConversationList({
   conversations,
   active,
@@ -61,7 +77,69 @@ export function ConversationList({
   onNew,
   onOpen,
   onDelete,
+  onRename,
+  onDuplicate,
 }: Props) {
+  /** The conversation being renamed, or null. */
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [menu, setMenu] = useState<Menu | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing !== null) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [editing]);
+
+  // The menu is anchored to a click, so anything else that happens closes it:
+  // a click elsewhere, a scroll, Escape, or the window losing focus.
+  useEffect(() => {
+    if (!menu) return;
+    const dismiss = () => setMenu(null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") dismiss();
+    };
+    // Capture, so a click on another row opens that row's menu rather than
+    // being eaten by this one closing.
+    window.addEventListener("pointerdown", dismiss, true);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("blur", dismiss);
+    window.addEventListener("resize", dismiss);
+    return () => {
+      window.removeEventListener("pointerdown", dismiss, true);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("blur", dismiss);
+      window.removeEventListener("resize", dismiss);
+    };
+  }, [menu]);
+
+  const startRename = (conversation: ConversationSummary) => {
+    setEditing(conversation.id);
+    setDraft(conversation.title);
+  };
+
+  /**
+   * Commit the edit, or throw it away.
+   *
+   * A blank name is refused here rather than sent and refused there, so the
+   * input stays open with what was typed: closing it on a rejected save loses
+   * the text, and the title is the only thing identifying the conversation.
+   */
+  const commitRename = (keep: boolean) => {
+    if (editing === null) return;
+    const title = draft.trim();
+    const id = editing;
+    if (keep && title) {
+      setEditing(null);
+      onRename(id, title);
+      return;
+    }
+    if (keep && !title) return; // Blank: stay open, keep the draft.
+    setEditing(null);
+  };
+
   return (
     <nav className="chatlist" aria-label="Conversations">
       <button
@@ -99,51 +177,125 @@ export function ConversationList({
               className={`chatrow${
                 conversation.id === active ? " is-active" : ""
               }`}
+              onContextMenu={(event) => {
+                // The browser's own menu offers "search image for" and
+                // "inspect", neither of which means anything on a title.
+                event.preventDefault();
+                setMenu({ id: conversation.id, x: event.clientX, y: event.clientY });
+              }}
             >
-              <button
-                type="button"
-                className="chatrow-open"
-                onClick={() => onOpen(conversation.id)}
-                disabled={busy}
-                title={conversation.title}
-              >
-                <span className="chatrow-title">{conversation.title}</span>
-                <span className="chatrow-meta">
-                  {when(conversation.updated_at)}
-                  {conversation.message_count > 0 && (
-                    <> · {conversation.message_count}</>
-                  )}
-                </span>
-              </button>
-              {/*
-               * Delete is a second control on the row rather than a menu. A
-               * menu would put the only way to remove a conversation behind two
-               * clicks, and deleting is the operation people need most when a
-               * list gets long.
-               */}
-              <button
-                type="button"
-                className="chatrow-delete"
-                onClick={() => onDelete(conversation.id)}
-                title={`Delete "${conversation.title}"`}
-                aria-label={`Delete ${conversation.title}`}
-              >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.7"
-                  strokeLinecap="round"
-                  aria-hidden="true"
-                >
-                  <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />
-                </svg>
-              </button>
+              {editing === conversation.id ? (
+                <input
+                  ref={inputRef}
+                  className="chatrow-input"
+                  value={draft}
+                  aria-label="Conversation name"
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      commitRename(true);
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      commitRename(false);
+                    }
+                  }}
+                  onBlur={() => commitRename(true)}
+                />
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="chatrow-open"
+                    onClick={() => onOpen(conversation.id)}
+                    disabled={busy}
+                    title={conversation.title}
+                  >
+                    <span className="chatrow-title">{conversation.title}</span>
+                    <span className="chatrow-meta">
+                      {when(conversation.updated_at)}
+                      {conversation.message_count > 0 && (
+                        <> · {conversation.message_count}</>
+                      )}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="chatrow-more"
+                    onClick={(event) => {
+                      const box = event.currentTarget.getBoundingClientRect();
+                      setMenu({
+                        id: conversation.id,
+                        x: box.left,
+                        y: box.bottom + 4,
+                      });
+                    }}
+                    title="Rename, duplicate or delete"
+                    aria-label={`Options for ${conversation.title}`}
+                    aria-haspopup="menu"
+                    aria-expanded={menu?.id === conversation.id}
+                  >
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <circle cx="5" cy="12" r="1.7" />
+                      <circle cx="12" cy="12" r="1.7" />
+                      <circle cx="19" cy="12" r="1.7" />
+                    </svg>
+                  </button>
+                </>
+              )}
             </li>
           ))}
         </ul>
+      )}
+
+      {menu && (
+        <div
+          className="rowmenu"
+          role="menu"
+          style={{ left: menu.x, top: menu.y }}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const target = conversations.find((c) => c.id === menu.id);
+              setMenu(null);
+              if (target) startRename(target);
+            }}
+          >
+            Rename
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const id = menu.id;
+              setMenu(null);
+              onDuplicate(id);
+            }}
+          >
+            Duplicate
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="rowmenu-danger"
+            onClick={() => {
+              const id = menu.id;
+              setMenu(null);
+              onDelete(id);
+            }}
+          >
+            Delete
+          </button>
+        </div>
       )}
     </nav>
   );

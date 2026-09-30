@@ -319,6 +319,19 @@ export function App() {
   }, []);
 
   /**
+   * The name of the open conversation, for the top bar.
+   *
+   * Read out of the list rather than held separately, because the list is
+   * re-fetched from the core after every change -- including a rename, which
+   * means this follows the new name without anyone having to remember to
+   * update a second copy of it.
+   */
+  const activeTitle = useMemo(
+    () => conversations.find((c) => c.id === conversation)?.title ?? "",
+    [conversations, conversation],
+  );
+
+  /**
    * Re-read what the bound model can be asked to think.
    *
    * Called whenever the model can have changed, because the answer belongs to
@@ -474,6 +487,48 @@ export function App() {
       }
     },
     [conversation, refreshConversations],
+  );
+
+  /**
+   * Rename a conversation from the list.
+   *
+   * A rejected name comes back as an error and the row keeps whatever it had:
+   * the core refuses a blank title, and showing the old one is better than
+   * showing a name the user never asked for.
+   */
+  const renameConversation = useCallback(
+    async (id: string, title: string) => {
+      // Cleared up front, not only on failure. An error left standing from
+      // something else would otherwise sit under a rename that worked, and
+      // read as though the rename were what went wrong.
+      setState((prev) => ({ ...prev, error: null }));
+      try {
+        await backendRef.current!.call("conversations.rename", { id, title });
+        await refreshConversations();
+      } catch (error: unknown) {
+        setState((prev) => ({
+          ...prev,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      }
+    },
+    [refreshConversations],
+  );
+
+  const duplicateConversation = useCallback(
+    async (id: string) => {
+      setState((prev) => ({ ...prev, error: null }));
+      try {
+        await backendRef.current!.call("conversations.duplicate", { id });
+        await refreshConversations();
+      } catch (error: unknown) {
+        setState((prev) => ({
+          ...prev,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      }
+    },
+    [refreshConversations],
   );
 
   /**
@@ -684,6 +739,8 @@ export function App() {
           onNew={createConversation}
           onOpen={(id) => void openConversation(id)}
           onDelete={(id) => void deleteConversation(id)}
+          onRename={(id, title) => void renameConversation(id, title)}
+          onDuplicate={(id) => void duplicateConversation(id)}
         />
       <IconRail
         connected={connected}
@@ -702,7 +759,7 @@ export function App() {
       </div>
 
       <div className="main">
-        <TopBar busy={state.busy} />
+        <TopBar busy={state.busy} title={activeTitle} />
 
         <MessageList messages={state.messages} busy={state.busy} />
 

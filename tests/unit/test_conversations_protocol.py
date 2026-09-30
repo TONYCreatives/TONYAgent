@@ -298,3 +298,117 @@ def test_state_names_the_open_conversation(store):
     _, frames = _drive([{"id": 1, "method": "state"}], store=store,
                        conversation_id=created.id)
     assert _by_id(frames)[1]["result"]["conversation"] == created.id
+
+
+# --- naming ----------------------------------------------------------------
+def test_renaming_reports_the_new_title_so_the_row_can_update(store):
+    created = store.create(title="New chat")
+    _, frames = _drive([{
+        "id": 1,
+        "method": "conversations.rename",
+        "params": {"id": created.id, "title": "Invoice questions"},
+    }], store=store)
+
+    result = _by_id(frames)[1]["result"]
+    assert result["conversation"]["title"] == "Invoice questions"
+    assert store.load(created.id).title == "Invoice questions"
+
+
+def test_renaming_to_nothing_is_a_rejection_and_changes_nothing(store):
+    """Reported as refused, not quietly filled in with something else."""
+    created = store.create(title="Worth keeping")
+    _, frames = _drive([{
+        "id": 1,
+        "method": "conversations.rename",
+        "params": {"id": created.id, "title": "   "},
+    }], store=store)
+
+    assert _by_id(frames)[1]["error"]["code"] == "rejected"
+    assert store.load(created.id).title == "Worth keeping"
+
+
+def test_renaming_a_conversation_that_is_not_there_is_a_rejection(store):
+    _, frames = _drive([{
+        "id": 1,
+        "method": "conversations.rename",
+        "params": {"id": "0" * 32, "title": "ghost"},
+    }], store=store)
+    assert _by_id(frames)[1]["error"]["code"] == "rejected"
+
+
+def test_duplicating_reports_the_new_row(store):
+    created = store.create(title="Deploy plan")
+    created.messages = [{"role": "user", "content": "hello"}]
+    store.save(created)
+
+    _, frames = _drive([{
+        "id": 1,
+        "method": "conversations.duplicate",
+        "params": {"id": created.id},
+    }], store=store)
+
+    result = _by_id(frames)[1]["result"]
+    assert result["conversation"]["id"] != created.id
+    assert result["conversation"]["title"] == "Deploy plan (copy)"
+    assert result["conversation"]["message_count"] == 1
+
+
+def test_duplicating_leaves_the_window_on_the_conversation_you_used(store):
+    """You right-clicked a row; jumping the window elsewhere is not that."""
+    created = store.create(title="current")
+    created.messages = [{"role": "user", "content": "hi"}]
+    store.save(created)
+
+    server, _ = _drive([{
+        "id": 1,
+        "method": "conversations.duplicate",
+        "params": {"id": created.id},
+    }], store=store, conversation_id=created.id)
+
+    assert server.conversation_id == created.id
+
+
+# --- the rule that keeps a manual name -------------------------------------
+def test_a_manual_name_is_not_overwritten_by_the_automatic_one(store):
+    """The auto-title fires only while the conversation is still "New chat".
+
+    It is the whole reason a rename is safe to do: without this, the next turn
+    would quietly take the name back and the rename would appear to have been
+    lost the moment it worked.
+    """
+    server, _ = _drive([{
+        "id": 1,
+        "method": "conversations.rename",
+        "params": {"id": store.create().id, "title": "KEEP ME"},
+    }], store=store, conversation_id=store.most_recent().id)
+    from tonyagent.providers import ChatMessage
+
+    server.session.messages = [
+        ChatMessage(role="user", content="How do I ship this?")
+    ]
+
+    server._persist()
+    assert store.load(server.conversation_id).title == "KEEP ME"
+
+
+def test_the_automatic_name_still_fires_when_nothing_was_chosen(store):
+    """The rename must not have disarmed the naming that made titles work."""
+    from tonyagent.providers import ChatMessage
+
+    created = store.create()
+    server = _drive([], store=store, conversation_id=created.id)[0]
+    server.session.messages = [
+        ChatMessage(role="user", content="How do I ship this?")
+    ]
+    server._persist()
+    assert store.load(created.id).title == "How do I ship this?"
+
+
+def test_a_copy_keeps_its_name_through_a_later_turn(store):
+    """A copy is "New chat (copy)" -- not the sentinel -- so it is left alone."""
+    original = store.create()
+    server = _drive([], store=store, conversation_id=original.id)[0]
+    clone = store.duplicate(original.id)
+
+    server._persist()
+    assert store.load(clone.id).title == "New chat (copy)"

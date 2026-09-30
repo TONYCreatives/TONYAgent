@@ -89,6 +89,8 @@ export interface CoreMethods {
   "conversations.create": { project?: string };
   "conversations.switch": { id: string };
   "conversations.delete": { id: string };
+  "conversations.rename": { id: string; title: string };
+  "conversations.duplicate": { id: string };
   /** Available composer modes and which one is in force. */
   "mode.list": Record<string, never>;
   "mode.set": { mode: string };

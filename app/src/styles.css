@@ -344,11 +344,11 @@ body {
 }
 
 /*
- * Delete sits on the row rather than in a menu. A menu would put the only way
- * to remove a conversation behind two clicks, and removing one is the thing
- * people need most once the list is long.
+ * The row's management control. It replaces the delete button that used to sit
+ * here: rename and duplicate are the operations a row needs too, and three
+ * buttons on a 200px row is a toolbar, not a list.
  */
-.chatrow-delete {
+.chatrow-more {
   flex: none;
   width: 26px;
   border: 0;
@@ -360,12 +360,72 @@ body {
   transition: opacity 0.12s ease, color 0.12s ease;
 }
 
-.chatrow:hover .chatrow-delete,
-.chatrow-delete:focus-visible {
+.chatrow:hover .chatrow-more,
+.chatrow-more:focus-visible,
+.chatrow-more[aria-expanded="true"] {
   opacity: 1;
 }
 
-.chatrow-delete:hover {
+.chatrow-more:hover {
+  color: var(--fg);
+}
+
+/*
+ * The inline rename field. Deliberately the same box the row was, so the title
+ * does not appear to jump when editing starts -- the text swaps in place.
+ */
+.chatrow-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--input);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.35;
+  outline: none;
+}
+
+/*
+ * The row menu. Fixed to the window and positioned from the click, so it
+ * behaves like a native menu: it is not clipped by the sidebar's overflow and
+ * it closes on the next click anywhere.
+ */
+.rowmenu {
+  position: fixed;
+  z-index: 40;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+}
+
+.rowmenu button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 1px);
+  background: none;
+  color: var(--fg-mute);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rowmenu button:hover,
+.rowmenu button:focus-visible {
+  background: var(--raised);
+  color: var(--fg);
+}
+
+.rowmenu-danger {
   color: var(--danger);
 }
 
@@ -525,6 +585,17 @@ body {
   background: var(--raised);
   color: var(--fg);
   font-size: 13px;
+}
+
+/*
+ * The open conversation's name. Ellipsised because a title the user typed can
+ * be any length, and a long one must not push the bar's own controls off.
+ */
+.tab-title {
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tab-spinner {

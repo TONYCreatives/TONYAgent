@@ -787,7 +787,7 @@ def test_search_matches_the_same_rules_the_agent_gets(tmp_path):
     assert files == {"keep.py"}, "node_modules must be skipped for both callers"
 
 
-# --- the log stream's encoding --------------------------------------------
+# --- the streams' encoding -------------------------------------------------
 def test_logs_stay_utf8_even_when_the_console_codepage_is_not():
     """Regression: one non-ASCII character in a log line killed the backend.
 
@@ -805,8 +805,8 @@ def test_logs_stay_utf8_even_when_the_console_codepage_is_not():
     """
     code = (
         "import sys; sys.path.insert(0, 'src');"
-        "from tonyagent.headless.server import configure_logging_to_stderr;"
-        "configure_logging_to_stderr();"
+        "from tonyagent.headless.server import configure_stdio;"
+        "configure_stdio();"
         "from loguru import logger;"
         "logger.info('Reopening conversation \\'안녕 …\\'')"
     )
@@ -820,5 +820,74 @@ def test_logs_stay_utf8_even_when_the_console_codepage_is_not():
     # squint. Before the fix this raised UnicodeDecodeError here.
     line = out.stderr.decode("utf-8")
     assert "안녕" in line and "\u2026" in line, line
+
+
+def test_a_request_carrying_non_ascii_text_is_read_as_utf8(tmp_path):
+    """Regression: renaming a conversation to a Korean title was impossible.
+
+    The same console code page that broke the log stream also decoded the
+    *request* stream, and fixing only the output left this behind:
+
+    * ``café`` was accepted and stored as ``caf챕`` -- no error anywhere, just a
+      title quietly mangled, which is worse than a failure.
+    * ``한`` raised ``UnicodeEncodeError: surrogates not allowed`` from inside
+      the write, because the three UTF-8 bytes of one character had become one
+      Korean character plus a stray lead byte.
+
+    So the feature was unusable for exactly the people most likely to want to
+    name a conversation in their own language. This drives the real thing: a
+    child process on a cp949 console reading a request from a real pipe.
+    """
+    from tonyagent.core.conversations import ConversationStore
+
+    store = ConversationStore(tmp_path / "chats")
+    conversation = store.create(title="placeholder")
+
+    # The store root and the target id go in through the environment rather
+    # than into the source below, which is full of braces that a Python format
+    # string would otherwise eat.
+    #
+    # The child reads the request from its *real* stdin and answers on its real
+    # stdout, exactly as the packaged sidecar does. Handing the server a
+    # TextIOWrapper instead would quietly bypass the thing under test: the
+    # encoding of ``sys.stdin`` itself.
+    driver = """
+import asyncio, os, sys
+sys.path.insert(0, 'src')
+from tonyagent.core.conversations import ConversationStore
+from tonyagent.core.session import AgentSession
+from tonyagent.headless.server import StdioServer, configure_stdio
+
+configure_stdio()
+server = StdioServer(
+    AgentSession(), sys.stdin, sys.stdout,
+    store=ConversationStore(os.environ['TONY_TEST_STORE']),
+)
+asyncio.run(server.serve())
+"""
+    env = {
+        **os.environ,
+        "PYTHONIOENCODING": "cp949",
+        "TONY_TEST_STORE": str(store.root),
+    }
+    request = json.dumps(
+        {
+            "id": 1,
+            "method": "conversations.rename",
+            "params": {"id": conversation.id, "title": "한국어 제목"},
+        },
+        ensure_ascii=False,
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", driver],
+        input=request.encode("utf-8") + b"\n",
+        capture_output=True,
+        cwd=".",
+        env=env,
+    )
+    assert out.returncode == 0, out.stderr.decode("utf-8", "replace")
+    reply = json.loads(out.stdout.decode("utf-8").strip())
+    assert reply["result"]["conversation"]["title"] == "한국어 제목", reply
+    assert store.load(conversation.id).title == "한국어 제목"
 
 

@@ -25,7 +25,11 @@ from typing import Any, Callable, TextIO
 
 from loguru import logger
 
-from tonyagent.core.conversations import ConversationStore, title_from
+from tonyagent.core.conversations import (
+    ConversationStore,
+    EmptyTitle,
+    title_from,
+)
 from tonyagent.core.events import Event, EventBus, EventType
 from tonyagent.core.session import AgentSession
 
@@ -105,6 +109,8 @@ class StdioServer:
             "conversations.create": self._h_conversations_create,
             "conversations.switch": self._h_conversations_switch,
             "conversations.delete": self._h_conversations_delete,
+            "conversations.rename": self._h_conversations_rename,
+            "conversations.duplicate": self._h_conversations_duplicate,
         }
         # Tool confirmations must reach the frontend as events, not a Tkinter
         # callback that only an after() loop would drain.
@@ -176,6 +182,12 @@ class StdioServer:
         # Retitle from the first user message, but only once. A list that
         # renames itself while you are reading it is disorienting, and a
         # conversation's opening line is the best title it will ever get.
+        #
+        # The sentinel is what makes a manual name stick: once `rename` has
+        # written anything else, this test is false and the name survives every
+        # later turn. (Naming a conversation "New chat" opts it back in --
+        # indistinguishable from having never been named, which is a fine thing
+        # for that name to mean.)
         first_user = next(
             (m.content for m in self.session.messages if m.role_value == "user"),
             None,
@@ -533,6 +545,47 @@ class StdioServer:
             self.session.clear()
         return {"id": conversation_id, "deleted": deleted}
 
+    def _h_conversations_rename(self, params: dict) -> Any:
+        """Give a conversation a name the user chose.
+
+        Refused, not repaired, when the name is empty: the title is the only
+        handle the list has on a conversation, so quietly substituting
+        something else would report success for a rename that did not happen.
+        """
+        conversation_id = str(params.get("id") or "")
+        if not conversation_id:
+            raise RpcError("missing conversation id")
+        store = self._require_store()
+        try:
+            conversation = store.rename(
+                conversation_id, str(params.get("title") or "")
+            )
+        except EmptyTitle as exc:
+            # Only this one exception. A bare ``except ValueError`` also caught
+            # ``UnicodeEncodeError``, so a failure while *writing* the
+            # conversation came back as "you gave me a bad name" -- a message
+            # pointing at the user's typing for a fault that was not theirs.
+            raise RpcError(str(exc)) from exc
+        if conversation is None:
+            raise RpcError(f"No such conversation: {conversation_id}")
+        return {"conversation": conversation.summary()}
+
+    def _h_conversations_duplicate(self, params: dict) -> Any:
+        """Copy a conversation under a new id.
+
+        Does not switch to the copy. Jumping the window away from the
+        conversation you right-clicked is not what "duplicate" asked for, and
+        the new row lands directly below the one you used.
+        """
+        conversation_id = str(params.get("id") or "")
+        if not conversation_id:
+            raise RpcError("missing conversation id")
+        store = self._require_store()
+        conversation = store.duplicate(conversation_id)
+        if conversation is None:
+            raise RpcError(f"No such conversation: {conversation_id}")
+        return {"conversation": conversation.summary()}
+
     # -- sandbox -------------------------------------------------------------
     async def _h_sandbox_start(self, params: dict) -> Any:
         requested = str(params.get("path", "") or "")
@@ -749,8 +802,8 @@ class StdioServer:
             await self._drain_pending()
 
 
-def configure_logging_to_stderr() -> None:
-    """Send all logs to stderr, keeping stdout purely for the protocol.
+def configure_stdio() -> None:
+    """Force all three streams to UTF-8, and send all logs to stderr.
 
     Colour is off, deliberately and not as a matter of taste. loguru decides
     whether to emit ANSI codes by asking whether stderr looks like a terminal,
@@ -762,28 +815,45 @@ def configure_logging_to_stderr() -> None:
     The consumer here is a React view rendering text, not a terminal, so the
     answer is the same in every environment.
 
-    Both streams are also forced to UTF-8, and that is not a preference. Under
-    the sidecar the streams are pipes, so Python picks the *console* code page
-    for them: on this machine cp949, which encodes ``...`` as the two bytes
-    ``a1 a6`` and any Korean character as its own two bytes. Tauri's shell
-    plugin decodes the sidecar's output with a strict UTF-8 decoder, raises
-    ``invalid utf-8 sequence of 1 bytes from index 133``, and reports it on the
-    Command's ``error`` event -- which the frontend reads as "the core died".
-    One non-ASCII conversation title in a log line therefore killed the whole
-    backend on launch, and the Logs panel showed a clean startup followed by
-    "The TONYAgent backend exited."
+    **All three** streams are forced to UTF-8, and that is not a preference.
+    Under the sidecar they are pipes, so Python picks the *console* code page
+    for them: on this machine cp949. Two separate faults came out of that, and
+    fixing one hid the other.
 
-    ``errors="replace"`` rather than strict, so an unencodable character is
-    visibly wrong in a log line instead of taking the process down with it.
+    On the way out, cp949 wrote a title's ``...`` as the two bytes ``a1 a6``.
+    Tauri's shell plugin decodes the sidecar's output with a strict UTF-8
+    decoder, raises ``invalid utf-8 sequence of 1 bytes from index 133``, and
+    reports it on the Command's ``error`` event -- which the frontend reads as
+    "the core died". One non-ASCII conversation title in a log line therefore
+    killed the whole backend on launch.
+
+    On the way *in*, the same code page decoded requests. A rename to
+    ``café`` was stored as ``caf챕`` -- silently wrong, no error anywhere -- and
+    a rename to ``한`` raised ``UnicodeEncodeError: surrogates not allowed``
+    from inside the write, because the three UTF-8 bytes of one character had
+    become one Korean character and a stray lead byte. The request stream is
+    the one that carries user text, so leaving it on the console code page
+    meant the feature was unusable for exactly the people most likely to need
+    it.
+
+    ``errors="replace"`` on the output streams rather than strict, so an
+    unencodable character is visibly wrong in a log line instead of taking the
+    process down with it. ``stdin`` is strict: a request that did not decode is
+    a request whose meaning is already unknown, and quietly substituting
+    U+FFFD for it would corrupt a conversation instead of reporting the fault.
     """
-    for stream in (sys.stdout, sys.stderr):
+    for stream, errors in (
+        (sys.stdin, "strict"),
+        (sys.stdout, "replace"),
+        (sys.stderr, "replace"),
+    ):
         # A frozen build or a redirected stream may not be a TextIOWrapper, and
         # TextIOWrapper.reconfigure raises on anything else.
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is None:
             continue
         try:
-            reconfigure(encoding="utf-8", errors="replace")
+            reconfigure(encoding="utf-8", errors=errors)
         except (ValueError, OSError):  # pragma: no cover -- platform specific
             pass
     logger.remove()
@@ -860,7 +930,7 @@ def build_store() -> ConversationStore:
 
 async def run(session: AgentSession | None = None) -> None:
     """Entry point for ``python -m tonyagent.headless.server``."""
-    configure_logging_to_stderr()
+    configure_stdio()
     session = session or build_session()
 
     store = build_store()

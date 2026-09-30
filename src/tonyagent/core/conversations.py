@@ -18,6 +18,7 @@ disk a conversation lives.
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import time
@@ -41,22 +42,47 @@ _TITLE_MAX = 60
 _SAFE_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
-def title_from(text: str) -> str:
-    """Derive a list title from the first user message.
+def _one_line(text: str, limit: int = _TITLE_MAX) -> str:
+    """Collapse text to a single trimmed line, cut on a word boundary.
 
-    Collapses whitespace so a multi-line paste becomes one line, and cuts on a
-    word boundary where it can -- a title ending mid-word looks like a bug even
-    when the text is correct.
+    A title ending mid-word looks like a bug even when the text is correct, so
+    the cut backs up to the last space. An empty result means the input was
+    nothing but whitespace.
     """
     flat = " ".join((text or "").split())
-    if not flat:
-        return "New chat"
-    if len(flat) <= _TITLE_MAX:
+    if len(flat) <= limit:
         return flat
-    cut = flat[:_TITLE_MAX]
+    cut = flat[:limit]
     if " " in cut:
         cut = cut[: cut.rindex(" ")]
     return cut.rstrip() + "…"
+
+
+def title_from(text: str) -> str:
+    """Derive a list title from the first user message."""
+    return _one_line(text) or "New chat"
+
+
+def _suffixed(title: str, suffix: str) -> str:
+    """``"name"`` plus a suffix, with room kept for the suffix.
+
+    Truncating the whole string after appending would eat the suffix itself,
+    which is the one part of the row that says what happened to it.
+    """
+    room = _TITLE_MAX - len(suffix)
+    base = _one_line(title, room) or "New chat"
+    return base + suffix
+
+
+class EmptyTitle(ValueError):
+    """Raised when a conversation would be left with no name.
+
+    Its own type rather than a bare ``ValueError`` because the protocol layer
+    has to tell this apart from every other ``ValueError`` -- and
+    ``UnicodeEncodeError`` is one of them, so catching ``ValueError`` there
+    turned a failed write into a "you gave me a bad name" rejection and hid the
+    real fault behind the user's typo.
+    """
 
 
 @dataclass
@@ -147,8 +173,16 @@ class ConversationStore:
         self.save(conversation)
         return conversation
 
-    def save(self, conversation: Conversation) -> None:
-        conversation.updated_at = time.time()
+    def save(self, conversation: Conversation, touch: bool = True) -> None:
+        """Write a conversation to disk.
+
+        ``touch`` stamps ``updated_at`` to now, which is what moves a
+        conversation to the top of the list -- correct for a turn that just
+        happened, wrong for a copy, which is *about* an older conversation and
+        belongs next to it rather than above everything.
+        """
+        if touch:
+            conversation.updated_at = time.time()
         self.root.mkdir(parents=True, exist_ok=True)
         path = self._path(conversation.id)
         # Write-then-replace, so an interrupted write cannot leave a truncated
@@ -176,7 +210,15 @@ class ConversationStore:
             return None
 
     def list(self) -> list[Conversation]:
-        """Every readable conversation, most recently updated first."""
+        """Every readable conversation, most recently updated first.
+
+        Ties on ``updated_at`` break by ``created_at`` *ascending*, which is
+        what puts a duplicate directly under the conversation it was copied
+        from: the copy shares the original's ``updated_at`` and was created
+        later. Without the tiebreak the two rows would come back in whatever
+        order the directory happened to yield, which is not a rule anyone can
+        rely on.
+        """
         if not self.root.exists():
             return []
         found: list[Conversation] = []
@@ -184,7 +226,9 @@ class ConversationStore:
             conversation = self.load(path.stem)
             if conversation is not None:
                 found.append(conversation)
-        found.sort(key=lambda c: c.updated_at, reverse=True)
+        # Negating rather than reverse=True: the two keys sort in opposite
+        # directions, and a tuple key is the only way to say that in one pass.
+        found.sort(key=lambda c: (-c.updated_at, c.created_at))
         return found
 
     def summaries(self) -> list[dict[str, Any]]:
@@ -207,3 +251,55 @@ class ConversationStore:
     def most_recent(self) -> Conversation | None:
         conversations = self.list()
         return conversations[0] if conversations else None
+
+    # -- manual names --------------------------------------------------------
+    def rename(self, conversation_id: str, title: str) -> Conversation | None:
+        """Give a conversation a name the user chose. ``None`` if not found.
+
+        An empty or whitespace-only name is refused by raising
+        :class:`EmptyTitle` rather than being quietly replaced with something.
+        The title *is* the conversation as far as the list is concerned: a row
+        with no name is a row the user cannot find again, and silently writing
+        "New chat" over their typing would look like the rename had worked.
+        """
+        clean = _one_line(title)
+        if not clean:
+            raise EmptyTitle("A conversation needs a name")
+        conversation = self.load(conversation_id)
+        if conversation is None:
+            return None
+        conversation.title = clean
+        self.save(conversation)
+        return conversation
+
+    def duplicate(self, conversation_id: str) -> Conversation | None:
+        """Copy a conversation, messages and all, under a new id.
+
+        The messages are deep-copied rather than shared. They are plain dicts
+        holding nested lists (``reasoning_details``), so a shallow copy would
+        hand the caller two records pointing at one set of objects. Today
+        nothing can observe that, because the store re-reads a conversation
+        from disk on every operation and the object ``duplicate`` was derived
+        from is discarded -- but that is a property of the current callers, not
+        of the data, and a shallow copy here would turn a future refactor into a
+        silent corruption bug.
+
+        The copy keeps the original's ``updated_at`` so the list shows it
+        directly beneath the conversation it came from. The file itself is
+        written now, so its mtime on disk is fresh either way; it is the
+        *record's* timestamp that stays put, and that is the one the list sorts
+        on.
+        """
+        original = self.load(conversation_id)
+        if original is None:
+            return None
+        clone = Conversation(
+            id=uuid.uuid4().hex,
+            title=_suffixed(original.title, " (copy)"),
+            project=original.project,
+            created_at=time.time(),
+            updated_at=original.updated_at,
+            messages=copy.deepcopy(original.messages),
+        )
+        self.save(clone, touch=False)
+        return clone
