@@ -66,6 +66,15 @@ class Conversation:
     ``messages`` is kept as plain dicts rather than ``ChatMessage`` objects: the
     file format is the schema, and importing the provider layer to read a file
     would make the store depend on the thing it stores transcripts *of*.
+
+    Those dicts are whatever ``ChatMessage.to_dict`` produced, so a message
+    written by a reasoning model carries its ``reasoning`` and
+    ``reasoning_details`` alongside ``content``. A conversation saved before
+    either field existed has no such keys, and reads back fine: nothing here
+    validates message shape, and the reader defaults an absent field to None.
+    That is the reason for the loose typing -- a new field on a message is
+    stored and restored without a migration, because the only thing that has to
+    survive is "does this old chat still open".
     """
 
     id: str = field(default_factory=lambda: uuid.uuid4().hex)

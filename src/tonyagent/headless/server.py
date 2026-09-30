@@ -26,7 +26,7 @@ from typing import Any, Callable, TextIO
 from loguru import logger
 
 from tonyagent.core.conversations import ConversationStore, title_from
-from tonyagent.core.events import Event, EventType
+from tonyagent.core.events import Event, EventBus, EventType
 from tonyagent.core.session import AgentSession
 
 #: Bump when the request/response shape changes incompatibly.
@@ -71,6 +71,9 @@ class StdioServer:
         # conversation for a window that never said anything.
         self.conversations = store
         self.conversation_id = conversation_id
+        # Released before the next session is wired, so repeated switches do
+        # not accumulate subscribers. See ``_attach_session``.
+        self._unsubscribe: Callable[[], None] | None = None
         if conversation_id:
             self._load_into_session(conversation_id)
         # The project folder the sandbox is attached to, echoed back by `state`
@@ -119,10 +122,18 @@ class StdioServer:
         is quiet and severe: the new session would answer every request and emit
         no events at all, so the window would show a permanently blank
         transcript and no error anywhere.
+
+        The old subscription is released first. A frontend appends each
+        ``message.delta`` to the text it is already showing, so a session
+        wired twice does not look like a duplicate frame on the wire -- it looks
+        like every answer typed twice, and the longer the session runs the more
+        times over.
         """
+        if self._unsubscribe is not None:
+            self._unsubscribe()
         self.session = session
         session.install_confirmation_bridge()
-        session.bus.subscribe(self._on_event)
+        self._unsubscribe = session.bus.subscribe(self._on_event)
 
     def _new_session(self) -> AgentSession:
         """A replacement session configured like the current one.
@@ -130,8 +141,14 @@ class StdioServer:
         Built bare it would come up with no provider bound, so switching chats
         would answer the next message with "no provider configured" -- from a
         conversation the user had been using a moment earlier.
+
+        It gets its own event bus. ``AgentSession`` falls back to a
+        process-wide default, and subscribing to that from every replacement
+        meant each conversation switch left another live subscriber behind --
+        all of them writing every event to stdout, so a chat's tenth switch
+        printed each delta ten times over.
         """
-        session = AgentSession()
+        session = AgentSession(bus=EventBus())
         if self.session.provider is not None:
             session.bind_provider(
                 self.session.provider_name, self.session.model, self.session.base_url
@@ -175,12 +192,12 @@ class StdioServer:
         session = self._new_session()
         for raw in conversation.messages:
             try:
-                session.messages.append(ChatMessage(
-                    role=raw.get("role", "user"),
-                    content=raw.get("content"),
-                    tool_calls=raw.get("tool_calls"),
-                    tool_call_id=raw.get("tool_call_id"),
-                ))
+                # Through ``from_dict`` rather than picking fields here: it is
+                # the one place that knows which keys a stored message has, and
+                # this loop used to silently drop every field it did not name.
+                row = dict(raw)
+                row.setdefault("role", "user")
+                session.messages.append(ChatMessage.from_dict(row))
             except Exception as exc:  # noqa: BLE001 - one bad row, not a dead chat
                 logger.warning(f"Skipping an unreadable message: {exc}")
         self.conversation_id = conversation_id

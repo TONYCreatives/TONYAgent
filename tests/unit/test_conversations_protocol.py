@@ -166,6 +166,52 @@ def _server_for(conversation_id: str, store: ConversationStore) -> StdioServer:
     return StdioServer(_session(), io.StringIO(""), io.StringIO(),
                        store=store, conversation_id=conversation_id)
 
+def test_a_restored_session_is_not_wired_twice(store):
+    """Each event must reach the wire once, however the session got there.
+
+    A frontend appends every ``message.delta`` to the text already on screen, so
+    a session wired twice does not read as a duplicate frame -- it reads as
+    every answer typed twice. That is also why this is silent: nothing errors,
+    the transcript just gets worse.
+
+    Restoring at startup is the case that doubled it: loading the conversation
+    wires the loaded session, and the constructor then wired ``self.session``
+    again -- which by then is that same loaded session.
+    """
+    conversation_id = store.create(title="target").id
+    server = _server_for(conversation_id, store)
+    lines = io.StringIO()
+    server.stdout = lines
+    server.session.bus.emit(EventType.MESSAGE_DELTA, {"text": "x"})
+    assert lines.getvalue().count("message.delta") == 1
+
+
+def test_switching_does_not_accumulate_event_subscriptions(store):
+    conversation_id = store.create(title="target").id
+    server = _server_for(conversation_id, store)
+    for _ in range(5):
+        server._load_into_session(conversation_id)
+    lines = io.StringIO()
+    server.stdout = lines
+    server.session.bus.emit(EventType.MESSAGE_DELTA, {"text": "x"})
+    assert lines.getvalue().count("message.delta") == 1
+
+
+def test_replacing_a_session_does_not_leak_onto_the_process_wide_bus(store):
+    """`AgentSession` falls back to a shared default bus.
+
+    Subscribing to that from every replacement left a live subscriber behind on
+    each switch, and they all kept writing to the server that created them.
+    """
+    from tonyagent.core.events import bus as default_bus
+
+    before = len(default_bus._subscribers)
+    conversation_id = store.create(title="target").id
+    server = _server_for(conversation_id, store)
+    for _ in range(5):
+        server._load_into_session(conversation_id)
+    assert len(default_bus._subscribers) == before
+
 
 def test_a_finished_turn_is_written_to_disk(store):
     """The guarantee the whole feature rests on: the chat survives the window."""

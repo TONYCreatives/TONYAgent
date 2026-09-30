@@ -21,18 +21,36 @@ from typing import Any, Iterable
 
 @dataclass
 class Chunk:
-    """One piece of a streamed response."""
+    """One piece of a streamed response.
+
+    ``reasoning`` is a model's thinking, which OpenRouter streams under its own
+    key rather than inside ``content``. It is kept apart deliberately: folding
+    it into ``content`` would put the trace of how an answer was reached into
+    the transcript AND into the message history sent back on the next turn,
+    where the model would read its own scratchpad as part of what it had said.
+    """
 
     content: str | None = None
     tool_calls: list[dict] | None = None
     finish_reason: str | None = None
     model: str = ""
+    #: This chunk's slice of thinking. A string, appended as it streams.
+    reasoning: str | None = None
+    #: The whole ``reasoning_details`` list so far, not just this chunk's part.
+    #: Returned on every chunk so the final value is always in hand, and sent
+    #: back on the assistant message: it is what keeps a tool-calling turn
+    #: continuous, because without it the provider sees reasoning blocks it
+    #: cannot match to what it produced.
+    reasoning_details: list[dict] | None = None
 
 
 @dataclass
 class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
+    #: Billed as output tokens but reported separately, so a turn that spent
+    #: everything on thinking is distinguishable from one that wrote prose.
+    reasoning_tokens: int = 0
 
     @property
     def total(self) -> int:
@@ -46,6 +64,25 @@ class Completion:
     finish_reason: str | None = None
     model: str = ""
     usage: Usage = field(default_factory=Usage)
+    reasoning: str | None = None
+    reasoning_details: list[dict] | None = None
+
+
+def read_usage(obj: dict) -> Usage:
+    """Token counts, including the reasoning that ``completion_tokens`` hides.
+
+    A model that reasoned for 4000 tokens and wrote 200 reports 4200 as its
+    completion tokens; the split only exists under
+    ``completion_tokens_details``, and it is the only way to tell a long answer
+    from a long think.
+    """
+    usage = obj.get("usage") or {}
+    details = usage.get("completion_tokens_details") or {}
+    return Usage(
+        usage.get("prompt_tokens", 0),
+        usage.get("completion_tokens", 0),
+        details.get("reasoning_tokens", 0) or 0,
+    )
 
 
 def tool_to_openai(tools: list[dict] | None) -> list[dict] | None:
@@ -113,6 +150,8 @@ class Dialect:
             tool_calls=current_tool_calls(acc),
             finish_reason=choice.get("finish_reason"),
             model=obj.get("model", ""),
+            reasoning=reasoning_delta(delta),
+            reasoning_details=accumulate_reasoning_details(delta, acc),
         )
 
     @staticmethod
@@ -154,13 +193,14 @@ class Dialect:
                 }
                 for tc in message["tool_calls"]
             ]
-        usage = obj.get("usage") or {}
         return Completion(
             content=message.get("content"),
             tool_calls=tool_calls,
             finish_reason=choice.get("finish_reason"),
             model=obj.get("model", ""),
-            usage=Usage(usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)),
+            usage=read_usage(obj),
+            reasoning=message.get("reasoning") or message.get("reasoning_content"),
+            reasoning_details=message.get("reasoning_details") or None,
         )
 
     # -- models --------------------------------------------------------------
@@ -174,4 +214,43 @@ class Dialect:
 def current_tool_calls(acc: dict) -> list[dict] | None:
     buf = acc.get("buffer")
     return list(buf.values()) if buf else None
+
+
+def reasoning_delta(delta: dict) -> str | None:
+    """The thinking in one delta, under either of its two names.
+
+    OpenRouter documents ``reasoning`` and carries ``reasoning_content`` as an
+    alias for the same field, and in practice both appear in the wild depending
+    on the upstream provider OpenRouter is proxying.
+    """
+    return delta.get("reasoning") or delta.get("reasoning_content") or None
+
+
+def accumulate_reasoning_details(delta: dict, acc: dict) -> list[dict] | None:
+    """Collect streamed ``reasoning_details`` into one list.
+
+    The array arrives incrementally and its entries are typed -- a
+    ``reasoning.text`` block that grows, then a ``reasoning.encrypted`` blob --
+    so the last item is replaced by its newer version rather than appended
+    twice. Appending blindly would send the same block back to the provider
+    with two entries, which it rejects.
+    """
+    parts = delta.get("reasoning_details")
+    if not parts:
+        collected = acc.get("reasoning_details")
+        return list(collected) if collected else None
+    collected = acc.setdefault("reasoning_details", [])
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        index = part.get("index")
+        if index is None:
+            collected.append(part)
+            continue
+        # Indices are sparse and arrive in order, so a missing slot is a gap
+        # rather than a reason to renumber everything after it.
+        while len(collected) <= index:
+            collected.append({})
+        collected[index] = part
+    return list(collected)
 

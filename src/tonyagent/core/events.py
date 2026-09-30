@@ -33,6 +33,12 @@ class EventType(str, Enum):
     MESSAGE_DELTA = "message.delta"
     MESSAGE_COMPLETED = "message.completed"
 
+    # Thinking. Separate from ``message.*`` because the text is not an answer:
+    # a frontend that renders both into one string shows the model working to
+    # the user as though it were the reply.
+    REASONING_DELTA = "reasoning.delta"
+    REASONING_COMPLETED = "reasoning.completed"
+
     # Tool execution
     TOOL_STARTED = "tool.started"
     TOOL_COMPLETED = "tool.completed"

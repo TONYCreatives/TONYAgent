@@ -32,6 +32,16 @@ from tonyagent.providers import (
 from tonyagent.providers.base import MessageRole
 from tonyagent.tools import ALL_SCHEMAS, ToolCall, tool_orchestrator
 
+#: Said when a model used its whole token allowance thinking and wrote nothing.
+#: The tokens are billed either way, so the user needs to know the difference
+#: between a model that over-thought and one that failed outright.
+_THINKING_BUDGET_NOTICE = (
+    "The model spent its whole token budget thinking and stopped before "
+    "writing an answer. It was still billed for that thinking. Try a model "
+    "that reasons faster, or ask for something smaller."
+)
+
+
 def _results_digest(orders: list[int]) -> str:
     """Build the assistant note that stands in for an unanswered tool result.
 
@@ -450,13 +460,18 @@ class AgentSession:
                 tool_calls=getattr(result, "tool_calls", None),
                 finish_reason=getattr(result, "finish_reason", None),
                 model=getattr(result, "model", "") or "",
+                reasoning=getattr(result, "reasoning", None),
+                reasoning_details=getattr(result, "reasoning_details", None),
             )
 
     async def _stream_assistant(self, turn_id: str) -> Any:
         """One assistant pass. Returns the tool calls it requested, if any."""
         self.emit(EventType.MESSAGE_STARTED, {}, turn_id=turn_id)
         text = ""
+        reasoning = ""
+        reasoning_details: Any = None
         tool_calls: Any = None
+        finish_reason: str | None = None
         async for chunk in self._iter_chunks(self._tool_schemas()):
             self._check_cancelled()
             if chunk.content:
@@ -464,17 +479,60 @@ class AgentSession:
                 self.emit(
                     EventType.MESSAGE_DELTA, {"text": chunk.content}, turn_id=turn_id
                 )
+            # Thinking goes out on its own event so a frontend can show it
+            # arriving without splicing it into the answer being typed below.
+            if chunk.reasoning:
+                reasoning += chunk.reasoning
+                self.emit(
+                    EventType.REASONING_DELTA,
+                    {"text": chunk.reasoning},
+                    turn_id=turn_id,
+                )
+            # Each chunk repeats the whole list so far, so the last one wins and
+            # nothing has to be reassembled here.
+            if chunk.reasoning_details:
+                reasoning_details = chunk.reasoning_details
             if chunk.tool_calls:
                 tool_calls = chunk.tool_calls
             if chunk.finish_reason:
+                finish_reason = chunk.finish_reason
                 break
+        # The budget trap: reasoning tokens are drawn from the same allowance as
+        # output, so a model that thinks at length can spend everything and stop
+        # at ``length`` with nothing written. Silent, it looks exactly like a
+        # provider that returned nothing, and the user has no way to tell a
+        # model that thought too long from a broken one.
+        truncated = finish_reason == "length" and not text and not tool_calls
+        if reasoning or reasoning_details or truncated:
+            self.emit(
+                EventType.REASONING_COMPLETED,
+                {
+                    "text": reasoning,
+                    "truncated": truncated,
+                    # Absent rather than empty when nothing went wrong, so a
+                    # frontend can tell "fine" from "not reported".
+                    **({"notice": _THINKING_BUDGET_NOTICE} if truncated else {}),
+                },
+                turn_id=turn_id,
+            )
+            if truncated:
+                self.emit(
+                    EventType.ERROR, {"message": _THINKING_BUDGET_NOTICE}, turn_id=turn_id
+                )
         # A tool-call pass often carries no text at all, but it MUST still
         # land in the history: OpenAI-compatible APIs reject a tool message
         # whose preceding assistant turn (carrying the matching tool_calls)
-        # is missing.
+        # is missing. The reasoning goes with it, because that is what the
+        # provider needs back to continue the same line of thought.
         if text or tool_calls:
             self.messages.append(
-                ChatMessage(role="assistant", content=text, tool_calls=tool_calls)
+                ChatMessage(
+                    role="assistant",
+                    content=text,
+                    tool_calls=tool_calls,
+                    reasoning=reasoning or None,
+                    reasoning_details=reasoning_details,
+                )
             )
         self.emit(EventType.MESSAGE_COMPLETED, {"text": text}, turn_id=turn_id)
         return tool_calls

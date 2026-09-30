@@ -29,6 +29,11 @@ class ChatMessage:
     ``role="tool"``, so normalising here keeps callers from having to remember
     which form is expected (it previously raised
     "'str' object has no attribute 'value'" on the first API call).
+
+    ``reasoning`` and ``reasoning_details`` are what a reasoning model thought,
+    and they are kept out of ``content`` on purpose. ``to_dict`` sends them
+    back on assistant turns because a tool-calling round needs the provider to
+    see the reasoning behind the tool call it is being asked to follow up on.
     """
 
     role: MessageRole | str
@@ -36,6 +41,8 @@ class ChatMessage:
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
     name: str | None = None
+    reasoning: str | None = None
+    reasoning_details: list[dict] | None = None
 
     def __post_init__(self) -> None:
         # Accept "user" as well as MessageRole.USER.
@@ -58,6 +65,14 @@ class ChatMessage:
             result["tool_call_id"] = self.tool_call_id
         if self.name:
             result["name"] = self.name
+        # Assistant turns only: these describe something the model produced, and
+        # a user or tool message has none. Sending them on a user turn is not
+        # merely redundant, it is a different message to the provider.
+        if self.role_value == MessageRole.ASSISTANT.value:
+            if self.reasoning:
+                result["reasoning"] = self.reasoning
+            if self.reasoning_details:
+                result["reasoning_details"] = self.reasoning_details
         return result
 
     @classmethod
@@ -69,6 +84,8 @@ class ChatMessage:
             tool_calls=data.get("tool_calls"),
             tool_call_id=data.get("tool_call_id"),
             name=data.get("name"),
+            reasoning=data.get("reasoning"),
+            reasoning_details=data.get("reasoning_details"),
         )
 @dataclass
 class ToolSchema:
@@ -142,6 +159,10 @@ class ChatCompletionChunk:
     finish_reason: str | None = None
     model: str | None = None
     usage: dict | None = None
+    #: Thinking for this chunk, and the whole ``reasoning_details`` list so far.
+    #: Kept out of ``content``: see :class:`tonyagent.api.dialects.Chunk`.
+    reasoning: str | None = None
+    reasoning_details: list[dict] | None = None
 
 
 @dataclass
@@ -153,6 +174,8 @@ class ChatCompletion:
     finish_reason: str | None = None
     model: str | None = None
     usage: dict | None = None
+    reasoning: str | None = None
+    reasoning_details: list[dict] | None = None
 
 
 class LLMProvider(Protocol):
@@ -302,6 +325,8 @@ class OpenAICompatibleProvider(BaseLLMProvider):
             finish_reason=result.finish_reason,
             model=result.model or self.model,
             usage=result.usage.total or None,
+            reasoning=result.reasoning,
+            reasoning_details=result.reasoning_details,
         )
 
     async def _stream_as_chunks(self, client, messages, tools, tool_choice, **kwargs):
@@ -311,6 +336,8 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 tool_calls=chunk.tool_calls,
                 finish_reason=chunk.finish_reason,
                 model=chunk.model or self.model,
+                reasoning=chunk.reasoning,
+                reasoning_details=chunk.reasoning_details,
             )
             if chunk.finish_reason:
                 break
