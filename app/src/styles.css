@@ -686,6 +686,114 @@ body {
   gap: 3px;
 }
 
+/* --- thinking panel ------------------------------------------------------- */
+/*
+ * Above the answer, not below it: the model thought and then said this, so it
+ * reads in that order. Quiet on purpose -- this is a trace of the model's
+ * working, and it should never be the loudest thing in the transcript.
+ */
+.thinking {
+  margin-bottom: 10px;
+  border-left: 2px solid var(--border-soft);
+  padding-left: 10px;
+}
+
+.thinking.is-open {
+  border-left-color: var(--fg-mute);
+}
+
+.thinking-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--fg-mute);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.thinking-head:hover {
+  color: var(--fg);
+}
+
+.thinking-caret {
+  font-size: 9px;
+}
+
+.thinking-live {
+  color: var(--fg-mute);
+  animation: thinking-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thinking-live { animation: none; }
+}
+
+.thinking-warn {
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.thinking-notice {
+  margin: 4px 0 0;
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/*
+ * Not Markdown and not a code block: this is prose the model was thinking in,
+ * so it wraps like prose. Monospace would read as output it produced, which is
+ * precisely the confusion the separate channel exists to prevent.
+ */
+.thinking-body {
+  margin-top: 4px;
+  color: var(--fg-mute);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Effort picker, sitting with the other quiet composer controls. */
+.thinking-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px 0 9px;
+}
+
+.thinking-chip-label {
+  color: var(--fg-mute);
+}
+
+.thinking-select {
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  /* The native arrow sits over the chip's own padding otherwise. */
+  padding: 0 2px 0 0;
+}
+
+.thinking-select:focus-visible {
+  outline: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+
 .bubble-user .tools {
   margin-top: 6px;
 }

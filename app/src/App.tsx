@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TauriBackend } from "./backend";
-import { applyEvent, appendUserMessage, initialState, type ChatState } from "./events";
+import {
+  applyEvent,
+  appendUserMessage,
+  blankMessage,
+  initialState,
+  type ChatState,
+} from "./events";
 import type { ChatMessage, Role } from "./events";
-import { Composer, type ModeInfo } from "./Composer";
+import { Composer, type ModeInfo, type ReasoningInfo } from "./Composer";
 import { ConfirmDialog } from "./ConfirmDialog";
 import {
   ConversationList,
@@ -44,6 +50,7 @@ export function App() {
   const [conversation, setConversation] = useState("");
   const [modes, setModes] = useState<ModeInfo[]>([]);
   const [mode, setMode] = useState("build");
+  const [reasoning, setReasoning] = useState<ReasoningInfo | null>(null);
   /**
    * Folders this window has trusted.
    *
@@ -311,24 +318,87 @@ export function App() {
     setConversations(listed.conversations ?? []);
   }, []);
 
+  /**
+   * Re-read what the bound model can be asked to think.
+   *
+   * Called whenever the model can have changed, because the answer belongs to
+   * the model: the same dropdown is five options on one model and correctly
+   * absent on the next. Failures leave it null, which hides the control
+   * rather than showing one that would be refused.
+   */
+  const refreshReasoning = useCallback(async (cancelled?: boolean) => {
+    const backend = backendRef.current;
+    if (!backend) return;
+    try {
+      const listed = (await backend.call("reasoning.list")) as ReasoningInfo;
+      if (cancelled) return;
+      setReasoning(listed);
+    } catch (error: unknown) {
+      if (cancelled) return;
+      // An unread answer is an absent control, not an error the user has to
+      // clear: the model still works, it just thinks however it thinks.
+      setReasoning(null);
+      console.warn("Could not read reasoning support:", error);
+    }
+  }, []);
+
+  const changeReasoning = useCallback(async (effort: string) => {
+    // Painted straight away, because the core has to write the choice to disk
+    // and a dropdown that lags a round trip feels broken. The reply corrects
+    // it if the model refuses, which is the same contract `changeMode` has.
+    setReasoning((prev) => (prev ? { ...prev, effort } : prev));
+    try {
+      const applied = (await backendRef.current!.call("reasoning.set", { effort })) as {
+        effort?: string;
+      };
+      if (applied.effort !== undefined) {
+        setReasoning((prev) => (prev ? { ...prev, effort: applied.effort! } : prev));
+      }
+    } catch (error: unknown) {
+      setState((prev) => ({
+        ...prev,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      await refreshReasoning();
+    }
+  }, [refreshReasoning]);
+
+  // Re-read whenever the model can have changed. One effect rather than a call
+  // in three places, because the failure mode of forgetting the third is a
+  // dropdown offering efforts the new model does not have.
+  useEffect(() => {
+    if (!connected) return;
+    let cancelled = false;
+    void refreshReasoning(cancelled);
+    return () => {
+      cancelled = true;
+    };
+  }, [connected, model, refreshReasoning]);
+
   /** Replace the transcript with a conversation's saved messages. */
-  const showMessages = useCallback((raw: unknown[]) => {
-    const restored: ChatMessage[] = [];
-    (raw ?? []).forEach((entry, index) => {
-      const message = entry as { role?: string; content?: string | null };
-      if (!message.role) return;
-      // Tool turns come back as assistant text rather than reconstructed tool
-      // cards. Their results are already flattened into the transcript by the
-      // core, and a tool call with no card behind it would render as an
-      // orphaned heading for work that already happened.
-      const role: Role = message.role === "user" ? "user" : "assistant";
-      restored.push({
-        id: `restored-${index}`,
-        role,
-        text: message.content ?? "",
-        tools: [],
+  const showMessages = useCallback((raw: unknown[]) => {      const restored: ChatMessage[] = [];
+      (raw ?? []).forEach((entry, index) => {
+        const message = entry as {
+          role?: string;
+          content?: string | null;
+          reasoning?: string | null;
+        };
+        if (!message.role) return;
+        // Tool turns come back as assistant text rather than reconstructed tool
+        // cards. Their results are already flattened into the transcript by the
+        // core, and a tool call with no card behind it would render as an
+        // orphaned heading for work that already happened.
+        const role: Role = message.role === "user" ? "user" : "assistant";
+        restored.push({
+          ...blankMessage(`restored-${index}`, role),
+          text: message.content ?? "",
+          // A saved message is finished by definition. Without this it would
+          // come back mid-stream and its panel would sit open forever, waiting
+          // for a `reasoning.completed` that was sent hours ago.
+          reasoning: message.reasoning ?? "",
+          reasoningComplete: true,
+        });
       });
-    });
     setState((prev) => ({
       ...prev,
       messages: restored,
@@ -675,6 +745,8 @@ export function App() {
           model={model}
           modes={modes}
           mode={mode}
+          reasoning={reasoning}
+          onReasoningChange={(effort) => void changeReasoning(effort)}
           onModeChange={changeMode}
           onSend={send}
           onCancel={cancel}

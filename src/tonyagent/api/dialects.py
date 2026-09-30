@@ -68,6 +68,29 @@ class Completion:
     reasoning_details: list[dict] | None = None
 
 
+@dataclass(frozen=True)
+class ReasoningSpec:
+    """What a model reports about its own thinking.
+
+    ``efforts`` is empty for a model that reasons without offering a dial, and
+    the model is simply absent from the mapping for one that does not reason at
+    all. Those are different facts: the first still thinks, the second cannot
+    be asked to.
+    """
+
+    efforts: list[str] = field(default_factory=list)
+    default_effort: str = ""
+    #: Reasoning cannot be turned off, so "off" is not an option to offer and
+    #: ``none`` is not a value to send.
+    mandatory: bool = False
+
+    def accepts(self, effort: str) -> bool:
+        """Whether this model can be asked for exactly this effort."""
+        if not effort or self.mandatory and effort == "none":
+            return False
+        return effort in self.efforts
+
+
 def read_usage(obj: dict) -> Usage:
     """Token counts, including the reasoning that ``completion_tokens`` hides.
 
@@ -206,6 +229,34 @@ class Dialect:
     # -- models --------------------------------------------------------------
     def parse_models(self, obj: dict) -> list[str]:
         return [m.get("id", "") for m in (obj.get("data") or []) if m.get("id")]
+
+    def parse_model_reasoning(self, obj: dict) -> dict[str, "ReasoningSpec"]:
+        """What each model says about its own thinking, keyed by model id.
+
+        Read from the same response as the model list, because that is where
+        OpenRouter reports it and a second request would be a second chance to
+        be rate-limited.
+
+        A model with no ``reasoning`` object is not one that thinks -- the
+        dynamic routers (``openrouter/auto``) report nothing at all, which is
+        the same thing as saying no and is treated that way. An empty
+        ``supported_efforts`` with the object present is a model that thinks
+        with no dial: it gets a spec, and no choice to make.
+        """
+        specs: dict[str, ReasoningSpec] = {}
+        for model in obj.get("data") or []:
+            model_id = model.get("id")
+            if not model_id:
+                continue
+            reasoning = model.get("reasoning")
+            if not isinstance(reasoning, dict):
+                continue
+            specs[model_id] = ReasoningSpec(
+                efforts=list(reasoning.get("supported_efforts") or []),
+                default_effort=reasoning.get("default_effort") or "",
+                mandatory=bool(reasoning.get("mandatory")),
+            )
+        return specs
 
     def models_url(self, base_url: str) -> str:
         return f"{base_url.rstrip('/')}/models"

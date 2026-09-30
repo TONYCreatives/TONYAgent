@@ -103,6 +103,21 @@ def save_config(config: dict) -> None:
         raise
 
 
+def save_reasoning_effort(effort: str) -> None:
+    """Record how hard the user wants the model to think.
+
+    Same read-modify-write as :func:`save_provider_selection`, and for the same
+    reason: the sidecar never loads ``settings``, so assembling a config dict
+    from it here would write defaults over the user's real settings.
+
+    An empty effort is written rather than removed, so switching back to "let
+    the model decide" survives a restart the same way a chosen one does.
+    """
+    config = load_config()
+    config.setdefault("provider", {})["reasoning_effort"] = effort
+    save_config(config)
+
+
 def save_provider_selection(name: str, model: str = "", base_url: str = "") -> None:
     """Record the provider the user chose, so the next launch starts on it.
 

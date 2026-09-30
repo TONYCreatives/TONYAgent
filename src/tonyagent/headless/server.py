@@ -94,6 +94,8 @@ class StdioServer:
             "search": self._h_search,
             "mode.set": self._h_mode_set,
             "mode.list": self._h_mode_list,
+            "reasoning.list": self._h_reasoning_list,
+            "reasoning.set": self._h_reasoning_set,
             "sandbox.start": self._h_sandbox_start,
             "sandbox.stop": self._h_sandbox_stop,
             "sandbox.stats": self._h_sandbox_stats,
@@ -153,6 +155,9 @@ class StdioServer:
             session.bind_provider(
                 self.session.provider_name, self.session.model, self.session.base_url
             )
+        # The effort is a property of the window, not of one conversation, so
+        # switching chats must not silently reset it to the model default.
+        session.set_reasoning_effort(self.session.reasoning_effort)
         return session
 
     def _persist(self) -> None:
@@ -314,6 +319,59 @@ class StdioServer:
             "base_url": base_url,
         }
 
+    async def _h_reasoning_list(self, params: dict) -> Any:
+        """What the bound model can be asked to think at.
+
+        Read from the provider rather than a local table, because the effort
+        names are the provider's and change with its models. A model that
+        cannot think reports ``supported: False`` with no efforts, and the
+        frontend's job is to show nothing rather than offer a choice that would
+        be refused.
+        """
+        session = self.session
+        spec = await session.reasoning_capability()
+        efforts = list(spec.efforts) if spec else []
+        if spec is not None and spec.mandatory:
+            # Cannot be turned off, so "off" is not one of the options.
+            efforts = [e for e in efforts if e != "none"]
+        return {
+            "model": session.model,
+            "supported": spec is not None,
+            "efforts": efforts,
+            "default_effort": (spec.default_effort if spec else "") or "",
+            "mandatory": bool(spec.mandatory) if spec else False,
+            "effort": session.reasoning_effort,
+        }
+
+    async def _h_reasoning_set(self, params: dict) -> Any:
+        """Choose how hard the model should think, and remember it.
+
+        Checked against the model before it is accepted, so a dropdown that
+        offers something the request would silently drop cannot report
+        success: a rejected effort is a 400 on the next message, and the user
+        would be looking at that instead of at their own choice.
+        """
+        effort = params.get("effort")
+        if not isinstance(effort, str):
+            raise RpcError("effort must be a string")
+        wanted = effort.strip()
+        session = self.session
+        spec = await session.reasoning_capability()
+        if wanted and (spec is None or not spec.accepts(wanted)):
+            raise RpcError(
+                f"{session.model or 'this model'} does not support thinking effort "
+                f"{wanted!r}"
+            )
+        applied = session.set_reasoning_effort(wanted)
+        try:
+            from tonyagent.config import save_reasoning_effort
+
+            save_reasoning_effort(applied)
+        except Exception as exc:  # noqa: BLE001 - the choice still applies this session
+            logger.error(f"Could not save the reasoning effort: {exc}")
+            return {"effort": applied, "persisted": False}
+        return {"effort": applied, "persisted": True}
+
     def _h_providers_list(self, params: dict) -> Any:
         """Report which providers exist, without exposing anything secret.
 
@@ -403,6 +461,7 @@ class StdioServer:
             "project": self.project,
             "mode": self.session.mode_name,
             "conversation": self.conversation_id,
+            "reasoning_effort": self.session.reasoning_effort,
         }
 
     # -- conversations --------------------------------------------------------
@@ -702,7 +761,31 @@ def configure_logging_to_stderr() -> None:
 
     The consumer here is a React view rendering text, not a terminal, so the
     answer is the same in every environment.
+
+    Both streams are also forced to UTF-8, and that is not a preference. Under
+    the sidecar the streams are pipes, so Python picks the *console* code page
+    for them: on this machine cp949, which encodes ``...`` as the two bytes
+    ``a1 a6`` and any Korean character as its own two bytes. Tauri's shell
+    plugin decodes the sidecar's output with a strict UTF-8 decoder, raises
+    ``invalid utf-8 sequence of 1 bytes from index 133``, and reports it on the
+    Command's ``error`` event -- which the frontend reads as "the core died".
+    One non-ASCII conversation title in a log line therefore killed the whole
+    backend on launch, and the Logs panel showed a clean startup followed by
+    "The TONYAgent backend exited."
+
+    ``errors="replace"`` rather than strict, so an unencodable character is
+    visibly wrong in a log line instead of taking the process down with it.
     """
+    for stream in (sys.stdout, sys.stderr):
+        # A frozen build or a redirected stream may not be a TextIOWrapper, and
+        # TextIOWrapper.reconfigure raises on anything else.
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):  # pragma: no cover -- platform specific
+            pass
     logger.remove()
     logger.add(sys.stderr, level="INFO", colorize=False)
 
@@ -750,6 +833,9 @@ def build_session() -> AgentSession:
             )
         else:
             logger.info(f"Restored provider {name!r} (model={model or 'default'!r}).")
+        # Applied after the bind, because the model has to be known before an
+        # effort can be checked against what it offers.
+        session.set_reasoning_effort(str(provider.get("reasoning_effort") or ""))
     except Exception as exc:  # noqa: BLE001 - never fail startup over config
         logger.warning(f"Could not restore the saved provider: {exc}")
     return session

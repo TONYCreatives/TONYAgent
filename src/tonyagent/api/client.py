@@ -21,7 +21,7 @@ from typing import Any, AsyncIterator
 
 import httpx
 
-from tonyagent.api.dialects import Chunk, Completion, Dialect
+from tonyagent.api.dialects import Chunk, Completion, Dialect, ReasoningSpec
 from tonyagent.api.errors import ErrorKind, KeyFormatError, KeyLengthError, LLMError
 
 # Fallback length floor for providers that do not declare an exact length.
@@ -196,6 +196,24 @@ class LLMClient:
 
     async def list_models(self) -> list[str]:
         """Fetch the live model list. Also serves as an auth probe."""
+        return [model_id for model_id, _ in (await self._model_entries()).items()]
+
+    async def list_model_reasoning(self) -> dict[str, ReasoningSpec]:
+        """What each listed model reports about its own thinking."""
+        specs: dict[str, ReasoningSpec] = {}
+        for model_id, entry in (await self._model_entries()).items():
+            parsed = self.dialect.parse_model_reasoning({"data": [entry]})
+            if model_id in parsed:
+                specs[model_id] = parsed[model_id]
+        return specs
+
+    async def _model_entries(self) -> dict[str, dict]:
+        """The raw ``/models`` entries, keyed by id.
+
+        The reasoning metadata and the id list come from the same response, so
+        asking for both is one request rather than two, and a model that
+        appears in one cannot be missing from the other.
+        """
         url = self.dialect.models_url(self.base_url)
         headers = self._headers()
         headers.pop("Accept", None)
@@ -208,8 +226,9 @@ class LLMClient:
         if resp.status_code in (401, 403):
             raise LLMError.from_response(resp.status_code, resp.text, self.provider)
         if resp.status_code >= 400:
-            return []
+            return {}
         try:
-            return self.dialect.parse_models(resp.json())
+            data = (resp.json() or {}).get("data") or []
         except ValueError:
-            return []
+            return {}
+        return {m["id"]: m for m in data if isinstance(m, dict) and m.get("id")}

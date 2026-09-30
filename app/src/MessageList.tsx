@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "./events";
 import { MarkdownText } from "./MarkdownText";
 
@@ -26,11 +26,74 @@ function ToolRow({ tool }: { tool: ChatMessage["tools"][number] }) {
   );
 }
 
+/**
+ * What the model thought, above the answer it produced.
+ *
+ * Open while the thinking is still arriving and folded once it is done: the
+ * trace is often longer than the answer, and a transcript of a session where
+ * every reply is twice its own length is one nobody reads. Folding it is not
+ * discarding it -- the text stays on the message and reopens with a click, and
+ * it is still in the saved conversation, so a reopened chat shows the same
+ * thing this one did.
+ *
+ * Rendered only when there is something to show. A model that does not
+ * reason gets no panel, not an empty one, because a permanently collapsed
+ * "Thinking" header on every answer is furniture the user has to learn to
+ * ignore.
+ */
+function ThinkingPanel({ message }: { message: ChatMessage }) {
+  const hasReasoning = message.reasoning.trim() !== "";
+  // Born folded if this message was restored with its thinking already
+  // complete, open if the thinking is still arriving.
+  const [open, setOpen] = useState(!message.reasoningComplete);
+  // Set once the reader has made their own choice, so finishing the stream
+  // does not fold a panel they opened on purpose.
+  const touched = useRef(false);
+
+  useEffect(() => {
+    if (message.reasoningComplete && !touched.current) setOpen(false);
+  }, [message.reasoningComplete]);
+
+  if (!hasReasoning && !message.reasoningTruncated) return null;
+
+  const toggle = () => {
+    touched.current = true;
+    setOpen((was) => !was);
+  };
+
+  return (
+    <div className={`thinking${open ? " is-open" : ""}`}>
+      <button
+        type="button"
+        className="thinking-head"
+        onClick={toggle}
+        aria-expanded={open}
+      >
+        <span className="thinking-caret">{open ? "▾" : "▸"}</span>
+        <span>Thinking</span>
+        {message.reasoningTruncated && (
+          // The turn produced no answer at all; the notice below says why, and
+          // the badge says it without having to open anything.
+          <span className="thinking-warn" title={message.reasoningNotice}>
+            ran out of budget
+          </span>
+        )}
+        {!message.reasoningComplete && <span className="thinking-live">…</span>}
+      </button>
+      {message.reasoningNotice && (
+        <p className="thinking-notice">{message.reasoningNotice}</p>
+      )}
+      {open && hasReasoning && <div className="thinking-body">{message.reasoning}</div>}
+    </div>
+  );
+}
+
 function Bubble({ message }: { message: ChatMessage }) {
   const isUser = message.role === "user";
   return (
     <div className={`row ${isUser ? "row-user" : "row-assistant"}`}>
       <div className={`bubble ${isUser ? "bubble-user" : "bubble-assistant"}`}>
+        {!isUser && <ThinkingPanel message={message} />}
         {/*
           Only assistant text is Markdown. A user's message is shown exactly as
           typed -- someone pasting `**not bold**` meant the asterisks.

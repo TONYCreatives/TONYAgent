@@ -245,3 +245,82 @@ test("the reducer does not mutate the state it was given", () => {
   applyEvent(before, event("tool.started", { id: "x", name: "read_file" }));
   assert.equal(JSON.stringify(before), snapshot);
 });
+
+// --- reasoning ------------------------------------------------------------
+//
+// The whole point of the separate channel, restated as assertions: a
+// reasoning model's thinking must not end up inside its own answer, and it
+// must survive the same append/replace contract `message.delta` has.
+
+test("reasoning deltas append to their own field, never to the answer", () => {
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(state, event("reasoning.delta", { text: "Let me " }));
+  state = applyEvent(state, event("reasoning.delta", { text: "look." }));
+  state = applyEvent(state, event("message.delta", { text: "Found it." }));
+
+  const message = state.messages[0];
+  assert.equal(message.reasoning, "Let me look.");
+  assert.equal(message.text, "Found it.");
+  assert.ok(!message.text.includes("Let me"), "thinking leaked into the answer");
+});
+
+test("reasoning.completed replaces the text rather than appending it", () => {
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(state, event("reasoning.delta", { text: "half" }));
+  state = applyEvent(
+    state,
+    event("reasoning.completed", { text: "half and the rest" }),
+  );
+  // Appending would give "halffull..." -- a duplicate is how a lost delta
+  // turns into a text that reads like two thoughts glued together.
+  assert.equal(state.messages[0].reasoning, "half and the rest");
+  assert.equal(state.messages[0].reasoningComplete, true);
+});
+
+test("a budget-exhausted turn is flagged on the message, not just the banner", () => {
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(state, event("reasoning.delta", { text: "thinking" }));
+  state = applyEvent(
+    state,
+    event("reasoning.completed", { text: "thinking", truncated: true, notice: "ran out" }),
+  );
+  const message = state.messages[0];
+  assert.equal(message.reasoningTruncated, true);
+  assert.equal(message.reasoningNotice, "ran out");
+});
+
+test("a turn that only thought is not dropped as an empty bubble", () => {
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(state, event("reasoning.delta", { text: "thinking" }));
+  state = applyEvent(state, event("turn.finished"));
+  // It produced no answer, but it produced something worth showing and
+  // something worth explaining. Dropping it leaves the user with a turn that
+  // appears to have done nothing.
+  assert.equal(state.messages.length, 1);
+});
+
+test("an answer with no reasoning leaves the panel with nothing to render", () => {
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(state, event("message.delta", { text: "Just an answer." }));
+  state = applyEvent(state, event("message.completed", { text: "Just an answer." }));
+  state = applyEvent(state, event("turn.finished"));
+  assert.equal(state.messages[0].reasoning, "");
+  assert.equal(state.messages[0].reasoningComplete, false);
+});
+
+test("a new turn does not inherit the previous turn's reasoning", () => {
+  let state = applyEvent(initialState, event("turn.started", {}, "t1"));
+  state = applyEvent(state, event("reasoning.delta", { text: "first" }, "t1"));
+  state = applyEvent(state, event("turn.finished", {}, "t1"));
+  state = applyEvent(state, event("turn.started", {}, "t2"));
+  state = applyEvent(state, event("reasoning.delta", { text: "second" }, "t2"));
+  const byId = Object.fromEntries(state.messages.map((m) => [m.id, m]));
+  assert.equal(byId.t1.reasoning, "first");
+  assert.equal(byId.t2.reasoning, "second");
+});
+
+test("a user message carries no reasoning to render", () => {
+  const state = appendUserMessage(initialState, "hi");
+  assert.equal(state.messages[0].reasoning, "");
+  assert.equal(state.messages[0].reasoningComplete, false);
+});

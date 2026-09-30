@@ -8,6 +8,7 @@ from typing import Any, AsyncIterator, Protocol
 from enum import Enum
 
 from tonyagent.api import LLMClient, MIN_KEY_LENGTH, normalize_key
+from tonyagent.api.dialects import ReasoningSpec
 from tonyagent.config.keyring import load_api_key
 
 
@@ -262,6 +263,10 @@ class OpenAICompatibleProvider(BaseLLMProvider):
     #: with a clear AttributeError instead of silently skipping the key check.
     key_prefix: str
     key_length: int | None = None
+    #: Fetched once per provider instance. The model list is a few hundred
+    #: entries and does not change within a session, so asking per turn would
+    #: spend a request to learn the same thing.
+    _reasoning_specs: dict[str, ReasoningSpec] | None = None
 
     def _build_tools(self, tools: list[ToolSchema] | None) -> list[dict] | None:
         if not tools:
@@ -348,6 +353,18 @@ class OpenAICompatibleProvider(BaseLLMProvider):
 
     async def fetch_models(self) -> list[str]:
         return await self.http_client().list_models()
+
+    async def reasoning_spec(self, model: str) -> ReasoningSpec | None:
+        """What this provider says about ``model``'s thinking, or None.
+
+        None means the model does not reason, which is a different thing from
+        reasoning with no effort dial -- the caller must not send a
+        ``reasoning`` key at all in that case, because a model that cannot
+        reason rejects one.
+        """
+        if self._reasoning_specs is None:
+            self._reasoning_specs = await self.http_client().list_model_reasoning()
+        return self._reasoning_specs.get(model or "")
 
     def validate_credentials(self) -> bool:
         """Local shape check only. Use ``check_connection`` for a real test."""

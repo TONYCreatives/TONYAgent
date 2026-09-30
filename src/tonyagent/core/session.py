@@ -20,6 +20,7 @@ from typing import Any, Optional
 from loguru import logger
 
 from tonyagent.api import LLMError
+from tonyagent.api.dialects import ReasoningSpec
 from tonyagent.core.events import Event, EventType, bus as default_bus
 from tonyagent.core.modes import DEFAULT_MODE, Mode, get_mode
 from tonyagent.providers import (
@@ -57,6 +58,11 @@ def _results_digest(orders: list[int]) -> str:
     )
 
 
+#: Sentinel for "the model's thinking has not been looked up yet". Distinct
+#: from None, which means "looked up; it does not reason".
+_UNRESOLVED = object()
+
+
 class SessionCancelled(Exception):
     """Raised when the user stops a turn."""
 
@@ -82,10 +88,18 @@ class AgentSession:
         #: base_url, ...). Stored so `state` can report it back to a window
         #: that reloaded, and so the settings panel reopens pre-filled.
         self.base_url: str = ""
+        #: How hard to ask the model to think. "" means "whatever the model
+        #: defaults to", which is also what a model with no effort dial gets.
+        self.reasoning_effort: str = ""
         self.messages: list[ChatMessage] = []
         self.provider: Any = None
         self._cancel: Optional[asyncio.Event] = None
         self._busy = False
+        #: What the provider said about this model's thinking, resolved once.
+        #: ``_UNRESOLVED`` rather than None because "not looked up yet" and
+        #: "looked up, does not reason" lead to the same request but only one
+        #: of them should cost a network call.
+        self._reasoning_spec: Any = _UNRESOLVED
         #: Composer mode. Governs the system prompt and which tools exist.
         self._mode: Mode = get_mode(DEFAULT_MODE)
         #: 1-based tool-round numbers executed in the turn in flight, so the
@@ -109,6 +123,10 @@ class AgentSession:
         self.provider = ProviderFactory.create_provider(
             provider_name, model=model, base_url=base_url
         )
+        # A new provider, or a new model, is a different answer to "can this
+        # think, and how hard". Cached against the old one would ask the new
+        # model to be told an effort it never offered.
+        self._reasoning_spec = _UNRESOLVED
         if self.provider is None:
             self.model = model
             self.emit(EventType.ERROR, {"message": f"Unknown provider: {provider_name}"})
@@ -444,6 +462,7 @@ class AgentSession:
             tools=tools,
             tool_choice=ToolChoice.AUTO,
             stream=True,
+            **(await self._reasoning_request()),
         )
         if hasattr(result, "__aiter__"):
             async for chunk in result:
@@ -463,6 +482,62 @@ class AgentSession:
                 reasoning=getattr(result, "reasoning", None),
                 reasoning_details=getattr(result, "reasoning_details", None),
             )
+
+    async def reasoning_capability(self) -> ReasoningSpec | None:
+        """What the current model says about its thinking, read once.
+
+        Public because the protocol needs the same answer the request layer
+        does, and two lookups that disagree would be a dropdown offering a
+        choice the request then throws away.
+        """
+        if self._reasoning_spec is _UNRESOLVED:
+            self._reasoning_spec = None
+            getter = getattr(self.provider, "reasoning_spec", None)
+            if getter is not None:
+                try:
+                    self._reasoning_spec = await getter(self.model)
+                except Exception as exc:  # noqa: BLE001 - unknown model, no key sent
+                    logger.warning(f"Could not read reasoning support: {exc}")
+                    self._reasoning_spec = None
+        return self._reasoning_spec
+
+    async def _reasoning_request(self) -> dict[str, Any]:
+        """The ``reasoning`` field for this request, or nothing at all.
+
+        Nothing is the common and important answer. A model that does not
+        reason rejects a request carrying the key, so the field is only built
+        once the model is known to accept it *and* the chosen effort is one it
+        offers. A model that reasons with no dial is left to its own default
+        rather than guessed at, and a mandatory one is never told ``none``.
+
+        The lookup is cached because the model list does not change under us
+        and this runs once per assistant pass.
+        """
+        if self._reasoning_spec is _UNRESOLVED:
+            await self.reasoning_capability()
+        spec = self._reasoning_spec
+        if not isinstance(spec, ReasoningSpec) or not spec.accepts(self.reasoning_effort):
+            return {}
+        return {"reasoning": {"effort": self.reasoning_effort}}
+
+    def set_reasoning_effort(self, effort: str) -> str:
+        """Choose how hard the model should think. Returns what took effect.
+
+        An effort is refused only when the model is already known and does not
+        offer it. Before the first request the answer is taken on trust and
+        re-checked by :meth:`_reasoning_request`, which is where the spec is
+        actually in hand -- refusing here would mean refusing everything that
+        arrived before the model list had been read.
+        """
+        effort = (effort or "").strip()
+        if not effort:
+            self.reasoning_effort = ""
+            return ""
+        spec = self._reasoning_spec
+        if isinstance(spec, ReasoningSpec) and not spec.accepts(effort):
+            return self.reasoning_effort
+        self.reasoning_effort = effort
+        return effort
 
     async def _stream_assistant(self, turn_id: str) -> Any:
         """One assistant pass. Returns the tool calls it requested, if any."""

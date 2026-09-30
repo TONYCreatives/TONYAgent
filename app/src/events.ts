@@ -38,6 +38,25 @@ export interface ChatMessage {
   role: Role;
   text: string;
   tools: ToolCall[];
+  /**
+   * What the model thought, kept beside the answer rather than inside it.
+   *
+   * The core streams this on its own events precisely so the two do not
+   * merge: an answer that arrives with the model's scratchwork interleaved is
+   * a different thing from an answer.
+   */
+  reasoning: string;
+  /**
+   * Whether `reasoning.completed` has arrived.
+   *
+   * A restored message is born complete, which is what makes a reopened
+   * conversation show its panel folded rather than streaming forever.
+   */
+  reasoningComplete: boolean;
+  /** The model ran out of budget thinking and wrote nothing. */
+  reasoningTruncated: boolean;
+  /** Why, in words. Only ever set alongside `reasoningTruncated`. */
+  reasoningNotice?: string;
 }
 
 /** Events that mean the turn is over, successfully or not. */
@@ -71,6 +90,19 @@ export const initialState: ChatState = {
   error: null,
   pendingConfirm: null,
 };
+
+/** A message with nothing in it yet, reasoning included. */
+export function blankMessage(id: string, role: Role): ChatMessage {
+  return {
+    id,
+    role,
+    text: "",
+    tools: [],
+    reasoning: "",
+    reasoningComplete: false,
+    reasoningTruncated: false,
+  };
+}
 
 /** Find the assistant message a turn is currently writing into. */
 function currentAssistant(state: ChatState, turnId: string | null): ChatMessage | undefined {
@@ -178,12 +210,13 @@ function copyMessages(state: ChatState): ChatMessage[] {
  * and the placeholder survived both, so the failure path -- the one a new user
  * hits first -- was the one path that kept the empty bubble.
  *
- * A message that has text *or* tools is kept. A tool call with no assistant
- * prose is a legitimate, informative turn.
+ * A message that has text, tools, *or* reasoning is kept. Reasoning counts
+ * because a model that thought and then ran out of budget produced something
+ * worth showing and something worth explaining.
  */
 function dropEmptyAssistantMessages(next: ChatState): void {
   next.messages = next.messages.filter(
-    (m) => m.text.trim() !== "" || m.tools.length > 0,
+    (m) => m.text.trim() !== "" || m.tools.length > 0 || m.reasoning.trim() !== "",
   );
 }
 
@@ -201,7 +234,7 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
       // Create the assistant placeholder eagerly, keyed by the turn id, so the
       // first delta has somewhere to land. `message.started` also carries the
       // turn id, so both paths converge on the same message.
-      upsert(next, { id: turnId ?? nextId("a"), role: "assistant", text: "", tools: [] });
+      upsert(next, blankMessage(turnId ?? nextId("a"), "assistant"));
       return next;
     }
 
@@ -210,7 +243,37 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
       // missed (events replayed from a sequence, say) the placeholder is
       // created here instead.
       if (!currentAssistant(next, turnId) && turnId) {
-        upsert(next, { id: turnId, role: "assistant", text: "", tools: [] });
+        upsert(next, blankMessage(turnId, "assistant"));
+      }
+      return next;
+    }
+
+    case "reasoning.delta": {
+      // Appended exactly like `message.delta`, and kept on its own field. The
+      // reasoning panel is the only thing that reads this; folding it into
+      // `text` would put a model's scratchpad inside its own answer.
+      const target = currentAssistant(next, turnId);
+      if (target) {
+        target.reasoning += payloadString(payload, "text") ?? "";
+        upsert(next, target);
+      }
+      return next;
+    }
+
+    case "reasoning.completed": {
+      const target = currentAssistant(next, turnId);
+      if (target) {
+        // The core sends the authoritative final text, same contract as
+        // `message.completed`. Replace rather than append: a dropped delta must
+        // not leave a hole that a second copy of the text would fill.
+        const final = payloadString(payload, "text");
+        if (final !== undefined) target.reasoning = final;
+        target.reasoningComplete = true;
+        target.reasoningTruncated = payload.truncated === true;
+        if (target.reasoningTruncated) {
+          target.reasoningNotice = payloadString(payload, "notice");
+        }
+        upsert(next, target);
       }
       return next;
     }
@@ -331,7 +394,7 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
 export function appendUserMessage(state: ChatState, text: string): ChatState {
   return {
     ...state,
-    messages: [...state.messages, { id: nextId("u"), role: "user", text, tools: [] }],
+    messages: [...state.messages, { ...blankMessage(nextId("u"), "user"), text }],
   };
 }
 

@@ -28,6 +28,8 @@ export type EventType =
   | "message.started"
   | "message.delta"
   | "message.completed"
+  | "reasoning.delta"
+  | "reasoning.completed"
   | "tool.started"
   | "tool.completed"
   | "tool.failed"
@@ -90,6 +92,17 @@ export interface CoreMethods {
   /** Available composer modes and which one is in force. */
   "mode.list": Record<string, never>;
   "mode.set": { mode: string };
+  /**
+   * How hard the bound model can be asked to think.
+   *
+   * `supported: false` means the model does not reason at all, and the core
+   * will not send a `reasoning` field for it. `efforts` is empty for a model
+   * that reasons with no dial, which is a different thing: it thinks, and
+   * there is nothing to choose.
+   */
+  "reasoning.list": Record<string, never>;
+  /** `effort: ""` hands the decision back to the model. */
+  "reasoning.set": { effort: string };
   search: {
     pattern: string;
     path?: string;

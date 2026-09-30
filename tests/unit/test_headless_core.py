@@ -7,6 +7,7 @@ core never imports a GUI toolkit.
 import asyncio
 import io
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -784,5 +785,40 @@ def test_search_matches_the_same_rules_the_agent_gets(tmp_path):
             folder_manager.set_folder(previous)
 
     assert files == {"keep.py"}, "node_modules must be skipped for both callers"
+
+
+# --- the log stream's encoding --------------------------------------------
+def test_logs_stay_utf8_even_when_the_console_codepage_is_not():
+    """Regression: one non-ASCII character in a log line killed the backend.
+
+    Under the sidecar stdout and stderr are pipes, so Python gives them the
+    *console* code page -- cp949 on this machine, which encodes a Korean
+    character as two bytes that are not valid UTF-8. Tauri's shell plugin
+    decodes the sidecar's output strictly, raises
+    ``invalid utf-8 sequence of 1 bytes from index N``, and reports it on the
+    Command's ``error`` event, which the frontend reads as the core exiting.
+
+    So the app died on launch with a perfectly good conversation open, purely
+    because the conversation title contained an ellipsis or a Korean word. The
+    reproduction below is the real one: a child process whose streams are
+    forced onto a non-UTF-8 code page, logging a non-ASCII line.
+    """
+    code = (
+        "import sys; sys.path.insert(0, 'src');"
+        "from tonyagent.headless.server import configure_logging_to_stderr;"
+        "configure_logging_to_stderr();"
+        "from loguru import logger;"
+        "logger.info('Reopening conversation \\'안녕 …\\'')"
+    )
+    env = {**os.environ, "PYTHONIOENCODING": "cp949"}
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, cwd=".", env=env
+    )
+    assert out.returncode == 0, out.stderr.decode("utf-8", "replace")
+
+    # The whole point: the bytes are decodable, not merely decodable-if-you-
+    # squint. Before the fix this raised UnicodeDecodeError here.
+    line = out.stderr.decode("utf-8")
+    assert "안녕" in line and "\u2026" in line, line
 
 

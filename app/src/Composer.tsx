@@ -8,6 +8,16 @@ export interface ModeInfo {
   writes: boolean;
 }
 
+/** What the bound model says about its own thinking. */
+export interface ReasoningInfo {
+  supported: boolean;
+  /** Efforts the model accepts, in the provider's own order. */
+  efforts: string[];
+  default_effort: string;
+  mandatory: boolean;
+  effort: string;
+}
+
 interface Props {
   busy: boolean;
   disabled: boolean;
@@ -16,6 +26,15 @@ interface Props {
   modes: ModeInfo[];
   /** The mode actually in force, as the core last reported it. */
   mode: string;
+  /**
+   * Reasoning support for the bound model, or null while it is being read.
+   *
+   * Null and "not supported" are deliberately different: the first has not
+   * answered yet and the control stays put, the second has and the control
+   * goes away.
+   */
+  reasoning: ReasoningInfo | null;
+  onReasoningChange: (effort: string) => void;
   onModeChange: (name: string) => void;
   onSend: (text: string) => void;
   onCancel: () => void;
@@ -27,6 +46,8 @@ export function Composer({
   model,
   modes,
   mode,
+  reasoning,
+  onReasoningChange,
   onModeChange,
   onSend,
   onCancel,
@@ -92,6 +113,37 @@ export function Composer({
             <span>{model || "No model"}</span>
             <span className="chip-caret">&#9662;</span>
           </button>
+
+          {/*
+            Only for a model that reports a dial. A model that cannot reason,
+            and a model that reasons with no choice to make, both get nothing
+            here: a control that cannot change anything teaches the reader that
+            this row is decoration.
+          */}
+          {reasoning && reasoning.efforts.length > 0 && (
+            <label className="chip thinking-chip" title="How hard the model should think">
+              <span className="thinking-chip-label">Thinking</span>
+              <select
+                className="thinking-select"
+                value={reasoning.effort}
+                onChange={(e) => onReasoningChange(e.target.value)}
+                disabled={disabled || busy}
+                aria-label="Thinking effort"
+              >
+                {/*
+                  "default" is the absence of a choice, and it is always
+                  offered: the model knows better than a hardcoded guess what
+                  its own budget should be.
+                */}
+                <option value="">default{reasoning.default_effort ? ` (${reasoning.default_effort})` : ""}</option>
+                {reasoning.efforts.map((effort) => (
+                  <option key={effort} value={effort}>
+                    {effort}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           <div className="composer-spacer" />
 
