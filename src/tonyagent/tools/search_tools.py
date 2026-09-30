@@ -74,6 +74,13 @@ def _extract_context(file_path: Path, line_no: int, before: int, after: int) -> 
 
 @register_tool
 class GrepTool(Tool):
+    """Search file contents with a regex, confined to the project folder.
+
+    Reports ``file:line`` matches with surrounding context so the model can act
+    on a hit without re-reading the file. Unparseable output is truncated at
+    ``max_output_size`` and says so, rather than silently losing the tail.
+    """
+
     name = "grep"
     description = "Search for a regex pattern in file contents within the project."
     category = ToolCategory.SEARCH
@@ -185,6 +192,12 @@ class GrepTool(Tool):
 
 @register_tool
 class GlobTool(Tool):
+    """Find files by name using a glob pattern.
+
+    The companion to ``grep``: one finds what to read, the other finds what is
+    inside it.
+    """
+
     name = "glob"
     description = "Find files matching a glob pattern within the project."
     category = ToolCategory.SEARCH

@@ -59,6 +59,14 @@ def _resolve_path(path: str) -> Path:
     return target
 @register_tool
 class ReadFileTool(Tool):
+    """Read a text file from the project folder.
+
+    Paths are project-relative and confined to the project folder; a path that
+    escapes it is refused rather than clamped, so the model learns that the
+    folder is the boundary rather than discovering it by reading someone else's
+    SSH key.
+    """
+
     name = "read_file"
     description = "Read the contents of a file from the project folder."
     category = ToolCategory.FILE
@@ -90,6 +98,13 @@ class ReadFileTool(Tool):
 
 @register_tool
 class WriteFileTool(Tool):
+    """Create or overwrite a file in the project folder.
+
+    Destructive and confirmation-gated: it replaces existing content, so the
+    caller is asked before it happens unless the project is trusted. Reports a
+    ``file_change`` artifact so the UI can show a diff.
+    """
+
     name = "write_file"
     description = "Create or overwrite a file in the project folder."
     category = ToolCategory.FILE
@@ -138,6 +153,13 @@ class WriteFileTool(Tool):
 
 @register_tool
 class EditFileTool(Tool):
+    """Replace an exact string inside an existing file.
+
+    Fails rather than guessing when the string is absent or ambiguous, because
+    a "helpful" fuzzy edit is a corruption the model will then reason about as
+    if it were intentional.
+    """
+
     name = "edit_file"
     description = "Edit a file by replacing old_text with new_text (exact match required)."
     category = ToolCategory.FILE
@@ -181,6 +203,13 @@ class EditFileTool(Tool):
 
 @register_tool
 class DeleteFileTool(Tool):
+    """Delete a file from the project folder, via the recycle bin.
+
+    Destructive and confirmation-gated. Goes to the recycle bin rather than
+    unlinking, so a mistaken call is recoverable by the user but not by the
+    agent pretending it can undo itself.
+    """
+
     name = "delete_file"
     description = "Delete a file from the project folder (moves to recycle bin)."
     category = ToolCategory.FILE
@@ -226,6 +255,12 @@ class DeleteFileTool(Tool):
 
 @register_tool
 class ListDirTool(Tool):
+    """List the contents of a directory in the project folder.
+
+    The only file tool with no required arguments: listing the project root is
+    a reasonable thing to want, and the default path makes that one call.
+    """
+
     name = "list_dir"
     description = "List directory contents with optional recursion."
     category = ToolCategory.FILE

@@ -5,6 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from tonyagent.tools.base import Tool, ToolResult, ToolResultStatus, ToolCategory, register_tool
+from tonyagent.tools.runtime_access import (
+    check_runtime,
+    isolated_backend,
+    running_backend,
+)
 from tonyagent.sandbox import get_shared_sandbox_manager
 from tonyagent.sandbox.base import SandboxStatus
 from tonyagent.folder.manager import folder_manager
@@ -16,69 +21,32 @@ def get_sandbox_manager():
 
 
 def _check_sandbox(needs_network: bool = False, needs_isolation: bool = False):
-    """Return None if a usable RUNNING backend exists, else an error string.
+    """Return None if a usable runtime exists, else an error string.
 
-    A headless browser is not a shell escape, so these tools accept the local
-    runtime and work with no Docker daemon. ``needs_isolation`` is for the one
-    browser tool that runs arbitrary code (``execute_js``), which still refuses
-    to run anywhere that does not contain it.
-
-    ``needs_network`` is for the tools that genuinely load pages. Network egress
-    is off by default in the container, so without this they would fail deep
-    inside Playwright with a confusing DNS error instead of saying what to
-    change. The local runtime has no such switch: the host's own network is what
-    it uses, so the gate does not apply there.
+    Thin alias for :func:`runtime_access.check_runtime`, kept so the existing
+    call sites and their tests read the same. The implementation is shared with
+    the sandbox file tools: two copies of this is how ``execute_command`` and
+    ``execute_js`` came to describe one condition differently.
     """
-    manager = get_shared_sandbox_manager()
-    backend = manager.get_runtime_backend()
-    if backend is None:
-        return (
-            "The sandbox runtime is not running. Choose a project folder in "
-            "Settings first."
-        )
-    if needs_isolation and not getattr(backend, "provides_isolation", False):
-        return (
-            "This tool runs arbitrary code, so it needs an isolated sandbox and "
-            "only the local runtime is available. Start Docker, then pick the "
-            "project folder again."
-        )
-    # getattr rather than a direct attribute: a third-party backend predating
-    # either flag must not blow up here. Both default to the refusing answer.
-    if needs_network and not getattr(backend, "has_network", False):
-        return (
-            "Browser tools need network access, but the sandbox is running with "
-            "--network none. Enable it in Settings > Sandbox > 'Allow network "
-            "access', restart the sandbox, then try again."
-        )
-    return None
+    return check_runtime(needs_network=needs_network, needs_isolation=needs_isolation)
 
 
 def _running_backend():
-    backend = get_shared_sandbox_manager().get_runtime_backend()
-    if backend is None:
-        raise RuntimeError(
-            "The sandbox runtime is not running. Choose a project folder in "
-            "Settings first."
-        )
-    return backend
+    """The runtime for the browser tools, or raise. See runtime_access."""
+    return running_backend()
 
 
 def _isolated_backend():
     """The runtime for a tool that must not run uncontained."""
-    manager = get_shared_sandbox_manager()
-    backend = manager.get_backend()
-    if backend is None or backend.status is not SandboxStatus.RUNNING:
-        raise RuntimeError(
-            "This tool runs arbitrary code, so it needs an isolated sandbox. "
-            "Start Docker and pick the project folder again."
-        )
-    if not getattr(backend, "provides_isolation", False):
-        raise RuntimeError(
-            "This tool runs arbitrary code, so it needs an isolated sandbox."
-        )
-    return backend
+    return isolated_backend()
 @register_tool
 class BrowserNavigateTool(Tool):
+    """Open a URL in the headless browser.
+
+    Starts the browser on first use and reuses the page afterwards, so this is
+    the call that establishes the session every other browser tool acts on.
+    """
+
     name = "browser_navigate"
     description = "Navigate browser to a URL in the sandbox."
     category = ToolCategory.BROWSER
@@ -102,6 +70,12 @@ class BrowserNavigateTool(Tool):
 
 @register_tool
 class BrowserClickTool(Tool):
+    """Click an element matched by a CSS selector.
+
+    A selector that matches nothing costs Playwright's full timeout, so prefer
+    a selector you have seen in a snapshot.
+    """
+
     name = "browser_click"
     description = "Click an element on the page by CSS selector."
     category = ToolCategory.BROWSER
@@ -125,6 +99,13 @@ class BrowserClickTool(Tool):
 
 @register_tool
 class BrowserTypeTool(Tool):
+    """Type text into an element matched by a CSS selector.
+
+    Fills the field rather than sending per-key events, so it suits forms and
+    search boxes; it is not a way to reproduce keystroke-by-keystroke
+    behaviour.
+    """
+
     name = "browser_type"
     description = "Type text into an element by CSS selector."
     category = ToolCategory.BROWSER
@@ -148,6 +129,12 @@ class BrowserTypeTool(Tool):
 
 @register_tool
 class BrowserEvalTool(Tool):
+    """Evaluate JavaScript in the page and return the result.
+
+    The escape hatch for anything the other tools cannot express. It runs in
+    the page, not in Node -- for the latter see ``execute_js``.
+    """
+
     name = "browser_eval"
     description = "Evaluate JavaScript in the browser page context."
     category = ToolCategory.BROWSER
@@ -171,6 +158,12 @@ class BrowserEvalTool(Tool):
 
 @register_tool
 class BrowserSnapshotTool(Tool):
+    """Describe the current page as text: an ARIA tree of interactive elements.
+
+    This is how the model learns which selectors are real. Guessing selectors
+    from a URL is what makes the other browser tools time out.
+    """
+
     name = "browser_snapshot"
     description = (
         "Get a text snapshot of the current page: the interactive elements (with "
@@ -260,6 +253,12 @@ class BrowserSnapshotTool(Tool):
 
 @register_tool
 class SetViewportSizeTool(Tool):
+    """Resize the viewport, for checking responsive layout.
+
+    The resize persists for later calls, so a test that cares about both phone
+    and desktop widths has to set the size before each phase rather than once.
+    """
+
     name = "set_viewport_size"
     description = (
         "Set the browser viewport size for responsive testing (for example "
@@ -309,6 +308,13 @@ class SetViewportSizeTool(Tool):
 
 @register_tool
 class BrowserGetTextTool(Tool):
+    """Read the visible text of the page, optionally scoped to one selector.
+
+    Truncates at ``max_chars`` and says so. Note that the text is whatever the
+    page served, which is not always English -- assert on substance rather than
+    on a string you saw once.
+    """
+
     name = "browser_get_text"
     description = (
         "Read the visible text of the current page, optionally scoped to one CSS "
@@ -367,6 +373,12 @@ class BrowserGetTextTool(Tool):
 
 @register_tool
 class BrowserWaitForTool(Tool):
+    """Wait for a selector to reach a state: visible, hidden, attached, detached.
+
+    The right answer to a page that has not finished loading. Polling here costs
+    one round trip; guessing and re-navigating costs the whole flow.
+    """
+
     name = "browser_wait_for"
     description = (
         "Wait for a CSS selector to reach a state (visible, hidden, attached, "
@@ -425,6 +437,11 @@ class BrowserWaitForTool(Tool):
 
 @register_tool
 class BrowserScrollTool(Tool):
+    """Scroll the page, or one element, up, down, to the top or to the bottom.
+
+    Scrolling an element is how lazily-loaded content is usually revealed.
+    """
+
     name = "browser_scroll"
     description = (
         "Scroll the page (or a specific element) up, down, to the top, or to the "
@@ -481,6 +498,12 @@ class BrowserScrollTool(Tool):
 
 @register_tool
 class BrowserScreenshotTool(Tool):
+    """Capture a screenshot into the project folder.
+
+    Writes inside the workspace, so the path is confined like any other file
+    tool. An empty path saves as ``screenshot.png`` at the workspace root.
+    """
+
     name = "browser_screenshot"
     description = "Capture a screenshot of the current browser page."
     category = ToolCategory.BROWSER
@@ -528,9 +551,17 @@ class BrowserScreenshotTool(Tool):
 
 @register_tool
 class ExecuteJsTool(Tool):
+    """Run JavaScript under Node.js, outside any page.
+
+    Lives in this module only because it shares the runtime; it is not a
+    browser tool. It executes arbitrary code, so like ``execute_command`` it
+    refuses to run on the local runtime and needs a containing backend --
+    ``category`` says SHELL for that reason.
+    """
+
     name = "execute_js"
     description = "Execute JavaScript in Node.js context in the sandbox."
-    category = ToolCategory.BROWSER
+    category = ToolCategory.SHELL
     parameters = {"type": "object", "properties": {"script": {"type": "string", "description": "JavaScript code to execute"}, "timeout": {"type": "integer", "description": "Timeout in seconds", "default": 10}}, "required": ["script"], "additionalProperties": False}
     destructive = False
     requires_confirmation = True

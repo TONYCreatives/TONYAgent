@@ -75,6 +75,15 @@ def _is_internal_host(hostname: str) -> bool:
 
 @register_tool
 class HttpRequestTool(Tool):
+    """Make an HTTP request.
+
+    The one tool that does not need a project folder, and the one with a
+    network-shaped guard: loopback, private and link-local addresses are
+    refused by default. Without that, "fetch the docs" is a one-token pivot
+    into the user's own services, so the refusal names the setting that opens
+    it rather than just saying no.
+    """
+
     name = "http_request"
     description = "Make an HTTP request to a URL."
     category = ToolCategory.NETWORK

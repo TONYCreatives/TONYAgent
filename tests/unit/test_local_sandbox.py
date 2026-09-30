@@ -61,6 +61,52 @@ def test_schema_flags_match_the_tool_classes(flag):
     assert not mismatched, f"{flag} differs between class and schema: {mismatched}"
 
 
+@pytest.mark.parametrize("field", ["category", "destructive", "requires_confirmation"])
+def test_schema_metadata_matches_the_tool_classes(field):
+    """The rest of the mirrored metadata is pinned for the same reason.
+
+    ``category`` drifted silently once already: ``execute_js`` was filed under
+    BROWSER while living in the browser module, and nothing noticed because
+    only the two sandbox flags were being compared.
+    """
+    tools = _registered_tools()
+    mismatched = {
+        name: (getattr(tool, field), SCHEMAS_BY_NAME[name].get(field))
+        for name, tool in tools.items()
+        if getattr(tool, field) != SCHEMAS_BY_NAME[name].get(field)
+    }
+    assert not mismatched, f"{field} differs between class and schema: {mismatched}"
+
+
+@pytest.mark.parametrize("field", ["description", "parameters"])
+def test_model_facing_text_matches_the_tool_classes(field):
+    """What the model reads must be what the class says.
+
+    ``schemas.py`` is the copy that reaches the provider, so a divergence here
+    is the model being told something the code does not do.
+    """
+    tools = _registered_tools()
+    mismatched = [
+        name for name, tool in tools.items()
+        if getattr(tool, field) != SCHEMAS_BY_NAME[name].get(field)
+    ]
+    assert not mismatched, f"{field} differs between class and schema: {mismatched}"
+
+
+def test_every_tool_documents_itself():
+    """A tool class should say what it does.
+
+    The absence of these is why ``schemas.py`` had to be maintained by hand:
+    with nothing on the class, the schema looked like the only description
+    there was.
+    """
+    undocumented = sorted(
+        name for name, tool in _registered_tools().items()
+        if not (tool.__doc__ or "").strip()
+    )
+    assert not undocumented, f"tools with no docstring: {undocumented}"
+
+
 def test_only_code_execution_requires_isolation():
     """Exactly the two tools that run arbitrary code are gated.
 

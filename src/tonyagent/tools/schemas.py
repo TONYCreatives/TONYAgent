@@ -273,6 +273,8 @@ BROWSER_SCREENSHOT_SCHEMA = {
 EXECUTE_JS_SCHEMA = {
     "name": "execute_js",
     "description": "Execute JavaScript in Node.js context in the sandbox.",
+    # SHELL, not BROWSER: it runs under Node, not in a page. It lives in
+    # browser_tools.py only because it shares the runtime.
     "parameters": {
         "type": "object",
         "properties": {
@@ -282,7 +284,7 @@ EXECUTE_JS_SCHEMA = {
         "required": ["script"],
         "additionalProperties": False,
     },
-    "category": ToolCategory.BROWSER,
+    "category": ToolCategory.SHELL,
     "destructive": False,
     "requires_confirmation": True,
     "sandbox_required": True,
@@ -293,10 +295,10 @@ EXECUTE_JS_SCHEMA = {
 SANDBOX_READ_FILE_SCHEMA = {
     "name": "sandbox_read_file",
     "description": (
-        "Read a text file from inside the sandbox container. Use this when you need "
-        "the container's view of a file (e.g. a dependency installed only in the "
-        "image). For ordinary project files prefer read_file, which does not "
-        "require a running sandbox."
+        "Read a text file through the sandbox runtime, scoped to the project "
+        "folder. Use this when you need the runtime's view of a file (e.g. a "
+        "dependency installed only in the container image). For ordinary "
+        "project files prefer read_file, which is simpler."
     ),
     "parameters": {
         "type": "object",
@@ -323,9 +325,9 @@ SANDBOX_READ_FILE_SCHEMA = {
 SANDBOX_LIST_FILES_SCHEMA = {
     "name": "sandbox_list_files",
     "description": (
-        "List files visible inside the sandbox container. Use this to inspect the "
-        "container filesystem. For ordinary project files prefer list_dir, which "
-        "does not require a running sandbox."
+        "List files through the sandbox runtime, scoped to the project folder. "
+        "Use this to inspect the runtime's filesystem. For ordinary project "
+        "files prefer list_dir, which is simpler."
     ),
     "parameters": {
         "type": "object",

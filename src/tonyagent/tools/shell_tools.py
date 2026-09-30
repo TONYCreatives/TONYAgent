@@ -113,6 +113,18 @@ async def _execute_local(command: str, cwd: str, timeout: int) -> ToolResult:
 
 @register_tool
 class ExecuteCommandTool(Tool):
+    """Run a shell command inside the sandbox.
+
+    One of only two tools that execute model-authored code, so one of only two
+    that require a *containing* backend. With only the local runtime available
+    this refuses, because "run it on the host instead" is not a lesser version
+    of the same thing -- it is the thing the sandbox exists to prevent.
+
+    Three gates, in order: the command allow/deny list, then the isolation
+    check, then per-session confirmation. A trusted project skips the prompt
+    but never the allowlist.
+    """
+
     name = "execute_command"
     description = "Execute a shell command in the sandbox environment."
     category = ToolCategory.SHELL

@@ -1,4 +1,4 @@
-"""Read-only file tools that run INSIDE the sandbox container.
+"""Read-only file tools that go through the sandbox runtime.
 
 Why these exist: the shell allowlist deliberately excludes ``cat``/``ls`` so a
 model-chosen command can't do anything unexpected. But without them the model
@@ -7,8 +7,11 @@ look at a file. These give that capability back through a narrow, typed,
 read-only RPC instead of a general shell.
 
 Use the host-side tools (``read_file``/``list_dir`` in file_tools.py) for normal
-work. These matter when you specifically need the container's view - a
-dependency resolved inside the sandbox, or a file that only exists in the image.
+work. These matter when you specifically need the runtime's view - a dependency
+resolved inside the container image, or a file that only exists there.
+
+They run on the local runtime too, so no Docker daemon is required. What they
+do not provide is containment: the workspace boundary holds, nothing more.
 """
 
 from __future__ import annotations
@@ -19,31 +22,36 @@ from tonyagent.config.settings import settings
 from tonyagent.sandbox import get_shared_sandbox_manager
 from tonyagent.sandbox.base import SandboxStatus
 from tonyagent.tools.base import Tool, ToolCategory, ToolResult, ToolResultStatus, register_tool
+from tonyagent.tools.runtime_access import running_backend
 
 
 def _running_backend():
-    """Return the RUNNING runtime, or raise with an actionable message.
+    """The RUNNING runtime, or raise with an actionable message.
 
-    Reading a file under the workspace is not a shell escape, so this accepts
-    the local runtime and works with no Docker daemon.
+    Alias for :func:`runtime_access.running_backend`, shared with the browser
+    tools so one condition cannot be described two ways.
     """
-    backend = get_shared_sandbox_manager().get_runtime_backend()
-    if backend is None:
-        raise RuntimeError(
-            "The sandbox runtime is not running. Choose a project folder in "
-            "Settings first."
-        )
-    return backend
+    return running_backend()
 
 
 @register_tool
 class SandboxReadFileTool(Tool):
+    """Read a file through the sandbox runtime, scoped to the project folder.
+
+    Prefer ``read_file`` for ordinary project files. This exists for the case
+    where the runtime's view differs -- a dependency that exists only inside
+    the container's image, for instance.
+
+    Works on the local runtime too, so it does not need Docker; only the
+    workspace boundary is guaranteed, not containment.
+    """
+
     name = "sandbox_read_file"
     description = (
-        "Read a text file from inside the sandbox container. Use this when you need "
-        "the container's view of a file (e.g. a dependency installed only in the "
-        "image). For ordinary project files prefer read_file, which does not "
-        "require a running sandbox."
+        "Read a text file through the sandbox runtime, scoped to the project "
+        "folder. Use this when you need the runtime's view of a file (e.g. a "
+        "dependency installed only in the container image). For ordinary "
+        "project files prefer read_file, which is simpler."
     )
     category = ToolCategory.FILE
     parameters = {
@@ -94,11 +102,18 @@ class SandboxReadFileTool(Tool):
 
 @register_tool
 class SandboxListFilesTool(Tool):
+    """List files through the sandbox runtime, scoped to the project folder.
+
+    The runtime-scoped counterpart to ``list_dir``, which is the better default
+    for ordinary project files. Works on the local runtime as well, so Docker is
+    not required.
+    """
+
     name = "sandbox_list_files"
     description = (
-        "List files visible inside the sandbox container. Use this to inspect the "
-        "container filesystem. For ordinary project files prefer list_dir, which "
-        "does not require a running sandbox."
+        "List files through the sandbox runtime, scoped to the project folder. "
+        "Use this to inspect the runtime's filesystem. For ordinary project "
+        "files prefer list_dir, which is simpler."
     )
     category = ToolCategory.FILE
     parameters = {
