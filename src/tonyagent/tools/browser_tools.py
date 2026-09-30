@@ -78,7 +78,7 @@ def _isolated_backend():
         )
     return backend
 @register_tool
-class BrowserNavigateTool:
+class BrowserNavigateTool(Tool):
     name = "browser_navigate"
     description = "Navigate browser to a URL in the sandbox."
     category = ToolCategory.BROWSER
@@ -101,7 +101,7 @@ class BrowserNavigateTool:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
 
 @register_tool
-class BrowserClickTool:
+class BrowserClickTool(Tool):
     name = "browser_click"
     description = "Click an element on the page by CSS selector."
     category = ToolCategory.BROWSER
@@ -124,7 +124,7 @@ class BrowserClickTool:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
 
 @register_tool
-class BrowserTypeTool:
+class BrowserTypeTool(Tool):
     name = "browser_type"
     description = "Type text into an element by CSS selector."
     category = ToolCategory.BROWSER
@@ -147,7 +147,7 @@ class BrowserTypeTool:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
 
 @register_tool
-class BrowserEvalTool:
+class BrowserEvalTool(Tool):
     name = "browser_eval"
     description = "Evaluate JavaScript in the browser page context."
     category = ToolCategory.BROWSER
@@ -170,7 +170,7 @@ class BrowserEvalTool:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
 
 @register_tool
-class BrowserSnapshotTool:
+class BrowserSnapshotTool(Tool):
     name = "browser_snapshot"
     description = (
         "Get a text snapshot of the current page: the interactive elements (with "
@@ -259,7 +259,7 @@ class BrowserSnapshotTool:
 
 
 @register_tool
-class SetViewportSizeTool:
+class SetViewportSizeTool(Tool):
     name = "set_viewport_size"
     description = (
         "Set the browser viewport size for responsive testing (for example "
@@ -308,7 +308,7 @@ class SetViewportSizeTool:
 
 
 @register_tool
-class BrowserGetTextTool:
+class BrowserGetTextTool(Tool):
     name = "browser_get_text"
     description = (
         "Read the visible text of the current page, optionally scoped to one CSS "
@@ -366,7 +366,7 @@ class BrowserGetTextTool:
 
 
 @register_tool
-class BrowserWaitForTool:
+class BrowserWaitForTool(Tool):
     name = "browser_wait_for"
     description = (
         "Wait for a CSS selector to reach a state (visible, hidden, attached, "
@@ -424,7 +424,7 @@ class BrowserWaitForTool:
 
 
 @register_tool
-class BrowserScrollTool:
+class BrowserScrollTool(Tool):
     name = "browser_scroll"
     description = (
         "Scroll the page (or a specific element) up, down, to the top, or to the "
@@ -480,7 +480,7 @@ class BrowserScrollTool:
 
 
 @register_tool
-class BrowserScreenshotTool:
+class BrowserScreenshotTool(Tool):
     name = "browser_screenshot"
     description = "Capture a screenshot of the current browser page."
     category = ToolCategory.BROWSER
@@ -527,7 +527,7 @@ class BrowserScreenshotTool:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
 
 @register_tool
-class ExecuteJsTool:
+class ExecuteJsTool(Tool):
     name = "execute_js"
     description = "Execute JavaScript in Node.js context in the sandbox."
     category = ToolCategory.BROWSER

@@ -52,7 +52,25 @@ class Tool(ABC):
     description: str = ""
     category: ToolCategory = ToolCategory.UTILITY
     parameters: dict[str, Any] = {}
-    required: list[str] = field(default_factory=list)
+    #: Required parameters, derived from ``parameters`` rather than declared.
+    #:
+    #: This used to be ``field(default_factory=list)``, which is meaningless
+    #: here because ``Tool`` is not a dataclass: the class attribute was a
+    #: ``dataclasses.Field`` object, not a list, for all 22 tools. Nothing
+    #: noticed because ``validate_args`` guarded with ``isinstance(..., list)``
+    #: and quietly validated nothing, so a model could omit a required argument
+    #: and get a raw ``TypeError`` from the execute signature instead of a
+    #: sentence telling it which argument was missing.
+    #:
+    #: Reading it from ``parameters`` makes the schema the single source of
+    #: truth, which is also the only copy ``ToolSchema.from_tool_schema_dict``
+    #: consults -- so validation and the advertised contract now agree by
+    #: construction rather than by two hand-maintained lists happening to match.
+    @property
+    def required(self) -> list[str]:
+        declared = (self.parameters or {}).get("required") or []
+        return list(declared)
+
     destructive: bool = False
     requires_confirmation: bool = False
     #: Needs a sandbox *runtime* of some kind. The local runtime satisfies
@@ -88,9 +106,13 @@ class Tool(ABC):
         pass
 
     def validate_args(self, args: dict) -> tuple[bool, str | None]:
-        """Validate arguments against schema."""
-        required = self.required if isinstance(self.required, list) else []
-        for req in required:
+        """Validate arguments against schema.
+
+        Presence only. Type and range are the provider's business -- it is the
+        one sending the request, and re-deriving its coercion rules here meant
+        two implementations that could disagree.
+        """
+        for req in self.required:
             if req not in args:
                 return False, f"Missing required parameter: {req}"
         return True, None
