@@ -25,7 +25,8 @@ from typing import Any, Callable, TextIO
 
 from loguru import logger
 
-from tonyagent.core.events import Event
+from tonyagent.core.conversations import ConversationStore, title_from
+from tonyagent.core.events import Event, EventType
 from tonyagent.core.session import AgentSession
 
 #: Bump when the request/response shape changes incompatibly.
@@ -53,11 +54,25 @@ class StdioServer:
     tracebacks) must go to stderr or the frontend will try to parse it as JSON.
     """
 
-    def __init__(self, session: AgentSession, stdin: TextIO, stdout: TextIO) -> None:
+    def __init__(
+        self,
+        session: AgentSession,
+        stdin: TextIO,
+        stdout: TextIO,
+        store: ConversationStore | None = None,
+        conversation_id: str = "",
+    ) -> None:
         self.session = session
         self.stdin = stdin
         self.stdout = stdout
         self._running = True
+        # The conversation this session writes into. Empty until one is created
+        # or restored, which is also what keeps `_persist` from inventing a
+        # conversation for a window that never said anything.
+        self.conversations = store
+        self.conversation_id = conversation_id
+        if conversation_id:
+            self._load_into_session(conversation_id)
         # The project folder the sandbox is attached to, echoed back by `state`
         # so a window that reloads knows what it is working on.
         self.project: str = ""
@@ -81,11 +96,95 @@ class StdioServer:
             "sandbox.stats": self._h_sandbox_stats,
             "confirm.respond": self._h_confirm_respond,
             "trust.set": self._h_trust_set,
+            "conversations.list": self._h_conversations_list,
+            "conversations.create": self._h_conversations_create,
+            "conversations.switch": self._h_conversations_switch,
+            "conversations.delete": self._h_conversations_delete,
         }
         # Tool confirmations must reach the frontend as events, not a Tkinter
         # callback that only an after() loop would drain.
+        #
+        # Through `_attach_session` rather than against the `session` argument:
+        # restoring a conversation above may already have replaced it, and
+        # subscribing the original would leave the live session mute.
+        self._attach_session(self.session)
+
+    # -- session plumbing ----------------------------------------------------
+    def _attach_session(self, session: AgentSession) -> None:
+        """Point the server at a session and wire the callbacks it needs.
+
+        Switching conversations means a different ``AgentSession`` object, and
+        the two things a session owns -- the confirmation bridge and the event
+        subscription -- live on the object, not on the server. Forgetting either
+        is quiet and severe: the new session would answer every request and emit
+        no events at all, so the window would show a permanently blank
+        transcript and no error anywhere.
+        """
+        self.session = session
         session.install_confirmation_bridge()
-        self.session.bus.subscribe(self._on_event)
+        session.bus.subscribe(self._on_event)
+
+    def _new_session(self) -> AgentSession:
+        """A replacement session configured like the current one.
+
+        Built bare it would come up with no provider bound, so switching chats
+        would answer the next message with "no provider configured" -- from a
+        conversation the user had been using a moment earlier.
+        """
+        session = AgentSession()
+        if self.session.provider is not None:
+            session.bind_provider(
+                self.session.provider_name, self.session.model, self.session.base_url
+            )
+        return session
+
+    def _persist(self) -> None:
+        """Write the current transcript to disk.
+
+        Called when a turn ends rather than on every message. A turn is the unit
+        the user thinks in, and saving mid-stream would leave a transcript whose
+        last entry is a half-received tool call.
+        """
+        if not self.conversations or not self.conversation_id:
+            return
+        conversation = self.conversations.load(self.conversation_id)
+        if conversation is None:
+            return
+        conversation.messages = [m.to_dict() for m in self.session.messages]
+        # Retitle from the first user message, but only once. A list that
+        # renames itself while you are reading it is disorienting, and a
+        # conversation's opening line is the best title it will ever get.
+        first_user = next(
+            (m.content for m in self.session.messages if m.role_value == "user"),
+            None,
+        )
+        if first_user and conversation.title == "New chat":
+            conversation.title = title_from(first_user)
+        conversation.project = self.project
+        self.conversations.save(conversation)
+
+    def _load_into_session(self, conversation_id: str) -> None:
+        """Replace the session with one holding a saved transcript."""
+        if self.conversations is None:
+            return
+        conversation = self.conversations.load(conversation_id)
+        if conversation is None:
+            return
+        from tonyagent.providers import ChatMessage
+
+        session = self._new_session()
+        for raw in conversation.messages:
+            try:
+                session.messages.append(ChatMessage(
+                    role=raw.get("role", "user"),
+                    content=raw.get("content"),
+                    tool_calls=raw.get("tool_calls"),
+                    tool_call_id=raw.get("tool_call_id"),
+                ))
+            except Exception as exc:  # noqa: BLE001 - one bad row, not a dead chat
+                logger.warning(f"Skipping an unreadable message: {exc}")
+        self.conversation_id = conversation_id
+        self._attach_session(session)
 
     # -- outbound ------------------------------------------------------------
     def _write(self, obj: Any) -> None:
@@ -107,8 +206,17 @@ class StdioServer:
 
         Events and replies share the stream, so they must be distinguishable.
         Events carry no ``id``; replies always do.
+
+        A finished turn is also the point at which the transcript becomes worth
+        writing down. It is saved after the event is pushed, so the frontend
+        never sees a turn it could not reopen.
         """
         self._write({"event": True, **event.to_dict()})
+        if event.type is EventType.TURN_FINISHED:
+            try:
+                self._persist()
+            except Exception as exc:  # noqa: BLE001 - a full disk is not a crash
+                logger.error(f"Could not save the conversation: {exc}")
 
     # -- handlers ------------------------------------------------------------
     def _h_ping(self, params: dict) -> Any:
@@ -277,7 +385,77 @@ class StdioServer:
             "messages": len(self.session.messages),
             "project": self.project,
             "mode": self.session.mode_name,
+            "conversation": self.conversation_id,
         }
+
+    # -- conversations --------------------------------------------------------
+    def _require_store(self) -> ConversationStore:
+        if self.conversations is None:
+            raise RpcError("conversations are not available in this build")
+        return self.conversations
+
+    def _h_conversations_list(self, params: dict) -> Any:
+        """List saved conversations, newest first.
+
+        Summaries only. The rows render a title and a timestamp; sending the
+        transcripts would mean transferring every conversation's full history on
+        each launch to draw a sidebar.
+        """
+        store = self._require_store()
+        try:
+            return {"conversations": store.summaries()}
+        except Exception as exc:  # noqa: BLE001 - an empty list beats a dead UI
+            logger.warning(f"conversations.list failed: {exc}")
+            return {"conversations": []}
+
+    def _h_conversations_create(self, params: dict) -> Any:
+        """Start a new conversation and switch to it.
+
+        Creating and switching are one action because that is what "New chat"
+        means to the person pressing it: a fresh empty conversation, not a new
+        row that they then have to go and click.
+        """
+        store = self._require_store()
+        project = str(params.get("project") or self.project or "")
+        conversation = store.create(title="New chat", project=project)
+        self._persist()  # Bank the outgoing conversation before leaving it.
+        self.project = project
+        self._load_into_session(conversation.id)
+        return {"conversation": conversation.summary()}
+
+    def _h_conversations_switch(self, params: dict) -> Any:
+        conversation_id = str(params.get("id") or "")
+        if not conversation_id:
+            raise RpcError("missing conversation id")
+        store = self._require_store()
+        conversation = store.load(conversation_id)
+        if conversation is None:
+            raise RpcError(f"No such conversation: {conversation_id}")
+        self._persist()
+        self.project = conversation.project
+        self._load_into_session(conversation_id)
+        return {
+            "conversation": conversation.summary(),
+            # The transcript, so the window can render the reopened chat without
+            # asking for it again. Returning the id alone would leave the user
+            # looking at an empty pane wondering whether the click landed.
+            "messages": conversation.messages,
+            "project": conversation.project,
+        }
+
+    def _h_conversations_delete(self, params: dict) -> Any:
+        conversation_id = str(params.get("id") or "")
+        if not conversation_id:
+            raise RpcError("missing conversation id")
+        store = self._require_store()
+        deleted = store.delete(conversation_id)
+        # Deleting the conversation you are looking at leaves you looking at
+        # nothing, which reads as a failure rather than as the intended result.
+        # So the window is moved on to a fresh one.
+        if deleted and conversation_id == self.conversation_id:
+            self.conversation_id = ""
+            self.session.clear()
+        return {"id": conversation_id, "deleted": deleted}
 
     # -- sandbox -------------------------------------------------------------
     async def _h_sandbox_start(self, params: dict) -> Any:
@@ -560,11 +738,45 @@ def build_session() -> AgentSession:
     return session
 
 
+def build_store() -> ConversationStore:
+    """Where conversations live on disk.
+
+    A sibling of ``config.toml`` rather than inside the project folder: a
+    conversation is a property of the person using the app, not of whichever
+    directory happens to be open, and putting it under the project would make
+    the history disappear the moment you switched folders.
+
+    Failure to create the directory is not fatal here -- the store writes
+    lazily and reports its own failures -- because a sidecar that refuses to
+    start is worse than one that starts and cannot yet save.
+    """
+    from tonyagent.config.settings import settings
+
+    return ConversationStore(settings.get_config_dir() / "conversations")
+
+
 async def run(session: AgentSession | None = None) -> None:
     """Entry point for ``python -m tonyagent.headless.server``."""
     configure_logging_to_stderr()
     session = session or build_session()
-    await StdioServer(session, sys.stdin, sys.stdout).serve()
+
+    store = build_store()
+    # Reopen the most recent conversation, so launching the app puts you back
+    # where you were. Restoring it into the session here rather than in the
+    # frontend means the history is present before the window asks for anything,
+    # which is what keeps a reload from showing an empty transcript.
+    conversation_id = ""
+    try:
+        recent = store.most_recent()
+        if recent is not None:
+            conversation_id = recent.id
+            logger.info(f"Reopening conversation {recent.title!r}.")
+    except Exception as exc:  # noqa: BLE001 - never fail startup over history
+        logger.warning(f"Could not read saved conversations: {exc}")
+
+    await StdioServer(
+        session, sys.stdin, sys.stdout, store=store, conversation_id=conversation_id
+    ).serve()
 
 
 def main() -> None:
