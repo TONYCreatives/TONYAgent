@@ -253,10 +253,26 @@ class StdioServer:
         return {"provider": provider, "deleted": True}
 
     def _h_state(self, params: dict) -> Any:
+        """Report what the session can actually do, not what it was asked for.
+
+        ``AgentSession`` carries a provider *name* from construction
+        ("openrouter") with no provider object behind it, so echoing that name
+        straight back made `state` claim a working configuration on a session
+        that would reject every message with "no provider configured". A window
+        that reloads then shows a provider it cannot use, which reads exactly
+        like the key never being saved.
+
+        So the name and model are reported only when a provider is actually
+        bound; unbound means "". `bound` is reported explicitly so the frontend
+        can tell "no provider" apart from "provider with an empty name" without
+        having to infer it.
+        """
+        bound = self.session.provider is not None
         return {
-            "provider": self.session.provider_name,
-            "model": self.session.model,
-            "base_url": self.session.base_url,
+            "provider": self.session.provider_name if bound else "",
+            "model": self.session.model if bound else "",
+            "base_url": self.session.base_url if bound else "",
+            "bound": bound,
             "busy": self.session.busy,
             "messages": len(self.session.messages),
             "project": self.project,

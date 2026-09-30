@@ -846,6 +846,29 @@ body {
   color: var(--accent);
 }
 
+/*
+ * A status-bar item that is also the way out of the state it reports. The
+ * default button chrome is far too heavy for a 26px bar, so it borrows the bar's
+ * own typography and is underlined instead -- visible as actionable without
+ * competing with the controls above it.
+ */
+.linkish {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-variant-numeric: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.linkish:hover {
+  color: var(--fg);
+}
+
 /* --- confirmation modal -------------------------------------------------- */
 
 .modal-backdrop {

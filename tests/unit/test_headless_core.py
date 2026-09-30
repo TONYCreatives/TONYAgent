@@ -365,6 +365,66 @@ def test_bind_provider_reports_a_custom_base_url_and_state_remembers_it():
     assert replies[2]["base_url"] == "https://gateway.internal/v1"
 
 
+# --- `state` honesty -------------------------------------------------------
+#
+# The window renders `state` verbatim, so a field that claims a provider the
+# session cannot use is a lie with a UI on it. `AgentSession` carries the name
+# "openrouter" from construction with no provider object behind it, which is
+# exactly the state a fresh sidecar used to report.
+
+
+def test_state_does_not_claim_a_provider_that_is_not_bound():
+    """Regression: the reason a saved key looked like it had no effect.
+
+    `state` reported the constructor's provider name on a session where every
+    message was rejected with "no provider configured". The window showed a
+    provider; the app had none.
+    """
+    session = AgentSession(bus=EventBus())
+    assert session.provider is None
+    frames = _drive([{"id": 1, "method": "state"}], session=session)
+
+    result = frames[0]["result"]
+    assert result["bound"] is False
+    assert result["provider"] == ""
+    assert result["model"] == ""
+    assert result["base_url"] == ""
+
+
+def test_state_reports_the_provider_once_one_is_bound():
+    frames = _drive([
+        {"id": 1, "method": "bind_provider",
+         "params": {"name": "openrouter", "model": "x/y"}},
+        {"id": 2, "method": "state"},
+    ])
+    replies = {f["id"]: f["result"] for f in frames if "id" in f}
+    assert replies[2]["bound"] is True
+    assert replies[2]["provider"] == "openrouter"
+    assert replies[2]["model"] == "x/y"
+
+
+def test_a_rejected_bind_leaves_the_session_reporting_no_provider():
+    """An unknown name must not persist as the reported provider.
+
+    ``bind_provider`` records the requested name before the factory can reject
+    it, so a bad name would otherwise survive in `state` as though it were the
+    configuration in force.
+
+    Looked up by id rather than by position: the rejection also emits an ERROR
+    event, so the first frame on the wire is a push, not the reply.
+    """
+    session = _session()
+    frames = _drive([
+        {"id": 1, "method": "bind_provider",
+         "params": {"name": "not-a-real-provider"}},
+        {"id": 2, "method": "state"},
+    ], session=session)
+    by_id = {f["id"]: f for f in frames if "id" in f}
+    assert by_id[1]["error"]["code"] == "rejected"
+    assert by_id[2]["result"]["bound"] is False
+    assert by_id[2]["result"]["provider"] == ""
+
+
 def test_bind_provider_rejects_a_scheme_less_base_url():
     """Regression: a base_url with no scheme reached httpx and surfaced as
     "Request URL is missing an 'http://' or 'https://' protocol".

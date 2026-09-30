@@ -20,6 +20,14 @@ export function App() {
   // Endpoint override last bound, or "" for the provider default. Kept beside
   // the model because both are "what is this window talking to", not chat state.
   const [baseUrl, setBaseUrl] = useState("");
+  /**
+   * True when the core came up with no provider bound.
+   *
+   * Kept distinct from an empty `provider` string so the settings panel does
+   * not open over the user's first message every launch: the hint is in the
+   * status bar, which is where a user looks for "why can't I send?".
+   */
+  const [needsProvider, setNeedsProvider] = useState(false);
   const [sandbox, setSandbox] = useState("stopped");
   const [project, setProject] = useState("");
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -160,6 +168,7 @@ export function App() {
       setProvider(bound.provider ?? name);
       setModel(bound.model ?? model);
       setBaseUrl(bound.base_url ?? endpoint);
+      setNeedsProvider(false);
     },
     [],
   );
@@ -177,6 +186,7 @@ export function App() {
           provider?: string;
           model?: string;
           base_url?: string;
+          bound?: boolean;
           project?: string;
           mode?: string;
         };
@@ -203,25 +213,12 @@ export function App() {
         if (cancelled) return;
         setModes(modeList.modes ?? []);
         if (modeList.mode) setMode(modeList.mode);
-        // Bind immediately so the session is usable. The core reports a
-        // provider *name* in `state` (its own default) but starts with no
-        // provider object, so without this the first message is rejected with
-        // "no provider configured" until the user opens Settings and presses
-        // Apply -- which is exactly the trap of saving a key and finding it has
-        // no effect.
-        if (snapshot.provider) {
-          try {
-            await applyBinding(
-              snapshot.provider,
-              snapshot.model ?? "",
-              snapshot.base_url ?? "",
-            );
-          } catch {
-            // e.g. the `custom` provider with no base_url yet. Leave it
-            // unbound; the settings panel is where that gets fixed, and a
-            // banner here would be noise on every launch.
-          }
-        }
+        // No rebind here. The core restores the saved provider itself, and
+        // `state` reports a name only when one is genuinely bound -- so this
+        // used to be a workaround for a core that claimed a provider it did
+        // not have, and rebinding it again only risked overwriting the
+        // selection with the default it was supposed to be reporting.
+        if (!snapshot.bound) setNeedsProvider(true);
       } catch (error) {
         if (!cancelled) {
           setConnected(false);
@@ -561,6 +558,12 @@ export function App() {
           sandbox={sandbox}
           connected={connected}
           busy={state.busy}
+          needsProvider={needsProvider}
+          onConfigure={() => {
+            setSettingsError(null);
+            setSettingsNotice(null);
+            setSettingsOpen(true);
+          }}
         />
       </div>
 
