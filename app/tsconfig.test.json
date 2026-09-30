@@ -1,0 +1,11 @@
+{
+  "//": "The build:proto compile step. Extends the app's own config so the tests are typechecked under the same rules as the app, and differs only where emitting to .tmp requires it. `node --test` runs plain JavaScript in Node, so the output has to be real ESM with resolvable paths -- which is why every relative import in a component carries a .js extension, even though Vite does not need one.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": ".tmp",
+    "rootDir": "src",
+    "types": ["node"]
+  },
+  "include": ["src/**/*.test.ts", "src/**/*.test.tsx"]
+}
