@@ -55,7 +55,16 @@ class Tool(ABC):
     required: list[str] = field(default_factory=list)
     destructive: bool = False
     requires_confirmation: bool = False
+    #: Needs a sandbox *runtime* of some kind. The local runtime satisfies
+    #: this, so these tools work with no Docker daemon.
     sandbox_required: bool = False
+    #: Needs a runtime that actually *contains* what runs inside it.
+    #:
+    #: Distinct from ``sandbox_required`` on purpose. A headless browser or a
+    #: read of a workspace file is not a shell escape, so those tools are happy
+    #: on the local runtime. A tool that executes arbitrary code is not, and
+    #: must be refused there rather than quietly run on the user's machine.
+    isolation_required: bool = False
 
     def get_schema(self) -> dict:
         """Get OpenAI-compatible function schema."""

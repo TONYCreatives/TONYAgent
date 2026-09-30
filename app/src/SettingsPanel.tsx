@@ -55,6 +55,12 @@ interface Props {
   trusted: boolean;
   /** Non-null while a call is in flight, so the panel can show what failed. */
   error: string | null;
+  /**
+   * Degraded-but-working, e.g. a project folder attached without an isolated
+   * sandbox. Kept apart from `error` because nothing here needs fixing, and an
+   * error style would imply otherwise.
+   */
+  notice: string | null;
   onClose: () => void;
   onChooseFolder: () => void;
   onStopSandbox: () => void;
@@ -82,6 +88,7 @@ export function SettingsPanel({
   sandbox,
   trusted,
   error,
+  notice,
   onClose,
   onChooseFolder,
   onStopSandbox,
@@ -142,6 +149,7 @@ export function SettingsPanel({
         <h2 id="settings-title">Settings</h2>
 
         {error && <p className="warn">{error}</p>}
+        {notice && <p className="notice">{notice}</p>}
 
         <section className="settings-group">
           <h3>Project folder</h3>

@@ -268,14 +268,23 @@ class StdioServer:
                 raise RpcError(f"Not a usable folder: {requested}")
 
         ok = await self.session.start_sandbox(requested)
-        if ok:
-            # Remember the project so a later `state` call can tell the UI what
-            # it is attached to. Without this a reconnecting window would show
-            # "no folder" while the core was happily sandboxed.
-            from tonyagent.folder import folder_manager
+        # The folder is recorded whether or not a container came up. It is what
+        # the file tools and `search` resolve against, so tying it to container
+        # success left a machine with no Docker daemon reporting "no folder"
+        # while the core had a perfectly usable workspace.
+        from tonyagent.folder import folder_manager
 
-            self.project = str(folder_manager.current_folder or params.get("path", ""))
-        return {"running": bool(ok), "project": self.project}
+        self.project = str(folder_manager.current_folder or params.get("path", ""))
+        # `isolated` is reported separately and on purpose. A local runtime
+        # means most tools work; only code execution needs the container, and
+        # the UI should say which of the two it got rather than showing one
+        # boolean for both.
+        isolated = bool(self.session.is_sandbox_isolated())
+        return {
+            "running": bool(ok),
+            "isolated": isolated,
+            "project": self.project,
+        }
 
     async def _h_sandbox_stop(self, params: dict) -> Any:
         await self.session.stop_sandbox()

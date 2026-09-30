@@ -87,6 +87,13 @@ export interface CoreMethods {
     max_results?: number;
     context_lines?: number;
   };
+  /**
+   * `running` means a sandbox runtime is available, which without Docker is
+   * the local one. `isolated` says whether code the agent generates is
+   * actually contained. They are separate because with no Docker daemon the
+   * first is true and the second is false, and collapsing them into one boolean
+   * is what made the app look broken on a machine without Docker.
+   */
   "sandbox.start": { path?: string };
   "sandbox.stop": Record<string, never>;
   "sandbox.stats": Record<string, never>;

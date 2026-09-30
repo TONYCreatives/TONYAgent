@@ -15,22 +15,36 @@ def get_sandbox_manager():
     return get_shared_sandbox_manager()
 
 
-def _check_sandbox(needs_network: bool = False):
+def _check_sandbox(needs_network: bool = False, needs_isolation: bool = False):
     """Return None if a usable RUNNING backend exists, else an error string.
 
+    A headless browser is not a shell escape, so these tools accept the local
+    runtime and work with no Docker daemon. ``needs_isolation`` is for the one
+    browser tool that runs arbitrary code (``execute_js``), which still refuses
+    to run anywhere that does not contain it.
+
     ``needs_network`` is for the tools that genuinely load pages. Network egress
-    is off by default now, so without this they would fail deep inside
-    Playwright with a confusing DNS error instead of saying what to change.
+    is off by default in the container, so without this they would fail deep
+    inside Playwright with a confusing DNS error instead of saying what to
+    change. The local runtime has no such switch: the host's own network is what
+    it uses, so the gate does not apply there.
     """
-    backend = get_shared_sandbox_manager().get_backend()
+    manager = get_shared_sandbox_manager()
+    backend = manager.get_runtime_backend()
     if backend is None:
-        return "Sandbox is not running (no backend). Start the sandbox first."
-    if backend.status is not SandboxStatus.RUNNING:
-        return f"Sandbox is not running (status: {backend.status.value}). Start the sandbox first."
-    # getattr on the backend itself, not on backend.config: a backend without a
-    # config attribute must not blow up here.
-    config = getattr(backend, "config", None)
-    if needs_network and not getattr(config, "enable_network", False):
+        return (
+            "The sandbox runtime is not running. Choose a project folder in "
+            "Settings first."
+        )
+    if needs_isolation and not getattr(backend, "provides_isolation", False):
+        return (
+            "This tool runs arbitrary code, so it needs an isolated sandbox and "
+            "only the local runtime is available. Start Docker, then pick the "
+            "project folder again."
+        )
+    # getattr rather than a direct attribute: a third-party backend predating
+    # either flag must not blow up here. Both default to the refusing answer.
+    if needs_network and not getattr(backend, "has_network", False):
         return (
             "Browser tools need network access, but the sandbox is running with "
             "--network none. Enable it in Settings > Sandbox > 'Allow network "
@@ -40,9 +54,28 @@ def _check_sandbox(needs_network: bool = False):
 
 
 def _running_backend():
-    backend = get_shared_sandbox_manager().get_backend()
+    backend = get_shared_sandbox_manager().get_runtime_backend()
+    if backend is None:
+        raise RuntimeError(
+            "The sandbox runtime is not running. Choose a project folder in "
+            "Settings first."
+        )
+    return backend
+
+
+def _isolated_backend():
+    """The runtime for a tool that must not run uncontained."""
+    manager = get_shared_sandbox_manager()
+    backend = manager.get_backend()
     if backend is None or backend.status is not SandboxStatus.RUNNING:
-        raise RuntimeError("Sandbox is not running. Start the sandbox first.")
+        raise RuntimeError(
+            "This tool runs arbitrary code, so it needs an isolated sandbox. "
+            "Start Docker and pick the project folder again."
+        )
+    if not getattr(backend, "provides_isolation", False):
+        raise RuntimeError(
+            "This tool runs arbitrary code, so it needs an isolated sandbox."
+        )
     return backend
 @register_tool
 class BrowserNavigateTool:
@@ -502,12 +535,15 @@ class ExecuteJsTool:
     destructive = False
     requires_confirmation = True
     sandbox_required = True
+    # Arbitrary code, so the local runtime is not enough: this one keeps
+    # needing a backend that contains it.
+    isolation_required = True
 
     async def execute(self, script: str, timeout: int = 10):
-        error = _check_sandbox()
+        error = _check_sandbox(needs_isolation=True)
         if error: return ToolResult(status=ToolResultStatus.ERROR, error=error)
         try:
-            backend = _running_backend()
+            backend = _isolated_backend()
             result = await backend.execute_js(script, timeout)
             if result.success:
                 return ToolResult(status=ToolResultStatus.SUCCESS, output=str(result.data), artifacts=[{"type": "execute_js", "result": result.data}])

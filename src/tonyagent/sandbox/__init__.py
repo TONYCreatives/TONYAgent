@@ -9,6 +9,7 @@ from tonyagent.sandbox.base import (
     SandboxManager,
 )
 from tonyagent.sandbox.docker_backend import DockerSandboxBackend
+from tonyagent.sandbox.local_backend import LocalBackend
 from tonyagent.sandbox.wsb_backend import WsbSandboxBackend
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "BrowserResult",
     "SandboxManager",
     "DockerSandboxBackend",
+    "LocalBackend",
     "WsbSandboxBackend",
     "shared_sandbox_manager",
     "get_shared_sandbox_manager",

@@ -65,6 +65,29 @@ if not _mypyc:
         "cannot start without it"
     )
 
+# The sandbox RPC server travels with the sidecar.
+#
+# The Docker-free runtime (tonyagent.sandbox.local_backend) loads this exact
+# file into the sidecar's own process, so a packaged app has no repository to
+# read it from. It is 19 KB, so it is always bundled; without it the browser
+# and read-only file tools would work in a checkout and silently do nothing in
+# an installed app, which is the worst version of this bug.
+_RPC_SERVER = ROOT / "docker" / "sandbox" / "rpc_server.py"
+if not _RPC_SERVER.is_file():
+    raise SystemExit(f"missing {_RPC_SERVER}; the local sandbox runtime needs it")
+
+# Playwright is opt-in, and the reason is size.
+#
+# Its driver alone is ~101 MiB, so bundling it unconditionally would take the
+# installer from ~48 MiB to ~150 MiB to serve one feature. `build_sidecar.py
+# --with-browser` turns it on for a self-contained build. The runtime also
+# prefers a system browser (Edge, then Chrome) over a downloaded Chromium, so
+# this flag buys the driver, not a 150 MB browser.
+_WITH_BROWSER = os.environ.get("TONYAGENT_WITH_BROWSER") == "1"
+_playwright_datas, _playwright_binaries, _playwright_hidden = (
+    collect_all("playwright") if _WITH_BROWSER else ([], [], [])
+)
+
 # `console=False` hides the console window. The protocol needs real stdio
 # handles, which a windows-subsystem binary does not get -- a GUI subsystem app
 # has no usable stdout, and the frontend would see an empty pipe. So this MUST
@@ -74,8 +97,10 @@ if not _mypyc:
 a = Analysis(
     [str(SRC / "tonyagent" / "headless" / "server.py")],
     pathex=[str(SRC)],
-    binaries=_tomli_binaries + _mypyc,
-    datas=_tomli_datas,
+    binaries=_tomli_binaries + _mypyc + _playwright_binaries,
+    datas=_tomli_datas
+    + [(_RPC_SERVER, "tonyagent_sandbox")]
+    + _playwright_datas,
     # Every provider is OpenAI-compatible and goes through tonyagent.api.LLMClient
     # (httpx), so there are no vendor SDKs to bundle. These are the only
     # imports PyInstaller's static analysis cannot see:
@@ -89,7 +114,8 @@ a = Analysis(
         "tomli_w",
         "loguru",
         "pydantic",
-    ],
+    ]
+    + _playwright_hidden,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -100,11 +126,11 @@ a = Analysis(
     excludes=[
         "tkinter",
         "customtkinter",
-        # Browser automation runs inside the Docker sandbox
-        # (docker/sandbox/rpc_server.py), never on the host. Bundling the
-        # Playwright driver here would add tens of MB and a Chromium download
-        # path that the sidecar never takes.
-        "playwright",
+        # Playwright is excluded unless TONYAGENT_WITH_BROWSER=1, because its
+        # driver is ~101 MiB. rpc_server.py imports it lazily and reports an
+        # actionable message when it is missing, so a lean build degrades to
+        # "browser tools need Playwright" rather than failing to start.
+        *([] if _WITH_BROWSER else ["playwright"]),
         "pytest",
         "mypy",
         "ruff",

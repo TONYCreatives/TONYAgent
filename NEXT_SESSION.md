@@ -1,11 +1,11 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-09-29, after the bounded tool-loop fix (the first live
-turn succeeded; see 1.9)
+**Last updated:** 2026-09-30, after the Docker-free sandbox runtime (20 of 22
+tools no longer need a daemon; see 1.12)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 247 passed, TypeScript 54 passed,
+protocol method.** Everything green: **Python 263 passed, TypeScript 54 passed,
 Tauri MSI + NSIS installers produced.**
 
 Five phases of work landed since the MSVC blocker was cleared:
@@ -43,10 +43,11 @@ Tauri one is new and thinner (chat, sandbox status, confirmations).
 
 ```bash
 python -m compileall -q src            # syntax
-python -m pytest tests -q              # 247 passed
+python -m pytest tests -q              # 263 passed
 python scripts/check_all.py --fast     # 3 checks incl. GUI launch
 python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refusals (no sandbox needed)
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
+python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
 cd app && npm test                     # 54 passed (protocol + reducer + markdown, no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
@@ -57,6 +58,10 @@ component fails the build. `npm test` compiles only the two protocol modules
 (`backend.ts`, `events.ts`) and their tests, which is what keeps it runnable
 without Tauri or Rust installed. It is no longer just `backend.ts` — the
 reducer gained its own suite in Phase 3, and that suite found a real bug.
+
+**Run `e2e_no_docker.py` with the daemon actually stopped.** It prints a
+warning and still passes if a daemon is reachable, so a green run against a
+running Docker proves nothing about the thing it exists to check.
 
 **The Tk flake is fixed.** `test_phase4_ux.py` used to fail in roughly two
 full-suite runs out of four -- a *different* test each time, always with
@@ -389,7 +394,7 @@ open the one that looks relevant" is a normal request), so the turn now loops:
     an assistant note ("Tool results are above..." plus one `[result N]` per
     round), and leaves turns that produced a real answer untouched.
 
-Verified: Python 247 passed, TS 54, `tsc --noEmit` clean, sidecar rebuilt.
+Verified: Python 263 passed, TS 54, `tsc --noEmit` clean, sidecar rebuilt.
 Still unproven live: a multi-round turn in the packaged app, and Markdown
 rendering of a real reply.
 
@@ -411,6 +416,80 @@ matching element costs a 30s Playwright timeout (the harness navigates to a
 `data:` URL form it controls instead), and `list_dir` recursive output uses
 OS separators, so on Windows the model sees `sub\\deep.txt` -- cosmetic, but
 a cross-platform agent will meet it.
+
+### 1.12 Docker is no longer required for 20 of the 22 tools
+
+The single biggest source of friction in this project was that the agent
+appeared to need Docker to do anything. It does not, and the reason it looked
+like it did is worth recording precisely.
+
+**Docker was never load-bearing for most of the tools.** A headless browser and
+a read of a workspace file are not shell escapes. Of the 22 tools, 20 need only
+a *runtime*; exactly 2 -- `execute_command` and `execute_js` -- need a runtime
+that *contains* what runs inside it. Conflating those two words is what made
+the dependency look total.
+
+The mechanism turned out to be cheap, because `SandboxBackend` was already
+written as a JSON-RPC client: every public method is built on one abstract
+primitive, `_send_request`. So:
+
+- `docker/sandbox/rpc_server.py` had exactly one real coupling to the
+  container: a hardcoded `/workspace`, in 10 places. It is now
+  `TONYAGENT_WORKSPACE`, defaulting to `/workspace` so the container is
+  unaffected. That was the whole blocker.
+- `tonyagent/sandbox/local_backend.py` loads that **same file** into the core's
+  own process. Dispatch is in-process rather than over a pipe, because in the
+  packaged sidecar `sys.executable` is the PyInstaller binary and does not run
+  a script passed to it. The handler code, the framing and the timeouts are
+  therefore still shared with the container -- one implementation, two places
+  to run it.
+- `provides_isolation` (backend) and `isolation_required` (tool) are the new
+  axis. `SandboxManager.get_backend()` still means "the isolating one"; the new
+  `get_runtime_backend()` means "whatever can serve a tool that does not need
+  containment", preferring the container so turning Docker on stays an upgrade.
+
+**Three bugs fell out of the investigation, all of them pre-existing:**
+
+1. `SandboxManager._detect_backend()` ended in `return "docker"`
+   unconditionally, so a machine with no daemon was told to start Docker. Its
+   DISM probe for the Windows optional feature needs an **elevated** shell
+   (error 740 without one), so the `WsbSandboxBackend` branch was unreachable
+   for ordinary users. It now ends in `return "local"`.
+2. `WsbSandboxBackend` is a stub: `_connect_pipe`, `_read_responses` and
+   `_send_request` are all `pass`, and the `LogonCommand` it writes names a
+   `tonyagent_sandbox.rpc_server` module that does not exist. It was left in
+   place with a docstring saying so rather than deleted, because deleting it
+   would hide that the gap exists. It stays `provides_isolation = False`, so a
+   stub that cannot contain anything is never selectable as the thing that
+   does.
+3. The frontend bailed out of folder selection when `!result.running`, while
+   the core had in fact registered the folder and 20 working tools. `running`
+   and `isolated` are now separate fields, and the panel shows a `.notice` (a
+   degraded-but-working style, deliberately not the error style) instead of
+   silently disabling Files and Search.
+
+**Packaging.** `rpc_server.py` (19 KB) is always bundled, because a packaged
+app has no repository to read it from and the failure mode is a tool that works
+in a checkout and silently does nothing when installed. Playwright is
+**opt-in** via `build_sidecar.py --with-browser`: its driver alone is ~101 MiB,
+which would take the installer from 48 MiB to ~150 MiB for one feature. Without
+it the browser tools report a missing-Playwright error rather than failing to
+start. The browser itself is not bundled either -- `rpc_server.py` tries system
+Edge, then Chrome, then Playwright's own Chromium, and Edge ships with Windows.
+
+**Verified with the daemon genuinely stopped** (`docker version` refused):
+`scripts/e2e_no_docker.py` is **17/17** -- file read/write/edit, list, grep,
+sandbox read/list, an HTTP round trip, and `browser_navigate` /
+`browser_get_text` / `browser_snapshot` against example.com through system
+Edge, with `execute_command` and `execute_js` both correctly refused. The
+**packaged** sidecar was then driven over stdio and answered
+`{"running": true, "isolated": false}`, including with the repository's
+`docker/` directory renamed away, which is what proves the bundled copy is the
+one being used.
+
+`tests/unit/test_local_sandbox.py` (16 tests) pins the parity between the
+`Tool` classes and the hand-written `schemas.py` dicts, which duplicate these
+flags and had no check keeping them honest.
 
 ### 1.11 The packaged app, verified end to end
 

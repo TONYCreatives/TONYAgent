@@ -171,9 +171,21 @@ class AgentSession:
             return False
         self.emit(
             EventType.SANDBOX_STATUS,
-            {"status": "running" if ok else "stopped"},
+            {
+                "status": "running" if ok else "stopped",
+                # Reported apart from the status so the UI can say "working, but
+                # not isolated" instead of a single boolean that hides which of
+                # the two the user actually got.
+                "isolated": self.is_sandbox_isolated(),
+            },
         )
         return bool(ok)
+
+    def is_sandbox_isolated(self) -> bool:
+        """True when code the agent generates is contained by a sandbox."""
+        from tonyagent.sandbox import get_shared_sandbox_manager
+
+        return get_shared_sandbox_manager().is_isolated()
 
     async def stop_sandbox(self) -> None:
         """Stop the shared sandbox."""

@@ -17,12 +17,20 @@ from tonyagent.tools.shell_tools import ExecuteCommandTool, _resolve_sandbox_cwd
 
 
 class FakeBackend:
+    #: Stands in for the container, so it declares that it contains what runs
+    #: inside it. The code-execution tools refuse anything that does not.
+    provides_isolation = True
+
     def __init__(self, enable_network: bool = True):
         self.status = SandboxStatus.RUNNING
         self.last_cwd: str | None = None
         # browser_* tools refuse to run without egress, so the default fake
         # opts in. Use FakeBackend(enable_network=False) to test that path.
         self.config = SandboxConfig(enable_network=enable_network)
+
+    @property
+    def has_network(self) -> bool:
+        return bool(self.config.enable_network)
 
     async def execute_command(self, command, cwd="/workspace", timeout=30):
         self.last_cwd = cwd

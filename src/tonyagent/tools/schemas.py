@@ -160,6 +160,7 @@ EXECUTE_COMMAND_SCHEMA = {
     "destructive": True,
     "requires_confirmation": True,
     "sandbox_required": True,
+    "isolation_required": True,
 }
 
 # Network Tools
@@ -285,6 +286,7 @@ EXECUTE_JS_SCHEMA = {
     "destructive": False,
     "requires_confirmation": True,
     "sandbox_required": True,
+    "isolation_required": True,
 }
 
 # Sandbox (read-only, in-container) Tools

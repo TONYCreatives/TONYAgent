@@ -16,7 +16,13 @@ from tonyagent.sandbox.base import (
 
 
 class FakeBackend(SandboxBackend):
-    """Minimal backend: answers every RPC from a canned handler."""
+    """Minimal backend: answers every RPC from a canned handler.
+
+    Stands in for the container, so it declares isolation -- the
+    code-execution tools refuse a backend that does not.
+    """
+
+    provides_isolation = True
 
     def __init__(self, handler=None):
         super().__init__(SandboxConfig())
@@ -193,10 +199,11 @@ def test_browser_tools_explain_network_requirement(monkeypatch):
 
     class FakeBackend:
         status = SandboxStatus.RUNNING
+        provides_isolation = True
         config = SandboxConfig(enable_network=False)
 
     manager = browser_tools.get_shared_sandbox_manager()
-    monkeypatch.setattr(manager, "get_backend", lambda: FakeBackend())
+    monkeypatch.setattr(manager, "get_runtime_backend", lambda: FakeBackend())
 
     err = browser_tools._check_sandbox(needs_network=True)
     assert err and "network" in err.lower() and "Settings" in err
@@ -214,7 +221,10 @@ def test_check_sandbox_tolerates_backend_without_config(monkeypatch):
         status = SandboxStatus.RUNNING  # deliberately no `config` attribute
 
     manager = browser_tools.get_shared_sandbox_manager()
-    monkeypatch.setattr(manager, "get_backend", lambda: BareBackend())
+    monkeypatch.setattr(manager, "get_runtime_backend", lambda: BareBackend())
     assert browser_tools._check_sandbox() is None
     # Unknown config -> treated as "no network", so the guidance still shows.
     assert "network" in (browser_tools._check_sandbox(needs_network=True) or "").lower()
+    # A backend that predates provides_isolation reads as non-isolating, so a
+    # code-execution tool refuses it instead of raising AttributeError.
+    assert "isolated" in (browser_tools._check_sandbox(needs_isolation=True) or "").lower()

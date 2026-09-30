@@ -906,6 +906,17 @@ body {
   font-size: 12px;
 }
 
+/* Degraded-but-working, which is not the same as broken. An error style here
+   would tell the user to go fix something that is not broken. */
+.notice {
+  margin: 0 0 14px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(186, 205, 169, 0.1);
+  color: var(--accent);
+  font-size: 12px;
+}
+
 .modal-actions {
   display: flex;
   gap: 8px;

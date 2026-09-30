@@ -22,7 +22,30 @@ from loguru import logger
 
 
 class WsbSandboxBackend(SandboxBackend):
-    """Windows Sandbox backend using .wsb configuration."""
+    """Windows Sandbox backend using .wsb configuration.
+
+    NOT IMPLEMENTED. Every transport method below is a ``pass`` and the
+    ``LogonCommand`` it writes names a ``tonyagent_sandbox.rpc_server`` module
+    that does not exist, so this cannot start and cannot serve a request.
+
+    It is left in place, rather than deleted, only so the gap is visible in the
+    source. Two things follow from it, and both were true before this class was
+    written:
+
+    * ``SandboxManager._detect_backend`` can never return ``"windows"``, because
+      its DISM probe needs an elevated shell and every non-elevated run falls
+      through to ``"docker"``.
+    * ``provides_isolation`` is deliberately left False. A stub that cannot
+      contain anything must not be selectable as the thing that does.
+
+    If you are here to finish it: the local runtime is the transport, not this.
+    ``LocalBackend`` already solves "run the sandbox RPC server somewhere
+    else", and pointing a ``.wsb`` config at a copy of that server is a much
+    smaller job than wiring up named pipes from scratch.
+    """
+
+    #: Must stay False until a request can actually round-trip.
+    provides_isolation = False
 
     def __init__(self, config: SandboxConfig):
         super().__init__(config)

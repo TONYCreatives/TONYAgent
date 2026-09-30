@@ -136,7 +136,15 @@ async def main() -> int:
             (BrowserScreenshotTool, {}),
             (ExecuteJsTool, {"script": "console.log(1)"}),
         ):
-            await expect_error(f"{tool.name}(stopped)", tool().execute(**kwargs), "sandbox")
+            # Labelled "no runtime" rather than "stopped": in --fast no runtime
+            # is ever attached, and 13 of these tools are served perfectly well
+            # by the local runtime. They all fail here for the same reason --
+            # nothing is attached -- so the isolation-specific message is not
+            # what to expect. That one is covered by test_local_sandbox.py,
+            # which attaches the local runtime on purpose.
+            await expect_error(
+                f"{tool.name}(no runtime)", tool().execute(**kwargs), "runtime"
+            )
         return _summary()
 
     manager = get_shared_sandbox_manager()

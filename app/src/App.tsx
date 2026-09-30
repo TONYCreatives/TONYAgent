@@ -25,6 +25,7 @@ export function App() {
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [modes, setModes] = useState<ModeInfo[]>([]);
   const [mode, setMode] = useState("build");
@@ -301,10 +302,11 @@ export function App() {
     const chosen = await pickFolder();
     if (!chosen) return;
     setSettingsError(null);
+    setSettingsNotice(null);
     try {
       const result = (await backendRef.current!.call("sandbox.start", {
         path: chosen,
-      })) as { running: boolean; project?: string };
+      })) as { running: boolean; isolated?: boolean; project?: string };
       if (!result.running) {
         setSettingsError("The sandbox did not start. See the log below for the reason.");
         return;
@@ -313,6 +315,14 @@ export function App() {
       // The Files panel is the view of this folder; opening it here is what
       // makes the pick feel like it did something.
       setFilesOpen(true);
+      // A runtime is not the same as containment. Without Docker the tools
+      // still work, but only the two that execute code are unavailable, and
+      // saying so is more useful than a green tick that implies otherwise.
+      if (result.isolated === false) {
+        setSettingsNotice(
+          "Working without an isolated sandbox: file, search, web and browser tools are available, but running commands and JavaScript needs Docker.",
+        );
+      }
     } catch (error) {
       setSettingsError(error instanceof Error ? error.message : String(error));
     }
@@ -525,6 +535,7 @@ export function App() {
             sandbox={sandbox}
             trusted={trustedProjects.has(project)}
             error={settingsError}
+            notice={settingsNotice}
             onClose={() => setSettingsOpen(false)}
             onChooseFolder={chooseFolder}
             onStopSandbox={stopSandbox}

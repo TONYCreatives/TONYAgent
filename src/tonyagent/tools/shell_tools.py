@@ -129,6 +129,9 @@ class ExecuteCommandTool(Tool):
     destructive = True
     requires_confirmation = True
     sandbox_required = True
+    # Arbitrary code, so the local runtime is not enough: this one keeps
+    # needing a backend that contains it.
+    isolation_required = True
 
     async def execute(self, command: str, cwd: str = ".", timeout: int = 30) -> ToolResult:
         # Validate command
@@ -136,10 +139,31 @@ class ExecuteCommandTool(Tool):
         if not allowed:
             return ToolResult(status=ToolResultStatus.ERROR, error=f"Command not allowed: {reason}")
 
-        # Sandbox first: the whole point of sandbox_required.
+        # An *isolating* backend only. get_backend() deliberately does not
+        # return the local runtime, because running a model-authored command on
+        # the host is exactly the thing that runtime must never be trusted for.
         manager = get_shared_sandbox_manager()
+        if manager.get_runtime_backend() is None and not settings.tools.fallback_to_local:
+            # Checked first so this tool says the same thing as execute_js when
+            # nothing is attached at all. Two tools that both need isolation
+            # should not tell the user two different stories about one cause.
+            # Skipped when host execution was explicitly opted into, since that
+            # opt-in is precisely a way to run with no sandbox at all.
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                error=(
+                    "The sandbox runtime is not running. Choose a project folder "
+                    "in Settings first."
+                ),
+            )
         backend = manager.get_backend()
-        if backend is not None and backend.status is SandboxStatus.RUNNING:
+        if (
+            backend is not None
+            and backend.status is SandboxStatus.RUNNING
+            # A third-party backend without the flag reads as not isolating,
+            # so an older plugin fails closed instead of running on the host.
+            and getattr(backend, "provides_isolation", False)
+        ):
             try:
                 sandbox_cwd = _resolve_sandbox_cwd(cwd)
             except ValueError as e:
@@ -169,7 +193,9 @@ class ExecuteCommandTool(Tool):
         return ToolResult(
             status=ToolResultStatus.ERROR,
             error=(
-                "Sandbox is not running. Start the sandbox before running commands "
-                "(or set tools.fallback_to_local=true for host execution)."
+                "No isolated sandbox is running. Running commands on the host is "
+                "not a substitute, so this is refused on purpose -- start Docker "
+                "and pick the project folder again (or set "
+                "tools.fallback_to_local=true to accept host execution)."
             ),
         )

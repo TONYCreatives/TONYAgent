@@ -9,12 +9,22 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+# The workspace root.
+#
+# This server is not container-only: the host also runs it as a plain
+# subprocess (see tonyagent.sandbox.local_backend) so the browser and
+# read-only file tools work with no Docker daemon. The container passes
+# /workspace, the host passes the real project folder. Hardcoding the
+# Linux path is what made the Docker dependency unavoidable.
+WORKSPACE = Path(os.environ.get("TONYAGENT_WORKSPACE", "/workspace")).resolve()
+
 # Add workspace to path
-sys.path.insert(0, "/workspace")
+sys.path.insert(0, str(WORKSPACE))
 
 
-async def exec_command(command: str, cwd: str = "/workspace", timeout: int = 30) -> dict:
+async def exec_command(command: str, cwd: str = "", timeout: int = 30) -> dict:
     """Execute a shell command."""
+    cwd = cwd or str(WORKSPACE)
     try:
         proc = await asyncio.create_subprocess_shell(
             command,
@@ -70,18 +80,66 @@ async def execute_js(script: str, timeout: int = 10) -> dict:
 # Browser automation with Playwright
 _browser = None
 _page = None
+#: The driver handle must be kept, not left as a local in the function that
+#: starts it. Playwright runs a separate driver process; dropping the last
+#: reference to the handle is what stops it from ever being shut down, so the
+#: container leaked one per session before this was a module global.
+_playwright = None
+
+#: Launch channels, tried in order. The system browser comes first because it
+#: is the only option that needs no ~150 MB download: Edge ships with Windows
+#: and Chrome is near-universal. The bundled Chromium is the last resort, and
+#: in the container it is the only one that exists.
+_BROWSER_CHANNELS = ("msedge", "chrome", None)
+
+
+async def _ensure_browser():
+    """Launch a browser once and return it, or raise a readable error."""
+    global _browser, _page, _playwright
+    from playwright.async_api import async_playwright
+
+    if _browser is None:
+        _playwright = await async_playwright().start()
+        errors = []
+        for channel in _BROWSER_CHANNELS:
+            try:
+                _browser = await _playwright.chromium.launch(headless=True, channel=channel)
+                break
+            except Exception as exc:  # try the next channel
+                errors.append(f"{channel or 'bundled chromium'}: {exc}")
+        if _browser is None:
+            raise RuntimeError(
+                "No usable browser. Tried " + "; ".join(errors)
+                + ". Install Microsoft Edge or Chrome, or run "
+                "`playwright install chromium`."
+            )
+        _page = await _browser.new_page()
+    return _browser, _page
+
+
+async def close_browser() -> dict:
+    """Release the browser and its driver. Safe to call more than once."""
+    global _browser, _page, _playwright
+    try:
+        if _browser is not None:
+            await _browser.close()
+    except Exception:
+        pass
+    try:
+        if _playwright is not None:
+            await _playwright.stop()
+    except Exception:
+        pass
+    _browser = _page = _playwright = None
+    return {"success": True}
 
 
 async def browser_navigate(url: str) -> dict:
-    global _browser, _page
     try:
-        from playwright.async_api import async_playwright
-        if _browser is None:
-            playwright = await async_playwright().start()
-            _browser = await playwright.chromium.launch(headless=True)
-            _page = await _browser.new_page()
-        await _page.goto(url, wait_until="networkidle")
-        return {"success": True, "data": {"url": _page.url, "title": await _page.title()}}
+        # _ensure_browser assigns the module-level _page the other handlers read.
+        _, page = await _ensure_browser()
+        await page.goto(url, wait_until="networkidle")
+        return {"success": True, "data": {"url": page.url, "title": await page.title()}}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -329,7 +387,7 @@ async def browser_screenshot(path: str = "") -> dict:
     global _page
     try:
         if not path:
-            path = "/workspace/screenshot.png"
+            path = str(WORKSPACE / "screenshot.png")
         await _page.screenshot(path=path)
         return {"success": True, "data": {"path": path}}
     except Exception as e:
@@ -345,12 +403,11 @@ async def ping() -> dict:
 # Dedicated methods rather than "cat"/"ls" through exec_command, so the host can
 # grant file reading without widening the shell allowlist.
 
-WORKSPACE = Path("/workspace").resolve()
 MAX_READ_BYTES = 1024 * 1024  # 1MB, matches settings.tools.max_output_size
 
 
 def _safe_path(raw: str) -> Path:
-    """Resolve a workspace-relative path, refusing anything outside /workspace.
+    """Resolve a workspace-relative path, refusing anything outside the workspace.
 
     Containers are not a security boundary against a determined attacker (the
     user owns the image), but this stops a model mistake from wandering into
@@ -430,6 +487,7 @@ async def list_files(path: str = ".", max_depth: int = 3) -> dict:
 # Method dispatch
 METHODS = {
     "ping": ping,
+    "close": close_browser,
     "exec_command": exec_command,
     "execute_js": execute_js,
     "browser_navigate": browser_navigate,

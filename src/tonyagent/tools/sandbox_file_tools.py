@@ -22,13 +22,16 @@ from tonyagent.tools.base import Tool, ToolCategory, ToolResult, ToolResultStatu
 
 
 def _running_backend():
-    """Return the RUNNING backend, or raise with an actionable message."""
-    backend = get_shared_sandbox_manager().get_backend()
+    """Return the RUNNING runtime, or raise with an actionable message.
+
+    Reading a file under the workspace is not a shell escape, so this accepts
+    the local runtime and works with no Docker daemon.
+    """
+    backend = get_shared_sandbox_manager().get_runtime_backend()
     if backend is None:
-        raise RuntimeError("Sandbox is not running (no backend). Start the sandbox first.")
-    if backend.status is not SandboxStatus.RUNNING:
         raise RuntimeError(
-            f"Sandbox is not running (status: {backend.status.value}). Start the sandbox first."
+            "The sandbox runtime is not running. Choose a project folder in "
+            "Settings first."
         )
     return backend
 

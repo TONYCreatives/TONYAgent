@@ -15,8 +15,9 @@ else, so the entry is derived from the host at build time instead.
 
 Usage::
 
-    python scripts/build_sidecar.py          # build and install
-    python scripts/build_sidecar.py --clean  # discard build dirs first
+    python scripts/build_sidecar.py              # build and install
+    python scripts/build_sidecar.py --clean      # discard build dirs first
+    python scripts/build_sidecar.py --with-browser   # + Playwright driver
 
 The output is gitignored; it is a reproducible build product, not source.
 """
@@ -25,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -63,6 +65,16 @@ def main() -> int:
         action="store_true",
         help="remove build/ and dist/ before building",
     )
+    parser.add_argument(
+        "--with-browser",
+        action="store_true",
+        help=(
+            "bundle the Playwright driver so the browser tools work in the "
+            "packaged app with no Docker. Adds roughly 100 MB to the sidecar; "
+            "the system Edge/Chrome is still preferred over a downloaded "
+            "Chromium, so this buys the driver and not a browser download"
+        ),
+    )
     args = parser.parse_args()
 
     if args.clean:
@@ -75,9 +87,12 @@ def main() -> int:
     # Fixed working directory: the spec reads src/ relative to itself, and a
     # stable cwd keeps the PyInstaller cache in one place across runs.
     print(f"building sidecar from {SPEC}")
+    env = dict(os.environ)
+    env["TONYAGENT_WITH_BROWSER"] = "1" if args.with_browser else "0"
     result = subprocess.run(
         [sys.executable, "-m", "PyInstaller", "--noconfirm", str(SPEC)],
         cwd=str(ROOT),
+        env=env,
     )
     if result.returncode != 0:
         print("PyInstaller failed", file=sys.stderr)

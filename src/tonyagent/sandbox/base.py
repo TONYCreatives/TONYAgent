@@ -5,8 +5,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any, Optional
 import asyncio
+
+from tonyagent.folder import folder_manager
 
 
 class SandboxStatus(str, Enum):
@@ -52,6 +55,27 @@ class BrowserResult:
     data: Any = None
     error: str | None = None
 class SandboxBackend(ABC):
+    #: Whether this backend actually *contains* what runs inside it.
+    #:
+    #: This is the distinction the whole module turns on, and conflating it
+    #: with "is there a sandbox" is what made Docker look mandatory. A local
+    #: subprocess is a perfectly good runtime for a headless browser or for a
+    #: read of a workspace file -- neither of those is a shell escape. It is
+    #: NOT a boundary for code that can execute arbitrary commands, so the
+    #: tools that can are gated on this flag rather than on mere liveness.
+    provides_isolation: bool = False
+
+    @property
+    def has_network(self) -> bool:
+        """Whether this backend can reach the network.
+
+        Asked rather than inferred from ``provides_isolation``: a container can
+        be isolated *and* offline (``--network none``), and the local runtime is
+        the reverse. Deriving one from the other would block the browser tools
+        on the runtime that can actually load a page.
+        """
+        return bool(getattr(self.config, "enable_network", False))
+
     def __init__(self, config: SandboxConfig):
         self.config = config
         self.status = SandboxStatus.STOPPED
@@ -220,9 +244,21 @@ class SandboxManager:
     def __init__(self):
         self._backend: Optional[SandboxBackend] = None
         self._config: Optional[SandboxConfig] = None
+        self._local: Optional[SandboxBackend] = None
 
     async def start(self, config: SandboxConfig) -> bool:
+        """Start the local runtime, then the isolating backend if one is asked for.
+
+        Returns True when a *runtime* is available, which is deliberately a
+        weaker promise than "a container is running". The browser and
+        read-only file tools need the former; only the two code-execution tools
+        need the latter, and they check ``provides_isolation`` themselves. So a
+        machine with no Docker daemon still gets a working agent, and the
+        difference is reported rather than thrown away.
+        """
         self._config = config
+
+        local_ok = await self.ensure_local(config)
 
         if config.type == "auto":
             config.type = await self._detect_backend()
@@ -233,18 +269,51 @@ class SandboxManager:
         elif config.type == "windows":
             from tonyagent.sandbox.wsb_backend import WsbSandboxBackend
             self._backend = WsbSandboxBackend(config)
+        elif config.type == "local":
+            # Explicitly asking for no isolation: the local runtime is it.
+            self._backend = None
+            return local_ok
         else:
             raise ValueError(f"Unknown sandbox type: {config.type}")
 
         success = await self._backend.start()
         if success:
             self._backend.status = SandboxStatus.RUNNING
-        return success
+        # Isolation is an upgrade, not a precondition.
+        return bool(success or local_ok)
+
+    async def ensure_local(self, config: Optional[SandboxConfig] = None) -> bool:
+        """Start (or re-point) the Docker-free runtime. Cheap and synchronous-ish.
+
+        Safe to call repeatedly: an already-running runtime bound to the same
+        project folder is left alone, so the tools can ask for it without
+        paying for a reload.
+        """
+        from tonyagent.sandbox.local_backend import LocalBackend
+
+        cfg = config or self._config or SandboxConfig()
+        if self._local is not None and self._local.status is SandboxStatus.RUNNING:
+            current = getattr(self._local, "workspace", None)
+            target = cfg.project_path or str(folder_manager.current_folder or "")
+            if not target or (current is not None and Path(target).resolve() == current):
+                return True
+            await self._local.stop()
+            self._local = None
+
+        backend = LocalBackend(cfg)
+        if not await backend.start():
+            self._local = None
+            return False
+        self._local = backend
+        return True
 
     async def stop(self) -> None:
         if self._backend:
             await self._backend.stop()
             self._backend = None
+        if self._local is not None:
+            await self._local.stop()
+            self._local = None
 
     async def health_check(self) -> bool:
         if not self._backend:
@@ -252,14 +321,52 @@ class SandboxManager:
         return await self._backend.health_check()
 
     def get_backend(self) -> Optional[SandboxBackend]:
+        """The *isolating* backend, or None. Unchanged meaning, on purpose.
+
+        Callers that only need a runtime should use ``get_runtime_backend``;
+        keeping the two apart is what stops a tool from picking up a
+        non-isolating backend by accident.
+        """
         return self._backend
 
+    def get_local_backend(self) -> Optional[SandboxBackend]:
+        """The Docker-free runtime, or None if it could not start."""
+        return self._local
+
+    def get_runtime_backend(self) -> Optional[SandboxBackend]:
+        """The best RUNNING backend for a tool that does not need isolation.
+
+        Prefers the container when it is up, so turning Docker on is still an
+        upgrade rather than a change of which code runs.
+        """
+        if self._backend is not None and self._backend.status is SandboxStatus.RUNNING:
+            return self._backend
+        if self._local is not None and self._local.status is SandboxStatus.RUNNING:
+            return self._local
+        return None
+
+    def is_isolated(self) -> bool:
+        """True when code the agent generates is actually contained."""
+        return (
+            self._backend is not None
+            and self._backend.status is SandboxStatus.RUNNING
+            and self._backend.provides_isolation
+        )
+
     def is_running(self) -> bool:
-        """True when a backend exists and reports RUNNING."""
-        return self._backend is not None and self._backend.status is SandboxStatus.RUNNING
+        """True when any runtime is available, isolated or not."""
+        return self.get_runtime_backend() is not None
 
     @staticmethod
     async def _detect_backend() -> str:
+        """Pick an isolating backend, or say plainly that there is not one.
+
+        The DISM probe for the Windows optional feature needs an elevated
+        shell: without one it returns error 740, so a normal user can never
+        get "windows" here even on a machine that has it. The old code let that
+        fall through to "docker" silently, which is how a Windows Sandbox
+        backend that cannot work ended up looking like a live alternative.
+        """
         try:
             import docker
             client = docker.from_env()
@@ -281,4 +388,7 @@ class SandboxManager:
             except Exception:
                 pass
 
-        return "docker"
+        # No containing backend. "local" is still a working answer: the browser
+        # and read-only file tools run on it, and only the two code-execution
+        # tools are refused. Failing here instead would take all 22 away.
+        return "local"
