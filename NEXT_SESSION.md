@@ -412,6 +412,44 @@ matching element costs a 30s Playwright timeout (the harness navigates to a
 OS separators, so on Windows the model sees `sub\\deep.txt` -- cosmetic, but
 a cross-platform agent will meet it.
 
+### 1.11 The packaged app, verified end to end
+
+The installers were rebuilt so they actually contain the tool loop and the
+rail rework (`npx tauri build`; MSI 48.36 MiB, NSIS 47.43 MiB). The stale
+`Model requested more tools after a tool result.` banner the user was seeing
+was not a live bug: it was the `61e4c69` build, which predates the loop.
+
+Verified in the built `tonyagent-app.exe` over CDP (`--remote-debugging-port=9333`):
+
+- **Rail.** Closed by default at 70px with zero labels; the TopBar toggle
+  expands to 248px with all five labels and persists `stored=1`; the rail's own
+  toggle button collapses it back.
+- **Tool loop.** A three-round chain (`write_file` -> `read_file` -> `list_dir`)
+  streams to a final Markdown answer with **zero** error elements in the DOM.
+  The old banner does not reappear.
+- **Markdown.** `## ` became `div.md-h.md-h2`, bullets/ordered lists became
+  `md-list`+`md-ul`/`md-ol`, and backticks became `md-code`.
+
+The real model could not be used (the stored OpenRouter key reported "Key
+limit exceeded"), so the turn was driven against a throwaway local
+OpenAI-compatible SSE server bound as the `custom` provider. Then the **shipped
+sidecar binary** (`app/src-tauri/binaries/tonyagent-core-*.exe`) was driven over
+stdio with a real project folder and a confirmation auto-approver: all three
+tools returned `status: success`, the error list was empty, and
+`notes/plan.md` existed on disk with the exact Markdown written. So the loop is
+verified in the artifact that ships, not only in the source tree.
+
+Three things worth knowing from that run:
+
+- `write_file` is `destructive`, so it raises a `confirmation.requested` event
+  and **times out to `cancelled` after 60s** if nobody answers. A headless
+  driver must reply with `confirm.respond`.
+- `sandbox.start` returns `{"running": false, "project": ""}` when Docker is
+  down, but the folder is registered *before* the container starts, so the ten
+  host tools keep working. Only the sandbox group is unavailable.
+- A key shorter than the provider's declared length is rejected at bind time
+  with an actionable message rather than a 401 -- worth keeping, it is the
+  difference between a fixable message and a mystery.
 
 ---
 
