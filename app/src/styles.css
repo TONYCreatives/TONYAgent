@@ -53,7 +53,7 @@
   --warn: #c9a45f;
 
   --rail-w: 70px;
-  --rail-w-expanded: 248px;
+  --rail-w-expanded: 204px;
   --topbar-h: 42px;
   --sidebar-w: 425px;
 
@@ -158,9 +158,16 @@ body {
 /* --- app shell ----------------------------------------------------------- */
 
 /*
- * The rail is always rendered: closed it is the narrow icon strip, expanded
- * it widens in place. The column therefore never disappears, so the grid
- * template is fixed and `.main` stays pinned to column 2.
+ * The rail is always rendered: closed it is the narrow icon strip, expanded it
+ * widens in place. The column never disappears, so `.main` stays pinned to
+ * column 2 -- but the column has to *follow* the rail, not stay at the closed
+ * width. It used to be fixed at `--rail-w`, so the expanded rail overflowed its
+ * own track and painted over the first 178px of the chat area. The comment
+ * above the original rule described the intent and quietly assumed the thing
+ * that was broken.
+ *
+ * `.rail-open` is set from React rather than derived from the rail's own width,
+ * because a grid track cannot be sized by a sibling's computed width.
  */
 .app {
   display: grid;
@@ -168,6 +175,12 @@ body {
   grid-template-rows: 100%;
   height: 100%;
   overflow: hidden;
+  /* Positioning context for the Files overlay and its scrim. */
+  position: relative;
+}
+
+.app.rail-open {
+  grid-template-columns: var(--rail-w-expanded) minmax(0, 1fr) auto;
 }
 
 .main {
@@ -198,7 +211,11 @@ body {
   border-right: 1px solid var(--border-soft);
   overflow: hidden;
   width: var(--rail-w);
-  transition: width 0.16s ease;
+  /*
+   * No width transition: the grid track snaps to the new width at the same
+   * moment, so animating only the rail would leave it visibly sliding inside a
+   * track that has already moved. Snapping reads as one action.
+   */
 }
 
 /*
@@ -296,19 +313,6 @@ body {
 
 .rail-spacer {
   flex: 1;
-}
-
-.rail-avatar {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
-  background: var(--raised);
-  color: var(--fg-dim);
-  font-size: 10px;
-  font-weight: 600;
-  user-select: none;
 }
 
 /* --- top bar ------------------------------------------------------------- */
@@ -785,10 +789,62 @@ body {
  * failure can surface. Capped and scrollable so a chatty core cannot push the
  * composer off screen.
  */
-.logstrip {
-  max-height: 120px;
-  overflow-y: auto;
+/*
+ * Collapsed, the log is one 26px line. Expanded, it is the same strip it always
+ * was -- so opening it is the same experience, and only the resting cost changed.
+ */
+.logbar {
   margin: 0 28px 8px;
+}
+
+.logbar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  height: 26px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+}
+
+.logbar-toggle:hover {
+  color: var(--fg-mute);
+}
+
+.logbar.is-open .logbar-toggle {
+  color: var(--fg-mute);
+}
+
+.logbar-caret {
+  width: 10px;
+  text-align: center;
+  font-size: 10px;
+}
+
+.logbar-count {
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--raised);
+  color: var(--fg-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.logbar.is-open .logbar-count {
+  color: var(--fg-mute);
+}
+
+.logstrip {
+  margin-top: 4px;
+  max-height: 150px;
+  overflow-y: auto;
   padding: 8px 12px;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
@@ -799,6 +855,11 @@ body {
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.logstrip-empty {
+  color: var(--fg-dim);
+  font-style: italic;
 }
 
 /* --- status bar ---------------------------------------------------------- */
@@ -1207,18 +1268,48 @@ body {
 /* --- right sidebar ------------------------------------------------------- */
 
 /*
- * A separate docked panel, not a drawer over the transcript. It sits on its own
- * surface (#171717) with its own header, so the window reads as three regions
- * rather than two.
+ * An overlay, not a third column.
+ *
+ * Docked, an empty Files panel took 425px -- a third of a 1200px window -- to
+ * say "no files touched yet", and it did that *permanently*, because the only
+ * thing that opened it also kept it open. The transcript is the point of the
+ * window; a panel that has nothing to show should not permanently shrink it.
+ *
+ * So it floats above the transcript with a scrim, which makes the temporary
+ * nature obvious and gives the click-anywhere-to-dismiss behaviour that a
+ * docked panel cannot have.
  */
 .sidebar {
-  grid-column: 3;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
   display: flex;
   flex-direction: column;
   width: var(--sidebar-w);
   min-width: 0;
-  border-left: 1px solid var(--border-soft);
+  border-left: 1px solid var(--border);
   background: var(--surface);
+  box-shadow: -18px 0 40px rgba(0, 0, 0, 0.35);
+}
+
+/*
+ * On a near-black UI a dark scrim is invisible -- dimming black toward black
+ * changes nothing -- so the panel read as a layout break slicing the composer in
+ * half rather than as something opened over the window. The blur is what makes
+ * the overlay legible on a dark theme; the tint is deliberately light for the
+ * same reason.
+ */
+.sidebar-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: rgba(8, 8, 8, 0.35);
+  backdrop-filter: blur(1.5px);
+  border: 0;
+  padding: 0;
+  cursor: default;
 }
 
 .sidebar-head {

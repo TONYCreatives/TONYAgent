@@ -1,72 +1,27 @@
 /**
- * Top bar: sidebar toggle, the conversation tab, and new-chat.
+ * Top bar: what the conversation is, and whether it is working.
  *
- * The tab is a pill because that is the reference's affordance, and the spinner
- * inside it is the only place a turn's progress is shown — the status bar
- * carries connection and provider state, which is a different question.
+ * Deliberately not a second navigation surface. It used to carry a sidebar
+ * toggle, a clear button and a new-chat button -- each of which also existed in
+ * the rail directly to its left. Two controls for one action is not a choice the
+ * user made; it is the same action listed twice, and it makes the window read as
+ * cluttered while giving no extra capability.
+ *
+ * So this bar answers exactly one question -- "what am I looking at, and is it
+ * busy?" -- and the rail answers "what can I do?".
  */
 
 interface Props {
   busy: boolean;
-  connected: boolean;
-  onNewChat: () => void;
-  onClear: () => void;
-  onToggleRail: () => void;
 }
 
-export function TopBar({ busy, connected, onNewChat, onClear, onToggleRail }: Props) {
+export function TopBar({ busy }: Props) {
   return (
     <header className="topbar">
-      <button
-        type="button"
-        className="topbar-toggle"
-        onClick={onToggleRail}
-        title="Toggle sidebar"
-        aria-label="Toggle sidebar"
-      >
-        <svg
-          width="15"
-          height="15"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <rect x="3" y="4" width="18" height="16" rx="2" />
-          <path d="M9 4v16" />
-        </svg>
-      </button>
-
       <div className="tab">
         {busy && <span className="tab-spinner" aria-label="Working" />}
         <span>TONYAgent</span>
-        <button
-          type="button"
-          className="tab-clear"
-          onClick={onClear}
-          disabled={!connected || busy}
-          title="Clear conversation"
-          aria-label="Clear conversation"
-        >
-          &#215;
-        </button>
       </div>
-
-      <button
-        type="button"
-        className="topbar-new"
-        onClick={onNewChat}
-        disabled={!connected || busy}
-        title="New chat"
-        aria-label="New chat"
-      >
-        +
-      </button>
-
-      <div className="topbar-spacer" />
     </header>
   );
 }

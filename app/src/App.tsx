@@ -49,6 +49,7 @@ export function App() {
     () => new Set(),
   );
   const [logLines, setLogLines] = useState<string[]>([]);
+  const [logsOpen, setLogsOpen] = useState(false);
   /**
    * The left rail's expanded state. FALSE by default: the closed rail is the
    * 70px icon strip, and the wide labelled version is the thing the user
@@ -325,6 +326,23 @@ export function App() {
     }
   }, []);
 
+  /**
+   * Escape closes the Files overlay.
+   *
+   * An overlay you can only dismiss by aiming at a small close button is a trap
+   * for the keyboard, and the scrim makes the click-anywhere target invisible --
+   * there is nothing on screen to say "click here to close". Escape is the
+   * affordance that does not depend on seeing anything.
+   */
+  useEffect(() => {
+    if (!filesOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFilesOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [filesOpen]);
+
   const stopSandbox = useCallback(() => {
     void backendRef.current!.call("sandbox.stop").catch((error: unknown) => {
       setSettingsError(error instanceof Error ? error.message : String(error));
@@ -469,7 +487,7 @@ export function App() {
   }, []);
 
   return (
-    <div className="app">
+    <div className={`app${railExpanded ? " rail-open" : ""}`}>
       <IconRail
         connected={connected}
         busy={state.busy}
@@ -487,25 +505,42 @@ export function App() {
       />
 
       <div className="main">
-        <TopBar
-          busy={state.busy}
-          connected={connected}
-          onNewChat={newChat}
-          onClear={clear}
-          onToggleRail={() => setRailExpanded((open) => !open)}
-        />
+        <TopBar busy={state.busy} />
 
         <MessageList messages={state.messages} busy={state.busy} />
 
         {state.error && <div className="banner">{state.error}</div>}
 
-        {logLines.length > 0 && (
-          <div className="logstrip">
-            {logLines.map((line, i) => (
-              <div key={i}>{line}</div>
-            ))}
-          </div>
-        )}
+        {/*
+         * Collapsed by default. The strip used to be a permanent 83px block
+         * wedged between the transcript and the composer, and at rest the only
+         * thing it said was "nothing is wrong" -- space spent saying so. A
+         * one-line bar keeps the log one click away and says nothing when it has
+         * nothing to say.
+         */}
+        <div className={`logbar${logsOpen ? " is-open" : ""}`}>
+          <button
+            type="button"
+            className="logbar-toggle"
+            onClick={() => setLogsOpen((open) => !open)}
+            aria-expanded={logsOpen}
+          >
+            <span className="logbar-caret">{logsOpen ? "▾" : "▸"}</span>
+            <span>Logs</span>
+            {logLines.length > 0 && (
+              <span className="logbar-count">{logLines.length}</span>
+            )}
+          </button>
+          {logsOpen && (
+            <div className="logstrip">
+              {logLines.length === 0 ? (
+                <div className="logstrip-empty">No log output yet.</div>
+              ) : (
+                logLines.map((line, i) => <div key={i}>{line}</div>)
+              )}
+            </div>
+          )}
+        </div>
 
         <Composer
           busy={state.busy}

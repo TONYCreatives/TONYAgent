@@ -51,7 +51,6 @@ const PATHS = {
   newChat: "M12 5v14M5 12h14",
   clear: "M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6",
   stop: "M6 6h12v12H6z",
-  sandbox: "M4 7h16v13H4zM9 7V4h6v3",
   search: "M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16zM21 21l-4.3-4.3",
   terminal: "M4 17l6-5-6-5M12 19h8",
   // Panel with the divider nearer the left edge: matches the reference's
@@ -95,10 +94,11 @@ export function IconRail({
   onSettings,
   onSearch,
 }: Props) {
-  // Sandbox and settings both open the one settings panel: the project folder
-  // and the model are both "what is this window working on", and two modals
-  // reaching the same core methods would be two places to keep in sync. Search
-  // has its own panel because it is a query with results, not a setting.
+  // No Sandbox entry. It used to sit directly above Settings and open the same
+  // panel, so two labels led to one destination and neither could be the obvious
+  // choice. The panel already covers the project folder and the sandbox together
+  // -- both are "what is this window working on" -- so one entry says that once.
+  // Search keeps its own panel because it is a query with results, not a setting.
   const items: Item[] = [
     {
       key: "new",
@@ -127,13 +127,6 @@ export function IconRail({
     });
   }
   items.push(
-    {
-      key: "sandbox",
-      icon: <path d={PATHS.sandbox} />,
-      label: "Sandbox",
-      onClick: onSettings,
-      disabled: !connected,
-    },
     {
       key: "search",
       icon: <path d={PATHS.search} />,
@@ -186,10 +179,6 @@ export function IconRail({
       ))}
 
       <div className="rail-spacer" />
-
-      <div className="rail-avatar" title="Local session">
-        TA
-      </div>
     </nav>
   );
 }

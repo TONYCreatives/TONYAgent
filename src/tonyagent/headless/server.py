@@ -496,9 +496,20 @@ class StdioServer:
 
 
 def configure_logging_to_stderr() -> None:
-    """Send all logs to stderr, keeping stdout purely for the protocol."""
+    """Send all logs to stderr, keeping stdout purely for the protocol.
+
+    Colour is off, deliberately and not as a matter of taste. loguru decides
+    whether to emit ANSI codes by asking whether stderr looks like a terminal,
+    and under ``tauri dev`` it decided yes -- so the log strip rendered
+    literal ``ESC[32m`` and ``ESC[0m`` in the middle of every line. The
+    packaged build answered no and looked fine, which is the worst kind of bug:
+    correct in the build the user runs, broken in the one a developer opens.
+
+    The consumer here is a React view rendering text, not a terminal, so the
+    answer is the same in every environment.
+    """
     logger.remove()
-    logger.add(sys.stderr, level="INFO")
+    logger.add(sys.stderr, level="INFO", colorize=False)
 
 
 def build_session() -> AgentSession:

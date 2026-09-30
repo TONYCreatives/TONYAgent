@@ -1,9 +1,11 @@
 /**
  * Right-hand Files panel.
  *
- * A docked third region, not a drawer: the reference keeps it permanently
- * visible with its own surface and header, so the window reads as three columns
- * rather than two.
+ * An overlay rather than a third column. Docked, an empty panel held 425px --
+ * a third of a 1200px window -- open indefinitely to report that the agent had
+ * not touched anything yet, permanently narrowing the transcript. It now floats
+ * over it behind a scrim, so it is obviously temporary and clicking away
+ * dismisses it.
  *
  * The tree is fed by the parent rather than read from disk. The core already
  * owns the sandbox and the folder, so letting the UI walk the filesystem would
@@ -119,7 +121,17 @@ export function FileSidebar({
   }
 
   return (
-    <aside className="sidebar" aria-label="Files">
+    <>
+      {/* Dismisses on any click outside the panel, which is the affordance the
+          docked version could not offer: there was nothing to dismiss *to*. */}
+      <button
+        type="button"
+        className="sidebar-scrim"
+        onClick={onToggle}
+        tabIndex={-1}
+        aria-label="Close files"
+      />
+      <aside className="sidebar" aria-label="Files">
       <div className="sidebar-head">
         <svg
           width="15"
@@ -250,6 +262,7 @@ export function FileSidebar({
           })}
         </div>
       )}
-    </aside>
+      </aside>
+    </>
   );
 }
