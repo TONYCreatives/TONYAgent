@@ -1,14 +1,19 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-09-30, after the Docker-free sandbox runtime (20 of 22
-tools no longer need a daemon; see 1.12)
+**Last updated:** 2026-09-30, after the reasoning channel, the thinking panel
+and named conversations (see 1.13)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 404 passed, TypeScript 54 passed,
+protocol method.** Everything green: **Python 477 passed, TypeScript 103 passed,
 Tauri MSI + NSIS installers produced.**
 
-Five phases of work landed since the MSVC blocker was cleared:
+`pytest tests -q` reports **477 passed, 1 failed, 7 skipped**. The failure is
+`tests/integration/test_docker_backend.py::test_start_ping_exec_stop` and it is
+not a bug: it needs a running Docker daemon. It has failed on every run on this
+machine and will pass wherever Docker is up.
+
+Ten phases of work landed since the MSVC blocker was cleared:
 
 | Phase | What it did |
 |---|---|
@@ -17,9 +22,14 @@ Five phases of work landed since the MSVC blocker was cleared:
 | 3 | The four composer modes became real permissions, and the Files tree reports diffs the core measured instead of counting tool calls |
 | 4 | Assistant text is rendered as Markdown, parsed to a token tree and built as React elements so untrusted model output never becomes raw HTML |
 | 5 | The model field is free text (OpenRouter's namespaced ids, any self-hosted gateway) and `bind_provider` accepts an optional `base_url`, which is what makes the `custom` provider reachable from the UI at all |
+| 6 | The conversation list, saved to disk, with "New chat" that means a new one |
+| 7 | Anthropic and Gemini dropped; OpenRouter is the only dialect left |
+| 8 | Reasoning kept on its own channel through to stored conversations |
+| 9 | The thinking panel, and an effort dial chosen per model |
+| 10 | A conversation can be named, copied, and found again |
 
 The Tkinter UI is untouched throughout and still the mature path. See
-sections 1.3-1.6 for what each phase changed and why.
+sections 1.3-1.6 and 1.13-1.17 for what each phase changed and why.
 
 ---
 
@@ -43,21 +53,34 @@ Tauri one is new and thinner (chat, sandbox status, confirmations).
 
 ```bash
 python -m compileall -q src            # syntax
-python -m pytest tests -q              # 404 passed
+python -m pytest tests -q              # 477 passed, 1 failed (Docker), 7 skipped
 python scripts/check_all.py --fast     # 3 checks incl. GUI launch
 python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refusals (no sandbox needed)
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 54 passed (protocol + reducer + markdown, no Rust needed)
+cd app && npm test                     # 103 passed (protocol, reducer, markdown, components; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
 `npm run build` runs `tsc --noEmit && vite build`, so a type error in a
-component fails the build. `npm test` compiles only the two protocol modules
-(`backend.ts`, `events.ts`) and their tests, which is what keeps it runnable
-without Tauri or Rust installed. It is no longer just `backend.ts` — the
-reducer gained its own suite in Phase 3, and that suite found a real bug.
+component fails the build. `npm test` is `tsc -p tsconfig.test.json && node
+--test ".tmp/**/*.test.js"` — one compile, one glob, and the test files are
+never named in `package.json`. The compile extends the app's own `tsconfig.json`,
+so the tests are typechecked under the same rules as the app they test
+(verified: an unused local in a test file fails the build). It is what keeps
+the suite runnable without Tauri or Rust installed.
+
+**Component tests need two things the protocol tests do not.** `test-dom.ts`
+installs a jsdom window on the Node globals, and it has to be its own module
+imported *first* — react-dom decides whether it is in a browser at import
+time. And every relative import in a component now carries a `.js` extension,
+because Vite resolves without one and Node does not.
+
+**Assert on counts, not on nodes.** `assert.equal(query, null)` makes node:test
+serialise the whole jsdom element to build its failure message, which took 91
+seconds on a single assertion. `assert.equal(all(c, ".x").length, 0)` fails the
+same way and reads instantly — the whole suite runs in about 2s.
 
 **Run `e2e_no_docker.py` with the daemon actually stopped.** It prints a
 warning and still passes if a daemon is reachable, so a green run against a
@@ -533,6 +556,104 @@ Three things worth knowing from that run:
   with an actionable message rather than a 401 -- worth keeping, it is the
   difference between a fixable message and a mystery.
 
+### 1.13 One provider, and why the others went
+
+Anthropic and Gemini were deleted (28 files, +142/-725) rather than left
+unused. Two dialects with no way to exercise them is two claims nobody can
+check, and `fe1e470` removed the modules, their tests, and their entries in the
+provider registry together.
+
+The finding worth keeping is what came with it. Every event was reaching the
+window **three times** — a subscription leak in `App`, invisible because
+streaming still worked and a duplicated message looks the same as a retried
+one. It surfaced only while working on the reasoning channel, where three
+copies of a delta are three copies of the model's thinking.
+
+### 1.14 Conversations on disk
+
+`core/conversations.py` is a new file, one JSON document per conversation. The
+choice is deliberate against a single index: a corrupt conversation should
+cost that one conversation, and a write costs one small file.
+
+`list()` sorts on `(-updated_at, created_at)`. The tiebreak is not decoration —
+it is what puts a copy directly beneath the conversation it came from, since
+the copy shares the original's `updated_at` and was created later.
+
+**`save(conversation, touch=True)` exists because two callers want different
+things.** A turn that just happened should move a chat to the top. A *copy* is
+about an older conversation and belongs next to it, so `duplicate()` passes
+`touch=False`. Renaming **does** touch, and therefore **does** move a chat to
+the top of the list. That is deliberate: "recently handled on top" is what the
+sidebar has always meant, and a rename is a deliberate act by the reader. If
+that ever stops being what you want, the change is one argument at
+`conversations.py:rename`.
+
+### 1.15 Reasoning on its own channel
+
+`reasoning.delta` / `reasoning.completed` carry the model's thinking, and
+`ChatMessage` keeps it in a `reasoning` field beside `text` rather than
+inside it. An answer with scratchwork interleaved is a different thing from an
+answer, and the wire format is what guarantees that: two events, two fields,
+no merging to undo.
+
+A restored message is born `reasoningComplete: true`, which is what makes a
+reopened conversation show its panel folded rather than streaming forever.
+
+### 1.16 The thinking panel, and the effort dial
+
+`ThinkingPanel` in `MessageList.tsx` opens while the thinking streams and folds
+when it completes — the trace is often longer than the answer, and a transcript
+where every reply is twice its own length is one nobody reads. Folding is not
+discarding: the text stays on the message, reopens with a click, and is in the
+saved conversation.
+
+Three rules earn their own tests because each is one edit from inverting:
+
+- **A model that cannot think gets no panel at all**, not an empty one. A
+  permanently collapsed "Thinking" header above every answer is furniture the
+  user learns to ignore.
+- **A panel the reader opened on purpose is not folded when the turn ends.**
+  `touched` records that they chose to be looking at it.
+- **The effort dial appears only when `reasoning.efforts.length > 0`.** A
+  model that cannot reason, and one that reasons with no choice to make, both
+  get nothing: a control that cannot change anything teaches the reader that
+  the row is decoration.
+
+The dial's value is whatever the core last reported, never a local guess
+written when a value was clicked — the same rule the mode pills follow.
+
+### 1.17 Two bugs that only a real run finds
+
+**A conversation title in any non-ASCII script killed the app.** The sidecar's
+stdout and stderr had been configured for UTF-8, and the request stream had
+not: stdin still took the Windows console code page (cp949), so `café` was
+stored as `caf챕` and a title of `한` raised `UnicodeEncodeError: surrogates not
+allowed`. Tauri decodes its sidecar strictly, so a mangled byte in a title
+reached the frontend as "the core died" — and any non-ASCII title took the
+whole window down. All three streams are configured now, in
+`configure_stdio()`. **The lesson is the asymmetry: fixing two of three streams
+reads as fixing the bug, because the symptom is identical.**
+
+**The same class of bug, one layer up:** a conversation title containing `…`
+reached the log as non-UTF-8 and the strict decoder rejected it, which is how
+an earlier launch crash was found. Both are the same failure — a Windows
+process that believes its own console encoding and is wrong.
+
+### 1.18 What the component tests found
+
+`ConversationList.test.tsx`, `MessageList.test.tsx` and `Composer.test.tsx`
+run under jsdom, and each new rule was verified by reversing it. One reversal
+**passed**, which is the part worth recording: mutating the effort dial's
+"default" option to carry the default effort's *name* instead of `""` left the
+test green, because the test set the select to `""`, which then matched no
+option at all and so never fired the callback it was asserting on. The test now
+reads the option's own `value` back. A test that cannot fail is worth as much
+as a test that does not exist — slightly less, because it reads like coverage.
+
+The shared harness is `test-render.ts` plus the side-effect `test-dom.ts`.
+The sixteen existing rename tests passed against the extracted harness
+unchanged, which is what made moving it safe.
+
 ---
 
 ## 2. The wire protocol (contract for the future UI)
@@ -573,6 +694,18 @@ stdout is protocol-only, or the frontend will parse log lines as JSON.
 | `sandbox.stats` | — | stats dict |
 | `confirm.respond` | `{id, confirmed}` | `{id, confirmed}` |
 | `trust.set` | `{project, trusted}` | `{project, trusted}` |
+| `conversations.list` | — | `{conversations: [{id, title, project, created_at, updated_at, message_count}]}` |
+| `conversations.create` | — | the new conversation's summary |
+| `conversations.switch` | `{id}` | the conversation's messages |
+| `conversations.delete` | `{id}` | `{deleted}` |
+| `conversations.rename` | `{id, title}` | the renamed conversation's summary |
+| `conversations.duplicate` | `{id}` | the copy's summary |
+| `reasoning.list` | — | `{model, supported, efforts, default_effort, mandatory, effort}` |
+| `reasoning.set` | `{effort}` | `{effort, ...}` |
+
+**25 methods.** A conversation's `summary` is deliberately not its transcript:
+shipping the full history on every launch to draw a sidebar of titles is the
+kind of thing that is fine at ten conversations and unusable at ten thousand.
 
 ### Artifacts inside a `tool.completed` result
 
@@ -594,9 +727,13 @@ filesystem contradicts is worse than no badge.
 ### Event types
 
 `turn.started` `turn.finished` `turn.failed` `message.started` `message.delta`
-`message.completed` `tool.started` `tool.completed` `tool.failed`
-`confirmation.requested` `confirmation.resolved` `sandbox.status`
-`sandbox.stats` `log` `error`
+`message.completed` **`reasoning.delta` `reasoning.completed`** `tool.started`
+`tool.completed` `tool.failed` `confirmation.requested` `confirmation.resolved`
+`sandbox.status` `sandbox.stats` `log` `error`
+
+**`reasoning.*` is a separate channel, not a prefix of `message.*`.** The
+model's thinking arrives on its own events so it can never be interleaved into
+an answer. See 1.15.
 
 ### Invariants — do not break these
 
@@ -617,24 +754,34 @@ filesystem contradicts is worse than no badge.
 app/
   index.html                Vite entry
   vite.config.ts            base "./", port 1420
+  tsconfig.json             the app; `tsc --noEmit`, no emit
+  tsconfig.test.json        extends the above, emits ESM to .tmp for node --test
   src/
     main.tsx                mounts App
     App.tsx                 owns backend lifecycle, wires everything
     events.ts               reduces core events to render state
-    MessageList.tsx         transcript + tool rows
-    Composer.tsx            input, Enter to send
+    MessageList.tsx         transcript + tool rows + ThinkingPanel
+    Composer.tsx            input, Enter to send, effort dial
+    ConversationList.tsx    saved chats, row menu, inline rename
     ConfirmDialog.tsx       destructive-action prompt
     StatusBar.tsx           provider / sandbox / connection
     IconRail.tsx            left rail (new chat, clear, stop, placeholders)
     TopBar.tsx              toggle, conversation tab, new chat
     styles.css              dark-only tokens sampled from the Freebuff app
-    backend.ts              the protocol client (13 tests)
+    backend.ts              the protocol client
+    test-dom.ts             installs jsdom on the globals; imported first
+    test-render.ts          mount / act / type / press / query helpers
+    *.test.ts, *.test.tsx   103 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
     capabilities/default.json
     Cargo.toml, build.rs, src/main.rs, src/lib.rs
     icons/                  generated from icons/icon.svg
     binaries/               PyInstaller sidecar output (gitignored)
+
+**Every relative import in a component carries a `.js` extension.** Vite does
+not need one; Node does, and the component tests are the components running
+under Node. See 1.18.
 ```
 
 ### Visual design
