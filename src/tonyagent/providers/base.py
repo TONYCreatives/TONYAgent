@@ -98,18 +98,29 @@ class ToolSchema:
         )
 
     def to_openai_format(self) -> dict:
-        """Convert to OpenAI function format."""
+        """Convert to OpenAI function format.
+
+        ``parameters`` is passed through rather than rebuilt. It already *is* a
+        complete JSON Schema object -- ``{"type": "object", "properties": {...},
+        "required": [...]}`` -- because that is what
+        ``from_tool_schema_dict`` stores. Re-wrapping it under ``properties``
+        nested the entire schema one level too deep, so the model was told each
+        tool had exactly one parameter, named ``type``, whose value was the
+        string ``object``. The real parameter names never reached it, and it
+        could not have called a tool correctly no matter how it guessed.
+
+        The one adjustment is for a ToolSchema built by hand with a bare
+        properties dict, which is wrapped so both shapes are accepted.
+        """
+        parameters = self.parameters or {"type": "object", "properties": {}}
+        if "properties" not in parameters:
+            parameters = {"type": "object", "properties": parameters}
         return {
             "type": "function",
             "function": {
                 "name": self.name,
                 "description": self.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": self.parameters,
-                    "required": self.required,
-                    "additionalProperties": False,
-                },
+                "parameters": parameters,
             },
         }
 
