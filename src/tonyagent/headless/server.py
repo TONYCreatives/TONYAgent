@@ -485,10 +485,45 @@ def configure_logging_to_stderr() -> None:
     logger.add(sys.stderr, level="INFO")
 
 
+def build_session() -> AgentSession:
+    """Create a session already bound to the provider the user last chose.
+
+    Without this the window starts on ``AgentSession``'s default provider *name*
+    with no provider object behind it, so ``state`` looks configured while the
+    first message fails with "no provider configured" -- which reads, from the
+    UI, exactly like a key that was never saved.
+
+    Every failure here falls back to an unbound session rather than raising.
+    A sidecar that cannot start is a dead app; a sidecar that starts and asks
+    for a provider is a working app telling the truth about what it needs.
+    """
+    session = AgentSession()
+    try:
+        from tonyagent.config import load_config
+
+        provider = load_config().get("provider") or {}
+        name = str(provider.get("name") or "").strip()
+        if not name:
+            logger.info("No saved provider; starting unbound.")
+            return session
+        model = str(provider.get("model") or "")
+        base_url = str(provider.get("base_url") or "")
+        bound = session.bind_provider(name, model, base_url)
+        if bound is None:
+            logger.warning(
+                f"Saved provider {name!r} is no longer available; starting unbound."
+            )
+        else:
+            logger.info(f"Restored provider {name!r} (model={model or 'default'!r}).")
+    except Exception as exc:  # noqa: BLE001 - never fail startup over config
+        logger.warning(f"Could not restore the saved provider: {exc}")
+    return session
+
+
 async def run(session: AgentSession | None = None) -> None:
     """Entry point for ``python -m tonyagent.headless.server``."""
     configure_logging_to_stderr()
-    session = session or AgentSession()
+    session = session or build_session()
     await StdioServer(session, sys.stdin, sys.stdout).serve()
 
 
