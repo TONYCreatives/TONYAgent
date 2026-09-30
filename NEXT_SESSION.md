@@ -5,7 +5,7 @@
 tools no longer need a daemon; see 1.12)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 263 passed, TypeScript 54 passed,
+protocol method.** Everything green: **Python 403 passed, TypeScript 54 passed,
 Tauri MSI + NSIS installers produced.**
 
 Five phases of work landed since the MSVC blocker was cleared:
@@ -43,7 +43,7 @@ Tauri one is new and thinner (chat, sandbox status, confirmations).
 
 ```bash
 python -m compileall -q src            # syntax
-python -m pytest tests -q              # 263 passed
+python -m pytest tests -q              # 403 passed
 python scripts/check_all.py --fast     # 3 checks incl. GUI launch
 python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refusals (no sandbox needed)
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
@@ -137,6 +137,8 @@ correct and silently did nothing.
 | **A saved key had no effect** | after saving the OpenRouter key, the first message was rejected `no provider configured`, while `state` cheerfully reported provider `openrouter` | the core session starts with a provider *name* but no provider *object*; only the settings panel's Apply button ever called `bind_provider`. Neither startup nor a key save bound one, so the UI showed a provider it could not actually use | `App` binds on startup and rebinds after a key save (which also rebuilds the provider, clearing an HTTP client cached before the key existed) |
 | **`No models provided` when no model was chosen** | binding a provider without picking a model sent an empty model id and the API rejected the request | `ProviderRegistry.create` passed `model=""` explicitly, clobbering every provider's constructor default (`openrouter/auto`, `gpt-4o-mini`, `claude-3-5-sonnet-20241022`, ...) | omit an empty model so the class default applies; `session.bind_provider` now records the *resolved* model so `state` agrees |
 | **"Request URL is missing an 'http://' or 'https://' protocol"** | a scheme-less Base URL ("openrouter.ai/api/v1") surfaced as a network error on the first message, with a hint about VPNs and firewalls | the value was passed straight to httpx as the request URL. `LLMClient` only substitutes the dialect's default when the base URL is *empty* | `normalize_base_url()` rejects a scheme-less value at bind time with an actionable message and strips a trailing slash |
+| **The test suite overwrote the user's own config.toml** | after Phase A made `bind_provider` persist, running the suite silently reset the saved model to `openrouter/auto` and pointed the next launch at `https://gateway.internal/v1` | `test_bind_provider_reports_a_custom_base_url_and_state_remembers_it` drives the *real* handler, so it is a real writer -- and only the two persistence test files redirected `get_config_path`. There was no `tests/conftest.py` at all, so nothing made it structurally impossible, and a green suite is not a warning | a session-wide autouse fixture redirects `migration.get_config_path`; a test asserts the real file's bytes are unchanged across a real bind. The per-test fixtures stayed: they exist to *inspect* the file, not merely to survive writing it |
+| **A fresh sidecar reported a provider it had not bound** | the status bar showed `openrouter / openrouter/auto` while every message was rejected `no provider configured` | `_h_state` echoed `session.provider_name`, which `AgentSession` sets at construction with `provider = None`. Same user-visible lie as an unsaved key, from the opposite direction -- and it is what made the `gateway.internal` corruption above look like a real setting rather than a bug | `state` reports provider/model/base_url only when `provider is not None`, plus an explicit `bound` flag; the status bar turns "not bound" into a clickable prompt. The frontend's startup rebind, which existed only to paper over this, is gone |
 | **A failed turn left an empty assistant bubble** | with a rejected key the error banner rendered correctly *and* an empty bubble sat under it, so the transcript read as a broken UI | `turn.started` creates the assistant bubble eagerly so the first delta has a home, and `turn.finished` dropped a placeholder the core never wrote to. `turn.failed` and `error` did not -- and those are the paths a new user hits first, because a wrong key is the first thing a new user has | one `dropEmptyAssistantMessages` helper called by all three terminal events. Found by driving the **packaged** app with a credit-exhausted key, not by a test |
 
 The pattern worth keeping: **the sidecar's stderr is the only place core-side
@@ -394,7 +396,7 @@ open the one that looks relevant" is a normal request), so the turn now loops:
     an assistant note ("Tool results are above..." plus one `[result N]` per
     round), and leaves turns that produced a real answer untouched.
 
-Verified: Python 263 passed, TS 54, `tsc --noEmit` clean, sidecar rebuilt.
+Verified: Python 403 passed, TS 54, `tsc --noEmit` clean, sidecar rebuilt.
 Still unproven live: a multi-round turn in the packaged app, and Markdown
 rendering of a real reply.
 
