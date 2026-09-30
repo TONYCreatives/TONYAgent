@@ -15,7 +15,16 @@ class OpenRouterProvider(OpenAICompatibleProvider):
     key_length = 73
 
     name = "openrouter"
-    models = ["openrouter/auto", "anthropic/claude-3.5-sonnet", "openai/gpt-4o", "google/gemini-pro-1.5"]
+    #: A handful of ids to seed the model field with. OpenRouter proxies
+    #: hundreds more and the field takes any of them, so this is a starting
+    #: point rather than the list.
+    models = [
+        "openrouter/auto",
+        "anthropic/claude-sonnet-4.5",
+        "openai/gpt-5",
+        "google/gemini-2.5-pro",
+        "deepseek/deepseek-chat",
+    ]
     supports_streaming = True
     supports_function_calling = True
 

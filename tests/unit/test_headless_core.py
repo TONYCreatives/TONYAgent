@@ -629,27 +629,27 @@ def fake_keyring(monkeypatch):
 def test_key_save_stores_the_key_and_reports_only_the_provider(fake_keyring):
     frames = _drive([
         {"id": 1, "method": "key.save",
-         "params": {"provider": "anthropic", "api_key": _KEY}},
+         "params": {"provider": "openrouter", "api_key": _KEY}},
     ])
-    assert frames[0]["result"] == {"provider": "anthropic", "saved": True}
-    assert fake_keyring.store[("TONYAgent", "anthropic:api_key")] == _KEY
+    assert frames[0]["result"] == {"provider": "openrouter", "saved": True}
+    assert fake_keyring.store[("TONYAgent", "openrouter:api_key")] == _KEY
 
 
 def test_key_save_normalises_a_pasted_key(fake_keyring):
     """A trailing newline survives every local check and is rejected by the API."""
     frames = _drive([
         {"id": 1, "method": "key.save",
-         "params": {"provider": "openai", "api_key": f'  "{_KEY}"\n'}},
+         "params": {"provider": "openrouter", "api_key": f'  "{_KEY}"\n'}},
     ])
     assert frames[0]["result"]["saved"] is True
-    assert fake_keyring.store[("TONYAgent", "openai:api_key")] == _KEY
+    assert fake_keyring.store[("TONYAgent", "openrouter:api_key")] == _KEY
 
 
 def test_the_key_never_appears_on_stdout(fake_keyring, capsys):
     """The load-bearing test: not in the reply, not in an event, not anywhere."""
     frames = _drive([
         {"id": 1, "method": "key.save",
-         "params": {"provider": "anthropic", "api_key": _KEY}},
+         "params": {"provider": "openrouter", "api_key": _KEY}},
         {"id": 2, "method": "state"},
     ])
     wire = json.dumps(frames)
@@ -674,7 +674,7 @@ def test_a_keyring_failure_does_not_echo_the_key(monkeypatch, capsys):
     monkeypatch.setattr(keyring_mod, "keyring", _FakeKeyring(fail=True))
     frames = _drive([
         {"id": 1, "method": "key.save",
-         "params": {"provider": "anthropic", "api_key": _KEY}},
+         "params": {"provider": "openrouter", "api_key": _KEY}},
     ])
     assert frames[0]["error"]["code"] == "rejected"
     assert _KEY not in json.dumps(frames)
@@ -682,18 +682,18 @@ def test_a_keyring_failure_does_not_echo_the_key(monkeypatch, capsys):
 
 
 def test_key_save_requires_both_fields(fake_keyring):
-    for params in ({}, {"provider": "openai"}, {"api_key": _KEY}, {"provider": " ", "api_key": _KEY}):
+    for params in ({}, {"provider": "openrouter"}, {"api_key": _KEY}, {"provider": " ", "api_key": _KEY}):
         frames = _drive([{"id": 1, "method": "key.save", "params": params}])
         assert frames[0]["error"]["code"] == "rejected", params
 
 
 def test_key_delete_removes_the_stored_key(fake_keyring):
-    fake_keyring.store[("TONYAgent", "groq:api_key")] = _KEY
+    fake_keyring.store[("TONYAgent", "openrouter:api_key")] = _KEY
     frames = _drive([
-        {"id": 1, "method": "key.delete", "params": {"provider": "groq"}},
+        {"id": 1, "method": "key.delete", "params": {"provider": "openrouter"}},
     ])
-    assert frames[0]["result"] == {"provider": "groq", "deleted": True}
-    assert ("TONYAgent", "groq:api_key") not in fake_keyring.store
+    assert frames[0]["result"] == {"provider": "openrouter", "deleted": True}
+    assert ("TONYAgent", "openrouter:api_key") not in fake_keyring.store
 
 
 def test_there_is_no_method_that_returns_a_key():
@@ -708,11 +708,13 @@ def test_there_is_no_method_that_returns_a_key():
 
 def test_providers_list_reports_credential_presence_after_a_save(fake_keyring):
     """`has_credentials` must reflect the keyring without revealing the key."""
-    fake_keyring.store[("TONYAgent", "groq:api_key")] = _KEY
+    assert _drive([{"id": 1, "method": "providers.list"}])[0]["result"]["providers"][0][
+        "has_credentials"
+    ] is False
+    fake_keyring.store[("TONYAgent", "openrouter:api_key")] = _KEY
     frames = _drive([{"id": 1, "method": "providers.list"}])
     by_name = {p["name"]: p for p in frames[0]["result"]["providers"]}
-    assert by_name["groq"]["has_credentials"] is True
-    assert by_name["openai"]["has_credentials"] is False
+    assert by_name["openrouter"]["has_credentials"] is True
     assert _KEY not in json.dumps(frames)
 
 

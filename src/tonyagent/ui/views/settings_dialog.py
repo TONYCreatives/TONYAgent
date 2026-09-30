@@ -27,10 +27,6 @@ MUTED_FONT = ("Segoe UI", 11)
 
 SANDBOX_TYPES = ["auto", "docker", "windows"]
 THEMES = ["system", "light", "dark"]
-PROVIDERS = [
-    "openai", "anthropic", "gemini", "mistral",
-    "groq", "openrouter", "ollama", "custom",
-]
 
 
 class SettingsDialog(ctk.CTkToplevel):

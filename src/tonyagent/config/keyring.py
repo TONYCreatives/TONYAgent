@@ -70,39 +70,16 @@ def delete_api_key(provider: str) -> None:
         raise KeyringError(f"Failed to delete API key: {e}") from e
 
 
-def save_custom_endpoint_key(api_key: str) -> None:
-    """Save custom endpoint API key."""
-    save_api_key("custom", api_key)
-
-
-def load_custom_endpoint_key() -> str | None:
-    """Load custom endpoint API key."""
-    return load_api_key("custom")
-
-
-def delete_custom_endpoint_key() -> None:
-    """Delete custom endpoint API key."""
-    delete_api_key("custom")
-
-
 def get_all_stored_providers() -> list[str]:
-    """Get list of providers with stored API keys."""
-    # keyring doesn't have a list function, so we check known providers
-    known_providers = [
-        "openai",
-        "anthropic",
-        "gemini",
-        "mistral",
-        "groq",
-        "openrouter",
-        "ollama",
-        "custom",
-    ]
-    stored = []
-    for provider in known_providers:
-        if load_api_key(provider):
-            stored.append(provider)
-    return stored
+    """Providers that have an API key in the keyring.
+
+    The keyring has no list operation, so this asks about each provider that
+    exists. It reads the registry rather than repeating the names, because a
+    hardcoded list here is a list that goes stale the moment a provider lands.
+    """
+    from tonyagent.providers.base import provider_registry
+
+    return [name for name in provider_registry.list_providers() if load_api_key(name)]
 
 
 def migrate_from_config_file(config_path: str) -> int:

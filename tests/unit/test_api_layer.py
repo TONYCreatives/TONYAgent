@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from tonyagent.api import Dialect, LLMClient, get_dialect, normalize_key
+from tonyagent.api import Dialect, LLMClient, normalize_key
 from tonyagent.api.dialects import Chunk
 from tonyagent.api.errors import ErrorKind, KeyFormatError, KeyLengthError, LLMError
 
@@ -98,10 +98,9 @@ def test_real_model_ids_pass_validation():
 
     for good in (
         "openai/gpt-4o-mini",
-        "anthropic/claude-sonnet-4.6",
-        "gemini-1.5-pro",
-        "llama3.1",
-        "o1",
+        "anthropic/claude-sonnet-4.5",
+        "google/gemini-2.5-pro",
+        "deepseek/deepseek-r1:free",
         "",
     ):
         assert ProviderFactory._is_valid_model_id(good) is True, good
@@ -126,17 +125,9 @@ def test_an_omitted_model_falls_back_to_the_provider_default():
     """
     from tonyagent.providers.factory import ProviderFactory
 
-    for name, expected in (
-        ("openrouter", "openrouter/auto"),
-        ("openai", "gpt-4o-mini"),
-        ("anthropic", "claude-3-5-sonnet-20241022"),
-        ("gemini", "gemini-1.5-pro"),
-        ("groq", "llama-3.1-70b-versatile"),
-        ("ollama", "llama3.1"),
-    ):
-        prov = ProviderFactory.create_provider(name, model="")
-        assert prov is not None, name
-        assert prov.model == expected, f"{name}: {prov.model!r} != {expected!r}"
+    prov = ProviderFactory.create_provider("openrouter", model="")
+    assert prov is not None
+    assert prov.model == "openrouter/auto"
 
 
 # --- key validation (the bug that caused the 401 confusion) -------------------
@@ -171,14 +162,6 @@ def test_missing_key_is_a_config_error():
     assert exc.value.kind is ErrorKind.CONFIG
 
 
-def test_ollama_needs_no_key_shape_check():
-    c = LLMClient("ollama", "", "llama3.1", "http://localhost:11434/v1", key_prefix="")
-    # Empty prefix means "any key is fine", so this must NOT raise a format error.
-    with pytest.raises(LLMError) as exc:
-        c.check_key()
-    assert exc.value.kind is ErrorKind.CONFIG  # missing, not malformed
-
-
 # --- error classification ----------------------------------------------------
 
 @pytest.mark.parametrize("status,kind", [
@@ -200,8 +183,8 @@ def test_openrouter_error_body_is_understood():
 
 # --- dialect wire translation -------------------------------------------------
 
-def test_openai_dialect_builds_the_expected_request():
-    d = get_dialect("openai")
+def test_the_dialect_builds_the_expected_request():
+    d = Dialect()
     payload = d.build_request("gpt-4o", [{"role": "user", "content": "hi"}],
                               tools=[{"name": "read_file", "description": "r",
                                       "parameters": {"type": "object"}}],
@@ -212,26 +195,8 @@ def test_openai_dialect_builds_the_expected_request():
     assert payload["tool_choice"] == "auto"
 
 
-def test_anthropic_dialect_splits_system_out():
-    d = get_dialect("anthropic")
-    payload = d.build_request("claude", [
-        {"role": "system", "content": "be nice"},
-        {"role": "user", "content": "hi"},
-    ])
-    assert payload["system"] == "be nice"
-    assert all(m["role"] != "system" for m in payload["messages"])
-    assert "max_tokens" in payload
-
-
-def test_gemini_dialect_uses_content_parts():
-    d = get_dialect("gemini")
-    payload = d.build_request("gemini-1.5-pro", [{"role": "user", "content": "hi"}])
-    assert payload["contents"][0]["parts"][0]["text"] == "hi"
-    assert "gemini-1.5-pro" in d.url("https://x/v1beta", "gemini-1.5-pro", False)
-
-
 def test_tool_call_fragments_are_reassembled():
-    d = get_dialect("openai")
+    d = Dialect()
     acc: dict = {}
     d.parse_stream_event("", json.dumps({"choices": [{"delta": {"tool_calls": [
         {"index": 0, "id": "c1", "function": {"name": "read_file", "arguments": "{\"p"}}]}}]}), acc)
@@ -243,7 +208,7 @@ def test_tool_call_fragments_are_reassembled():
 
 
 def test_streaming_yields_content_chunks():
-    d = get_dialect("openai")
+    d = Dialect()
     acc: dict = {}
     for piece in ("Hel", "lo"):
         obj = {"choices": [{"delta": {"content": piece}}], "model": "m"}
@@ -251,24 +216,8 @@ def test_streaming_yields_content_chunks():
         assert c.content == piece
 
 
-def test_anthropic_stream_events():
-    d = get_dialect("anthropic")
-    acc: dict = {}
-    c = d.parse_stream_event("content_block_delta", json.dumps(
-        {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hi"}}), acc)
-    assert c.content == "hi"
-
-
-def test_gemini_stream_events():
-    d = get_dialect("gemini")
-    acc: dict = {}
-    c = d.parse_stream_event("", json.dumps(
-        {"candidates": [{"content": {"parts": [{"text": "hi"}]}}]}), acc)
-    assert c.content == "hi"
-
-
-def test_completion_parsing_openai():
-    d = get_dialect("openai")
+def test_completion_parsing():
+    d = Dialect()
     comp = d.parse_completion({"choices": [{"message": {"content": "hi"},
                                             "finish_reason": "stop"}],
                                "usage": {"prompt_tokens": 5, "completion_tokens": 3}})
@@ -278,19 +227,16 @@ def test_completion_parsing_openai():
 
 # --- provider wiring ----------------------------------------------------------
 
-@pytest.mark.parametrize("name,prefix,dialect", [
-    ("openai", "sk-", "openai"), ("openrouter", "sk-or-", "openai"),
-    ("anthropic", "sk-ant-", "anthropic"), ("gemini", "AIza", "gemini"),
-    ("groq", "gsk_", "openai"), ("ollama", "", "openai"),
-])
-def test_every_provider_has_a_prefix_and_dialect(name, prefix, dialect):
+def test_openrouter_is_the_only_registered_provider():
+    """The app is single-provider, so the registry must say so out loud.
+
+    A test that names the providers is how a second one gets added without
+    anyone deciding that it should be.
+    """
     import tonyagent.providers  # noqa: F401
     from tonyagent.providers.base import provider_registry
 
-    cls = provider_registry.get(name)
-    assert cls is not None, name
-    assert getattr(cls, "key_prefix", None) == prefix, name
-    assert get_dialect(getattr(cls, "dialect", "openai")).name == dialect
+    assert provider_registry.list_providers() == ["openrouter"]
 
 
 def test_no_provider_delegates_to_an_abstract_stub():
@@ -299,8 +245,7 @@ def test_no_provider_delegates_to_an_abstract_stub():
     import tonyagent.providers  # noqa: F401
 
     assert "chat_completion" in OpenAICompatibleProvider.__dict__
-    for name in ("openai", "openrouter", "groq", "mistral", "custom",
-                 "anthropic", "gemini", "ollama"):
+    for name in provider_registry.list_providers():
         cls = provider_registry.get(name)
         owner = next(c for c in cls.__mro__ if "chat_completion" in c.__dict__)
         assert owner is OpenAICompatibleProvider, f"{name} -> {owner.__name__}"
@@ -310,7 +255,7 @@ def test_providers_expose_a_real_health_check():
     from tonyagent.providers.base import provider_registry
     import tonyagent.providers  # noqa: F401
 
-    for name in ("openrouter", "openai", "anthropic", "gemini"):
+    for name in provider_registry.list_providers():
         cls = provider_registry.get(name)
         assert hasattr(cls, "check_connection"), name
         assert hasattr(cls, "fetch_models"), name

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Protocol
 from enum import Enum
 
-from tonyagent.api import LLMClient, MIN_KEY_LENGTH, get_dialect, normalize_key
+from tonyagent.api import LLMClient, MIN_KEY_LENGTH, normalize_key
 from tonyagent.config.keyring import load_api_key
 
 
@@ -234,16 +234,11 @@ class BaseLLMProvider(ABC):
 class OpenAICompatibleProvider(BaseLLMProvider):
     """Base class for OpenAI-compatible providers."""
 
-    def _get_headers(self) -> dict[str, str]:
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-        headers.update(self.extra_headers)
-        return headers
-
-    def _get_base_url(self) -> str:
-        return self.base_url or "https://api.openai.com/v1"
-
-    def _build_messages(self, messages: list[ChatMessage]) -> list[dict]:
-        return [m.to_dict() for m in messages]
+    #: The only provider in the registry declares both of these, so they are
+    #: required rather than optional. A subclass that omitted them would fail
+    #: with a clear AttributeError instead of silently skipping the key check.
+    key_prefix: str
+    key_length: int | None = None
 
     def _build_tools(self, tools: list[ToolSchema] | None) -> list[dict] | None:
         if not tools:
@@ -275,11 +270,10 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 api_key=self.api_key or load_api_key(self.name) or "",
                 model=self.model,
                 base_url=self.base_url,
-                dialect=get_dialect(getattr(self, "dialect", "openai")),
                 timeout=self.timeout,
                 extra_headers=self.extra_headers,
-                key_prefix=getattr(self, "key_prefix", None),
-                key_length=getattr(self, "key_length", None),
+                key_prefix=self.key_prefix,
+                key_length=self.key_length,
             )
         return self._http
 
@@ -333,19 +327,13 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         key = normalize_key(self.api_key or load_api_key(self.name) or "")
         if not key:
             return False
-        prefix = getattr(self, "key_prefix", "")
-        if prefix and not key.startswith(prefix):
+        if not key.startswith(self.key_prefix):
             return False
-        # An empty prefix means "any key is fine" (Ollama, custom endpoints),
-        # so only apply length rules to providers that expect a real key.
-        if not prefix:
-            return True
         # Exact length when the provider declares one. A 35-character key with
         # the right prefix is still broken, and this is the only place that
         # knows it before a request is spent.
-        expected = getattr(self, "key_length", None)
-        if expected:
-            return len(key) == expected
+        if self.key_length:
+            return len(key) == self.key_length
         return len(key) >= MIN_KEY_LENGTH
 
 

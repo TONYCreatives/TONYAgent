@@ -5,9 +5,6 @@ from tonyagent.config.keyring import (
     load_api_key,
     save_api_key,
     delete_api_key,
-    load_custom_endpoint_key,
-    save_custom_endpoint_key,
-    delete_custom_endpoint_key,
     get_all_stored_providers,
     migrate_from_config_file,
 )
@@ -20,7 +17,6 @@ from tonyagent.config.migration import (
 from tonyagent.config.settings import (
     Settings,
     ProviderSettings,
-    CustomProviderSettings,
     SandboxSettings,
     ToolsSettings,
     LoggingSettings,
@@ -33,7 +29,6 @@ __all__ = [
     # Settings
     "Settings",
     "ProviderSettings",
-    "CustomProviderSettings",
     "SandboxSettings",
     "ToolsSettings",
     "LoggingSettings",
@@ -45,9 +40,6 @@ __all__ = [
     "load_api_key",
     "save_api_key",
     "delete_api_key",
-    "load_custom_endpoint_key",
-    "save_custom_endpoint_key",
-    "delete_custom_endpoint_key",
     "get_all_stored_providers",
     "migrate_from_config_file",
     # Migration

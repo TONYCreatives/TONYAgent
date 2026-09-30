@@ -45,7 +45,6 @@ def migrate_config(config: dict) -> dict:
 
         # Ensure all sections exist
         defaults = {
-            "custom_provider": {"enabled": False},
             "sandbox": {},
             "tools": {},
             "logging": {},

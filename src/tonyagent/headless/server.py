@@ -261,10 +261,10 @@ class StdioServer:
             base_url = normalize_base_url(base_url)
             provider = self.session.bind_provider(name, model, base_url)
         except ValueError as exc:
-            # Two user errors land here: `CustomProvider` refusing to load with
-            # no base_url, and a base_url with no http(s):// scheme. Both
-            # messages describe the user's own field, never a secret, so they
-            # are safe to surface as a rejection rather than an opaque 500.
+            # The one user error that lands here is a base_url with no
+            # http(s):// scheme. It describes the user's own field, never a
+            # secret, so it is safe to surface as a rejection rather than an
+            # opaque 500.
             raise RpcError(str(exc)) from None
         if provider is None:
             raise RpcError(f"Unknown provider: {name}")

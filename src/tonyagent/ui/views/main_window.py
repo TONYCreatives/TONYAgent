@@ -34,6 +34,7 @@ from tonyagent.folder.manager import folder_manager
 from tonyagent.config.settings import settings
 from tonyagent.providers import (
     ProviderFactory,
+    provider_registry,
     ChatMessage,
     ToolSchema,
     ToolChoice,
@@ -44,6 +45,11 @@ from tonyagent.ui.views.confirm_dialog import ConfirmationDialog
 from tonyagent.utils.threading import schedule_on_ui
 from tonyagent.sandbox import SandboxConfig, SandboxStatus, get_shared_sandbox_manager
 from tonyagent.ui.views.settings_dialog import SettingsDialog
+
+#: The one provider this app talks to. The selector is kept in the panel so the
+#: model and key fields have something to belong to, but a single-item combo
+#: cannot be changed, so no code branches on it any more.
+PROVIDER = "openrouter"
 
 # --- Layout tokens (Stage A) -------------------------------------------------
 SIDEBAR_WIDTH = 340        # single source of truth; the root grid uses this too
@@ -198,14 +204,11 @@ class MainWindow:
         PillLabel(panel, text="Provider:", font=BODY_FONT).grid(
             row=1, column=0, sticky="w", padx=PAD_INNER, pady=PAD_SM
         )
-        self.provider_combo = PillComboBox(
-            panel,
-            values=["openai", "anthropic", "gemini", "mistral", "groq", "openrouter", "ollama", "custom"],
-        )
+        self.provider_combo = PillComboBox(panel, values=[PROVIDER], state="readonly")
         # No right padx on the field: it already carries the panel inset, and a
         # second inset made the fields sit visibly left of the panel edge.
         self.provider_combo.grid(row=1, column=1, sticky="ew", padx=(0, PAD_INNER), pady=PAD_SM)
-        self.provider_combo.set(settings.provider.name or "openai")
+        self.provider_combo.set(PROVIDER)
 
         # API Key entry
         PillLabel(panel, text="API Key:", font=BODY_FONT).grid(
@@ -242,21 +245,8 @@ class MainWindow:
         )
         self.model_combo = PillComboBox(panel, values=[], state="normal")
         self.model_combo.grid(row=5, column=1, sticky="ew", padx=(0, PAD_INNER), pady=PAD_SM)
+        self.model_combo.configure(command=self._on_model_change)
         self._update_models()
-
-        # Custom endpoint expander
-        self.custom_frame = PillFrame(panel)
-        self.custom_frame.grid(row=6, column=0, columnspan=2, sticky="ew", padx=12, pady=8)
-        self.custom_frame.grid_columnconfigure(1, weight=1)
-        self.custom_frame.grid_remove()  # Hidden by default
-
-        PillLabel(self.custom_frame, text="Base URL:", font=("Segoe UI", 11)).grid(
-            row=0, column=0, sticky="w", padx=8, pady=4
-        )
-        self.custom_url_entry = PillEntry(
-            self.custom_frame, placeholder_text="https://api.example.com/v1"
-        )
-        self.custom_url_entry.grid(row=0, column=1, sticky="ew", padx=8, pady=4)
 
         # Test connection button
         self.test_btn = SecondaryPillButton(
@@ -280,8 +270,6 @@ class MainWindow:
             row=7, column=1, sticky="e", padx=PAD_INNER, pady=(10, PAD_MD)
         )
 
-        # Bind provider change to update models and custom frame visibility
-        self.provider_combo.configure(command=self._on_provider_change)
         self._set_provider_expanded, self._provider_expanded = self._make_collapsible(
             panel, expanded=True, title_label=self._provider_title
         )
@@ -611,53 +599,27 @@ class MainWindow:
         self.lock_indicator.configure(text_color=theme_manager.get_color_pair("error"))
         self.theme_btn.configure(text="🌙" if actual == "light" else "☀️")
 
-    def _on_provider_change(self, value: str) -> None:
-        """Handle provider selection change."""
-        self._update_models()
-        self._update_custom_frame_visibility()
-        # Reinitialize provider
-        self._init_provider()
-        # Remember the choice so a restart does not silently revert it.
-        self._persist_provider_choice()
-
     def _update_models(self) -> None:
-        """Update model dropdown based on selected provider.
+        """Seed the model dropdown with OpenRouter's suggestions.
 
-        The combo is editable: OpenRouter and most gateways expose far more
-        models than any hardcoded list, so keep whatever the user typed if it
-        belongs to the newly selected provider.
+        The combo is editable and OpenRouter carries hundreds of namespaced ids,
+        so this list is a starting point rather than a closed set. The saved
+        model always wins: silently replacing it with the first suggestion is
+        what a user notices only when their bill changes.
         """
-        provider = self.provider_combo.get()
-        previous = (self.model_combo.get() or "").strip()
-        models = {
-            "openai": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"],
-            "anthropic": ["claude-3-5-sonnet-20241022", "claude-3-5-haiku-20241022", "claude-3-opus-20240229"],
-            "gemini": ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.0-pro"],
-            "mistral": ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest"],
-            "groq": ["llama-3.1-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
-            "openrouter": ["openrouter/auto", "anthropic/claude-3.5-sonnet", "openai/gpt-4o"],
-            "ollama": ["llama3.1", "llama3.2", "codellama", "mistral"],
-            "custom": [],
-        }
-        model_list = models.get(provider, [])
-        self.model_combo.configure(values=model_list)
-        # Restore the saved model, else keep what the user typed, else fall back
-        # to the first suggestion. This used to force model_list[0], silently
-        # discarding the user's choice on every provider change.
+        suggestions = provider_registry.get_models(PROVIDER)
+        self.model_combo.configure(values=suggestions)
         saved = (settings.provider.model or "").strip()
-        if saved and (not model_list or saved in model_list or provider == "openrouter"):
-            self.model_combo.set(saved)
-        elif previous:
-            self.model_combo.set(previous)
-        elif model_list:
-            self.model_combo.set(model_list[0])
+        self.model_combo.set(saved or (suggestions[0] if suggestions else ""))
 
-    def _update_custom_frame_visibility(self) -> None:
-        """Show/hide custom endpoint frame."""
-        if self.provider_combo.get() == "custom":
-            self.custom_frame.grid()
-        else:
-            self.custom_frame.grid_remove()
+    def _on_model_change(self, value: str) -> None:
+        """Re-bind the session to the newly picked model and remember it.
+
+        This is what ``_on_provider_change`` used to do. With one provider that
+        combo cannot change, so the handler moved to the field that can.
+        """
+        self._init_provider()
+        self._persist_provider_choice()
 
     def _test_connection(self) -> None:
         """Verify the key with a real network round-trip.
@@ -665,7 +627,7 @@ class MainWindow:
         The old check only did ``str.startswith()``, so the status bar showed
         "Connected" while every request came back 401.
         """
-        provider = self.provider_combo.get()
+        provider = PROVIDER
         typed = self.api_key_entry.get().strip()
         if typed and "*" not in typed:
             try:
@@ -738,7 +700,7 @@ class MainWindow:
 
     def _save_api_key(self) -> None:
         """Save the typed API key to the OS keyring."""
-        provider = self.provider_combo.get()
+        provider = PROVIDER
         api_key = self.api_key_entry.get().strip()
         if not api_key:
             self._log("No API key entered", "error")
@@ -809,7 +771,7 @@ class MainWindow:
         is kept only so the existing UI checks (key present, model label) keep
         working without a wider refactor.
         """
-        provider_name = self.provider_combo.get() or settings.provider.name
+        provider_name = PROVIDER
         model = self.model_combo.get() or settings.provider.model
         try:
             self._current_provider = ProviderFactory.create_provider(
@@ -890,7 +852,7 @@ class MainWindow:
 
     def _on_forget_key(self) -> None:
         """Delete the stored key for the current provider."""
-        provider = self.provider_combo.get() or settings.provider.name
+        provider = PROVIDER
         try:
             from tonyagent.config.keyring import delete_api_key
 
@@ -902,14 +864,10 @@ class MainWindow:
         self._init_provider()
 
     def _persist_provider_choice(self) -> None:
-        """Save the provider/model the user picked so it survives a restart."""
+        """Save the model the user picked so it survives a restart."""
         try:
-            provider_name = self.provider_combo.get()
-            model = self.model_combo.get()
-            if provider_name:
-                settings.provider.name = provider_name
-            if model:
-                settings.provider.model = model
+            settings.provider.name = PROVIDER
+            settings.provider.model = self.model_combo.get()
             settings.save()
         except Exception:
             logger.exception("Could not persist provider choice")
@@ -1008,7 +966,7 @@ class MainWindow:
             try:
                 if self._session.provider is None:
                     self._session.bind_provider(
-                        self.provider_combo.get() or "",
+                        PROVIDER,
                         self.model_combo.get() or "",
                     )
                 self._session.send(self._pending_text)
@@ -1372,8 +1330,6 @@ class MainWindow:
     def _on_settings_saved(self) -> None:
         """Re-sync widgets that mirror settings (provider + sandbox config)."""
         try:
-            if hasattr(self, "provider_combo"):
-                self.provider_combo.set(settings.provider.name or "openai")
             self._update_models()
         except Exception:
             logger.exception("Failed to refresh provider after settings save")

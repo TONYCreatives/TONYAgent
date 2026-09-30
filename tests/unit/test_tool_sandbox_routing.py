@@ -864,7 +864,7 @@ def _make_window(provider):
     "provider_cls", [_AsyncGenProvider, _CoroGenProvider, _CoroOnceProvider]
 )
 async def test_iter_provider_chunks_handles_every_shape(provider_cls):
-    """Regression: 'async for' got a coroutine -> no reply for openrouter/groq/...
+    """Regression: 'async for' got a coroutine -> no reply.
 
     The UI iterated provider.chat_completion() directly. That works only when the
     method is a true async generator; the OpenAI-compatible family returns a

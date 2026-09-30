@@ -370,16 +370,16 @@ test("key.save reaches the sidecar intact -- redaction would break it", async ()
   const { transport, backend } = makeBackend();
   await backend.start();
 
-  const call = backend.call("key.save", { provider: "anthropic", api_key: SECRET });
+  const call = backend.call("key.save", { provider: "openrouter", api_key: SECRET });
   const frame = JSON.parse(transport.written[0]);
   assert.equal(frame.method, "key.save");
   // The real value must be sent; the core normalises and stores it.
   assert.equal(frame.params.api_key, SECRET);
 
-  transport.push(`${JSON.stringify({ id: 1, result: { provider: "anthropic", saved: true } })}\n`);
+  transport.push(`${JSON.stringify({ id: 1, result: { provider: "openrouter", saved: true } })}\n`);
   // The reply must not contain the key either.
   const result = (await call) as Record<string, unknown>;
-  assert.deepEqual(result, { provider: "anthropic", saved: true });
+  assert.deepEqual(result, { provider: "openrouter", saved: true });
   assert.equal(JSON.stringify(result).includes(SECRET), false);
 });
 
@@ -389,12 +389,12 @@ test("no backend log line ever contains a key", async () => {
   backend.onLog((line) => logged.push(line));
 
   await backend.start();
-  const call = backend.call("key.save", { provider: "anthropic", api_key: SECRET });
-  transport.push(`${JSON.stringify({ id: 1, result: { provider: "anthropic", saved: true } })}\n`);
+  const call = backend.call("key.save", { provider: "openrouter", api_key: SECRET });
+  transport.push(`${JSON.stringify({ id: 1, result: { provider: "openrouter", saved: true } })}\n`);
   await call;
 
   // Simulate the core's stderr and stdout chatter around the call.
-  transport.pushStderr(`[sidecar] saved key for anthropic ${SECRET}\n`);
+  transport.pushStderr(`[sidecar] saved key for openrouter ${SECRET}\n`);
   transport.pushStderr("some unrelated warning\n");
 
   // The real core never logs the key, so the only line carrying it here is

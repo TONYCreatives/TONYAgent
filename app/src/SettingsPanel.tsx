@@ -269,10 +269,7 @@ export function SettingsPanel({
 
           {/*
             An optional endpoint override. Empty means "use the provider's own
-            default" (OpenRouter's API, the configured `custom_provider`
-            base_url, ...). It is what makes the `custom` provider reachable at
-            all: that provider refuses to load without a base_url, so before
-            this field the only way to use it was to edit config.toml by hand.
+            default", which is OpenRouter's API.
           */}
           <div className="settings-row">
             <input

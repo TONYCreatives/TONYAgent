@@ -21,7 +21,7 @@ from typing import Any, AsyncIterator
 
 import httpx
 
-from tonyagent.api.dialects import Chunk, Completion, Dialect, get_dialect
+from tonyagent.api.dialects import Chunk, Completion, Dialect
 from tonyagent.api.errors import ErrorKind, KeyFormatError, KeyLengthError, LLMError
 
 # Fallback length floor for providers that do not declare an exact length.
@@ -70,22 +70,21 @@ class LLMClient:
         api_key: str,
         model: str,
         base_url: str,
-        dialect: Dialect | None = None,
+        key_prefix: str,
         timeout: float = 60.0,
         extra_headers: dict[str, str] | None = None,
-        key_prefix: str | None = None,
         key_length: int | None = None,
     ):
         self.provider = provider
         self.api_key = normalize_key(api_key)
         self.model = model
-        self.dialect = dialect or get_dialect(provider)
+        self.dialect = Dialect()
         self.base_url = (base_url or self.dialect.default_base_url).rstrip("/")
         self.timeout = timeout
         self.extra_headers = extra_headers or {}
-        # Providers differ even inside one dialect (openai=sk-, groq=gsk_,
-        # openrouter=sk-or-), so the prefix belongs to the provider, not the dialect.
-        self.key_prefix = key_prefix if key_prefix is not None else self.dialect.key_prefix
+        # The key prefix is a property of the account, not of the wire format,
+        # so it arrives from the provider rather than from the dialect.
+        self.key_prefix = key_prefix
         # Exact expected length, when the provider knows it. A key of the right
         # shape but the wrong length is a truncated paste, and the provider will
         # report it as an opaque 401 unless we catch it here.
@@ -101,13 +100,7 @@ class LLMClient:
         }
 
     def _url(self, stream: bool) -> str:
-        url = self.dialect.url(self.base_url, self.model, stream)
-        params: list[str] = []
-        if stream and self.dialect.stream_param():
-            params.append(self.dialect.stream_param())
-        if hasattr(self.dialect, "key_query"):
-            params.append(self.dialect.key_query(self.api_key))
-        return f"{url}?{'&'.join(params)}" if params else url
+        return self.dialect.url(self.base_url, self.model, stream)
 
     def check_key(self) -> None:
         """Fail fast on a missing or clearly truncated key."""
@@ -119,7 +112,7 @@ class LLMClient:
                 hint="Open the API Provider panel, paste the key, and press Save to Keyring.",
             )
         prefix = self.key_prefix
-        if prefix and not self.api_key.startswith(prefix):
+        if not self.api_key.startswith(prefix):
             raise LLMError(
                 ErrorKind.AUTH,
                 f"The {self.provider} key does not start with '{prefix}'.",
@@ -127,7 +120,7 @@ class LLMClient:
                 hint="Copy the key again from the provider's dashboard.",
             )
         if len(self.api_key) < MIN_KEY_LENGTH:
-            raise KeyFormatError(self.provider, len(self.api_key), prefix or "<any>")
+            raise KeyFormatError(self.provider, len(self.api_key), prefix)
         # Exact-length check. This is the check that would have caught the
         # 35-character OpenRouter key: right prefix, plausible length, but the
         # body was 28 hex chars where 64 are required. Without it the user only
@@ -208,8 +201,6 @@ class LLMClient:
         headers.pop("Accept", None)
         try:
             async with httpx.AsyncClient(timeout=min(self.timeout, 30.0)) as http:
-                if hasattr(self.dialect, "key_query"):
-                    url = f"{url}?{self.dialect.key_query(self.api_key)}"
                 resp = await http.get(url, headers=headers)
         except httpx.HTTPError as exc:
             raise LLMError.network(exc, self.provider) from exc

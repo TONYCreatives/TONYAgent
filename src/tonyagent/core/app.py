@@ -79,12 +79,6 @@ class TONYAgentApp:
                     "model": settings.provider.model,
                     "base_url": settings.provider.base_url,
                 },
-                "custom_provider": {
-                    "enabled": settings.custom_provider.enabled,
-                    "name": settings.custom_provider.name,
-                    "base_url": settings.custom_provider.base_url,
-                    "model": settings.custom_provider.model,
-                },
                 "sandbox": {
                     "type": settings.sandbox.type,
                     "docker_image": settings.sandbox.docker_image,

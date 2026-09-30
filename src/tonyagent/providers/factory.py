@@ -99,14 +99,8 @@ class ProviderFactory:
         # a good one waiting behind it, and vice versa.
         base_url = normalize_base_url(base_url)
 
-        if name == "custom":
-            model = model or settings.custom_provider.model
-            base_url = base_url or normalize_base_url(settings.custom_provider.base_url)
-            extra_headers = extra_headers or settings.custom_provider.extra_headers
-            api_key = api_key or load_api_key("custom")
-        else:
-            model = model or settings.provider.model
-            base_url = base_url or normalize_base_url(settings.provider.base_url)
+        model = model or settings.provider.model
+        base_url = base_url or normalize_base_url(settings.provider.base_url)
 
         return provider_registry.create(
             name, api_key=api_key, model=model, base_url=base_url,

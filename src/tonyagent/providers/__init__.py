@@ -13,7 +13,7 @@ from tonyagent.providers.base import (
 )
 from tonyagent.providers.factory import ProviderFactory
 
-from tonyagent.providers import openai, anthropic, gemini, mistral, groq, openrouter, ollama, custom
+from tonyagent.providers import openrouter
 
 __all__ = [
     "LLMProvider", "ChatMessage", "ToolSchema", "ToolChoice",

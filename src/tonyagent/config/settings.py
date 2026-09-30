@@ -22,19 +22,6 @@ class ProviderSettings(BaseModel):
     max_retries: int = 3
 
 
-class CustomProviderSettings(BaseModel):
-    """Settings for custom OpenAI-compatible endpoint."""
-
-    enabled: bool = False
-    name: str = "custom"
-    base_url: str = ""
-    api_key: str = ""  # Stored in keyring
-    model: str = ""
-    extra_headers: dict[str, str] = Field(default_factory=dict)
-    timeout: int = 60
-    max_retries: int = 3
-
-
 class SandboxSettings(BaseModel):
     """Sandbox configuration.
 
@@ -170,7 +157,6 @@ class Settings(BaseSettings):
     )
 
     provider: ProviderSettings = Field(default_factory=ProviderSettings)
-    custom_provider: CustomProviderSettings = Field(default_factory=CustomProviderSettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     tools: ToolsSettings = Field(default_factory=ToolsSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
