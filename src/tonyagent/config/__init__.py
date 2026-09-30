@@ -11,7 +11,12 @@ from tonyagent.config.keyring import (
     get_all_stored_providers,
     migrate_from_config_file,
 )
-from tonyagent.config.migration import load_config, save_config, reset_config
+from tonyagent.config.migration import (
+    load_config,
+    save_config,
+    save_provider_selection,
+    reset_config,
+)
 from tonyagent.config.settings import (
     Settings,
     ProviderSettings,
@@ -48,5 +53,6 @@ __all__ = [
     # Migration
     "load_config",
     "save_config",
+    "save_provider_selection",
     "reset_config",
 ]

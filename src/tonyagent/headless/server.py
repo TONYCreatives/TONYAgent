@@ -160,9 +160,28 @@ class StdioServer:
             raise RpcError(str(exc)) from None
         if provider is None:
             raise RpcError(f"Unknown provider: {name}")
+
+        # Persist the choice, so the next launch starts on it instead of on a
+        # default name with no provider behind it.
+        #
+        # A failure here is reported rather than raised: the bind itself worked
+        # and the session is usable, so failing the whole call would be a lie.
+        # But it is not swallowed either -- a selection that silently stops
+        # surviving a restart is exactly the bug this replaces, and the user is
+        # the only one who can notice it.
+        persisted = True
+        try:
+            from tonyagent.config import save_provider_selection
+
+            save_provider_selection(name, getattr(provider, "model", model), base_url)
+        except Exception as exc:  # noqa: BLE001 - a full disk must not kill the bind
+            persisted = False
+            logger.error(f"Could not save the provider selection: {exc}")
+
         return {
             "provider": name,
             "model": getattr(provider, "model", model),
+            "persisted": persisted,
             # Echo back the *requested* override, not the provider's resolved
             # default. The panel prefills from this, and pinning a default that
             # the provider may later change would be a lie about what the user

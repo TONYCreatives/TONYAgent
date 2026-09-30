@@ -104,6 +104,28 @@ def save_config(config: dict) -> None:
         raise
 
 
+def save_provider_selection(name: str, model: str = "", base_url: str = "") -> None:
+    """Record the provider the user chose, so the next launch starts on it.
+
+    Read-modify-write on purpose. ``save_config`` takes a whole config dict, and
+    the Tkinter app builds that dict from ``settings`` -- safe for it, because
+    Tk has always populated ``settings`` first. The sidecar does the opposite:
+    ``settings`` never loads config.toml, so assembling a dict from it here
+    would have written defaults over the user's real settings, tool allowlist
+    and all, on the first bind.
+
+    Only ``[provider]`` is touched; every other section is carried through
+    untouched. The API key is deliberately never written here -- it belongs in
+    the OS keyring, and a config file is one screenshot away.
+    """
+    config = load_config()
+    provider = config.setdefault("provider", {})
+    provider["name"] = name
+    provider["model"] = model
+    provider["base_url"] = base_url
+    save_config(config)
+
+
 def reset_config() -> None:
     """Reset configuration to defaults."""
     config_path = get_config_path()
