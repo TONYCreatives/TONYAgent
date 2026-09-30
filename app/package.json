@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "typecheck": "tsc --noEmit",
-    "build:proto": "tsc src/backend.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && tsc src/events.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && tsc src/markdown.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && tsc src/backend.test.ts src/events.test.ts src/markdown.test.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && node --test .tmp/backend.test.js .tmp/events.test.js .tmp/markdown.test.js",
+    "build:proto": "tsc src/backend.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && tsc src/events.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && tsc src/markdown.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && tsc src/backend.test.ts src/events.test.ts src/markdown.test.ts --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck && tsc src/ConversationList.test.tsx --outDir .tmp --module esnext --target es2022 --moduleResolution bundler --skipLibCheck --jsx react-jsx && node --test .tmp/backend.test.js .tmp/events.test.js .tmp/markdown.test.js .tmp/ConversationList.test.js",
     "test": "npm run build:proto",
     "tauri:build": "tauri build",
     "tauri:dev": "tauri dev",
@@ -24,10 +24,12 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/jsdom": "^30.0.0",
     "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^5",
+    "jsdom": "^30.1.1",
     "tsx": "^4",
     "typescript": "^5",
     "vite": "^7"
