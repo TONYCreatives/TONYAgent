@@ -5,7 +5,7 @@
 and named conversations (see 1.13)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 502 passed, TypeScript 135 passed,
+protocol method.** Everything green: **Python 502 passed, TypeScript 140 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **502 passed, 7 skipped** with Docker Desktop running.
@@ -62,7 +62,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 135 passed (protocol, reducer, markdown, components; no Rust needed)
+cd app && npm test                     # 140 passed (protocol, reducer, markdown, components; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -776,7 +776,7 @@ app/
     backend.ts              the protocol client
     test-dom.ts             installs jsdom on the globals; imported first
     test-render.ts          mount / act / type / press / query helpers
-    *.test.ts, *.test.tsx   135 tests, all run by `npm test`
+    *.test.ts, *.test.tsx   140 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
     capabilities/default.json
@@ -899,16 +899,51 @@ centre hits `.empty` rather than the backdrop, and the node leaves the DOM 149ms
 after the close. (In Chromium `--motion-fast` reads back `.11s`, not `110ms` --
 the re-serialisation from the first pass.
 
-**Found while observing, not fixed (no features this pass):** nothing handles
-Escape while the confirmation is up. `App.tsx` binds Escape for the Files
-overlay, `ConversationList` for its inline rename, and `ConfirmDialog` binds no
-key. The turn stays blocked until Allow or Deny is clicked, or the core's own
-60s timeout denies it. The dialog's comment argues a stray *click* must not
-read as an answer; that reasoning was never carried to the keyboard, where
-Escape is the reflexive "get this off my screen". Asserted as observed
-behaviour in `ConfirmDialog.test.tsx` so it is a visible test, not a blocked turn
-somebody has to diagnose. There is also no cancel button *named* cancel -- the
-buttons are "Allow" and "Deny".
+**Escape now denies the confirmation (fixed).** Found while observing above:
+nothing handled Escape while the prompt was up, so a turn stayed blocked until
+Allow, Deny, or the core's own 60s timeout. `ConfirmDialog` now binds a
+**capture-phase** `window` keydown that calls `stopPropagation` and answers
+`confirmed: false` -- denying, never allowing, because Escape is the reflexive
+"get this off my screen" and someone reaching for it is not reading the tool
+name. Capture plus `stopPropagation` is what keeps the two existing Escape
+readers behind it (`App.tsx`'s Files overlay, `ConversationList`'s row menu,
+both bubble-phase on `window`) from also acting on the same key.
+
+Two details that are easy to get wrong and are now covered by tests:
+
+- **Exactly once.** Both buttons and the key go through one `answer()` that
+  records the call id it has already answered. The dialog stays mounted for the
+  length of its own exit, so a second click or a held-down key would otherwise
+  put a second `confirm.respond` on the wire for a call the core has settled.
+- **The listener must not outlive the dialog.** A window listener left behind
+  would keep swallowing Escape for the rest of the session -- the Files overlay
+  and the row menu would silently stop responding to the keyboard. There is a
+  test that presses Escape after the dialog is gone and asserts the key gets
+  through.
+
+Each of those was checked by mutating the component: inverting Escape to allow
+-> 3 tests fail; removing the once-guard -> 3 fail; dropping to bubble phase ->
+the leak test fails; removing the cleanup -> the listener test fails.
+
+**One caveat about the test harness, learned the hard way here.** `press()`
+dispatches on `window`, but a real browser delivers a key to the *focused
+element*. Measured in the live webview: dispatching on `window` puts every
+listener in the at-target phase, where `stopPropagation` does **not** separate
+capture from bubble, while dispatching on `body` or the focused element does
+stop the bubble listener dead. So the harness exercises the stricter case and
+the behaviour it asserts is the one a real keypress depends on -- but do not
+read a green run as proof that a `window`-targeted dispatch is blocked in
+Chromium, because it is not.
+
+Related trap in the same harness: `render()` keeps a **single** root, so calling
+it twice in one test orphans the first tree instead of unmounting it. An
+orphaned `ConfirmDialog` keeps its window listener alive for the rest of the
+file, which surfaces as an unrelated Escape assertion failing several tests
+later. One `render` per test.
+
+Note there is still no button *named* cancel -- the buttons are "Allow" and
+"Deny" -- and Escape is not labelled on screen. If that matters for
+discoverability, `aria-keyshortcuts` or a hint line is the place to say it.
 
 `scripts/observe_confirm_contract.py` covers the core half end to end against the
 real `ToolOrchestrator` and the real `write_file`: one request per untrusted

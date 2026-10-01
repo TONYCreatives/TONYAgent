@@ -34,6 +34,12 @@
  * declares" testable at all. The keyframe names are confirmed in the real
  * webview separately, on the settings overlay, which shares the identical
  * `.modal-backdrop[data-state] > .modal` rules.
+ *
+ * The keyboard half needs no stylesheet. Escape denying the prompt is asserted
+ * against the real `window`, alongside a probe proving the probe works -- see
+ * "Escape does not leak to the window listeners behind it", which is the part
+ * that matters most: the dialog, the Files overlay and a conversation's row
+ * menu all read the same key, and only one of them may act on it.
  */
 
 import "./test-dom.js";
@@ -258,10 +264,10 @@ test("the request survives the exit window, answer and all", async () => {
   );
   await wait(exitDurationMs() - 60);
 
-  // The dialog is stateless and its payload is held by the window, so nothing
-  // here can blank itself -- but a dialog that emptied itself on the way out
-  // would be the worst version of this: the user sees the tool name fade away
-  // while the answer they are about to give stops meaning anything.
+  // The payload is held by the window and the dialog keeps rendering it, so
+  // nothing here can blank itself -- but a dialog that emptied itself on the
+  // way out would be the worst version of this: the user sees the tool name
+  // fade away while the answer they are about to give stops meaning anything.
   assert.equal(one(container, ".confirm-detail dd")!.textContent, "write_file");
   assert.ok(button(container, "Allow"), "Allow disappeared during the exit");
   assert.ok(button(container, "Deny"), "Deny disappeared during the exit");
@@ -309,7 +315,113 @@ test("the closed backdrop cannot intercept a click", async () => {
   assert.deepEqual(calls, []);
 });
 
-test("Allow and Deny each answer exactly once, with the right call and polarity", async () => {
+test("Allow runs the tool", async () => {
+  // Polarity is the whole safety property: `true` runs the tool and `false`
+  // does not, so a swapped pair would put the destructive action behind the
+  // safe-sounding label.
+  const { calls, onRespond } = recorder();
+  const container = await render(
+    <Overlay open>
+      <ConfirmDialog request={destructiveWrite()} onRespond={onRespond} />
+    </Overlay>,
+  );
+  await click(button(container, "Allow")!);
+  assert.deepEqual(calls, [["call-1", true]]);
+
+  // Allow is the one styled as the dangerous action, which is the visual half
+  // of the same statement: the button that runs the tool looks like it.
+  assert.equal(button(container, "Allow")!.className.includes("btn-danger"), true);
+});
+
+test("Deny does not run the tool", async () => {
+  // A separate test rather than a second `render` in the one above, because the
+  // harness keeps a single root: rendering twice orphans the first tree instead
+  // of unmounting it, and an orphaned ConfirmDialog keeps its window listener
+  // for the rest of the file. That is invisible here and would surface as an
+  // unrelated Escape assertion failing somewhere further down.
+  const { calls, onRespond } = recorder();
+  const container = await render(
+    <Overlay open>
+      <ConfirmDialog
+        request={requestFor({ id: "call-9", name: "write_file", destructive: true })}
+        onRespond={onRespond}
+      />
+    </Overlay>,
+  );
+  await click(button(container, "Deny")!);
+  assert.deepEqual(calls, [["call-9", false]]);
+  assert.equal(button(container, "Deny")!.className.includes("btn-danger"), false);
+});
+
+test("a second answer for the same prompt is dropped", async () => {
+  const request = destructiveWrite();
+  const { calls, onRespond } = recorder();
+  const container = await render(
+    <Overlay open>
+      <ConfirmDialog request={request} onRespond={onRespond} />
+    </Overlay>,
+  );
+
+  // The dialog stays mounted for the length of its own exit after it answers,
+  // so its buttons are still there and still clickable while the answer is on
+  // its way to the core. Each extra click would be another `confirm.respond`
+  // for a call the core has already settled -- and a user changing their mind
+  // mid-animation would otherwise be able to send both answers.
+  await click(button(container, "Allow")!);
+  await click(button(container, "Allow")!);
+  await click(button(container, "Deny")!);
+  assert.deepEqual(calls, [["call-1", true]]);
+});
+
+test("Escape denies, exactly once", async () => {
+  const request = destructiveWrite();
+  const { calls, onRespond } = recorder();
+  const container = await render(
+    <Overlay open>
+      <ConfirmDialog request={request} onRespond={onRespond} />
+    </Overlay>,
+  );
+
+  // Denying, never allowing. Escape is how a person gets a screen out of the
+  // way, and someone reaching for it is not reading the tool name -- so the
+  // answer it gives has to be the one that does nothing. A `true` here would
+  // turn the universal "dismiss" reflex into "run the destructive tool".
+  await press("Escape");
+  assert.deepEqual(calls, [["call-1", false]]);
+
+  // And it dismisses. The window clears `pendingConfirm` on the answer, so the
+  // overlay starts closing and the turn is unblocked -- which is the whole
+  // point: without this the turn stayed blocked until Allow, Deny, or the
+  // core's own 60-second timeout denied it.
+  await rerender(
+    <Overlay open={false}>
+      <ConfirmDialog request={request} onRespond={onRespond} />
+    </Overlay>,
+  );
+  await wait(exitDurationMs() + 60);
+  assert.equal(one(container, ".modal-backdrop"), null, "Escape left the dialog on screen");
+});
+
+test("a held-down or repeated Escape still answers once", async () => {
+  const request = destructiveWrite();
+  const { calls, onRespond } = recorder();
+  await render(
+    <Overlay open>
+      <ConfirmDialog request={request} onRespond={onRespond} />
+    </Overlay>,
+  );
+
+  // A key held down emits repeats, and the dialog is still mounted for the
+  // length of its own exit after answering -- so the listener is live for
+  // several chances to fire again. Each one past the first would be another
+  // `confirm.respond` on the wire for a call the core has already settled.
+  await press("Escape");
+  await press("Escape");
+  await press("Escape");
+  assert.deepEqual(calls, [["call-1", false]]);
+});
+
+test("Escape after a click does not answer twice", async () => {
   const request = destructiveWrite();
   const { calls, onRespond } = recorder();
   const container = await render(
@@ -319,20 +431,61 @@ test("Allow and Deny each answer exactly once, with the right call and polarity"
   );
 
   await click(button(container, "Allow")!);
-  assert.deepEqual(calls, [["call-1", true]]);
-
-  await click(button(container, "Deny")!);
-  assert.deepEqual(calls, [
-    ["call-1", true],
-    ["call-1", false],
-  ]);
-
-  // The polarity is the whole safety property. `true` runs the tool and `false`
-  // does not, and a swapped pair here would make Deny the dangerous button.
-  assert.equal(button(container, "Allow")!.className.includes("btn-danger"), true);
+  await press("Escape");
+  assert.deepEqual(
+    calls,
+    [["call-1", true]],
+    "Escape overrode an Allow that had already been given",
+  );
 });
 
-test("Escape does not answer it, and the dialog stays up", async () => {
+test("Escape is swallowed while the dialog is up, and other keys are not", async () => {
+  // Two other places already read Escape -- `App.tsx` closes the Files overlay
+  // on it, `ConversationList` closes an open row menu -- and both listen on
+  // `window` in the bubble phase. A blocking prompt over the top of either of
+  // them has to consume the key: denying a tool call must not also quietly
+  // close something the user was not looking at.
+  //
+  // The probe is a window listener in the bubble phase, exactly where those two
+  // live. Escape must not reach it. Another key must, and that is what makes
+  // the assertion mean something -- a listener wired to nothing, or a dialog
+  // that swallowed every keystroke, would both "pass" a check that only ever
+  // pressed Escape.
+  //
+  // One caveat about how this is driven. `press` dispatches on `window`, and a
+  // real browser delivers a key to the FOCUSED ELEMENT; measured in the live
+  // webview, dispatching on `window` puts every listener in the at-target
+  // phase, where `stopPropagation` does not separate capture from bubble, while
+  // dispatching on the focused element or `body` does stop the bubble listener
+  // dead. So this harness exercises the stricter case, and the behaviour it
+  // asserts -- capture runs first and stops the key reaching a bubble listener
+  // behind it -- is the one a real keypress depends on.
+  const behind: string[] = [];
+  const probe = () => behind.push(`saw:${behind.length}`);
+  dom.window.addEventListener("keydown", probe);
+
+  try {
+    const request = destructiveWrite();
+    const { calls, onRespond } = recorder();
+    await render(
+      <Overlay open>
+        <ConfirmDialog request={request} onRespond={onRespond} />
+      </Overlay>,
+    );
+
+    await press("Enter");
+    assert.equal(behind.length, 1, "an unrelated key was swallowed too");
+    behind.length = 0;
+
+    await press("Escape");
+    assert.deepEqual(behind, [], "Escape reached a listener behind the dialog");
+    assert.deepEqual(calls, [["call-1", false]], "the dialog did not answer");
+  } finally {
+    dom.window.removeEventListener("keydown", probe);
+  }
+});
+
+test("the key listener goes away with the dialog", async () => {
   const request = destructiveWrite();
   const { calls, onRespond } = recorder();
   const container = await render(
@@ -341,21 +494,27 @@ test("Escape does not answer it, and the dialog stays up", async () => {
     </Overlay>,
   );
 
-  // Observed, not wished for: nothing in the app handles Escape while this is
-  // up. `App.tsx` binds Escape for the Files overlay and `ConversationList`
-  // binds it for its inline rename; `ConfirmDialog` binds no key at all. The
-  // turn stays blocked until Allow or Deny is clicked, or until the core's own
-  // 60-second timeout denies it (`orchestrator.py::_request_confirmation`).
-  //
-  // The dialog's own comment explains why it is not dismissible by clicking
-  // away -- a stray click must not read as an answer -- and that reasoning has
-  // not been carried over to the keyboard, where Escape is the reflexive "get
-  // this off my screen". Asserted here so the gap is a failing test someone
-  // can see rather than a blocked turn someone has to diagnose.
+  await rerender(
+    <Overlay open={false}>
+      <ConfirmDialog request={request} onRespond={onRespond} />
+    </Overlay>,
+  );
+  await wait(exitDurationMs() + 60);
+  assert.equal(one(container, ".modal-backdrop"), null);
+
+  // A listener left on `window` outlives the component that added it, and this
+  // one would go on answering for a call id nothing is showing any more -- and
+  // would keep swallowing Escape from the rest of the app for the rest of the
+  // session, which is the more expensive half: the Files overlay and the row
+  // menu would silently stop responding to the keyboard.
+  const behind: string[] = [];
+  const probe = () => behind.push("fired");
+  dom.window.addEventListener("keydown", probe);
   await press("Escape");
-  assert.deepEqual(calls, [], "Escape answered the confirmation");
-  assert.equal(state(container), "open", "Escape dismissed a dialog that must not be dismissed");
-  assert.ok(one(container, ".modal"), "the dialog was removed by a key it does not handle");
+  dom.window.removeEventListener("keydown", probe);
+
+  assert.deepEqual(calls, [], "a closed dialog is still answering");
+  assert.deepEqual(behind, ["fired"], "a closed dialog is still swallowing Escape");
 });
 
 test("re-opening inside the exit window cancels the pending unmount", async () => {
