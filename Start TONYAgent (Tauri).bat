@@ -79,8 +79,11 @@ REM --- sidecar ---------------------------------------------------------------
 REM Matched by wildcard because the filename carries a target triple
 REM (tonyagent-core-x86_64-pc-windows-msvc.exe) that differs per machine.
 REM
-REM This only checks for existence. If you change the Python core, delete the
-REM exe and run this again -- there is no cheap way to detect staleness here.
+REM This only checks for existence, on purpose. `tauri dev` is the loop that
+REM rebuilds the frontend and the Rust shell every time it starts; the core is
+REM the one part it will not notice, so deleting the exe is how you force it.
+REM The prebuilt launcher is the one that compares timestamps, because it
+REM starts a fixed binary and nothing else rebuilds that.
 if exist "app\src-tauri\binaries\tonyagent-core-*.exe" goto have_sidecar
 
 echo [SETUP] Building the core sidecar (one time, about a minute)...

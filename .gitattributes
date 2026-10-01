@@ -1,0 +1,30 @@
+# cmd.exe has a defect in its `goto` label search that only shows up in batch
+# files with LF line endings, and it was measured rather than assumed:
+#
+#   * With CRLF, a `goto` found its label at every one of 1400 consecutive
+#     byte offsets. Never once did it fail.
+#   * With LF, it fails in narrow windows: 13 bytes wide, repeating every 512
+#     bytes -- cmd's batch read buffer -- and positioned by how many bytes lie
+#     between the `goto` and its label, not by where either sits in the file.
+#     Moving the goto changes the label's absolute offset and changes nothing
+#     else; the failing distance is the same.
+#   * Line count is not the trigger. Padding with many short lines and padding
+#     with one long line flip the outcome at the same byte offset, with the
+#     line count unchanged.
+#   * `goto label`, `goto :label` and `call :label` fail identically, so
+#     changing the form of the jump is not a way out.
+#
+# The consequence is what makes this worth pinning rather than noting: the
+# failure is a function of byte offsets, so an edit anywhere above a label can
+# move it into a failing window. The build script in this repository lost
+# `:build_sidecar` that way, after a run in which the same file had worked all
+# day and every other label in it still resolved. "It worked yesterday" is not
+# evidence of anything here.
+#
+# So a .bat's line endings are part of its correctness rather than a formatting
+# preference, and they are pinned here instead of being left to whatever
+# core.autocrlf happens to be on the machine that checks the repository out --
+# which is how these files came to be committed with the endings that break
+# them. tests/unit/test_build_scripts.py fails if this attribute is dropped or
+# if any .bat in the tree stops being CRLF.
+*.bat text eol=crlf
