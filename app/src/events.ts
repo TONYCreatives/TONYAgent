@@ -182,6 +182,25 @@ function describeResult(result: unknown): string | undefined {
 }
 
 /**
+ * Did this tool result come back as a failure?
+ *
+ * Asked of the *result*, not of the event type, because the core emits
+ * `tool.completed` for every finished call regardless of outcome -- it has a
+ * `tool.failed` type and never sends it. Reading the event type therefore marks
+ * every call successful, and a card reading "No project folder selected" is
+ * drawn in the colour that means "done". The status is in the payload the core
+ * already sends, so this is where the answer has always been.
+ *
+ * `cancelled` counts: it is not success either, and a stop the user asked for
+ * should not be reported as a completed action.
+ */
+function isFailure(result: unknown): boolean {
+  if (!result || typeof result !== "object") return false;
+  const status = (result as Record<string, unknown>).status;
+  return status === "error" || status === "cancelled";
+}
+
+/**
  * Copy the message list deeply enough that a reducer branch may edit it.
  *
  * A shallow `messages.slice()` copies the *array* but not the messages, so
@@ -325,7 +344,7 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
       const target = currentAssistant(next, turnId);
       const call = target?.tools.find((t) => t.id === id) ?? target?.tools[target.tools.length - 1];
       if (target && call) {
-        call.status = type === "tool.failed" ? "failed" : "ok";
+        call.status = isFailure(payload.result) || type === "tool.failed" ? "failed" : "ok";
         const detail = describeResult(payload.result);
         if (detail) call.detail = detail;
         // Only a success carries a change. A failed write changed nothing,

@@ -5,7 +5,7 @@
 and named conversations (see 1.13)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 502 passed, TypeScript 116 passed,
+protocol method.** Everything green: **Python 502 passed, TypeScript 126 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **502 passed, 7 skipped** with Docker Desktop running.
@@ -62,7 +62,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 116 passed (protocol, reducer, markdown, components; no Rust needed)
+cd app && npm test                     # 126 passed (protocol, reducer, markdown, components; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -776,7 +776,7 @@ app/
     backend.ts              the protocol client
     test-dom.ts             installs jsdom on the globals; imported first
     test-render.ts          mount / act / type / press / query helpers
-    *.test.ts, *.test.tsx   116 tests, all run by `npm test`
+    *.test.ts, *.test.tsx   126 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
     capabilities/default.json
@@ -831,6 +831,53 @@ Three things that are easy to get wrong and are worth not re-breaking:
 
 The row menu and the log strip are not overlays -- one is `position: fixed` and
 the other grows inline -- so both call the hook directly.
+
+#### What running it for real changed
+
+Everything above was checked in a browser preview first, and three things were
+wrong there that only the packaged app showed. All three are the kind a unit
+test cannot see, which is the argument for driving the real surface.
+
+**1. `--motion-fast` comes back in seconds.** Chromium re-serialises a custom
+property that holds a `<time>`: a stylesheet saying `110ms` reads back as
+`0.11s`. Parsing the number and assuming milliseconds got `0.11`, so every
+surface lingered 30ms under an animation that runs for 110 -- the exit was cut
+off before it finished. jsdom does not re-serialise, so the test passed. The
+unit is parsed now, and both spellings are asserted.
+
+**2. Two backdrops.** The window wrapped each panel in an `Overlay` *and* the
+panel carried one of its own, so the window behind the user was scrimmed twice
+(visibly darker than the design) and the inner backdrop was permanently
+`open`, which meant the dialog could never play its exit no matter what closed
+it. The markup looked fine and every test passed. `Overlay` now asserts it
+renders exactly one backdrop.
+
+**3. Every tool card was green.** Found by asking the live agent to write a
+file with no project folder selected. The card said "No project folder
+selected" and was drawn in the colour that means "done", because the status was
+read from the event type -- and the core emits `tool.completed` for every
+finished call, success or not. It has a `tool.failed` type and never sends it.
+The status is in the payload the core already sends, so that is where it is
+read from now. Nothing to do with motion; found by running the thing.
+
+To drive the webview itself:
+
+```
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS="--remote-debugging-port=9333"
+./tonyagent-app.exe
+python scripts/probe_webview.py -e "document.title"
+python scripts/probe_webview.py --screenshot shot.png
+```
+
+`probe_webview.py` has a **25 second** socket timeout, so an expression that
+polls must return inside that or it fails with "timed out waiting for the
+expression" -- send the action in one call and poll in later ones rather than
+in one long `await`.
+
+**Still not proven by a run:** the confirmation dialog. It needs a destructive
+tool call, which needs a project folder, and the only way to set one is the
+native folder picker, which CDP cannot drive. It renders through the same
+`Overlay` as settings and search, which were both driven for real.
 
 
 Every value is sampled from a full-resolution screenshot of the Freebuff

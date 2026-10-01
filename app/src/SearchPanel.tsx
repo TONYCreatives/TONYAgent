@@ -13,7 +13,6 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Overlay } from "./Overlay.js";
 
 /** One hit, mirroring the `grep_result` artifact the core returns. */
 export interface SearchMatch {
@@ -27,7 +26,6 @@ interface Props {
   connected: boolean;
   /** False until a project folder is chosen; grep is confined to it. */
   hasProject: boolean;
-  onClose: () => void;
   onSearch: (pattern: string) => Promise<SearchMatch[]>;
 }
 
@@ -54,7 +52,7 @@ function splitContext(context: string) {
   });
 }
 
-export function SearchPanel({ connected, hasProject, onClose, onSearch }: Props) {
+export function SearchPanel({ connected, hasProject, onSearch }: Props) {
   const [pattern, setPattern] = useState("");
   const [matches, setMatches] = useState<SearchMatch[] | null>(null);
   const [running, setRunning] = useState(false);
@@ -84,14 +82,13 @@ export function SearchPanel({ connected, hasProject, onClose, onSearch }: Props)
   };
 
   return (
-    <Overlay open onDismiss={onClose}>
-      <div
-        className="modal search-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="search-title"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div
+      className="modal search-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="search-title"
+      onClick={(e) => e.stopPropagation()}
+    >
         <h2 id="search-title">Search project</h2>
 
         <div className="settings-row">
@@ -162,6 +159,5 @@ export function SearchPanel({ connected, hasProject, onClose, onSearch }: Props)
           </div>
         )}
       </div>
-    </Overlay>
   );
 }

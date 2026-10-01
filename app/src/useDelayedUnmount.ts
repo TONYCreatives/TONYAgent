@@ -39,9 +39,26 @@ export function exitDurationMs(): number {
   const declared = getComputedStyle(document.documentElement)
     .getPropertyValue("--motion-fast")
     .trim();
-  const parsed = Number.parseFloat(declared);
-  const base = declared !== "" && Number.isFinite(parsed) && parsed > 0 ? parsed : FALLBACK_MS;
-  return base + SLACK_MS;
+  return parseCssTime(declared) + SLACK_MS;
+}
+
+/**
+ * A CSS `<time>` in milliseconds.
+ *
+ * The unit is not decoration. A custom property's computed value is
+ * re-serialised by the engine, and Chromium canonicalises times into seconds:
+ * a stylesheet saying `110ms` reads back as `0.11s`. Reading the number and
+ * assuming milliseconds therefore gets 0.11 -- and a delay of thirty
+ * milliseconds under an animation that runs for a hundred and ten, which cuts
+ * the exit off before it has finished. jsdom does not re-serialise, so a test
+ * against jsdom alone reads `110ms` and passes; only a real browser shows it.
+ */
+function parseCssTime(declared: string): number {
+  const match = /^(\d*\.?\d+)(ms|s)?$/.exec(declared);
+  if (!match) return FALLBACK_MS;
+  const value = Number.parseFloat(match[1]);
+  if (!Number.isFinite(value) || value <= 0) return FALLBACK_MS;
+  return match[2] === "s" ? value * 1000 : value;
 }
 
 /**

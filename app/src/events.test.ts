@@ -93,6 +93,42 @@ test("a failed tool reports no change even when it carries an artifact", () => {
   assert.equal(call.added, undefined);
 });
 
+test("a failure is read from the result, because the core sends one event type", () => {
+  // `tool.failed` exists and the core never emits it: every finished call
+  // arrives as `tool.completed`, whatever happened. Deriving the status from
+  // the event therefore painted every failure in the colour that means "done".
+  // Running for real is what showed it -- a card reading "No project folder
+  // selected" with a green tick.
+  const failed = onlyTool(
+    turnWithTool("write_file", {
+      status: "error",
+      output: null,
+      error: "No project folder selected",
+      artifacts: [],
+      duration_ms: 0,
+    }),
+  );
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.detail, "No project folder selected");
+
+  const cancelled = onlyTool(
+    turnWithTool("write_file", { status: "cancelled", artifacts: [] }),
+  );
+  assert.equal(cancelled.status, "failed", "a stopped call is not a done call");
+
+  const succeeded = onlyTool(
+    turnWithTool("read_file", { status: "success", output: "file body" }),
+  );
+  assert.equal(succeeded.status, "ok");
+});
+
+test("a result with no status at all is not treated as a failure", () => {
+  // Older frames and hand-written events may carry a bare result. Guessing
+  // "failed" would paint working tools red, which is its own lie.
+  const call = onlyTool(turnWithTool("read_file", { output: "just a string" }));
+  assert.equal(call.status, "ok");
+});
+
 test("a zero/zero change is passed through rather than invented", () => {
   // The sidebar hides a 0/0 badge, but the reducer must not turn it into a
   // fake +1 to make something visible.

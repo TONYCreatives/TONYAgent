@@ -20,7 +20,6 @@
  */
 
 import { useEffect, useState } from "react";
-import { Overlay } from "./Overlay.js";
 
 /** Shape of one entry in the `providers.list` reply. */
 export interface ProviderInfo {
@@ -139,14 +138,13 @@ export function SettingsPanel({
   };
 
   return (
-    <Overlay open onDismiss={onClose}>
-      <div
-        className="modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="settings-title"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <div
+      className="modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-title"
+      onClick={(e) => e.stopPropagation()}
+    >
         <h2 id="settings-title">Settings</h2>
 
         {error && <p className="warn">{error}</p>}
@@ -367,6 +365,5 @@ export function SettingsPanel({
           </button>
         </div>
       </div>
-    </Overlay>
   );
 }

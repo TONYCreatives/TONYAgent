@@ -27,7 +27,7 @@ import { test } from "node:test";
 import { act } from "react";
 
 import { render, rerender, one } from "./test-render.js";
-import { useDelayedUnmount } from "./useDelayedUnmount.js";
+import { useDelayedUnmount, exitDurationMs } from "./useDelayedUnmount.js";
 import { dom } from "./test-dom.js";
 
 const DELAY = 150;
@@ -177,6 +177,39 @@ test("with no delay given, lingers past the animation the stylesheet declares", 
     t.mock.timers.reset();
     restore();
   }
+});
+
+test("a duration declared in seconds is read as seconds", async (t) => {
+  // Chromium re-serialises a custom property that holds a time, so a
+  // stylesheet declaring `110ms` reads back as `0.11s`. jsdom keeps the text
+  // as written, so this spelling has to be asserted here or nothing covers it:
+  // parse the number, assume milliseconds, and every exit animation gets cut
+  // off at 30ms of its 110ms while every test still passes.
+  const restore = withToken("0.2s");
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const container = await render(<Probe open />);
+    await rerender(<Probe open={false} />);
+
+    await act(async () => {
+      t.mock.timers.tick(199);
+    });
+    assert.equal(mounted(container), "true", "0.2s was read as 0.2ms, not 200ms");
+
+    await act(async () => {
+      t.mock.timers.tick(61);
+    });
+    assert.equal(mounted(container), "false");
+  } finally {
+    t.mock.timers.reset();
+    restore();
+  }
+});
+
+test("an unreadable duration falls back instead of returning zero", () => {
+  // A token that is empty, or is not a time at all, must not become a delay of
+  // 0 -- that would silently turn every exit back into a hard cut.
+  assert.equal(exitDurationMs(), 110 + 30);
 });
 
 test("reduced motion drops the surface at once instead of lingering", async (t) => {

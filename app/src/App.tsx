@@ -832,11 +832,9 @@ export function App() {
         />
 
         {shownConfirm && (
-          <ConfirmDialog
-            open={state.pendingConfirm !== null}
-            request={shownConfirm}
-            onRespond={respond}
-          />
+          <Overlay open={state.pendingConfirm !== null}>
+            <ConfirmDialog request={shownConfirm} onRespond={respond} />
+          </Overlay>
         )}
 
         <Overlay open={settingsOpen} onDismiss={() => setSettingsOpen(false)}>
@@ -866,7 +864,6 @@ export function App() {
           <SearchPanel
             connected={connected}
             hasProject={project !== ""}
-            onClose={() => setSearchOpen(false)}
             onSearch={search}
           />
         </Overlay>

@@ -1,16 +1,14 @@
 import type { ChatState } from "./events";
-import { Overlay } from "./Overlay";
 
 interface Props {
   /**
-   * Whether the prompt is still outstanding.
+   * What to show.
    *
-   * Kept distinct from `request` so the dialog can outlast the core's
-   * confirmation: `request` says what to show, `open` says whether to show it.
-   * Once `open` goes false the overlay plays its exit and unmounts, which is
-   * why the window holds on to the last request rather than passing null.
+   * Deliberately not nullable. Whether to show it belongs to the `Overlay` the
+   * window puts around this, and that overlay keeps the dialog mounted after a
+   * close so it can animate out -- which is why the window holds on to the
+   * last request rather than passing null.
    */
-  open: boolean;
   request: NonNullable<ChatState["pendingConfirm"]>;
   onRespond: (id: string, confirmed: boolean) => void;
 }
@@ -25,10 +23,9 @@ interface Props {
  * Not dismissible by clicking away: this one is a decision, not a peek, and a
  * stray click must not be readable as an answer.
  */
-export function ConfirmDialog({ open, request, onRespond }: Props) {
+export function ConfirmDialog({ request, onRespond }: Props) {
   return (
-    <Overlay open={open}>
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
         <h2 id="confirm-title">Confirm tool execution</h2>
 
         <dl className="confirm-detail">
@@ -56,7 +53,6 @@ export function ConfirmDialog({ open, request, onRespond }: Props) {
             Deny
           </button>
         </div>
-      </div>
-    </Overlay>
+    </div>
   );
 }
