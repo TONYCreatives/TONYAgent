@@ -2189,7 +2189,24 @@ body {
  * one.
  */
 @media (prefers-reduced-motion: reduce) {
+  /*
+   * The two that are not `[data-state]` rules, and both are a *progress*
+   * indicator rather than a transition.
+   *
+   * Cancelling them stops the motion without removing the information they
+   * carry, which is the whole distinction: `.thinking-live` keeps its text and
+   * `.tab-spinner` keeps its ring. Hiding a busy indicator to satisfy a motion
+   * preference would trade a real signal for a cosmetic one, and a turn that
+   * looks finished is worse than a turn that looks still.
+   *
+   * `.tab-spinner` was the one animation this block missed, which is why
+   * `scripts/audit_reduced_motion.py` exists: the list is hand-written, and a
+   * selector added to the stylesheet later is invisible here until someone
+   * remembers to add it below too. The spinner's own rule carries no
+   * `[data-state]`, so it was never in the group below.
+   */
   .thinking-live { animation: none; }
+  .tab-spinner { animation: none; }
 
   /*
    * The repeated `[data-state]` halves are not noise, and `!important` was

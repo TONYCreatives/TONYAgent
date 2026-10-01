@@ -1,7 +1,7 @@
 # TONYAgent — Project Summary
 
 **Updated:** 2026-10-01 · **Tests:** Python 502 passed, 7 skipped
-(Docker 꺼져 있으면: 501 passed + 1 failed), TypeScript 140 passed
+(Docker 꺼져 있으면: 501 passed + 1 failed), TypeScript 143 passed
 **Build:** Tauri MSI + NSIS installers produced; app verified running end to end
 
 ---
@@ -131,7 +131,7 @@ MSVC 블로커는 **해결됨** (Visual Studio Community 2026, VC tools 14.51.36
 python -m compileall -q src
 python -m pytest tests -q                    # 502 passed, 7 skipped (Docker up)
 python scripts/check_all.py --fast           # 3 checks
-cd app && npm test                           # 140 passed (Rust 불필요)
+cd app && npm test                           # 143 passed (Rust 불필요)
 ```
 
 TypeScript 프로토콜 테스트가 Rust·Tauri·Python 없이 도는 것은 의도된 설계입니다.

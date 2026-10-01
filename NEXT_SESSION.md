@@ -5,7 +5,7 @@
 and named conversations (see 1.13)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 502 passed, TypeScript 140 passed,
+protocol method.** Everything green: **Python 502 passed, TypeScript 143 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **502 passed, 7 skipped** with Docker Desktop running.
@@ -62,7 +62,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 140 passed (protocol, reducer, markdown, components; no Rust needed)
+cd app && npm test                     # 143 passed (protocol, reducer, markdown, components; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -776,7 +776,7 @@ app/
     backend.ts              the protocol client
     test-dom.ts             installs jsdom on the globals; imported first
     test-render.ts          mount / act / type / press / query helpers
-    *.test.ts, *.test.tsx   140 tests, all run by `npm test`
+    *.test.ts, *.test.tsx   143 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
     capabilities/default.json
@@ -944,6 +944,49 @@ later. One `render` per test.
 Note there is still no button *named* cancel -- the buttons are "Allow" and
 "Deny" -- and Escape is not labelled on screen. If that matters for
 discoverability, `aria-keyshortcuts` or a hint line is the place to say it.
+
+**Reduced motion, observed for real (one defect found and fixed).** The
+`prefers-reduced-motion: reduce` block had never been run with the preference
+actually set -- it was only ever read. `scripts/probe_media.py` emulates the
+media feature over CDP on the same socket that evaluates the expression,
+because `probe_webview.py` sends only `Runtime.evaluate` and emulated media
+does not survive the connection. Measured in the packaged app:
+
+| surface | reduced | normal |
+| --- | --- | --- |
+| settings overlay animations | `none`, 0 live | `fade-in`+`rise-in` @160ms, 2 live |
+| overlay close to unmount | **3ms** | **148ms** |
+| row menu close to unmount | **36ms** | **147ms** |
+| `data-state`, `pointer-events` | published as usual | as usual |
+
+So the `defaultDelay()` branch does what its comment claims: the node is
+dropped at once instead of lingering as a ghost for a length of time nobody
+asked for. The animation-cancelling half of the block holds up too.
+
+**The one that was broken: `.tab-spinner`.** The top bar's busy indicator is
+`spin 0.7s linear infinite`, and it was **not** in the block -- so a turn
+showed a permanently rotating ring to precisely the people who had asked
+their operating system to stop things moving. Measured in the browser, before
+the fix: `animationName: spin`, `iterations: infinite`, `playState: running`
+**identically under both settings**. It is now cancelled.
+
+The fix cancels the animation only. The ring keeps its 12px size and its
+lighter top edge (`rgb(235,235,235)` against `rgb(122,122,122)` on the side),
+so it still reads as "busy" while standing still. Hiding the indicator would
+have satisfied the preference by trading a real signal for a cosmetic one, and
+a turn that looks finished is worse than a turn that looks still.
+
+The block is a hand-written list, so it is now checked rather than trusted.
+`app/src/reducedMotion.test.ts` fails if any animated selector in
+`styles.css` is not covered, and `scripts/audit_reduced_motion.py` prints the
+whole picture by hand. The test understands the two idioms the block is
+written in -- naming a selector outright, and naming it with the attribute
+*value* dropped (`.rowmenu[data-state]` covers
+`.rowmenu[data-state="open"]`, matching both states and winning on source
+order) -- because a matcher that does not would cry wolf on twelve
+already-covered rules and get ignored. Verified by mutation: removing the
+`.tab-spinner` cancellation, adding a new uncancelled infinite animation, and
+lowering a cancellation's specificity each fail the test that names them.
 
 `scripts/observe_confirm_contract.py` covers the core half end to end against the
 real `ToolOrchestrator` and the real `write_file`: one request per untrusted
