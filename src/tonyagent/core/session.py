@@ -63,6 +63,22 @@ def _results_digest(orders: list[int]) -> str:
 _UNRESOLVED = object()
 
 
+def _default_max_tool_calls() -> int:
+    """The per-turn tool budget, from settings, with a floor of one.
+
+    A limit of zero would refuse every tool, which is not a small budget --
+    it is a different product, expressed by removing tools from the model
+    list. So the floor is one call rather than none.
+    """
+    try:
+        from tonyagent.config.settings import settings
+
+        return max(1, int(settings.tools.max_tool_calls))
+    except Exception as exc:  # noqa: BLE001 - a bad setting must not stop a launch
+        logger.warning(f"Could not read max_tool_calls; using 10: {exc}")
+        return 10
+
+
 class SessionCancelled(Exception):
     """Raised when the user stops a turn."""
 
@@ -105,6 +121,14 @@ class AgentSession:
         #: 1-based tool-round numbers executed in the turn in flight, so the
         #: closing digest can name the results the model just produced.
         self._round_orders: list[int] = []
+        #: Individual tool calls already spent in the turn in flight. Counted
+        #: per call rather than per round, so a model that asks for five tools
+        #: in one message has spent five and the number on the card is the
+        #: number of things that were actually run.
+        self._tool_calls_used: int = 0
+        #: The per-turn tool budget, read once at construction so a mid-turn
+        #: settings change cannot make the counter and the label disagree.
+        self.max_tool_calls: int = _default_max_tool_calls()
 
     # -- provider ------------------------------------------------------------
     def bind_provider(
@@ -337,37 +361,82 @@ class AgentSession:
             self._busy = False
 
     # -- turn execution ------------------------------------------------------
-    #: How many tool rounds one turn may chain. Each round is one assistant
-    #: pass plus the tool calls it asked for; the cap exists so a model stuck
-    #: in a loop costs a bounded amount of money, not because one round is the
-    #: honest number. Two is not: "list the files, then open the one that looks
-    #: relevant" is a normal agent request, and the old single-round behaviour
-    #: answered it with an error instead of an answer.
-    MAX_TOOL_ROUNDS = 6
+    # The per-turn tool budget lives in ``self.max_tool_calls`` rather than
+    # being a class constant, because it is a setting the user can change and
+    # because a class constant cannot be lowered for one test without lowering
+    # it for every other. What it bounds is *individual calls*: the old
+    # ``MAX_TOOL_ROUNDS = 6`` counted assistant passes, so a model asking for
+    # five tools in a single message spent one round and could do it five
+    # times over for the price of six. The unit the model spends in is the
+    # unit the cap has to be in, or it does not bound anything.
+    #
+    # The per-call budget is the bound, but it cannot be the *only* one. A
+    # tool call whose ``function.name`` is empty is skipped without ever being
+    # counted, so a gateway that answers with nothing but nameless calls would
+    # spin this loop forever without spending a single call of the budget.
+    # That is a hang, not a slow turn, and it is reachable from a malformed
+    # response. So the loop keeps a round backstop as well -- generous enough
+    # that no honest turn ever meets it, since a turn that made no real call
+    # has nothing to show for its extra passes.
+    MAX_TOOL_ROUNDS = 100
+
+    def set_max_tool_calls(self, limit: int) -> int:
+        """Change the per-turn tool budget. Returns what took effect.
+
+        Floored at one rather than at zero. A budget of zero refuses every
+        tool, which is a different thing from a small budget and is expressed
+        by taking tools off the model's list -- so the floor corrects a
+        mistake instead of obeying it.
+
+        The change applies from the *next* turn. A turn in flight is mid-loop
+        with its own idea of how far it may go, and moving the number under it
+        would make the labels on results already in the transcript wrong.
+        """
+        self.max_tool_calls = max(1, int(limit))
+        return self.max_tool_calls
+
+    def _tool_budget_label(self) -> str:
+        """Where the turn stands, as the model and the UI both read it."""
+        return f"Tool call {self._tool_calls_used}/{self.max_tool_calls}"
+
+    def _budget_exhausted_error(self) -> str:
+        """What the user is told when the turn ran out of tool calls."""
+        return (
+            f"Stopped after {self.max_tool_calls} tool calls "
+            f"(last: {self._tool_budget_label()}). The model kept requesting "
+            "tools; ask it to summarise what it has, or raise the limit."
+        )
 
     async def _run_turn(self, turn_id: str) -> None:
         try:
             self.emit(EventType.TURN_STARTED, {"model": self.model}, turn_id=turn_id)
             self._round_orders = []
+            self._tool_calls_used = 0
             for _round in range(self.MAX_TOOL_ROUNDS):
                 tool_calls = await self._stream_assistant(turn_id)
                 if not tool_calls:
                     break
-                await self._run_tool_calls(tool_calls, turn_id, len(self._round_orders) + 1)
+                exhausted = await self._run_tool_calls(
+                    tool_calls, turn_id, len(self._round_orders) + 1
+                )
+                if exhausted:
+                    # The model has results it has not yet answered about.
+                    # Say so rather than pretending the turn completed.
+                    self.emit(
+                        EventType.ERROR,
+                        {"message": self._budget_exhausted_error()},
+                        turn_id=turn_id,
+                    )
+                    break
                 self._check_cancelled()
             else:
-                # The cap ran out while the model still wanted tools. Explain
-                # the state rather than pretending the turn completed: the
-                # model has results it has not yet answered about.
+                # The round backstop ran out. Reachable only by a turn that
+                # made no real call at all, but silent termination is how a
+                # truncated turn becomes a mystery, so it says the same thing
+                # the budget does rather than ending without a word.
                 self.emit(
                     EventType.ERROR,
-                    {
-                        "message": (
-                            f"Stopped after {self.MAX_TOOL_ROUNDS} tool rounds. "
-                            "The model kept requesting tools; ask it to "
-                            "summarise what it has, or continue the task."
-                        )
-                    },
+                    {"message": self._budget_exhausted_error()},
                     turn_id=turn_id,
                 )
             # A turn whose last act was a tool call must not leave the history
@@ -613,27 +682,52 @@ class AgentSession:
         return tool_calls
 
     async def _run_tool_calls(self, tool_calls: list[dict], turn_id: str,
-                              round_no: int) -> None:
-        """Execute each requested tool and append its result to the history."""
+                              round_no: int) -> bool:
+        """Execute each requested tool and append its result to the history.
+
+        Returns True when the turn ran out of tool calls before finishing the
+        batch, which is the only thing the caller needs to know: a turn that
+        stopped for any other reason continues.
+
+        Every requested call gets exactly one tool message, including the ones
+        the budget refused. That is not tidiness. The assistant message above
+        already declared these calls in its ``tool_calls`` array, and an
+        OpenAI-compatible endpoint rejects a history where a declared call has
+        no matching result -- so dropping the refused ones would turn a
+        finished, explainable turn into a 400 on the *next* message, with the
+        cause one request removed from anything the user can see.
+        """
+        refused = False
         for raw in tool_calls:
             self._check_cancelled()
             function = raw.get("function", {}) or {}
             name = function.get("name", "")
             if not name:
                 continue
+            call_id = raw.get("id") or uuid.uuid4().hex
+            if self._tool_calls_used >= self.max_tool_calls:
+                refused = True
+                self._append_refused_tool_message(call_id, name, turn_id)
+                continue
             try:
                 arguments = json.loads(function.get("arguments") or "{}")
             except (ValueError, TypeError):
                 # A malformed arguments blob is the model's fault, not a crash.
                 arguments = {}
-            call = ToolCall(
-                id=raw.get("id") or uuid.uuid4().hex,
-                name=name,
-                arguments=arguments,
-            )
+            call = ToolCall(id=call_id, name=name, arguments=arguments)
+            # Counted before the call runs, not after it returns. A tool that
+            # fails still consumed a call: the model asked for it, the request
+            # went out, and the budget is what bounds spending. Counting only
+            # successes would make a loop of failing tools free.
+            self._tool_calls_used += 1
             self.emit(
                 EventType.TOOL_STARTED,
-                {"id": call.id, "name": call.name, "arguments": call.arguments},
+                {
+                    "id": call.id,
+                    "name": call.name,
+                    "arguments": call.arguments,
+                    "tool_call_budget": self._budget_payload(),
+                },
                 turn_id=turn_id,
             )
             # The async entry point is required: the synchronous
@@ -641,15 +735,25 @@ class AgentSession:
             # calling it from a coroutine used to raise and the tool silently
             # never ran.
             result = await tool_orchestrator.execute_tool_async(call)
+            payload = result.to_dict()
+            # The same field the model reads, on the same number. The card and
+            # the model must not be able to disagree about how far the turn
+            # got, and there is exactly one place that knows.
+            payload["tool_call_budget"] = self._budget_payload()
             self.emit(
                 EventType.TOOL_COMPLETED,
-                {"id": call.id, "name": call.name, "result": result.to_dict()},
+                {
+                    "id": call.id,
+                    "name": call.name,
+                    "result": payload,
+                    "tool_call_budget": self._budget_payload(),
+                },
                 turn_id=turn_id,
             )
             self.messages.append(
                 ChatMessage(
                     role="tool",
-                    content=json.dumps(result.to_dict()),
+                    content=json.dumps(payload),
                     tool_call_id=call.id,
                 )
             )
@@ -657,6 +761,66 @@ class AgentSession:
         # continues or stops at the cap: the digest references the results by
         # these numbers.
         self._round_orders.append(round_no)
+        return refused
+
+    def _budget_payload(self) -> dict[str, Any]:
+        """The turn's tool-call standing, as one dict for every consumer."""
+        return {
+            "index": self._tool_calls_used,
+            "limit": self.max_tool_calls,
+            "label": self._tool_budget_label(),
+        }
+
+    def _append_refused_tool_message(self, call_id: str, name: str,
+                                     turn_id: str) -> None:
+        """Answer a call the budget will not pay for.
+
+        A refusal rather than a silence, and said plainly: the model is
+        reading this, and a result that merely says "error" leaves it to guess
+        whether to retry in a loop. The turn's real limit goes in the message
+        so the next turn can be planned inside it.
+        """
+        self.emit(
+            EventType.TOOL_COMPLETED,
+            {
+                "id": call_id,
+                "name": name,
+                "result": {
+                    "status": "error",
+                    "output": None,
+                    "error": (
+                        f"Not run: this turn reached its tool call budget "
+                        f"({self._tool_budget_label()}). Answer from the "
+                        "results you already have, or ask the user to raise "
+                        "the limit."
+                    ),
+                    "artifacts": [],
+                    "duration_ms": 0.0,
+                    "tool_call_budget": self._budget_payload(),
+                },
+                "tool_call_budget": self._budget_payload(),
+            },
+            turn_id=turn_id,
+        )
+        self.messages.append(
+            ChatMessage(
+                role="tool",
+                content=json.dumps(
+                    {
+                        "status": "error",
+                        "output": None,
+                        "error": (
+                            f"Not run: this turn reached its tool call budget "
+                            f"({self._tool_budget_label()})."
+                        ),
+                        "artifacts": [],
+                        "duration_ms": 0.0,
+                        "tool_call_budget": self._budget_payload(),
+                    }
+                ),
+                tool_call_id=call_id,
+            )
+        )
 
     def _append_results_digest(self) -> None:
         """Close a turn that ended on tool results with an assistant note.

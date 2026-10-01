@@ -105,6 +105,8 @@ class StdioServer:
             "sandbox.stats": self._h_sandbox_stats,
             "confirm.respond": self._h_confirm_respond,
             "trust.set": self._h_trust_set,
+            "tools.get": self._h_tools_get,
+            "tools.set": self._h_tools_set,
             "conversations.list": self._h_conversations_list,
             "conversations.create": self._h_conversations_create,
             "conversations.switch": self._h_conversations_switch,
@@ -694,6 +696,47 @@ class StdioServer:
                 matches = artifact.get("data") or []
                 break
         return {"matches": matches, "output": result.output}
+
+    # -- the tool call budget ------------------------------------------------
+    def _h_tools_get(self, params: dict) -> Any:
+        """The per-turn tool call budget, as it stands.
+
+        Read from the session rather than from settings, because the session is
+        what a turn actually consults and the two can differ the moment
+        someone changes it here. A control that showed the setting file would
+        report a number the next turn is not held to.
+        """
+        return {
+            "max_tool_calls": self.session.max_tool_calls,
+            "label": self.session._budget_payload()["label"],
+        }
+
+    def _h_tools_set(self, params: dict) -> Any:
+        """Change how many tool calls one turn may make.
+
+        Validated rather than clamped silently: a limit of zero is not a small
+        budget, it is a refusal of every tool, and a control that turned a
+        typed 0 into a 1 would report a value the user did not ask for. One is
+        the floor, and anything below it is an error the UI can show.
+        """
+        raw = params.get("max_tool_calls")
+        if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+            raise RpcError("max_tool_calls must be a number")
+        try:
+            wanted = int(raw)
+        except (TypeError, ValueError):
+            raise RpcError("max_tool_calls must be a whole number") from None
+        if wanted < 1:
+            raise RpcError("a turn must be allowed at least one tool call")
+        applied = self.session.set_max_tool_calls(wanted)
+        try:
+            from tonyagent.config import save_max_tool_calls
+
+            save_max_tool_calls(applied)
+        except Exception as exc:  # noqa: BLE001 - the choice still applies now
+            logger.error(f"Could not save the tool call budget: {exc}")
+            return {"max_tool_calls": applied, "persisted": False}
+        return {"max_tool_calls": applied, "persisted": True}
 
     # -- modes ---------------------------------------------------------------
     def _h_mode_set(self, params: dict) -> Any:

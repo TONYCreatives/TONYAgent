@@ -97,6 +97,19 @@ class ToolsSettings(BaseModel):
     )
     confirm_destructive: bool = True
     max_output_size: int = 1048576  # 1MB
+    max_tool_calls: int = 10
+    """How many individual tool calls one turn may make.
+
+    Counted per call, not per round. A model that asks for five tools in one
+    message has made five calls, and a budget that read that as one round
+    would let a single turn spend five times what the number says it may.
+    The cap exists so a model stuck in a loop costs a bounded amount of
+    money, which only works if the bound is in the unit the model spends in.
+
+    Set TONYAGENT_TOOLS__MAX_TOOL_CALLS to raise or lower it. One is the
+    floor: a limit of zero would refuse every tool, which is a different
+    thing from a small budget and is expressed by the model list instead.
+    """
     default_timeout: int = 30
     fallback_to_local: bool = False
     """Allow host execution when the sandbox is not running.

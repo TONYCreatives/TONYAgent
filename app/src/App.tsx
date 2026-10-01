@@ -47,6 +47,15 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
+  /**
+   * The per-turn tool call budget, as the core last reported it.
+   *
+   * Null until read. The control says "reading" rather than drawing a number
+   * it does not have, because this number is what the reader uses to tell
+   * whether a turn is about to be cut off.
+   */
+  const [maxToolCalls, setMaxToolCalls] = useState<number | null>(null);
+  const [budgetOpen, setBudgetOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversation, setConversation] = useState("");
@@ -390,6 +399,62 @@ export function App() {
       await refreshReasoning();
     }
   }, [refreshReasoning]);
+
+  /**
+   * Re-read the per-turn tool call budget.
+   *
+   * From the core, not from a local copy: this number is what bounds a turn,
+   * so a control that reported a value the core is not holding to would be
+   * the one number in the window that lies.
+   */
+  const refreshToolBudget = useCallback(async (cancelled?: boolean) => {
+    const backend = backendRef.current;
+    if (!backend) return;
+    try {
+      const listed = (await backend.call("tools.get")) as { max_tool_calls?: number };
+      if (cancelled) return;
+      setMaxToolCalls(listed.max_tool_calls ?? null);
+    } catch (error: unknown) {
+      if (cancelled) return;
+      // Same contract as the reasoning dial: an unread answer is a control
+      // that says "reading", not an error the user has to clear.
+      setMaxToolCalls(null);
+      console.warn("Could not read the tool call budget:", error);
+    }
+  }, []);
+
+  /**
+   * Change the per-turn tool call budget.
+   *
+   * Painted straight away, then corrected by the reply. A rejected value
+   * (zero, say) leaves the painted number on screen for a round trip, which
+   * is the same brief lag the reasoning dropdown has; the re-read on failure
+   * is what puts the truth back.
+   */
+  const changeToolBudget = useCallback(async (limit: number) => {
+    setMaxToolCalls(limit);
+    try {
+      const applied = (await backendRef.current!.call("tools.set", {
+        max_tool_calls: limit,
+      })) as { max_tool_calls?: number };
+      setMaxToolCalls(applied.max_tool_calls ?? limit);
+    } catch (error: unknown) {
+      setState((prev) => ({
+        ...prev,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      await refreshToolBudget();
+    }
+  }, [refreshToolBudget]);
+
+  useEffect(() => {
+    if (!connected) return;
+    let cancelled = false;
+    void refreshToolBudget(cancelled);
+    return () => {
+      cancelled = true;
+    };
+  }, [connected, refreshToolBudget]);
 
   // Re-read whenever the model can have changed. One effect rather than a call
   // in three places, because the failure mode of forgetting the third is a
@@ -829,6 +894,11 @@ export function App() {
           onModeChange={changeMode}
           onSend={send}
           onCancel={cancel}
+          maxToolCalls={maxToolCalls}
+          budgetOpen={budgetOpen}
+          onBudgetOpen={() => setBudgetOpen(true)}
+          onBudgetClose={() => setBudgetOpen(false)}
+          onBudgetChange={(limit) => void changeToolBudget(limit)}
         />
 
         {shownConfirm && (

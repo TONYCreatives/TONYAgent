@@ -965,6 +965,111 @@ body {
   opacity: 0.8;
 }
 
+/*
+ * The tool budget popover, anchored to the composer row rather than a dialog.
+ *
+ * The wrap is the positioning context and the popover itself is absolute
+ * within it, so the panel tracks the button without a portal and without the
+ * measure-and-place code a fixed-position version would need. The row sits at
+ * the bottom of the window, so the panel opens upward: a popover that opened
+ * down would render off-screen.
+ */
+.budget-popover-wrap {
+  position: relative;
+  flex: none;
+}
+
+.budget-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 232px;
+  padding: 10px 11px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+}
+
+.budget-popover-title {
+  margin: 0 0 4px;
+  color: var(--fg);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.budget-popover-hint {
+  margin: 0 0 9px;
+  color: var(--fg-mute);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.budget-presets {
+  display: flex;
+  gap: 4px;
+}
+
+.budget-preset {
+  flex: 1;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius-sm) - 1px);
+  background: var(--raised);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.budget-preset:hover:not(:disabled) {
+  background: var(--input);
+  color: var(--fg);
+}
+
+.budget-preset.is-active {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.budget-preset.is-active:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-fg);
+  filter: brightness(1.06);
+}
+
+.budget-custom {
+  margin: 8px 0 0;
+  color: var(--fg-mute);
+  font-size: 11.5px;
+}
+
+.budget-done {
+  margin-top: 8px;
+  font-size: 11.5px;
+}
+
+/*
+ * The turn's tool-call standing. Muted like the detail line, because it is
+ * context rather than an outcome -- until the turn is near its limit, at
+ * which point it is the only thing on the card warning that the next call
+ * may be refused, so it takes the warning tint rather than staying quiet.
+ */
+.tool-budget {
+  flex: none;
+  color: var(--fg-mute);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tool-budget.is-near-limit {
+  color: var(--warn);
+}
+
 /* --- composer ------------------------------------------------------------ */
 
 .composer {
@@ -2136,6 +2241,14 @@ body {
   animation: fade-in var(--motion-base) var(--ease-out) both;
 }
 
+.budget-popover[data-state="open"] {
+  animation: rise-in var(--motion-base) var(--ease-out) both;
+}
+
+.budget-popover[data-state="closed"] {
+  animation: rise-out var(--motion-fast) var(--ease-in) both;
+}
+
 .modal-backdrop[data-state="closed"] {
   animation: fade-out var(--motion-fast) var(--ease-in) both;
 }
@@ -2262,6 +2375,18 @@ body {
    */
   .thinking-live { animation: none; }
   .tab-spinner { animation: none; }
+  .thinking-live { animation: none; }
+  .tab-spinner { animation: none; }
+  /*
+   * Spelled out with the `[data-state]` half so it matches the specificity of
+   * the rule it cancels. `.budget-popover` alone is one class and loses to the
+   * two-class rule above, which is the mistake `audit_reduced_motion.py`
+   * exists to catch -- and did.
+   */
+  .budget-popover[data-state="open"],
+  .budget-popover[data-state="closed"] {
+    animation: none;
+  }
 
   /*
    * The repeated `[data-state]` halves are not noise, and `!important` was

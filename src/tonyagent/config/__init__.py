@@ -13,6 +13,7 @@ from tonyagent.config.migration import (
     save_config,
     save_provider_selection,
     save_reasoning_effort,
+    save_max_tool_calls,
     reset_config,
 )
 from tonyagent.config.settings import (
@@ -48,5 +49,6 @@ __all__ = [
     "save_config",
     "save_provider_selection",
     "save_reasoning_effort",
+    "save_max_tool_calls",
     "reset_config",
 ]

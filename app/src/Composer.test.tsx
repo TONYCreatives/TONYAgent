@@ -47,6 +47,7 @@ async function composer(props: {
   reasoning: ReasoningInfo | null;
   busy?: boolean;
   disabled?: boolean;
+  maxToolCalls?: number | null;
 }) {
   const calls = { efforts: [] as string[], sent: [] as string[], cancelled: 0 };
   const container = await render(
@@ -63,6 +64,11 @@ async function composer(props: {
       onCancel={() => {
         calls.cancelled += 1;
       }}
+      maxToolCalls={props.maxToolCalls ?? 10}
+      budgetOpen={false}
+      onBudgetOpen={() => {}}
+      onBudgetClose={() => {}}
+      onBudgetChange={() => {}}
     />,
   );
   return { container, calls };

@@ -236,3 +236,89 @@ describe("reasoning beside the answer", () => {
     assert.equal(body(container)!.textContent, "Internal deliberation.");
   });
 });
+
+// --- the tool call budget on a card ---------------------------------------
+/*
+ * The card shows where the turn stands: "Tool call 3/10". Two rules are easy
+ * to break here.
+ *
+ * The number is not decoration. Once the budget is nearly spent, it is the
+ * only thing on the card warning that the next call may be refused, so it
+ * takes a warning tint instead of staying muted. And the threshold is two
+ * calls, not one: a model refused on the call it was told it could make has
+ * already wasted that call, so a warning that arrived at the last call would
+ * have come one step too late to help.
+ */
+
+function toolCard(over: Partial<ChatMessage["tools"][number]> = {}) {
+  return message({
+    tools: [
+      {
+        id: "t1",
+        name: "read_file",
+        status: "ok",
+        detail: "Read 42 lines",
+        ...over,
+      },
+    ],
+  });
+}
+
+const budgetLabel = (container: HTMLElement) => one(container, ".tool-budget");
+
+describe("the tool call budget on a card", () => {
+  test("the number the core sent is the number shown", async () => {
+    const container = await transcript(toolCard({ budget: "Tool call 3/10" }));
+    assert.equal(budgetLabel(container)?.textContent, "Tool call 3/10");
+  });
+
+  test("a call with no budget shows nothing at all", async () => {
+    // The core has not reported one -- a restored conversation, or a gateway
+    // that does not count. An invented number would be a claim about a turn
+    // this file knows nothing about.
+    const container = await transcript(toolCard());
+    assert.equal(budgetLabel(container), null);
+  });
+
+  test("a turn early in its budget stays muted", async () => {
+    const container = await transcript(toolCard({ budget: "Tool call 3/10" }));
+    assert.equal(
+      budgetLabel(container)?.classList.contains("is-near-limit"),
+      false,
+      "a turn with seven calls left does not warrant a warning",
+    );
+  });
+
+  test("the penultimate call is warned about", async () => {
+    // 9/10: the next call is the last one. This is the warning that has to
+    // appear before the turn is cut off, not on the call that got refused.
+    const container = await transcript(toolCard({ budget: "Tool call 9/10" }));
+    assert.equal(budgetLabel(container)?.classList.contains("is-near-limit"), true);
+  });
+
+  test("the final call is warned about too", async () => {
+    const container = await transcript(toolCard({ budget: "Tool call 10/10" }));
+    assert.equal(budgetLabel(container)?.classList.contains("is-near-limit"), true);
+  });
+
+  test("a refused call is still warned about, since it is the last one", async () => {
+    const container = await transcript(
+      toolCard({ budget: "Tool call 10/10", status: "failed" }),
+    );
+    assert.equal(budgetLabel(container)?.classList.contains("is-near-limit"), true);
+  });
+
+  test("a budget of one is warned about from the first call", async () => {
+    // There is no "early" in a one-call budget, so a threshold that only
+    // triggers on the second-to-last call would never fire at all.
+    const container = await transcript(toolCard({ budget: "Tool call 1/1" }));
+    assert.equal(budgetLabel(container)?.classList.contains("is-near-limit"), true);
+  });
+
+  test("a label the core did not write is not guessed at", async () => {
+    // Parsed, not assumed. A malformed label must not throw and must not be
+    // turned into a near-limit warning nobody measured.
+    const container = await transcript(toolCard({ budget: "lots" }));
+    assert.equal(budgetLabel(container)?.classList.contains("is-near-limit"), false);
+  });
+});

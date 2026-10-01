@@ -1,5 +1,7 @@
 import { useState } from "react";
 
+import { ToolBudgetControl } from "./ToolBudgetControl.js";
+
 /** One entry in the `mode.list` reply. */
 export interface ModeInfo {
   name: string;
@@ -38,6 +40,18 @@ interface Props {
   onModeChange: (name: string) => void;
   onSend: (text: string) => void;
   onCancel: () => void;
+  /**
+   * How many tool calls one turn may make, or null while it is being read.
+   *
+   * Null and zero are different things and both are refused: null has not
+   * answered yet, zero would refuse every tool and is a different product.
+   * The control says "reading" rather than drawing a number it does not have.
+   */
+  maxToolCalls: number | null;
+  budgetOpen: boolean;
+  onBudgetOpen: () => void;
+  onBudgetClose: () => void;
+  onBudgetChange: (limit: number) => void;
 }
 
 export function Composer({
@@ -51,6 +65,11 @@ export function Composer({
   onModeChange,
   onSend,
   onCancel,
+  maxToolCalls,
+  budgetOpen,
+  onBudgetOpen,
+  onBudgetClose,
+  onBudgetChange,
 }: Props) {
   const [text, setText] = useState("");
 
@@ -113,6 +132,21 @@ export function Composer({
             <span>{model || "No model"}</span>
             <span className="chip-caret">&#9662;</span>
           </button>
+
+          {/*
+            The tool budget sits beside the model rather than in the settings
+            panel because it is per turn, not per install: a user who keeps
+            hitting the cap is making that decision constantly, and a dialog
+            they have to open to raise it is a dialog they will not open.
+          */}
+          <ToolBudgetControl
+            value={maxToolCalls}
+            disabled={disabled}
+            open={budgetOpen}
+            onOpen={onBudgetOpen}
+            onClose={onBudgetClose}
+            onChange={onBudgetChange}
+          />
 
           {/*
             Only for a model that reports a dial. A model that cannot reason,

@@ -118,6 +118,21 @@ def save_reasoning_effort(effort: str) -> None:
     save_config(config)
 
 
+def save_max_tool_calls(limit: int) -> None:
+    """Record how many tool calls one turn may make.
+
+    Same read-modify-write as :func:`save_reasoning_effort`, and for the same
+    reason: the sidecar never loads ``settings``, so assembling a config dict
+    from it here would write defaults over the user's real tool allowlist.
+
+    Only ``[tools].max_tool_calls`` is touched; the allowlist and denylist
+    that live in the same section are carried through untouched.
+    """
+    config = load_config()
+    config.setdefault("tools", {})["max_tool_calls"] = max(1, int(limit))
+    save_config(config)
+
+
 def save_provider_selection(name: str, model: str = "", base_url: str = "") -> None:
     """Record the provider the user chose, so the next launch starts on it.
 

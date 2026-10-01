@@ -105,6 +105,17 @@ export interface CoreMethods {
   "reasoning.list": Record<string, never>;
   /** `effort: ""` hands the decision back to the model. */
   "reasoning.set": { effort: string };
+  /**
+   * The per-turn tool call budget.
+   *
+   * Counted per individual call, not per assistant pass, so a model asking
+   * for five tools in one message has spent five. `get` reads the value the
+   * next turn is actually held to, which is the session's -- not the setting
+   * file's, and the two differ the moment it is changed here.
+   */
+  "tools.get": Record<string, never>;
+  /** One is the floor: zero would refuse every tool, not make a small budget. */
+  "tools.set": { max_tool_calls: number };
   search: {
     pattern: string;
     path?: string;

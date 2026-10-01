@@ -13,6 +13,24 @@ const STATUS_MARK: Record<"running" | "ok" | "failed", string> = {
   failed: "!",
 };
 
+/**
+ * Is this the last call the turn can afford?
+ *
+ * Parsed out of the label rather than carried as a field, because the label
+ * is what the core sends and the two could otherwise disagree. The threshold
+ * is the last two calls, not one: a model that gets refused on the call it
+ * was told it could make has already wasted that call, and the warning that
+ * would have helped arrived one step too late.
+ */
+function isNearLimit(budget: string): boolean {
+  const match = /^Tool call (\d+)\/(\d+)$/.exec(budget);
+  if (!match) return false;
+  const index = Number(match[1]);
+  const limit = Number(match[2]);
+  if (limit <= 0) return false;
+  return index >= limit - 1;
+}
+
 /** One tool invocation inside an assistant message. */
 function ToolRow({ tool }: { tool: ChatMessage["tools"][number] }) {
   return (
@@ -21,6 +39,16 @@ function ToolRow({ tool }: { tool: ChatMessage["tools"][number] }) {
         {STATUS_MARK[tool.status]}
       </span>
       <span className="tool-name">{tool.name}</span>
+      {tool.budget && (
+        // The number the model also read, so the reader can see the turn
+        // approaching its limit rather than discovering it from an error.
+        <span
+          className={`tool-budget${isNearLimit(tool.budget) ? " is-near-limit" : ""}`}
+          title="Tool calls used in this turn"
+        >
+          {tool.budget}
+        </span>
+      )}
       {tool.detail && <span className="tool-detail">{tool.detail}</span>}
     </div>
   );

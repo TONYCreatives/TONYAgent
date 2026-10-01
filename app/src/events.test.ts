@@ -360,3 +360,79 @@ test("a user message carries no reasoning to render", () => {
   assert.equal(state.messages[0].reasoning, "");
   assert.equal(state.messages[0].reasoningComplete, false);
 });
+
+// --- the tool call budget -------------------------------------------------
+/*
+ * The core counts tool calls and reports where the turn stands, as
+ * "Tool call 3/10", on the event and inside the result the model reads.
+ *
+ * The reducer's job is to carry that number, not to produce it. A budget
+ * counted here -- by tallying the tool cards in the transcript -- would
+ * disagree with the core the moment a call was refused, a conversation was
+ * restored from disk, or an event was dropped, and the number on the card is
+ * the number that bounds what the model can spend.
+ */
+
+const budget = (index: number, limit: number) => ({
+  index,
+  limit,
+  label: `Tool call ${index}/${limit}`,
+});
+
+function turnWithBudget(
+  result: unknown = { status: "success", output: "ok", artifacts: [] },
+) {
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(state, event("tool.started", { id: "c1", name: "read_file" }));
+  return applyEvent(
+    state,
+    event("tool.completed", { id: "c1", result, tool_call_budget: budget(3, 10) }),
+  );
+}
+
+test("a tool result carries the turn's tool-call standing", () => {
+  assert.equal(onlyTool(turnWithBudget()).budget, "Tool call 3/10");
+});
+
+test("the budget is read from the event, not counted from the cards", () => {
+  // One card, but the core says this was the third call of ten. A counter
+  // would say 1/10, which understates the turn by two calls and would never
+  // show the warning that the budget is nearly gone.
+  const call = onlyTool(turnWithBudget());
+  assert.equal(call.budget, "Tool call 3/10");
+  assert.notEqual(call.budget, "Tool call 1/10");
+});
+
+test("a refused call still carries a number", () => {
+  // The one card where the number matters most: this is the call the budget
+  // would not pay for, and the reader needs to see where the turn ended up.
+  const call = onlyTool(
+    turnWithBudget({ status: "error", error: "Not run: budget exhausted" }),
+  );
+  assert.equal(call.status, "failed");
+  assert.equal(call.budget, "Tool call 3/10");
+});
+
+test("a call with no budget shows no number", () => {
+  // A gateway that does not report one, or a result from a restored
+  // conversation. Inventing "Tool call 1/10" here would be a claim about a
+  // turn this file knows nothing about.
+  const call = onlyTool(turnWithTool("read_file", { status: "success", artifacts: [] }));
+  assert.equal(call.budget, undefined);
+});
+
+test("an unlabelled budget is not drawn as one", () => {
+  // The label is what the core asserts; a budget object without one is not
+  // something this file can turn into a number it did not measure.
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(state, event("tool.started", { id: "c1", name: "read_file" }));
+  state = applyEvent(
+    state,
+    event("tool.completed", {
+      id: "c1",
+      result: { status: "success", artifacts: [] },
+      tool_call_budget: { index: 2, limit: 10 },
+    }),
+  );
+  assert.equal(onlyTool(state).budget, undefined);
+});

@@ -309,9 +309,18 @@ async def test_a_turn_can_chain_several_tool_rounds():
     assert session.messages[-1].content == "done"
 
 
-async def test_hitting_the_tool_round_cap_is_explained_not_silent():
-    """A model that never stops asking for tools gets a bounded turn whose end
-    says what happened, in words a user can act on."""
+async def test_the_round_backstop_ends_a_turn_that_never_spends_a_call():
+    """A gateway answering with nothing but nameless tool calls must not hang.
+
+    A call with no ``function.name`` is skipped without being counted, so it
+    never spends a call of the per-turn budget -- the budget cannot be what
+    ends this turn, and something has to. It is the round backstop, and it
+    says so rather than stopping the turn without a word.
+
+    The per-turn budget itself is covered in ``test_tool_call_budget.py``,
+    which drives the real executor; this test is only about the backstop,
+    because that is the one bound that no normal turn should ever meet.
+    """
     import types
 
     from tonyagent.core.events import EventBus, EventType
@@ -326,20 +335,29 @@ async def test_hitting_the_tool_round_cap_is_explained_not_silent():
                                   stream=False, **kw):
             async def gen():
                 yield ChatCompletionChunk(
-                    tool_calls=[{"id": "c1", "function": {
-                        "name": "loop_forever", "arguments": "{}"}}],
+                    tool_calls=[{"id": "c1", "function": {"arguments": "{}"}}],
                     finish_reason="tool_calls",
                 )
             return gen()
 
     async def run_tools(self, tool_calls, turn_id, round_no):
-        """Mirror the real executor: one tool message per round."""
+        """Mirror the real executor's shape, including its refusal flag.
+
+        The flag is the contract: it is what tells the loop to stop. A stub
+        that returns None here would run the loop to the backstop on a turn
+        that should have ended, which is how this test passed for the wrong
+        reason the first time it was written.
+        """
         for raw in tool_calls:
-            session.messages.append(ChatMessage(
-                role="tool", content=f"{raw['function']['name']} ran",
+            name = (raw.get("function") or {}).get("name", "")
+            if not name:
+                continue
+            self.messages.append(ChatMessage(
+                role="tool", content=f"{name} ran",
                 tool_call_id=raw["id"],
             ))
         self._round_orders.append(round_no)
+        return False
 
     bus = EventBus()
     session = AgentSession(bus=bus)
@@ -353,15 +371,14 @@ async def test_hitting_the_tool_round_cap_is_explained_not_silent():
 
     assert session._round_orders == list(range(1, AgentSession.MAX_TOOL_ROUNDS + 1))
     errors = [e for e in seen if e.type == EventType.ERROR]
-    assert errors, "the cap was hit and nothing said so"
-    message = errors[-1].payload["message"]
-    assert str(AgentSession.MAX_TOOL_ROUNDS) in message
-    assert "tool rounds" in message
+    assert errors, "the backstop was hit and nothing said so"
+    assert "tool call" in errors[-1].payload["message"]
     # The turn still ends cleanly rather than as a crash.
     assert any(e.type == EventType.TURN_FINISHED for e in seen)
-    # And the history does not end on a bare tool result: the digest closes it.
-    assert session.messages[-1].role.value == "assistant"
-    assert "[result 1]" in session.messages[-1].content
+    # No digest here, and there should not be one: the digest exists to close
+    # a history left ending on an unanswered tool result, and this turn ran no
+    # tool at all. Asserting it would be asserting the opposite rule.
+    assert not [m for m in session.messages if m.role.value == "tool"]
 
 
 async def test_a_plain_answer_appends_no_digest():

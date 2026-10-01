@@ -31,6 +31,16 @@ export interface ToolCall {
   path?: string;
   added?: number;
   removed?: number;
+  /**
+   * Where the turn's tool-call budget stands, e.g. "Tool call 3/10".
+   *
+   * Read from the core rather than counted here. This file is a renderer, and
+   * a counter that counted tool cards would disagree with the core the moment
+   * a call was refused, a batch was dropped, or a conversation was restored
+   * from disk -- and the number on the card is the number that bounds the
+   * model's spending.
+   */
+  budget?: string;
 }
 
 export interface ChatMessage {
@@ -166,6 +176,21 @@ function readFileChange(result: unknown): { path: string; added: number; removed
     };
   }
   return null;
+}
+
+/**
+ * The turn's tool-call standing, if the core reported one.
+ *
+ * The core sends it on the event and inside the result the model reads. The
+ * event is read here because it is also present on a call the budget
+ * *refused* -- and a refused call still gets a card, drawn failed. Reading
+ * only `result` would leave that card without a number, which is the one card
+ * where the number matters most.
+ */
+function readBudget(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const label = (raw as Record<string, unknown>).label;
+  return typeof label === "string" && label.trim() ? label : undefined;
 }
 
 function describeResult(result: unknown): string | undefined {
@@ -347,6 +372,10 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
         call.status = isFailure(payload.result) || type === "tool.failed" ? "failed" : "ok";
         const detail = describeResult(payload.result);
         if (detail) call.detail = detail;
+        // The same field the model reads in its own tool result, so the card
+        // and the model cannot disagree about how far the turn got.
+        const budget = readBudget(payload.tool_call_budget);
+        if (budget) call.budget = budget;
         // Only a success carries a change. A failed write changed nothing,
         // and a badge the filesystem contradicts is worse than no badge.
         if (type === "tool.completed") {
