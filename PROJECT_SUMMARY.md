@@ -1,7 +1,7 @@
 # TONYAgent — Project Summary
 
-**Updated:** 2026-10-01 · **Tests:** Python 502 passed, 7 skipped
-(Docker 꺼져 있으면: 501 passed + 1 failed), TypeScript 146 passed
+**Updated:** 2026-10-01 · **Tests:** Python 590 passed, 7 skipped
+(Docker 꺼져 있으면: 589 passed + 1 failed), TypeScript 252 passed
 **Build:** Tauri MSI + NSIS installers produced; app verified running end to end
 
 ---
@@ -129,9 +129,11 @@ MSVC 블로커는 **해결됨** (Visual Studio Community 2026, VC tools 14.51.36
 
 ```bash
 python -m compileall -q src
-python -m pytest tests -q                    # 502 passed, 7 skipped (Docker up)
+python -m pytest tests -q                    # 590 passed, 7 skipped (Docker up)
 python scripts/check_all.py --fast           # 3 checks
-cd app && npm test                           # 146 passed (Rust 불필요)
+cd app && npm test                           # 252 passed (Rust 불필요)
+python scripts/verify_composer_pass.py       # 패키징된 앱 DOM: 전송 아이콘, 첨부,
+                                             # 모델 메뉴, tool call 예산
 ```
 
 TypeScript 프로토콜 테스트가 Rust·Tauri·Python 없이 도는 것은 의도된 설계입니다.
@@ -164,12 +166,13 @@ react-dom보다 **먼저** import되어야 하고(react-dom이 import 시점에 
 6. ~~대화 목록~~ ✅ (`conversations.*`)
 7. ~~thinking 패널 + effort 선택~~ ✅ (`reasoning.*`)
 8. ~~대화 이름 변경·복제~~ ✅
+9. ~~전송 아이콘·파일 첨부·모델 선택·턴당 tool call 한도~~ ✅ (`send`의 content parts, `models.list`, `tools.get`/`tools.set`)
 
 **남은 것 (우선순위 순)**
 - **실제 호스팅 모델로 성공하는 end-to-end 턴 1회** — 턴 경로는 라이브로 검증됨(OpenRouter가 제공자 오류를 그대로 반환, 로컬 mock 엔드포인트로 성공 턴 완주). 남은 건 호스팅 모델의 성공 응답뿐: OpenRouter 키 한도 상향/교체 필요
 - **thinking 패널·effort 다이얼의 실앱 확인** — jsdom 테스트로는 통과했지만, 패키징된 앱에서 실제로 접히고 펴지는지는 아직 눈으로 안 봤습니다
 - `App.tsx`가 여전히 창 전체를 담고 있습니다. 프로토콜 상태 훅과 대화 목록 로직을 떼어내야 컴포넌트 단위 테스트가 쉬워집니다
-- composer의 model 칩 / Attach 버튼 활성화, `/`·`@` 힌트 처리
+- ~~composer의 model 칩 / Attach 버튼~~ ✅ (model 칩 = `models.list` 기반 필터 메뉴, Attach = 멀티모달 첨부). 남음: `/`·`@` 힌트 처리
 - Files 트리에 디렉터리 그룹화 (`TreeEntry.kind`는 이미 `"dir"` 지원)
 - **Tkinter UI** — 10개 단계 동안 한 번도 손대지 않았습니다. 성숙한 경로이고 여전히 유효합니다
 
@@ -180,3 +183,75 @@ react-dom보다 **먼저** import되어야 하고(react-dom이 import 시점에 
 - 스키마/레지스트리 단일 소스화
 - 턴별 출력 예산
 - **Tkinter 채팅 버블 폭 수정** — React UI는 `fit-content`로 이미 해결됨
+
+---
+
+## 최근 추가분: composer pass
+
+네 개의 "coming soon" 플레이스홀더를 실제 기능으로 교체했습니다. 기능별로 커밋
+`698b022` (전송 아이콘) · tool budget · model picker · attachments.
+
+| 기능 | 코어 계약 | 비고 |
+|---|---|---|
+| 전송 아이콘 | — | `"Continue"` 텍스트 버튼 → `aria-label="Send"` 아이콘. Stop은 텍스트 유지 |
+| 파일 첨부 | `send {text, attachments}` | **바이트가 메시지 안으로**. 이미지는 `image_url` 데이터 URL, 텍스트는 파일명이 붙은 part |
+| 모델 선택 | `models.list` | 레지스트리 시드 5개가 아니라 **제공자의 실제 목록**(실측 462개) |
+| tool call 한도 | `tools.get` / `tools.set` | 라운드가 아니라 **개별 호출** 기준, 기본 10, `Tool call 3/10` |
+
+### 조용히 깨질 뻔했던 것 두 가지
+
+**토큰 추정이 멈췄습니다.** `ChatMessage.content`를 `str | list[dict]`로 넓히면
+`estimate_tokens`의 `len(m.content or "")`가 *문자 수*가 아니라 *part 개수*를
+세게 됩니다. 첨부된 4000자 문서가 토큰 0이 됩니다. 예외가 나지 않으니 로그에도
+아무것도 안 남습니다 — 그냥 budget이 계산을 멈춥니다. 유니온이 된 필드에 `len()`이
+붙어 있으면 스택 트레이스 없는 실패가 된다는 점을 기억해 둘 만합니다.
+
+**`[object Object]`가 사용자의 기록에 찍힙니다.** 첨부가 있는 대화는 content
+parts로 저장·복원되고, 이를 문자열을 기대하는 컴포넌트에 그대로 넘기면 됩니다.
+`app/src/attachments.ts`의 `textFromContent`만 이 사실을 알고 있습니다.
+
+### 400을 유발하는 지뢰
+
+예산이 거절한 tool call은 **버리지 않습니다.** 바로 위 assistant 메시지가 이미
+`tool_calls` 배열에 선언했기 때문에, 대응하는 결과가 없으면 OpenAI 계열
+엔드포인트가 **다음** 메시지를 400으로 거절합니다. 즉 거절을 조용히 처리하는
+"깔끔한" 구현이 보이는 실패를, 사용자가 볼 수 없는 한 요청 뒤로 미룹니다.
+거절 자체도 "error"가 아니라 현재 한도와 함께 모델에게 설명합니다.
+
+### live에서 확인한 것과 하지 않은 것
+
+패키징된 앱의 실제 DOM을 읽어 네 컨트롤이 모두 배선되어 있음을 확인했습니다
+(모델 462개, 필터, 예산 프리셋 5개, 활성 첨부 버튼과 그 뒤의 숨겨진 input,
+"Send" 아이콘). 콘솔 에러 0건.
+
+의도적으로 live에서 하지 않은 것: **모델 전환과 예산 변경**은 사용자의
+`config.toml`을 덮어쓰므로 단위 테스트로 증명했습니다.
+
+### 이번에 만난 함정
+
+- **패치 스크립트로 소스 파일을 덮어씀.** `write_file`의 대상 경로가
+  `src/tonyagent/providers/base.py`인데 내용이 Python 패처였습니다. `git status`로
+  잡아 `git checkout --`로 복구했습니다. 패치 스크립트는 항상 `scripts/`에.
+- **게터를 구조분해하면 한 번만 읽힙니다.** 모델 선택기 테스트 하네스가 `loads`를
+  getter로 돌려줬는데, `const { loads } = harness`는 **구조분해하는 그 시점에**
+  값을 읽습니다. 클릭 이후의 모든 단언이 클릭 이전의 숫자를 봤고, 컴포넌트가
+  로딩에 실패한 것처럼 보였습니다. 하네스의 카운터는 값이 아니라 함수입니다.
+- **렌더 중 setState.** `ToolBudgetControl`이 파생 상태를 만들려고
+  `useState` + `if (value !== shown) setShown(value)`를 썼더니, 테스트 스위트가
+  4초에서 121초로 늘고 `RangeError`로 죽었습니다. prop을 그대로 읽는 게 정답이었고
+  파생 상태는 애초에 필요 없었습니다.
+- **jsdom에 `DataTransfer`가 없습니다.** `FileReader`도 `test-dom.ts`의 전역 목록에
+  없어서 첨부 테스트 전부가 "FileReader is not defined"로 죽었는데, 이게 마치
+  기능이 깨진 것처럼 보입니다. 둘 다 이제 목록에 있습니다.
+- **CSS 한 줄에 리터럴 `\n`.** 개행 이스케이프가 섞인 패치 문자열 때문에 두
+  selector가 한 줄에 붙고 빌드가 "Unclosed block"으로 죽었습니다. 파일은 CRLF인데
+  그 한 줄만 LF여서 `\r\n`으로 만든 앵커가 통째로 misses — 문자열 매칭 대신 줄
+  번호로 고쳤습니다.
+- **`audit_reduced_motion.py`가 두 번 값을 잡아냈습니다.** 새 표면 두 개
+  (`.budget-popover`, `.modelpicker`) 모두 reduced-motion 취소를 `.thing`이 아니라
+  `.thing[data-state="open"]` 형태로 써야 했습니다. 한 클래스짜리는 명시도가
+  낮아서 모션이 계속 돕니다. 둘 다 배포 전에 잡혔습니다.
+- **`ModelPicker`의 fetch 가드는 중요해 보이지 않습니다.** 효과가 `onLoad`에
+  의존하고, 호출부의 `onLoad`는 매 렌더 새 인라인 arrow입니다. `loaded` ref를
+  지우면 fetch → 재렌더 → 새 arrow → 다시 fetch로 영원히 돕니다. 뮤테이션
+  테스트는 실패하지 않았습니다 — 테스트가 끝나지 않았습니다.

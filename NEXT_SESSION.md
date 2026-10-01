@@ -5,10 +5,10 @@
 and named conversations (see 1.13)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 502 passed, TypeScript 146 passed,
+protocol method.** Everything green: **Python 590 passed, TypeScript 252 passed,
 Tauri MSI + NSIS installers produced.**
 
-`pytest tests -q` reports **502 passed, 7 skipped** with Docker Desktop running.
+`pytest tests -q` reports **590 passed, 7 skipped** with Docker Desktop running.
 With the daemon stopped it is **501 passed, 1 failed, 7 skipped**, and the one
 failure is `tests/integration/test_docker_backend.py::test_start_ping_exec_stop`.
 That is the environment, not a bug: the test starts a real container, and it was
@@ -55,14 +55,14 @@ Tauri one is new and thinner (chat, sandbox status, confirmations).
 
 ```bash
 python -m compileall -q src            # syntax
-python -m pytest tests -q              # 502 passed, 7 skipped (Docker up)
+python -m pytest tests -q              # 590 passed, 7 skipped (Docker up)
                                          # 501 passed, 1 failed (Docker down), 7 skipped
 python scripts/check_all.py --fast     # 3 checks incl. GUI launch
 python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refusals (no sandbox needed)
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 146 passed (protocol, reducer, markdown, components; no Rust needed)
+cd app && npm test                     # 252 passed (protocol, reducer, markdown, components; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -776,7 +776,7 @@ app/
     backend.ts              the protocol client
     test-dom.ts             installs jsdom on the globals; imported first
     test-render.ts          mount / act / type / press / query helpers
-    *.test.ts, *.test.tsx   146 tests, all run by `npm test`
+    *.test.ts, *.test.tsx   252 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
     capabilities/default.json
@@ -1549,5 +1549,138 @@ longer a test failure -- do not go looking for a bug here.
 - **Self-hosted fonts.** The system stack renders differently per machine,
   which defeats the point of tuning a desktop layout.
 
+### The composer pass: send icon, attachments, model picker, tool budget
 
+Four features that were all "coming soon" placeholders. Committed one each:
+`698b022`, the tool budget, the model picker, and the attachments.
 
+**What was actually missing was usually smaller than the label.** The model
+chip said "Model -- coming soon" but `api/client.py` already had `list_models()`
+and the dialect already knew the `/models` URL. The only thing absent was an
+RPC to call it through. The tool cap existed as `MAX_TOOL_ROUNDS = 6` -- so
+there was no gap in the feature, only in the unit.
+
+#### The tool-call budget counted the wrong thing
+
+`MAX_TOOL_ROUNDS` counted assistant *passes*. A model asking for five tools in
+one message spent one round, so it could run thirty tools for the price of six:
+a bound that read like a bound and bounded nothing. It now counts individual
+calls, and every tool result carries `tool_call_budget` -- the same field the
+model reads and the card draws, so the two cannot disagree.
+
+Three things that are easy to get wrong here, and one of them bites late:
+
+- **A refused call is still answered.** The assistant message above already
+  declared it in `tool_calls`, and an OpenAI-compatible endpoint rejects a
+  declared call with no matching result. Dropping the refused ones turns a
+  finished turn into a 400 on the *next* message, with the cause one request
+  removed from anything visible.
+- **A failing tool still spends a call.** Counting only successes would make a
+  loop of failures free.
+- **A spent budget does not end the turn; a refusal does.** The model still
+  gets one more pass to answer from the result it has. A test asserting the
+  opposite looked like a bug and was right to be corrected: a model that cannot
+  answer at all is not a saving.
+- **The loop needs a round backstop as well.** A call whose `function.name` is
+  empty is skipped without being counted, so a malformed gateway would spin
+  forever without ever spending a call. That is a hang, not a slow turn.
+  `MAX_TOOL_ROUNDS = 100` is now that backstop, not the primary limit.
+
+#### The type change that would have broken token estimation quietly
+
+`ChatMessage.content` is now `str | list[dict] | None` so attachments can be
+content parts. `estimate_tokens` was `len(m.content or "")`, which counts
+*characters* for a string and *parts* for a list -- so a 4000-character document
+attached as three parts estimated at **zero** tokens. Nothing crashed; the
+budget simply stopped counting. Worth remembering as a class: a `len()` over a
+field that just became a union is the failure mode with no stack trace.
+
+Same shape of trap on the way back out: a saved message with an attachment
+reads back as content parts, and handing that array to a component expecting a
+string renders `[object Object]` in the user's own history. `textFromContent`
+in `app/src/attachments.ts` is the only place that knows this.
+
+#### Attachments
+
+The bytes go *in* the message, not a path *beside* it -- so the model sees a
+screenshot rather than being told one exists. `Dialect.build_request` passes
+messages through verbatim, which is why no dialect changed and why
+`test_attachments.py` asserts that it still does.
+
+The picker is `<input type="file">` + `FileReader`, not the native dialog in
+`dialog.ts`. That dialog is for folders and stays that way: it hands back a
+path because the core gives one to the sandbox, and this needs the bytes. The
+alternative (a new `#[tauri::command]` reading files) costs a Rust build, a
+capability, and a `base64` dependency for no user-visible difference.
+
+Validation is in the core, not the window. The window is a rendering layer and
+not a trust boundary; the limits are mirrored in the frontend only so a user
+finds out before a multi-megabyte read. PDFs are refused *with a next step*
+rather than converted -- the endpoint takes no document part, and a PDF made of
+text is usually not what someone attaching one wanted.
+
+A message with files and no words is a message. "What is in this screenshot?"
+has no text in it, and requiring text would make the obvious use of the feature
+the one thing it cannot do.
+
+#### Model picker
+
+`models.list` returns the provider's own list, sorted, plus `current` so the
+menu ticks the bound model without guessing. An empty list is an **error**, not
+an empty menu: "the provider has no models" and "we could not ask it" are the
+same pixels, and only the second is fixable by the user checking their key.
+
+Switching is refused mid-turn. The turn's history is being written by one model
+and rebinding interleaves two models' answers into one conversation.
+
+`/models` is now cached per client. It was fetched twice -- once for the ids,
+once for the reasoning metadata -- and two responses are not guaranteed to
+agree about which models exist.
+
+#### Live verification
+
+`scripts/verify_composer_pass.py` reads the packaged app's DOM over CDP. It
+found **462 models** in the real OpenRouter list, a filter, five budget
+presets, an enabled attach button with a real hidden input behind it, and a
+send button that is an icon labelled "Send" with no "Continue" anywhere in the
+row. Zero console errors.
+
+Not verified live, deliberately: switching a model or changing the budget
+rewrites the user's `config.toml`, so both are proven by unit tests instead.
+
+#### Traps hit while doing this
+
+- **Overwrote a source file with a patch script.** `write_file` aimed at
+  `src/tonyagent/providers/base.py` when the content was a Python patcher, so
+  the real file was replaced by the script that was going to edit it. Caught by
+  `git status`, restored with `git checkout --`. Patch scripts go in
+  `scripts/`, always.
+- **A destructured getter reads once.** The model picker harness returned
+  `loads` as a getter on an object literal, and `const { loads } = harness`
+  evaluated it *at the destructure* -- so every assertion after a click read the
+  number from before it. It looked exactly like the component failing to load.
+  Counts in a harness are functions, not values.
+- **A state update during render.** `ToolBudgetControl` derived `shown` with
+  `useState` + `if (value !== shown) setShown(value)`. The render loop took the
+  suite from 4s to 121s and died with `RangeError: Array buffer allocation
+  failed`. Reading the prop directly was the fix; the derived state was never
+  needed.
+- **jsdom has no `DataTransfer` and no assignable `input.files`.** The file
+  input tests stand in a FileList-shaped object. And `FileReader` was missing
+  from `test-dom.ts`'s global list, so every attachment test failed with
+  "FileReader is not defined" -- which reads like a broken feature rather than
+  a missing harness global. It is listed now.
+- **A CSS line with literal `\n` in it.** A patch string with an unescaped
+  newline glued two selectors onto one line and the build failed on
+  "Unclosed block". Fixed by line index rather than by string match, because
+  the file was CRLF and that one line was not -- so any multi-line anchor built
+  from `\r\n` missed it.
+- **`audit_reduced_motion.py` earned its keep twice.** Both new surfaces
+  (`.budget-popover`, `.modelpicker`) needed their cancellation written as
+  `.thing[data-state="open"]` rather than `.thing`; the one-class form loses on
+  specificity and the motion keeps playing. It flagged both before they shipped.
+- **The `ModelPicker` fetch guard is load-bearing and does not look it.**
+  The effect depends on `onLoad`, which is an inline arrow in every caller, so
+  removing the `loaded` ref makes the effect call `onLoad`, re-render, get a
+  new arrow, and run again forever. The mutation test did not fail -- the test
+  run never finished.
