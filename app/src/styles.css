@@ -1109,6 +1109,30 @@ body {
   cursor: default;
 }
 
+/*
+ * Send is the only affirmative action in the composer, so it is the one
+ * control that gets the accent fill. Stop stays a text button: giving an
+ * interruption and a submission the same visual weight would make the row
+ * ambiguous about what clicking it does.
+ */
+.icon-btn.send-btn {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.icon-btn.send-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-fg);
+  filter: brightness(1.06);
+}
+
+.icon-btn.send-btn:disabled {
+  background: var(--raised);
+  color: var(--fg-mute);
+  opacity: 0.4;
+  filter: none;
+}
+
 .btn {
   flex: none;
   height: 30px;

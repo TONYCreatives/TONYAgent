@@ -175,11 +175,29 @@ export function Composer({
           ) : (
             <button
               type="button"
-              className="btn btn-accent"
+              className="icon-btn send-btn"
               onClick={submit}
               disabled={disabled}
+              // The icon carries the meaning, so the name has to be in the
+              // accessibility tree rather than in the pixels. "Continue" was
+              // both wrong as a word and invisible to a screen reader here.
+              aria-label="Send"
+              title="Send"
             >
-              Continue
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M4.5 12h13" />
+                <path d="M12.5 6.5 18.5 12l-6 5.5" />
+              </svg>
             </button>
           )}
         </div>

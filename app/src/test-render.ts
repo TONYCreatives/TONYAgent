@@ -149,11 +149,21 @@ export async function press(key: string, element?: Element): Promise<void> {
  * not `input`, and the value has to be set to a real option or the assignment
  * is rejected outright.
  */
-export async function setValue(field: HTMLInputElement | HTMLSelectElement, value: string): Promise<void> {
+export async function setValue(
+  field: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
+  value: string,
+): Promise<void> {
   const isSelect = field instanceof dom.window.HTMLSelectElement;
+  const isTextArea = field instanceof dom.window.HTMLTextAreaElement;
+  // A textarea has its own value setter. Reusing the input's would set the
+  // property on the wrong prototype and the node React is holding would never
+  // see the text -- a test typing into the composer and asserting on a
+  // message that was never sent.
   const prototype = isSelect
     ? dom.window.HTMLSelectElement.prototype
-    : dom.window.HTMLInputElement.prototype;
+    : isTextArea
+      ? dom.window.HTMLTextAreaElement.prototype
+      : dom.window.HTMLInputElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(prototype, "value")!.set!;
   await act(async () => {
     setter.call(field, value);

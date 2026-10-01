@@ -23,7 +23,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { Composer, type ModeInfo, type ReasoningInfo } from "./Composer.js";
-import { all, one, render, setValue, texts } from "./test-render.js";
+import { all, click, one, press, render, setValue, texts } from "./test-render.js";
 
 const MODES: ModeInfo[] = [
   { name: "build", label: "Build", description: "Anything goes", writes: true },
@@ -48,7 +48,7 @@ async function composer(props: {
   busy?: boolean;
   disabled?: boolean;
 }) {
-  const calls = { efforts: [] as string[] };
+  const calls = { efforts: [] as string[], sent: [] as string[], cancelled: 0 };
   const container = await render(
     <Composer
       busy={props.busy ?? false}
@@ -59,12 +59,23 @@ async function composer(props: {
       reasoning={props.reasoning}
       onReasoningChange={(effort) => calls.efforts.push(effort)}
       onModeChange={() => {}}
-      onSend={() => {}}
-      onCancel={() => {}}
+      onSend={(text) => calls.sent.push(text)}
+      onCancel={() => {
+        calls.cancelled += 1;
+      }}
     />,
   );
   return { container, calls };
 }
+
+const sendButton = (container: HTMLElement) =>
+  one(container, ".send-btn") as HTMLButtonElement | null;
+
+const stopButton = (container: HTMLElement) =>
+  one(container, ".composer-row .btn") as HTMLButtonElement | null;
+
+const messageField = (container: HTMLElement) =>
+  one(container, ".composer-inner textarea") as HTMLTextAreaElement | null;
 
 const dial = (container: HTMLElement) =>
   one(container, ".thinking-select") as HTMLSelectElement | null;
@@ -192,5 +203,90 @@ describe("the thinking effort dial while the agent is working", () => {
     const { container } = await composer({ reasoning: reasoning() });
     assert.equal(dial(container)!.disabled, false);
     assert.equal(all(container, ".thinking-select").length, 1, "the dial is duplicated");
+  });
+});
+
+// --- what the send button says --------------------------------------------
+/*
+ * The send button used to render the word "Continue". That is a word from
+ * somewhere else entirely -- it is not what the button does, and a user
+ * reading it has to work out the translation. It was also a `<button>` whose
+ * only label was text, so the moment it became an icon the name would have
+ * gone with it. These assert the icon carries a name, not that it looks a
+ * certain way, because the name is the part that is actually load-bearing.
+ */
+describe("the send button", () => {
+  test("it does not read Continue", async () => {
+    const { container } = await composer({ reasoning: null });
+    const text = (container as HTMLElement).textContent ?? "";
+    assert.equal(
+      text.includes("Continue"),
+      false,
+      'the button still offers a word for a different action',
+    );
+  });
+
+  test("it is named for a screen reader, since a bare icon is not a control", async () => {
+    const { container } = await composer({ reasoning: null });
+    const button = sendButton(container)!;
+    assert.ok(button, "no send button rendered");
+    assert.equal(button.getAttribute("aria-label"), "Send");
+    assert.equal(button.getAttribute("title"), "Send");
+  });
+
+  test("the icon is hidden from assistive tech, because the name is the label", async () => {
+    const { container } = await composer({ reasoning: null });
+    const svg = one(sendButton(container)!, "svg")!;
+    assert.equal(svg.getAttribute("aria-hidden"), "true");
+  });
+
+  test("clicking it sends what was typed", async () => {
+    const { container, calls } = await composer({ reasoning: null });
+    await setValue(messageField(container)!, "list the files in src/core");
+    await click(sendButton(container)!);
+    assert.deepEqual(calls.sent, ["list the files in src/core"]);
+  });
+
+  test("it is the same action from the keyboard", async () => {
+    const { container, calls } = await composer({ reasoning: null });
+    await setValue(messageField(container)!, "hello");
+    await press("Enter", messageField(container)!);
+    assert.deepEqual(calls.sent, ["hello"], "Enter no longer sends");
+  });
+
+  test("an empty message is not sent", async () => {
+    // Not an error worth surfacing; the button just does nothing, as before.
+    const { container, calls } = await composer({ reasoning: null });
+    await click(sendButton(container)!);
+    assert.deepEqual(calls.sent, []);
+  });
+
+  test("whitespace is not a message either", async () => {
+    const { container, calls } = await composer({ reasoning: null });
+    await setValue(messageField(container)!, "   \n  ");
+    await click(sendButton(container)!);
+    assert.deepEqual(calls.sent, []);
+  });
+
+  test("it is disabled when the window is disabled", async () => {
+    const { container } = await composer({ reasoning: null, disabled: true });
+    assert.equal(sendButton(container)!.disabled, true);
+  });
+});
+
+// --- while the agent is working -------------------------------------------
+describe("the send button while the agent is working", () => {
+  test("send is replaced by Stop, not merely disabled", async () => {
+    // Showing a dead send button next to a live Stop button reads as "you can
+    // interrupt" and "you can also send", which is only half true.
+    const { container } = await composer({ reasoning: null, busy: true });
+    assert.equal(sendButton(container), null, "a send button survived into a busy turn");
+    assert.equal(stopButton(container)!.textContent, "Stop");
+  });
+
+  test("Stop is the button that interrupts, and it says what it does", async () => {
+    const { container, calls } = await composer({ reasoning: null, busy: true });
+    await click(stopButton(container)!);
+    assert.equal(calls.cancelled, 1);
   });
 });

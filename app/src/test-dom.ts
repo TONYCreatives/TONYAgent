@@ -42,6 +42,7 @@ for (const name of [
   "Element",
   "HTMLElement",
   "HTMLInputElement",
+  "HTMLTextAreaElement",
   "HTMLSelectElement",
   "HTMLButtonElement",
 ]) {
