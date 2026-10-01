@@ -18,6 +18,12 @@ import { pickFolder } from "./dialog";
 import { FileSidebar, type TreeEntry } from "./FileSidebar";
 import { IconRail } from "./IconRail";
 import { MessageList } from "./MessageList";
+import {
+  summaryLine,
+  textFromContent,
+  toWire,
+  type PendingAttachment,
+} from "./attachments";
 import type { ModelList } from "./ModelPicker";
 import { Overlay } from "./Overlay";
 import { SearchPanel, type SearchMatch } from "./SearchPanel";
@@ -293,13 +299,16 @@ export function App() {
     };
   }, []);
 
-  const send = useCallback(async (text: string) => {
+  const send = useCallback(async (text: string, attachments: PendingAttachment[] = []) => {
     const backend = backendRef.current!;
     // Optimistic: the user's message appears immediately rather than after a
-    // round trip. The core never echoes user text back as an event.
-    setState((prev) => appendUserMessage(prev, text));
+    // round trip. The core never echoes user text back as an event. The
+    // attachment names stand in for the message text when there is none,
+    // because a message that was only a screenshot would otherwise render as
+    // an empty bubble in the user's own transcript.
+    setState((prev) => appendUserMessage(prev, text || summaryLine(attachments)));
     try {
-      await backend.send(text);
+      await backend.send(text, toWire(attachments));
     } catch (error) {
       setState((prev) => ({
         ...prev,
@@ -547,7 +556,7 @@ export function App() {
       (raw ?? []).forEach((entry, index) => {
         const message = entry as {
           role?: string;
-          content?: string | null;
+          content?: string | string[] | null;
           reasoning?: string | null;
         };
         if (!message.role) return;
@@ -558,7 +567,7 @@ export function App() {
         const role: Role = message.role === "user" ? "user" : "assistant";
         restored.push({
           ...blankMessage(`restored-${index}`, role),
-          text: message.content ?? "",
+          text: textFromContent(message.content),
           // A saved message is finished by definition. Without this it would
           // come back mid-stream and its panel would sit open forever, waiting
           // for a `reasoning.completed` that was sent hours ago.

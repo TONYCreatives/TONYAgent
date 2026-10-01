@@ -1,5 +1,12 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 
+import {
+  MAX_ATTACHMENTS,
+  fileSize,
+  readFile,
+  rejectionReason,
+  type PendingAttachment,
+} from "./attachments.js";
 import { ModelPicker, type ModelList } from "./ModelPicker.js";
 import { ToolBudgetControl } from "./ToolBudgetControl.js";
 
@@ -39,7 +46,7 @@ interface Props {
   reasoning: ReasoningInfo | null;
   onReasoningChange: (effort: string) => void;
   onModeChange: (name: string) => void;
-  onSend: (text: string) => void;
+  onSend: (text: string, attachments: PendingAttachment[]) => void;
   onCancel: () => void;
   /**
    * How many tool calls one turn may make, or null while it is being read.
@@ -87,6 +94,13 @@ export function Composer({
   onModelListLoad,
 }: Props) {
   const [text, setText] = useState("");
+  // The files read so far. Held here rather than in the window because they
+  // belong to the message being composed, and a send clears them.
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  // Why the last pick was refused, if it was. Local too: it is about the
+  // composer field the user is looking at, and it clears when they try again.
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Drive the pill highlight from what the core reports, not from local
   // state. A local `setMode` would paint "Plan" the instant it was clicked
@@ -97,10 +111,48 @@ export function Composer({
 
   const submit = () => {
     const trimmed = text.trim();
-    // An empty message is not an error worth surfacing; just ignore it.
-    if (!trimmed || busy || disabled) return;
-    onSend(trimmed);
+    // A message with files and no words is a real message -- "what is in
+    // this screenshot?" -- so the files alone are enough to send. Requiring
+    // text would make the obvious use of the feature the one thing it cannot
+    // do.
+    if ((!trimmed && attachments.length === 0) || busy || disabled) return;
+    onSend(trimmed, attachments);
     setText("");
+    setAttachments([]);
+  };
+
+  const onFilesChosen = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = [...(event.target.files ?? [])];
+    // Reset immediately. Without this the same file cannot be picked twice in
+    // a row, because the input still holds it and change does not fire.
+    event.target.value = "";
+    if (files.length === 0) return;
+    setAttachmentError(null);
+    const room = MAX_ATTACHMENTS - attachments.length;
+    if (files.length > room) {
+      setAttachmentError(
+        `Only ${MAX_ATTACHMENTS} files can go with one message. ${files.length - room} were not added.`,
+      );
+    }
+    const wanted = files.slice(0, room);
+    const accepted: PendingAttachment[] = [];
+    for (const file of wanted) {
+      const reason = rejectionReason(file);
+      if (reason) {
+        setAttachmentError(reason);
+        continue;
+      }
+      try {
+        accepted.push(await readFile(file));
+      } catch (error) {
+        setAttachmentError(error instanceof Error ? error.message : String(error));
+      }
+    }
+    if (accepted.length > 0) setAttachments((prev) => [...prev, ...accepted]);
+  };
+
+  const removeAttachment = (name: string) => {
+    setAttachments((prev) => prev.filter((a) => a.name !== name));
   };
 
   return (
@@ -123,6 +175,52 @@ export function Composer({
           disabled={disabled}
           rows={2}
         />
+
+        {/*
+          What is about to go. Without this the only sign an attachment exists
+          is a message that suddenly contains a screenshot, and there is no way
+          to take one back before sending -- a mistake the user finds out about
+          only after the model has already answered it.
+        */}
+        {attachments.length > 0 && (
+          <ul className="attach-strip" aria-label="Files to send">
+            {attachments.map((file) => (
+              <li key={file.name} className="attach-item">
+                {file.preview ? (
+                  <img className="attach-thumb" src={file.preview} alt="" />
+                ) : (
+                  <span className="attach-doc" aria-hidden="true">
+                    TXT
+                  </span>
+                )}
+                <span className="attach-name" title={file.name}>
+                  {file.name}
+                </span>
+                <span className="attach-size">{fileSize(file.size)}</span>
+                <button
+                  type="button"
+                  className="attach-remove"
+                  onClick={() => removeAttachment(file.name)}
+                  title={`Remove ${file.name}`}
+                  aria-label={`Remove ${file.name}`}
+                >
+                  &times;
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {/*
+          A refusal is shown here, not logged. "That file type is not
+          supported" is the whole feedback a user gets, and a console warning
+          is feedback nobody sees.
+        */}
+        {attachmentError && (
+          <p className="attach-error" role="alert">
+            {attachmentError}
+          </p>
+        )}
 
         <div className="composer-row">
           <div className="mode-group" role="group" aria-label="Mode">
@@ -203,12 +301,20 @@ export function Composer({
 
           <div className="composer-spacer" />
 
+          {/*
+            The native folder picker in dialog.ts is not reused here on
+            purpose: it hands back a path because the core gives one to the
+            sandbox, and this needs the file's bytes. A file input hands back
+            a File, so no Rust command, no capability and no rebuild stand
+            between picking a screenshot and the model seeing it.
+          */}
           <button
             type="button"
             className="icon-btn"
-            disabled
-            title="Attach — coming soon"
-            aria-label="Attach"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled || attachments.length >= MAX_ATTACHMENTS}
+            title="Attach an image or a text file"
+            aria-label="Attach a file"
           >
             <svg
               width="15"
@@ -223,6 +329,14 @@ export function Composer({
               <path d="M12 5v14M5 12h14" />
             </svg>
           </button>
+          <input
+            ref={fileInputRef}
+            className="file-input"
+            type="file"
+            multiple
+            accept="image/png,image/jpeg,image/webp,image/gif,.txt,.md,.csv,.html,.json,.py,.yaml,.yml,.xml,.sh"
+            onChange={onFilesChosen}
+          />
 
           {busy ? (
             <button type="button" className="btn" onClick={onCancel}>

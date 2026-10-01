@@ -59,13 +59,22 @@ interface Pending {
   reject: (reason: Error) => void;
 }
 
+/** One file on its way to the core, in the shape `attachments.validate` reads. */
+export interface WireAttachment {
+  name: string;
+  /** The browser's type, or "" when it has none -- the core falls back to the extension. */
+  mime: string;
+  /** base64, no data-URL prefix. */
+  data: string;
+}
+
 /** Methods the core accepts. Kept narrow so typos fail at compile time. */
 export interface CoreMethods {
   ping: Record<string, never>;
   state: Record<string, never>;
   clear: Record<string, never>;
   cancel: Record<string, never>;
-  send: { text: string };
+  send: { text: string; attachments?: WireAttachment[] };
   bind_provider: { name: string; model?: string; base_url?: string };
   /** Provider names come from the core's registry, never from a local copy. */
   "providers.list": Record<string, never>;
@@ -328,9 +337,18 @@ export class TauriBackend {
     return promise;
   }
 
-  /** Convenience wrapper for the common send case. */
-  async send(text: string): Promise<string> {
-    const result = (await this.call("send", { text })) as { turn_id: string };
+  /**
+   * Send a message, with whatever files go with it.
+   *
+   * The attachments go in the message rather than beside it. A path would make
+   * the agent go and read a file with a tool, which is a second round trip and
+   * a second place to fail; the bytes are already in the window, and the
+   * endpoint accepts them as content parts.
+   */
+  async send(text: string, attachments: WireAttachment[] = []): Promise<string> {
+    const result = (await this.call("send", { text, attachments })) as {
+      turn_id: string;
+    };
     return result.turn_id;
   }
 

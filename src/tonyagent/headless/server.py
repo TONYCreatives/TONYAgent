@@ -30,6 +30,8 @@ from tonyagent.core.conversations import (
     EmptyTitle,
     title_from,
 )
+from tonyagent.core.attachments import AttachmentError
+from tonyagent.core.attachments import validate as validate_attachments
 from tonyagent.core.events import Event, EventBus, EventType
 from tonyagent.core.session import AgentSession
 
@@ -261,11 +263,24 @@ class StdioServer:
 
     def _h_send(self, params: dict) -> Any:
         text = params.get("text", "")
-        turn_id = self.session.send(text)
+        if not isinstance(text, str):
+            raise RpcError("text must be a string")
+        # Validated here, not in the window. A message is a JSON object on a
+        # pipe: anything that can write to the pipe can claim a 400MB
+        # attachment is 4KB, and the size limits are the ones that keep a
+        # request inside what the provider will accept.
+        try:
+            attachments = validate_attachments(params.get("attachments"))
+        except AttachmentError as exc:
+            # A rejection the user can act on, so it is a message rather than
+            # a generic failure: "this is a PDF" is a different problem from
+            # "something went wrong" and only one of them has a next step.
+            raise RpcError(str(exc)) from None
+        turn_id = self.session.send(text, attachments)
         if not turn_id:
             # Explain which precondition failed so the UI can say something
             # useful, instead of a generic "rejected".
-            if not text.strip():
+            if not text.strip() and not attachments:
                 raise RpcError("empty message")
             if self.session.busy:
                 raise RpcError("a turn is already running")

@@ -45,6 +45,13 @@ for (const name of [
   "HTMLTextAreaElement",
   "HTMLSelectElement",
   "HTMLButtonElement",
+  // Reading a picked file. jsdom has the real one; it was missing from this
+  // list, so `readFile` failed with "FileReader is not defined" in every
+  // attachment test -- which reads like the feature being broken rather than
+  // the harness missing a global.
+  "FileReader",
+  "File",
+  "Blob",
 ]) {
   globals[name] = (dom.window as unknown as Record<string, unknown>)[name];
 }

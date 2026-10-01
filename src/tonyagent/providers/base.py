@@ -21,6 +21,28 @@ class MessageRole(str, Enum):
     TOOL = "tool"
 
 
+def _content_texts(messages: list["ChatMessage"]) -> list[str]:
+    """The text of each message, whether content is a string or parts.
+
+    A part contributes its ``text``; an ``image_url`` contributes nothing,
+    because its payload is base64 and counting those characters would report a
+    40KB image as ten thousand tokens of prose.
+    """
+    texts: list[str] = []
+    for message in messages:
+        content = message.content
+        if content is None:
+            continue
+        if isinstance(content, str):
+            texts.append(content)
+            continue
+        for part in content:
+            if isinstance(part, dict):
+                value = part.get("text")
+                if isinstance(value, str):
+                    texts.append(value)
+    return texts
+
 @dataclass
 class ChatMessage:
     """A chat message.
@@ -38,7 +60,19 @@ class ChatMessage:
     """
 
     role: MessageRole | str
-    content: str | None = None
+    #: A string, or a list of OpenAI content parts.
+    #:
+    #: A list is what makes an attachment *visible* to the model rather than
+    #: merely mentioned: ``[{"type": "text", ...}, {"type": "image_url",
+    #: ...}]`` is the wire shape every OpenAI-compatible endpoint accepts, and
+    #: the dialect already passes messages through verbatim. A path in the text
+    #: would be the other design -- the model is told a file exists and has to
+    #: ask for it with a tool, which is a different product with an extra step
+    #: and one more failure mode.
+    #:
+    #: Kept loose on purpose. Validating the parts here would make this
+    #: dataclass own the wire format, and the format is the dialect's.
+    content: str | list[dict] | None = None
     tool_calls: list[dict] | None = None
     tool_call_id: str | None = None
     name: str | None = None
@@ -252,9 +286,17 @@ class BaseLLMProvider(ABC):
         ...
 
     def estimate_tokens(self, messages: list[ChatMessage]) -> int:
-        """Estimate token count (rough approximation)."""
-        total_chars = sum(len(m.content or "") for m in messages)
-        return total_chars // 4
+        """Estimate token count (rough approximation).
+
+        Counts the characters of text, and deliberately does *not* count an
+        image's bytes. ``len(m.content or "")`` looked like it would keep
+        working once ``content`` could be a list of parts, and it does not: for
+        a list it returns the number of parts, so a message carrying a
+        4000-character document estimated at zero tokens and a one-word message
+        estimated at zero too. Nothing crashes, the budget simply stops
+        counting, which is the worst way for this to be wrong.
+        """
+        return sum(len(text) for text in _content_texts(messages)) // 4
 class OpenAICompatibleProvider(BaseLLMProvider):
     """Base class for OpenAI-compatible providers."""
 

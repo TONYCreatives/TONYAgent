@@ -62,7 +62,7 @@ async function composer(props: {
       reasoning={props.reasoning}
       onReasoningChange={(effort) => calls.efforts.push(effort)}
       onModeChange={() => {}}
-      onSend={(text) => calls.sent.push(text)}
+      onSend={(text, files) => calls.sent.push(text || `(${files.length} files)`)}
       onCancel={() => {
         calls.cancelled += 1;
       }}

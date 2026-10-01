@@ -21,6 +21,7 @@ from loguru import logger
 
 from tonyagent.api import LLMError
 from tonyagent.api.dialects import ReasoningSpec
+from tonyagent.core.attachments import build_parts
 from tonyagent.core.events import Event, EventType, bus as default_bus
 from tonyagent.core.modes import DEFAULT_MODE, Mode, get_mode
 from tonyagent.providers import (
@@ -313,7 +314,7 @@ class AgentSession:
             {"id": tool_call_id, "confirmed": bool(confirmed)},
         )
 
-    def send(self, text: str) -> str:
+    def send(self, text: str, attachments: list[dict] | None = None) -> str:
         """Queue a user message. Returns the turn id, or "" if rejected.
 
         Synchronous on purpose: the caller gets an id immediately and then
@@ -324,21 +325,40 @@ class AgentSession:
         an ERROR event. The caller turns it into the reply for this request,
         and emitting as well would put a push on the wire *before* the reply it
         belongs to, which a frontend cannot attribute.
+
+        ``attachments`` are already-validated entries from
+        :mod:`tonyagent.core.attachments`. The *typed* text may be empty when
+        there are files: "what is in this screenshot?" is a message with no
+        words in it, and refusing it would make the obvious use of the feature
+        the one thing it cannot do.
         """
         text = (text or "").strip()
-        if not text:
+        attachments = attachments or []
+        if not text and not attachments:
             return ""
         if self._busy:
             return ""
         if self.provider is None:
             return ""
 
-        self.messages.append(ChatMessage(role="user", content=text))
+        self.messages.append(ChatMessage(role="user", content=self._user_content(text, attachments)))
         turn_id = uuid.uuid4().hex
         self._cancel = asyncio.Event()
         self._busy = True
         asyncio.ensure_future(self._run_turn(turn_id))
         return turn_id
+
+    @staticmethod
+    def _user_content(text: str, attachments: list[dict]) -> str | list[dict]:
+        """One message's content: a plain string, or content parts.
+
+        A string when there is nothing attached, because that is what every
+        other message in the history is and a special case for the common path
+        would be a special case in every reader.
+        """
+        if not attachments:
+            return text
+        return build_parts(attachments, text)
 
     async def run_turn(self, text: str) -> None:
         """Run a full turn to completion.
