@@ -450,11 +450,42 @@ body {
 
 .rowmenu button:hover,
 .rowmenu button:focus-visible {
-  background: var(--raised);
+  /*
+   * `--hover`, not `--raised`. `--raised` is the colour of a *selected*
+   * conversation row, so a hovered menu item was painted exactly like the
+   * conversation the user had chosen -- a menu that looked selected rather than
+   * hovered. Nine other rules in this file use `--hover` for exactly this.
+   */
+  background: var(--hover);
   color: var(--fg);
 }
 
-.rowmenu-danger {
+/*
+ * The destructive item, and the only place `--danger` reaches a menu.
+ *
+ * Two things had to be right for this to work at all, and neither was. It is
+ * written `.rowmenu button.rowmenu-danger` rather than `.rowmenu-danger`
+ * because the rule it has to beat is `.rowmenu button`, which is one class plus
+ * one element -- strictly more specific than a bare class, so the original
+ * single-class selector lost no matter how far down the file it sat and Delete
+ * rendered in the same grey as Rename. Measured before the fix:
+ * `color: rgb(122, 122, 122)`, identical to its neighbours.
+ *
+ * And it must come AFTER the hover rule, not merely be specific enough. Both
+ * selectors are now two classes plus an element, so the tie is broken by source
+ * order -- the same hazard `.btn-danger` documents further down. Sitting here,
+ * this wins, which is what keeps Delete red while it is hovered rather than
+ * fading to the neutral label colour.
+ *
+ * The divider is the app's own `--border-soft`, the same token used for every
+ * other separation in this file, and the gap above it is what makes the group
+ * read as "these two are the ordinary actions, this one is not" without a
+ * second look. An item that destroys something should not sit flush against the
+ * harmless ones.
+ */
+.rowmenu button.rowmenu-danger {
+  margin-top: 5px;
+  border-top: 1px solid var(--border-soft);
   color: var(--danger);
 }
 

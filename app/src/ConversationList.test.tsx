@@ -15,6 +15,7 @@
 
 import "./test-dom.js";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import { ConversationList, type ConversationSummary } from "./ConversationList.js";
@@ -35,6 +36,23 @@ import { exitDurationMs } from "./useDelayedUnmount.js";
 import { dom } from "./test-dom.js";
 
 const { window } = dom;
+
+/**
+ * The real stylesheet, in the document.
+ *
+ * Only the menu's own colour and separator rules are read out of it, and they
+ * are read by resolving them -- `getComputedStyle` on a rendered item -- rather
+ * than by matching the stylesheet's text. Matching text would pass while the
+ * rule lost the cascade, which is precisely the bug these were written for: the
+ * danger colour was present in the file the whole time and never once applied.
+ *
+ * `tsc` emits the tests to `.tmp/` and copies no other file, so the stylesheet
+ * is one directory up from the compiled module.
+ */
+const stylesheet = window.document.createElement("style");
+const STYLESHEET = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+stylesheet.textContent = STYLESHEET;
+window.document.head.appendChild(stylesheet);
 
 function conversation(over: Partial<ConversationSummary> = {}): ConversationSummary {
   return {
@@ -198,6 +216,87 @@ describe("the row menu", () => {
     // the half of that contract this side owns.
     await press("Escape");
     assert.equal(one(container, ".rowmenu")!.dataset.state, "closed");
+  });
+
+  test("Delete is the only item painted in the danger colour", async () => {
+    // Resolved through the real stylesheet rather than asserted on the rule's
+    // text, because the rule existing is not the same as the rule winning. It
+    // was written as a bare `.rowmenu-danger`, and the rule it has to beat is
+    // `.rowmenu button` -- one class plus one element, strictly more specific
+    // than a single class -- so it lost wherever it sat and Delete rendered in
+    // exactly the grey of its two neighbours. Measured in the packaged app
+    // before the fix: `rgb(122, 122, 122)`, same as Rename.
+    const container = await renderList([conversation()]);
+    await rightClick(rows(container)[0]);
+    const items = all(container, ".rowmenu [role='menuitem']");
+    const colour = (label: string) =>
+      dom.window.getComputedStyle(items.find((n) => n.textContent === label)!).color;
+
+    assert.equal(colour("Delete"), "var(--danger)");
+    // The other two must not have picked it up, or "the danger item" means
+    // nothing: the whole point is that it is the one that differs.
+    assert.equal(colour("Rename"), "var(--fg-mute)");
+    assert.equal(colour("Duplicate"), "var(--fg-mute)");
+  });
+
+  test("Delete is set apart from the harmless items", async () => {
+    // A control that destroys something should not sit flush against the ones
+    // that do not, and the app's own separator token is what says "a different
+    // kind of thing" everywhere else in this file.
+    const container = await renderList([conversation()]);
+    await rightClick(rows(container)[0]);
+    const items = all(container, ".rowmenu [role='menuitem']");
+    const deleteStyle = dom.window.getComputedStyle(items.find((n) => n.textContent === "Delete")!);
+    const duplicateStyle = dom.window.getComputedStyle(items.find((n) => n.textContent === "Duplicate")!);
+
+    // The gap is the part jsdom can resolve, and it is the part that proves the
+    // danger rule is *winning*: `margin-top` is a longhand, so it survives the
+    // cascade here, while a `.rowmenu-danger` written as a bare class would
+    // resolve to nothing at all.
+    assert.ok(
+      Number.parseFloat(deleteStyle.marginTop) > 0,
+      `Delete has no gap above it, so the danger rule is not winning: ${deleteStyle.marginTop}`,
+    );
+    // jsdom reports a computed zero length as `"0"` rather than `"0px"`, so this
+    // is compared numerically rather than as a string to keep it honest.
+    assert.equal(Number.parseFloat(duplicateStyle.marginTop) || 0, 0);
+
+    // The divider itself is NOT checked here, and the reason is worth recording:
+    // jsdom's CSS parser drops any shorthand containing `var()`, so
+    // `border-top: 1px solid var(--border-soft)` computes to nothing however
+    // correctly the cascade would resolve it. Asserting it would either fail
+    // for the wrong reason or, worse, pass against an empty string. It is read
+    // out of the stylesheet here and checked on the rendered menu in the real
+    // browser instead.
+    const dangerRule = /\.rowmenu button\.rowmenu-danger\s*\{([^}]*)\}/.exec(STYLESHEET);
+    assert.ok(dangerRule, "the destructive item's rule is missing from the stylesheet");
+    assert.match(
+      dangerRule[1],
+      /border-top:\s*1px solid var\(--border-soft\)/,
+      `the divider is not the app's own token: ${dangerRule[1].trim()}`,
+    );
+  });
+
+  test("hovering a menu item is not the same as selecting a conversation", async () => {
+    // `--raised` is the selected-row colour, so the hover rule was painting a
+    // hovered menu item identically to the conversation the user had chosen --
+    // a menu that read as selected. Nine other rules use `--hover` for this,
+    // and `--hover` is what the chat rows themselves use.
+    //
+    // Read from the stylesheet rather than computed, because jsdom cannot
+    // resolve `:hover` at all -- there is no pointer, so the rule never matches
+    // and a computed assertion would pass against anything.
+    const hoverRule = /\.rowmenu button:hover[^{]*\{([^}]*)\}/.exec(STYLESHEET);
+    assert.ok(hoverRule, "the menu hover rule is missing from the stylesheet");
+    assert.match(
+      hoverRule[1],
+      /background:\s*var\(--hover\)/,
+      `a hovered menu item is not using --hover: ${hoverRule[1].trim()}`,
+    );
+    assert.ok(
+      !/background:[^;]*var\(--raised\)/.test(hoverRule[1]),
+      "a hovered menu item is painted like a selected conversation row",
+    );
   });
 
   test("a menu re-opened after a full close targets the right row", async () => {

@@ -5,7 +5,7 @@
 and named conversations (see 1.13)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 502 passed, TypeScript 143 passed,
+protocol method.** Everything green: **Python 502 passed, TypeScript 146 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **502 passed, 7 skipped** with Docker Desktop running.
@@ -62,7 +62,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 143 passed (protocol, reducer, markdown, components; no Rust needed)
+cd app && npm test                     # 146 passed (protocol, reducer, markdown, components; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -776,7 +776,7 @@ app/
     backend.ts              the protocol client
     test-dom.ts             installs jsdom on the globals; imported first
     test-render.ts          mount / act / type / press / query helpers
-    *.test.ts, *.test.tsx   143 tests, all run by `npm test`
+    *.test.ts, *.test.tsx   146 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
     capabilities/default.json
@@ -987,6 +987,43 @@ order) -- because a matcher that does not would cry wolf on twelve
 already-covered rules and get ignored. Verified by mutation: removing the
 `.tab-spinner` cancellation, adding a new uncancelled infinite animation, and
 lowering a cancellation's specificity each fail the test that names them.
+
+**The row menu did not match the app it lives in (two real bugs).** Reading it
+against the stylesheet turned up two things that were wrong rather than
+merely plain, both measured in the packaged app before being fixed:
+
+- **`Delete` was not red.** `.rowmenu-danger` was written as a bare class, and
+  the rule it has to beat is `.rowmenu button` -- one class plus one element,
+  strictly more specific than a single class -- so it lost wherever it sat in
+  the file. Measured: `color: rgb(122, 122, 122)`, identical to Rename and
+  Duplicate. The colour was in the stylesheet the whole time and had never once
+  applied. It is now `.rowmenu button.rowmenu-danger`, and it sits *after* the
+  hover rule rather than merely being specific enough: both are two classes
+  plus an element, so the tie is broken by source order -- the same hazard
+  `.btn-danger` documents further down the file.
+- **Hovering a menu item painted it like a selected conversation.** The hover
+  rule used `--raised`, which is `.chatrow.is-active`; the menu therefore
+  rendered the conversation the user had *chosen* whenever they hovered an
+  item. Measured: hovered background `rgb(33, 33, 33)`, selected row
+  `rgb(33, 33, 33)`. Now `--hover`, which is what nine other rules use and what
+  the chat rows themselves use.
+
+`Delete` also gets a divider above it in the app's own `--border-soft`, plus a
+5px gap, so the destructive action is not flush against the harmless ones.
+Verified in the packaged app after the fix: Delete `rgb(201, 112, 95)`
+(`--danger`), divider `0.571px solid rgb(30, 30, 30)` (`--border-soft`), and
+hover `--hover` against a selected row still `rgb(33, 33, 33)`.
+
+Three tests in `ConversationList.test.tsx`. The colour one resolves the rule
+through the real stylesheet via `getComputedStyle` rather than matching its
+text -- **a rule existing is not a rule winning**, which is the whole bug, so a
+text assertion would have passed throughout. Two jsdom limits are recorded
+there rather than worked around silently: it drops any shorthand containing
+`var()`, so the divider is read from the stylesheet and checked on the real
+menu in the browser instead; and it cannot resolve `:hover` at all, so the
+hover rule is asserted on its text. Four mutations were tried against the
+tests -- reverting the danger selector, restoring `--raised`, deleting the
+divider, removing the gap -- and each fails the test that names it.
 
 `scripts/observe_confirm_contract.py` covers the core half end to end against the
 real `ToolOrchestrator` and the real `write_file`: one request per untrusted
