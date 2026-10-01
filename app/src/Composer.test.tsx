@@ -23,6 +23,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { Composer, type ModeInfo, type ReasoningInfo } from "./Composer.js";
+import type { ModelList } from "./ModelPicker.js";
 import { all, click, one, press, render, setValue, texts } from "./test-render.js";
 
 const MODES: ModeInfo[] = [
@@ -48,6 +49,7 @@ async function composer(props: {
   busy?: boolean;
   disabled?: boolean;
   maxToolCalls?: number | null;
+  modelList?: ModelList | null;
 }) {
   const calls = { efforts: [] as string[], sent: [] as string[], cancelled: 0 };
   const container = await render(
@@ -65,6 +67,12 @@ async function composer(props: {
         calls.cancelled += 1;
       }}
       maxToolCalls={props.maxToolCalls ?? 10}
+      modelList={props.modelList ?? null}
+      modelListError={null}
+      onModelMenuOpen={() => {}}
+      onModelMenuClose={() => {}}
+      onModelChange={() => {}}
+      onModelListLoad={() => {}}
       budgetOpen={false}
       onBudgetOpen={() => {}}
       onBudgetClose={() => {}}

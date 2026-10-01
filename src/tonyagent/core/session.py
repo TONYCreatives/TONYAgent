@@ -380,6 +380,36 @@ class AgentSession:
     # has nothing to show for its extra passes.
     MAX_TOOL_ROUNDS = 100
 
+    async def available_models(self) -> list[str]:
+        """Every model the bound provider offers, sorted.
+
+        Asked of the provider rather than read from the registry's seed list,
+        which is five illustrative ids. OpenRouter proxies several hundred and
+        the seed list says so in a comment, so a menu built from it would show
+        a user five of the models they have and none of the ones they want.
+
+        Public because the protocol needs the same answer the request layer
+        does: a picker offering an id the provider does not serve would bind
+        to a model whose first request is a 404.
+        """
+        provider = self.provider
+        if provider is None:
+            return []
+        # `http_client` is a *method* on the OpenAI-compatible provider, not a
+        # cached attribute, so it has to be called to get the client. Reading it
+        # and using it directly hands the caller a bound method, and the failure
+        # arrives as an AttributeError on a function -- which is the same
+        # confusing error a genuinely absent client would produce, so the
+        # absence check below has nothing left to say.
+        factory = getattr(provider, "http_client", None)
+        if factory is None:
+            return []
+        try:
+            models = await factory().list_models()
+        except Exception as exc:  # noqa: BLE001 - reported to the caller
+            raise LLMError.network(exc, self.provider_name) from exc
+        return sorted(models)
+
     def set_max_tool_calls(self, limit: int) -> int:
         """Change the per-turn tool budget. Returns what took effect.
 

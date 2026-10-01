@@ -70,6 +70,20 @@ export interface CoreMethods {
   /** Provider names come from the core's registry, never from a local copy. */
   "providers.list": Record<string, never>;
   /**
+   * Every model the bound provider offers.
+   *
+   * From the provider's own `/models`, not from the registry's seed list: that
+   * seed is five illustrative ids with a comment saying OpenRouter proxies
+   * hundreds more, so a picker built from it would show a user five of the
+   * models they have. `current` is what the menu ticks, so the component never
+   * has to guess which entry is bound.
+   *
+   * An empty list comes back as an error rather than as an empty array. A
+   * provider that will not list its models will not serve them either, and an
+   * empty dropdown says nothing about which of the two happened.
+   */
+  "models.list": Record<string, never>;
+  /**
    * Store an API key in the OS keyring.
    *
    * The key goes out on stdin and the reply carries only the provider name.

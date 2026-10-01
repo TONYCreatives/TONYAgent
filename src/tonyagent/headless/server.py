@@ -105,6 +105,7 @@ class StdioServer:
             "sandbox.stats": self._h_sandbox_stats,
             "confirm.respond": self._h_confirm_respond,
             "trust.set": self._h_trust_set,
+            "models.list": self._h_models_list,
             "tools.get": self._h_tools_get,
             "tools.set": self._h_tools_set,
             "conversations.list": self._h_conversations_list,
@@ -696,6 +697,30 @@ class StdioServer:
                 matches = artifact.get("data") or []
                 break
         return {"matches": matches, "output": result.output}
+
+    # -- models --------------------------------------------------------------
+    async def _h_models_list(self, params: dict) -> Any:
+        """Every model the bound provider offers.
+
+        From the provider's own ``/models`` endpoint, not from the registry's
+        seed list, because the seed is five illustrative ids and the point of
+        this method is that the user can pick any of the hundreds. It is also
+        an auth probe: a gateway that will not list its models will not serve
+        them either, and saying so is more useful than an empty menu.
+
+        The empty list is reported as an error rather than as "no models". An
+        empty dropdown and a failed read look identical in the window, and one
+        of them is a fixable problem the user needs to hear about.
+        """
+        if self.session.provider is None:
+            raise RpcError("no provider configured")
+        models = await self.session.available_models()
+        if not models:
+            raise RpcError(
+                f"{self.session.provider_name or 'This provider'} returned no "
+                "models. Check the API key and the endpoint."
+            )
+        return {"models": models, "current": self.session.model}
 
     # -- the tool call budget ------------------------------------------------
     def _h_tools_get(self, params: dict) -> Any:

@@ -89,6 +89,12 @@ class LLMClient:
         # shape but the wrong length is a truncated paste, and the provider will
         # report it as an opaque 401 unless we catch it here.
         self.key_length = key_length
+        # The gateway's model list, fetched at most once per client. OpenRouter
+        # answers it with several hundred entries, and a model picker that
+        # opened its menu on every click would otherwise spend a request per
+        # click to learn the same thing. Cached per client rather than
+        # globally so a rebind, or a second base_url, reads its own list.
+        self._model_entries_cache: dict[str, dict] | None = None
 
     # -- helpers -------------------------------------------------------------
     def _headers(self) -> dict[str, str]:
@@ -213,7 +219,22 @@ class LLMClient:
         The reasoning metadata and the id list come from the same response, so
         asking for both is one request rather than two, and a model that
         appears in one cannot be missing from the other.
+
+        Cached per client. OpenRouter answers this with several hundred
+        entries, so a menu that opened the list on every click would spend a
+        request per click to learn the same thing -- and the ids and the
+        reasoning metadata would come from two different responses that are
+        not guaranteed to agree, which is the failure this method existed to
+        prevent.
         """
+        if self._model_entries_cache is not None:
+            return self._model_entries_cache
+        entries = await self._fetch_model_entries()
+        self._model_entries_cache = entries
+        return entries
+
+    async def _fetch_model_entries(self) -> dict[str, dict]:
+        """One request to the gateway's model list."""
         url = self.dialect.models_url(self.base_url)
         headers = self._headers()
         headers.pop("Accept", None)

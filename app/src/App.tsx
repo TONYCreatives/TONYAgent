@@ -18,6 +18,7 @@ import { pickFolder } from "./dialog";
 import { FileSidebar, type TreeEntry } from "./FileSidebar";
 import { IconRail } from "./IconRail";
 import { MessageList } from "./MessageList";
+import type { ModelList } from "./ModelPicker";
 import { Overlay } from "./Overlay";
 import { SearchPanel, type SearchMatch } from "./SearchPanel";
 import { SettingsPanel, type ProviderInfo } from "./SettingsPanel";
@@ -56,6 +57,15 @@ export function App() {
    */
   const [maxToolCalls, setMaxToolCalls] = useState<number | null>(null);
   const [budgetOpen, setBudgetOpen] = useState(false);
+  /**
+   * The provider's model list, or null before it has been read.
+   *
+   * Null and empty are different things and the menu says which is which: an
+   * unread list is "Loading", and a provider that returned nothing is an error
+   * from the core rather than an empty dropdown a user has to interpret.
+   */
+  const [modelList, setModelList] = useState<ModelList | null>(null);
+  const [modelListError, setModelListError] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversation, setConversation] = useState("");
@@ -399,6 +409,70 @@ export function App() {
       await refreshReasoning();
     }
   }, [refreshReasoning]);
+
+  /**
+   * Read the model list, once.
+   *
+   * Called when the menu is first opened rather than at launch: OpenRouter
+   * answers with several hundred ids, and a window that reads them on every
+   * start spends a request to render a chip the user may never click.
+   *
+   * A failure is kept as a message rather than a console warning, because the
+   * menu is the one place the user is looking when they wonder why the list is
+   * not there.
+   */
+  const loadModelList = useCallback(async () => {
+    const backend = backendRef.current;
+    if (!backend) return;
+    setModelListError(null);
+    try {
+      const listed = (await backend.call("models.list")) as {
+        models?: string[];
+        current?: string;
+      };
+      setModelList({ models: listed.models ?? [], current: listed.current ?? "" });
+    } catch (error: unknown) {
+      setModelList(null);
+      setModelListError(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
+
+  /**
+   * Switch models, by re-binding the provider.
+   *
+   * Refused while a turn is in flight. The turn's history is being written by
+   * one model and rebinding mid-turn interleaves another model's answers into
+   * the same conversation -- so the guard is here rather than left to the user
+   * to notice, and the menu explains it instead of being quietly inert.
+   */
+  const changeModel = useCallback(
+    async (next: string) => {
+      if (state.busy) return;
+      if (next === model) return;
+      if (!provider) {
+        setModelListError("No provider is bound. Choose one in Settings first.");
+        return;
+      }
+      // Cleared first, so the reasoning dropdown does not keep offering the old
+      // model's efforts during the round trip. They belong to a model that is
+      // no longer bound, and the request layer would refuse them.
+      setReasoning(null);
+      try {
+        const bound = (await backendRef.current!.call("bind_provider", {
+          name: provider,
+          model: next,
+          ...(baseUrl ? { base_url: baseUrl } : {}),
+        })) as { model?: string };
+        setModel(bound.model ?? next);
+      } catch (error: unknown) {
+        setModelListError(error instanceof Error ? error.message : String(error));
+        // The chip still shows the old model, because `model` was never
+        // changed -- so the window and the core agree. Reading the list again
+        // is not needed; the failure was in the bind, not the list.
+      }
+    },
+    [state.busy, model, provider, baseUrl],
+  );
 
   /**
    * Re-read the per-turn tool call budget.
@@ -899,6 +973,12 @@ export function App() {
           onBudgetOpen={() => setBudgetOpen(true)}
           onBudgetClose={() => setBudgetOpen(false)}
           onBudgetChange={(limit) => void changeToolBudget(limit)}
+          modelList={modelList}
+          modelListError={modelListError}
+          onModelMenuOpen={() => {}}
+          onModelMenuClose={() => {}}
+          onModelChange={(next) => void changeModel(next)}
+          onModelListLoad={() => void loadModelList()}
         />
 
         {shownConfirm && (

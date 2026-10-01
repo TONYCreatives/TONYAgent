@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { ModelPicker, type ModelList } from "./ModelPicker.js";
 import { ToolBudgetControl } from "./ToolBudgetControl.js";
 
 /** One entry in the `mode.list` reply. */
@@ -52,6 +53,14 @@ interface Props {
   onBudgetOpen: () => void;
   onBudgetClose: () => void;
   onBudgetChange: (limit: number) => void;
+  /** The provider's model list, or null while it is being read. */
+  modelList: ModelList | null;
+  /** Why the list could not be read, or null. */
+  modelListError: string | null;
+  onModelMenuOpen: () => void;
+  onModelMenuClose: () => void;
+  onModelChange: (model: string) => void;
+  onModelListLoad: () => void;
 }
 
 export function Composer({
@@ -70,6 +79,12 @@ export function Composer({
   onBudgetOpen,
   onBudgetClose,
   onBudgetChange,
+  modelList,
+  modelListError,
+  onModelMenuOpen,
+  onModelMenuClose,
+  onModelChange,
+  onModelListLoad,
 }: Props) {
   const [text, setText] = useState("");
 
@@ -128,10 +143,17 @@ export function Composer({
             ))}
           </div>
 
-          <button type="button" className="chip" title="Model — coming soon">
-            <span>{model || "No model"}</span>
-            <span className="chip-caret">&#9662;</span>
-          </button>
+          <ModelPicker
+            model={model}
+            busy={busy}
+            disabled={disabled}
+            list={modelList}
+            error={modelListError}
+            onOpen={onModelMenuOpen}
+            onClose={onModelMenuClose}
+            onChange={onModelChange}
+            onLoad={onModelListLoad}
+          />
 
           {/*
             The tool budget sits beside the model rather than in the settings

@@ -979,6 +979,131 @@ body {
   flex: none;
 }
 
+/*
+ * The model menu, anchored to the chip that opens it.
+ *
+ * Same positioning contract as the tool budget popover beside it: the wrap is
+ * the containing block, the panel is absolute within it, and it opens upward
+ * because the composer row is at the bottom of the window. A panel that
+ * opened down would render off-screen.
+ *
+ * The list is its own scroll box with a capped height rather than an
+ * expanding one. OpenRouter answers with several hundred entries, and a menu
+ * three thousand pixels tall is a menu that pushes the transcript off the
+ * screen the user opened it from.
+ */
+.modelpicker-wrap {
+  position: relative;
+  flex: none;
+}
+
+.modelpicker {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 320px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+}
+
+.modelpicker-filter {
+  display: block;
+  width: 100%;
+  height: 28px;
+  margin-bottom: 6px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius-sm) - 1px);
+  background: var(--input);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.modelpicker-filter::placeholder {
+  color: var(--fg-mute);
+}
+
+.modelpicker-list {
+  max-height: 264px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.modelpicker-item {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 1px);
+  background: none;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.modelpicker-item:hover,
+.modelpicker-item:focus-visible {
+  background: var(--input);
+  color: var(--fg);
+}
+
+.modelpicker-item.is-current {
+  color: var(--fg);
+}
+
+/*
+ * The vendor is dimmed rather than hidden. The id is namespaced
+ * ("anthropic/claude-sonnet-4.5"), and the prefix is what tells you whether
+ * you are about to move to a different family of model -- which is the whole
+ * risk in a one-click switch.
+ */
+.modelpicker-vendor {
+  flex: none;
+  max-width: 96px;
+  overflow: hidden;
+  color: var(--fg-mute);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelpicker-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelpicker-current {
+  flex: none;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.modelpicker-note {
+  margin: 0;
+  padding: 9px 8px;
+  color: var(--fg-mute);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.modelpicker-note.is-error {
+  color: var(--danger);
+}
+
 .budget-popover {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -2241,6 +2366,14 @@ body {
   animation: fade-in var(--motion-base) var(--ease-out) both;
 }
 
+.modelpicker[data-state="open"] {
+  animation: rise-in var(--motion-base) var(--ease-out) both;
+}
+
+.modelpicker[data-state="closed"] {
+  animation: rise-out var(--motion-fast) var(--ease-in) both;
+}
+
 .budget-popover[data-state="open"] {
   animation: rise-in var(--motion-base) var(--ease-out) both;
 }
@@ -2384,7 +2517,9 @@ body {
    * exists to catch -- and did.
    */
   .budget-popover[data-state="open"],
-  .budget-popover[data-state="closed"] {
+  .budget-popover[data-state="closed"],
+  .modelpicker[data-state="open"],
+  .modelpicker[data-state="closed"] {
     animation: none;
   }
 
