@@ -1,7 +1,7 @@
 # TONYAgent — Project Summary
 
-**Updated:** 2026-09-30 · **Tests:** Python 501 passed (1 Docker, 7 skipped),
-TypeScript 103 passed
+**Updated:** 2026-10-01 · **Tests:** Python 502 passed, 7 skipped
+(Docker 꺼져 있으면: 501 passed + 1 failed), TypeScript 103 passed
 **Build:** Tauri MSI + NSIS installers produced; app verified running end to end
 
 ---
@@ -129,7 +129,7 @@ MSVC 블로커는 **해결됨** (Visual Studio Community 2026, VC tools 14.51.36
 
 ```bash
 python -m compileall -q src
-python -m pytest tests -q                    # 501 passed, 1 failed (Docker), 7 skipped
+python -m pytest tests -q                    # 502 passed, 7 skipped (Docker up)
 python scripts/check_all.py --fast           # 3 checks
 cd app && npm test                           # 103 passed (Rust 불필요)
 ```
