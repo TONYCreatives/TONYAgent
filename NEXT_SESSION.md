@@ -5,10 +5,10 @@
 and named conversations (see 1.13)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 477 passed, TypeScript 103 passed,
+protocol method.** Everything green: **Python 501 passed, TypeScript 103 passed,
 Tauri MSI + NSIS installers produced.**
 
-`pytest tests -q` reports **477 passed, 1 failed, 7 skipped**. The failure is
+`pytest tests -q` reports **501 passed, 1 failed, 7 skipped**. The failure is
 `tests/integration/test_docker_backend.py::test_start_ping_exec_stop` and it is
 not a bug: it needs a running Docker daemon. It has failed on every run on this
 machine and will pass wherever Docker is up.
@@ -53,7 +53,7 @@ Tauri one is new and thinner (chat, sandbox status, confirmations).
 
 ```bash
 python -m compileall -q src            # syntax
-python -m pytest tests -q              # 477 passed, 1 failed (Docker), 7 skipped
+python -m pytest tests -q              # 501 passed, 1 failed (Docker), 7 skipped
 python scripts/check_all.py --fast     # 3 checks incl. GUI launch
 python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refusals (no sandbox needed)
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip

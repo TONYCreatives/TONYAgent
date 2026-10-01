@@ -44,10 +44,18 @@ $Stages = @(
     [pscustomobject]@{
         Name   = 'sidecar'
         Inputs = @('src', 'pyproject.toml', 'scripts\sidecar.spec', 'docker')
-        # The triple-suffixed name Tauri looks for; the target is read off the
-        # host, so a hardcoded one would go stale on another machine.
-        Output = (Get-ChildItem -LiteralPath (Join-Path $Root 'app\src-tauri\binaries') -Filter 'tonyagent-core-*' -ErrorAction SilentlyContinue |
-            Select-Object -First 1 -ExpandProperty FullName)
+        # Resolved inside the loop, not here. Globbing for the output while
+        # building the table meant that a tree with no frozen core -- a fresh
+        # clone, or binaries\ deleted -- produced $null, and the "a missing
+        # output is always stale" rule below never got to see it: the stage
+        # reported itself current. Found by a test, after a launcher run had
+        # already rebuilt the shell around a sidecar that was not there.
+        #
+        # The triple-suffixed name is what Tauri looks for and the target is
+        # read off the host, so the file is globbed rather than hardcoded, and
+        # the newest match wins in case a second triple is lying around.
+        OutputDir  = 'app\src-tauri\binaries'
+        OutputGlob = 'tonyagent-core-*'
     },
     [pscustomobject]@{
         Name   = 'app'
@@ -99,7 +107,19 @@ function Get-NewestInput {
 $stale = @()
 
 foreach ($stage in $Stages) {
-    $outputPath = if ([System.IO.Path]::IsPathRooted($stage.Output)) { $stage.Output } else { Join-Path $Root $stage.Output }
+    # $null when a globbed output matches nothing, which is the answer we want:
+    # nothing was built, so the stage is stale.
+    $outputPath = if ($stage.OutputDir) {
+        Get-ChildItem -LiteralPath (Join-Path $Root $stage.OutputDir) -Filter $stage.OutputGlob -File -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+    }
+    elseif ([System.IO.Path]::IsPathRooted($stage.Output)) {
+        $stage.Output
+    }
+    else {
+        Join-Path $Root $stage.Output
+    }
 
     if (-not $outputPath -or -not (Test-Path -LiteralPath $outputPath)) {
         $stale += $stage.Name
