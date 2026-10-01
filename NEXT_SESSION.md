@@ -982,6 +982,14 @@ itself, so the Python side is the asymmetric one.
 cd app && python ../scripts/build_sidecar.py    # ~40s
 ```
 
+The prebuilt path does not have this problem.
+`Start TONYAgent (Prebuilt).bat` asks `scripts/build_state.ps1` what is
+stale, runs only those stages of `Build TONYAgent.bat`, and then starts the
+app -- so a Python change made since the last build is picked up by
+double-clicking, and a build that fails leaves the previous binary in
+place rather than leaving nothing to launch. `tauri dev` is the asymmetric
+one, and it is the loop this section is about.
+
 ### Layout rules that cost real time (tauri 2.12)
 
 These were each a silent failure with a build that looked fine:

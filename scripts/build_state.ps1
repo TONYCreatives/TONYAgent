@@ -68,6 +68,13 @@ $Stages = @(
 function Get-NewestInput {
     param([string[]]$Paths)
 
+    # Derived files are not inputs. Python's __pycache__ is the one that
+    # matters: running the test suite rewrites .pyc files under src/, which
+    # made the sidecar look stale after every pytest run, so every launch
+    # re-froze 45 MB of Python to pick up changes nobody had made. Measured,
+    # not assumed -- the newest "source" was core\__pycache__\conversations.pyc.
+    $derived = '\\(__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|node_modules|\.git)\\'
+
     $newest = $null
     foreach ($path in $Paths) {
         $full = Join-Path $Root $path
@@ -76,7 +83,8 @@ function Get-NewestInput {
         # A directory's own timestamp says when its entries changed, but a file
         # written inside it does not always update it, so recurse.
         $found = if ($item.PSIsContainer) {
-            Get-ChildItem -LiteralPath $full -Recurse -File -ErrorAction SilentlyContinue
+            Get-ChildItem -LiteralPath $full -Recurse -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.FullName -notmatch $derived }
         }
         else {
             $item

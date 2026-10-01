@@ -29,6 +29,13 @@ REM  cannot find the batch label specified" for a stage that ran minutes ago.
 REM ==========================================================================
 setlocal enabledelayedexpansion
 
+REM /q drops the two pauses, for callers that run this unattended --
+REM the launcher, which has a window of its own to close and no reader
+REM standing in front of it. Everything else, including every message,
+REM is unchanged: a caller that redirects output still sees it all.
+set "QUIET="
+if /i "%~1"=="/q" set "QUIET=1"
+
 cd /d "%~dp0"
 set PYTHONIOENCODING=utf-8
 
@@ -135,11 +142,8 @@ echo.
 
 :verify
 if not exist "app\src-tauri\target\release\tonyagent-app.exe" goto fail
-echo Start it with "Start TONYAgent (Prebuilt).bat".
-echo.
-pause
-endlocal
-exit /b 0
+if not defined QUIET echo Start it with "Start TONYAgent (Prebuilt).bat".
+goto finish_ok
 
 REM ------------------------------------------------------- missing SDK
 :no_sdk
@@ -152,23 +156,27 @@ echo        Developer Command Prompt where the SDK is already on PATH.
 echo.
 echo        The frontend and the Python sidecar do not need it.
 echo.
-pause
-endlocal
-exit /b 1
+goto fail_end
 
 :fail
 echo.
 echo [ERROR] The build failed. See the output above.
 echo.
-if exist "app\src-tauri\target\release\tonyagent-app.exe" (
-    echo         The previous build is still in place, so an earlier version of
-    echo         the app still runs. Nothing has been overwritten.
-    echo.
-) else (
-    echo         There is no previous build, so there is nothing to run yet.
-    echo         Fix the error above and run this again.
-    echo.
-)
-pause
+if not exist "app\src-tauri\target\release\tonyagent-app.exe" goto no_previous
+echo         The previous build is still in place, so an earlier version of
+echo         the app still runs. Nothing has been overwritten.
+goto fail_end
+
+:no_previous
+echo         There is no previous build, so there is nothing to run yet.
+echo         Fix the error above and run this again.
+
+:fail_end
+if not defined QUIET pause
 endlocal
 exit /b 1
+
+:finish_ok
+if not defined QUIET pause
+endlocal
+exit /b 0
