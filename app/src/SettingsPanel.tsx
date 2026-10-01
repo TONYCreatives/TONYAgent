@@ -20,6 +20,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { Overlay } from "./Overlay.js";
 
 /** Shape of one entry in the `providers.list` reply. */
 export interface ProviderInfo {
@@ -138,7 +139,7 @@ export function SettingsPanel({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <Overlay open onDismiss={onClose}>
       <div
         className="modal"
         role="dialog"
@@ -366,6 +367,6 @@ export function SettingsPanel({
           </button>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }

@@ -5,7 +5,7 @@
 and named conversations (see 1.13)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 502 passed, TypeScript 103 passed,
+protocol method.** Everything green: **Python 502 passed, TypeScript 116 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **502 passed, 7 skipped** with Docker Desktop running.
@@ -62,7 +62,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 103 passed (protocol, reducer, markdown, components; no Rust needed)
+cd app && npm test                     # 116 passed (protocol, reducer, markdown, components; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -769,12 +769,14 @@ app/
     ConfirmDialog.tsx       destructive-action prompt
     StatusBar.tsx           provider / sandbox / connection
     IconRail.tsx            left rail (new chat, clear, stop, placeholders)
+    Overlay.tsx             dismissible backdrop surface: owns its own lifecycle
+    useDelayedUnmount.ts    how long a dismissed surface lingers; useLastValue
     TopBar.tsx              toggle, conversation tab, new chat
     styles.css              dark-only tokens sampled from the Freebuff app
     backend.ts              the protocol client
     test-dom.ts             installs jsdom on the globals; imported first
     test-render.ts          mount / act / type / press / query helpers
-    *.test.ts, *.test.tsx   103 tests, all run by `npm test`
+    *.test.ts, *.test.tsx   116 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
     capabilities/default.json
@@ -788,6 +790,48 @@ under Node. See 1.18.
 ```
 
 ### Visual design
+
+### Sidebar order and motion
+
+**Actions above, history below.** `.sidecol` is one column holding `IconRail`
+then `ConversationList`. The rail is `flex: none` -- sized by its buttons -- and
+the list is `flex: 1`, filling the rest and scrolling inside itself. The rail
+used to carry a `flex: 1` spacer with the list at `max-height: 45%` above it,
+which meant a cap invented for the list decided where the buttons landed.
+There is no spacer and no cap any more; the buttons are pinned by construction.
+
+**Every dismissible surface animates in both directions**, which needs three
+pieces that have to agree:
+
+| where | what |
+| --- | --- |
+| `styles.css` | `--motion-fast` / `--motion-base` / `--ease-out` / `--ease-in`, the `@keyframes`, and one `[data-state="open"\|"closed"]` pair per surface |
+| `useDelayedUnmount.ts` | keeps the node mounted after the close, so there is something to animate out of; `useLastValue` keeps what it was showing |
+| `Overlay.tsx` | wraps the three backdrop surfaces and publishes `data-state` |
+
+A surface that renders conditionally cannot *transition* into existence --
+there is no "before" to transition from -- so the entry is a keyframe driven by
+an attribute, and the exit is the same node playing the other keyframe. That
+only works if something delays the unmount, which is the hook's whole job.
+
+Three things that are easy to get wrong and are worth not re-breaking:
+
+- **`--motion-fast` has one owner.** `useDelayedUnmount` reads it out of the
+  document rather than restating `110`, because the delay and the animation it
+  covers must not drift apart. Under `prefers-reduced-motion` it drops the node
+  at once, since there is then no animation to wait for.
+- **The reduced-motion block must match the specificity it cancels.** Every
+  rule it turns off is written `.thing[data-state="open"]`, two classes deep; a
+  plain `.thing` in the media query loses to that regardless of source order,
+  and the animations keep playing for exactly the people who asked for them not
+  to. The selectors there repeat `[data-state]` on purpose.
+- **A closed overlay is `pointer-events: none`.** It is still on screen for the
+  length of the exit, and a full-window backdrop left clickable swallows the
+  next click.
+
+The row menu and the log strip are not overlays -- one is `position: fixed` and
+the other grows inline -- so both call the hook directly.
+
 
 Every value is sampled from a full-resolution screenshot of the Freebuff
 desktop app (2879x1714, ~2x DPI), not eyeballed. **A partial capture is not

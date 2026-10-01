@@ -19,6 +19,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount.js";
 
 export interface ConversationSummary {
   id: string;
@@ -83,8 +84,19 @@ export function ConversationList({
   /** The conversation being renamed, or null. */
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [menu, setMenu] = useState<Menu | null>(null);
+  const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // `openMenuAt` is the menu that is open *and where it was opened from*; it
+  // doubles as the open flag, so dismissing it clears the row it belonged to.
+  // `menu` is what the node renders, and it outlives the dismissal so the exit
+  // animation has something to fade out from the right place -- a menu that
+  // slid back to the window origin on its way out would be worse than one that
+  // simply vanished.
+  const menu = useLastValue(openMenuAt);
+  const menuMounted = useDelayedUnmount(openMenuAt !== null);
+
+  const openMenu = (id: string, x: number, y: number) => setOpenMenuAt({ id, x, y });
+  const closeMenu = () => setOpenMenuAt(null);
 
   useEffect(() => {
     if (editing !== null) {
@@ -95,9 +107,15 @@ export function ConversationList({
 
   // The menu is anchored to a click, so anything else that happens closes it:
   // a click elsewhere, a scroll, Escape, or the window losing focus.
+  //
+  // Keyed on `openMenuAt`, not on `menu`. `menu` is retained so the node can
+  // animate out, which means it never returns to null and an effect watching
+  // it would leave four listeners on the window for the rest of the session.
+  // What these listeners are for is the time the menu is *open*, so that is what
+  // they watch.
   useEffect(() => {
-    if (!menu) return;
-    const dismiss = () => setMenu(null);
+    if (!openMenuAt) return;
+    const dismiss = closeMenu;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") dismiss();
     };
@@ -113,7 +131,7 @@ export function ConversationList({
       window.removeEventListener("blur", dismiss);
       window.removeEventListener("resize", dismiss);
     };
-  }, [menu]);
+  }, [openMenuAt]);
 
   const startRename = (conversation: ConversationSummary) => {
     setEditing(conversation.id);
@@ -181,7 +199,7 @@ export function ConversationList({
                 // The browser's own menu offers "search image for" and
                 // "inspect", neither of which means anything on a title.
                 event.preventDefault();
-                setMenu({ id: conversation.id, x: event.clientX, y: event.clientY });
+                openMenu(conversation.id, event.clientX, event.clientY);
               }}
             >
               {editing === conversation.id ? (
@@ -224,11 +242,7 @@ export function ConversationList({
                     className="chatrow-more"
                     onClick={(event) => {
                       const box = event.currentTarget.getBoundingClientRect();
-                      setMenu({
-                        id: conversation.id,
-                        x: box.left,
-                        y: box.bottom + 4,
-                      });
+                      openMenu(conversation.id, box.left, box.bottom + 4);
                     }}
                     title="Rename, duplicate or delete"
                     aria-label={`Options for ${conversation.title}`}
@@ -254,10 +268,17 @@ export function ConversationList({
         </ul>
       )}
 
-      {menu && (
+      {/*
+        `menuMounted && menu`, not `openMenuAt`: the node has to outlive the
+        dismissal so styles.css can play `menu-out`, and it needs the anchor to
+        do it from the right place. `data-state` tells the two apart, and the
+        closed state is inert -- see `.rowmenu[data-state="closed"]`.
+      */}
+      {menuMounted && menu && (
         <div
           className="rowmenu"
           role="menu"
+          data-state={openMenuAt ? "open" : "closed"}
           style={{ left: menu.x, top: menu.y }}
           onContextMenu={(event) => event.preventDefault()}
         >
@@ -266,7 +287,7 @@ export function ConversationList({
             role="menuitem"
             onClick={() => {
               const target = conversations.find((c) => c.id === menu.id);
-              setMenu(null);
+              closeMenu();
               if (target) startRename(target);
             }}
           >
@@ -277,7 +298,7 @@ export function ConversationList({
             role="menuitem"
             onClick={() => {
               const id = menu.id;
-              setMenu(null);
+              closeMenu();
               onDuplicate(id);
             }}
           >
@@ -289,7 +310,7 @@ export function ConversationList({
             className="rowmenu-danger"
             onClick={() => {
               const id = menu.id;
-              setMenu(null);
+              closeMenu();
               onDelete(id);
             }}
           >

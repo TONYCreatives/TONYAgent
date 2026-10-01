@@ -96,8 +96,8 @@ export function IconRail({
   // choice. The panel already covers the project folder and the sandbox together
   // -- both are "what is this window working on" -- so one entry says that once.
   // Search keeps its own panel because it is a query with results, not a setting.
-  // No "New chat" entry: the conversation list directly above owns that action,
-  // and two controls for one action is duplication rather than choice.
+  // No "New chat" entry: the conversation list below owns that action, and two
+  // controls for one action is duplication rather than choice.
   const items: Item[] = [
     {
       key: "clear",
@@ -169,8 +169,6 @@ export function IconRail({
           {item.badge !== undefined && <span className="rail-badge">{item.badge}</span>}
         </button>
       ))}
-
-      <div className="rail-spacer" />
     </nav>
   );
 }

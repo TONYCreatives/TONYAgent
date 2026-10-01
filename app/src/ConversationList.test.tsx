@@ -29,7 +29,9 @@ import {
   render,
   setValue,
   texts,
+  wait,
 } from "./test-render.js";
+import { exitDurationMs } from "./useDelayedUnmount.js";
 import { dom } from "./test-dom.js";
 
 const { window } = dom;
@@ -158,9 +160,14 @@ describe("the row menu", () => {
     const container = await renderList([conversation()]);
     await rightClick(rows(container)[0]);
     await press("Escape");
-    assert.equal(one(container, ".rowmenu"), null);
+    // Dismissed, but still in the tree: it has to be, or there is nothing for
+    // the exit animation to play and the menu would only ever be able to
+    // appear. "Closed" is a state, not an absence.
+    assert.equal(one(container, ".rowmenu")!.dataset.state, "closed");
     assert.deepEqual(calls.renamed, []);
     assert.deepEqual(calls.deleted, []);
+    await wait(exitDurationMs() + 60);
+    assert.equal(one(container, ".rowmenu"), null);
   });
 
   test("pressing elsewhere closes it", async () => {
@@ -168,7 +175,46 @@ describe("the row menu", () => {
     await rightClick(rows(container)[0]);
     assert.ok(one(container, ".rowmenu"));
     await pointerDown(window.document.body);
+    assert.equal(one(container, ".rowmenu")!.dataset.state, "closed");
+    await wait(exitDurationMs() + 60);
     assert.equal(one(container, ".rowmenu"), null);
+  });
+
+  test("a closing menu keeps its items, so the exit does not empty itself", async () => {
+    const container = await renderList([conversation()]);
+    await rightClick(rows(container)[0]);
+    await press("Escape");
+    // The anchor and the items are both still there after dismissal. A menu
+    // that dropped its contents on close would visibly collapse to nothing
+    // while fading, which is the animation announcing its own bug.
+    assert.deepEqual(menuItems(container), ["Rename", "Duplicate", "Delete"]);
+  });
+
+  test("an open menu is not inert, a closing one is", async () => {
+    const container = await renderList([conversation()]);
+    await rightClick(rows(container)[0]);
+    assert.equal(one(container, ".rowmenu")!.dataset.state, "open");
+    // The real guard is in the stylesheet, but the attribute that drives it is
+    // the half of that contract this side owns.
+    await press("Escape");
+    assert.equal(one(container, ".rowmenu")!.dataset.state, "closed");
+  });
+
+  test("a menu re-opened after a full close targets the right row", async () => {
+    const first = conversation();
+    const second = conversation({ id: "b".repeat(32), title: "Second" });
+    const container = await renderList([first, second]);
+    await rightClick(rows(container)[0]);
+    await press("Escape");
+    await wait(exitDurationMs() + 60);
+    assert.equal(one(container, ".rowmenu"), null, "the first menu never went away");
+
+    // The window listeners that dismiss the menu are torn down and rebuilt
+    // around `openMenuAt`, so a stale one cannot survive to close the second
+    // menu on its way in.
+    await rightClick(rows(container)[1]);
+    await chooseMenuItem(container, "Duplicate");
+    assert.deepEqual(calls.duplicated, [second.id]);
   });
 
   test("delete removes the row it was opened on", async () => {

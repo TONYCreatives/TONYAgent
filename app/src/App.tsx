@@ -18,10 +18,12 @@ import { pickFolder } from "./dialog";
 import { FileSidebar, type TreeEntry } from "./FileSidebar";
 import { IconRail } from "./IconRail";
 import { MessageList } from "./MessageList";
+import { Overlay } from "./Overlay";
 import { SearchPanel, type SearchMatch } from "./SearchPanel";
 import { SettingsPanel, type ProviderInfo } from "./SettingsPanel";
 import { StatusBar } from "./StatusBar";
 import { TopBar } from "./TopBar";
+import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount";
 
 export function App() {
   const [state, setState] = useState<ChatState>(initialState);
@@ -84,6 +86,19 @@ export function App() {
       // Private mode or storage disabled: the preference just does not stick.
     }
   }, [railExpanded]);
+
+  /*
+   * The window owns three open/closed flags and nothing else about how a
+   * surface behaves. `<Overlay>` handles staying mounted for the exit
+   * animation; the log strip, which is not an overlay, handles its own.
+   *
+   * The confirmation is the one that carries content -- which tool, which
+   * arguments -- so it needs the same retention as the row menu: the request
+   * has to still be there to render while the dialog fades out, or it empties
+   * itself mid-exit.
+   */
+  const logsMounted = useDelayedUnmount(logsOpen);
+  const shownConfirm = useLastValue(state.pendingConfirm);
   // Closed by default. The Files panel is 425px of a three-column window, and
   // opening it by default squeezed the transcript on a normal laptop width for
   // no benefit until the agent has actually touched a file. It still opens
@@ -730,7 +745,28 @@ export function App() {
 
   return (
     <div className={`app${railExpanded ? " rail-open" : ""}`}>
+      {/*
+        Actions above, history below. Both are still one column, but the rail
+        is a fixed handful of buttons and the list is whatever the account has
+        accumulated -- so the variable one goes underneath. With the list on top
+        it was capped at 45% of the window and the cap, not the list, decided
+        where the buttons ended up.
+      */}
       <div className={`sidecol${railExpanded ? " rail-open" : ""}`}>
+        <IconRail
+          connected={connected}
+          busy={state.busy}
+          messageCount={state.messages.length}
+          expanded={railExpanded}
+          onToggle={() => setRailExpanded((open) => !open)}
+          onClear={clear}
+          onCancel={cancel}
+          onSettings={() => {
+            setSettingsError(null);
+            setSettingsOpen(true);
+          }}
+          onSearch={() => setSearchOpen(true)}
+        />
         <ConversationList
           conversations={conversations}
           active={conversation}
@@ -742,20 +778,6 @@ export function App() {
           onRename={(id, title) => void renameConversation(id, title)}
           onDuplicate={(id) => void duplicateConversation(id)}
         />
-      <IconRail
-        connected={connected}
-        busy={state.busy}
-        messageCount={state.messages.length}
-        expanded={railExpanded}
-        onToggle={() => setRailExpanded((open) => !open)}
-        onClear={clear}
-        onCancel={cancel}
-        onSettings={() => {
-          setSettingsError(null);
-          setSettingsOpen(true);
-        }}
-        onSearch={() => setSearchOpen(true)}
-      />
       </div>
 
       <div className="main">
@@ -785,8 +807,8 @@ export function App() {
               <span className="logbar-count">{logLines.length}</span>
             )}
           </button>
-          {logsOpen && (
-            <div className="logstrip">
+          {logsMounted && (
+            <div className="logstrip" data-state={logsOpen ? "open" : "closed"}>
               {logLines.length === 0 ? (
                 <div className="logstrip-empty">No log output yet.</div>
               ) : (
@@ -809,9 +831,15 @@ export function App() {
           onCancel={cancel}
         />
 
-        {state.pendingConfirm && <ConfirmDialog request={state.pendingConfirm} onRespond={respond} />}
+        {shownConfirm && (
+          <ConfirmDialog
+            open={state.pendingConfirm !== null}
+            request={shownConfirm}
+            onRespond={respond}
+          />
+        )}
 
-        {settingsOpen && (
+        <Overlay open={settingsOpen} onDismiss={() => setSettingsOpen(false)}>
           <SettingsPanel
             connected={connected}
             busy={state.busy}
@@ -832,16 +860,16 @@ export function App() {
             onSaveKey={saveKey}
             onDeleteKey={deleteKey}
           />
-        )}
+        </Overlay>
 
-        {searchOpen && (
+        <Overlay open={searchOpen} onDismiss={() => setSearchOpen(false)}>
           <SearchPanel
             connected={connected}
             hasProject={project !== ""}
             onClose={() => setSearchOpen(false)}
             onSearch={search}
           />
-        )}
+        </Overlay>
 
         <StatusBar
           provider={provider}

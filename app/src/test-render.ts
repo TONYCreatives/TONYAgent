@@ -63,6 +63,24 @@ export async function rerender(element: ReactNode): Promise<void> {
   });
 }
 
+/**
+ * Let real time pass while React is still told it is inside `act`.
+ *
+ * Some of the app's behaviour is measured in milliseconds -- a dismissed
+ * overlay stays in the DOM for the length of its exit animation -- so a test
+ * that wants to see the *end* state has to wait for it, not just re-render.
+ *
+ * The wait is wrapped in `act` because the timer callback updates React state.
+ * An update outside `act` is a warning at best and an unflushed render at
+ * worst, and the assertion after it would then be testing a component that had
+ * not actually changed.
+ */
+export async function wait(ms: number): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => dom.window.setTimeout(resolve, ms));
+  });
+}
+
 /** Click an element the way a person would. */
 export async function click(element: Element): Promise<void> {
   await act(async () => {

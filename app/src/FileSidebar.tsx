@@ -13,6 +13,7 @@
  */
 
 import { useMemo, useState } from "react";
+import { useDelayedUnmount } from "./useDelayedUnmount.js";
 
 export interface TreeEntry {
   /** Path relative to the project root, or the folder name for a directory. */
@@ -89,13 +90,20 @@ export function FileSidebar({
   // worse than showing a flat list.
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
+  // The panel and its scrim stay mounted while sliding out, so the branch
+  // below is on `mounted` rather than on `open`. The two branches are mutually
+  // exclusive *trees*, so the reopen button cannot appear until the panel is
+  // really gone -- which is also why the delay is invisible here: nobody is
+  // waiting on a button that has not shown up yet.
+  const mounted = useDelayedUnmount(open);
+
   const visible = useMemo(() => {
     const needle = filter.trim().toLowerCase();
     if (!needle) return entries;
     return entries.filter((e) => e.name.toLowerCase().includes(needle));
   }, [entries, filter]);
 
-  if (!open) {
+  if (!mounted) {
     return (
       <button
         type="button"
@@ -127,11 +135,12 @@ export function FileSidebar({
       <button
         type="button"
         className="sidebar-scrim"
+        data-state={open ? "open" : "closed"}
         onClick={onToggle}
         tabIndex={-1}
         aria-label="Close files"
       />
-      <aside className="sidebar" aria-label="Files">
+      <aside className="sidebar" data-state={open ? "open" : "closed"} aria-label="Files">
       <div className="sidebar-head">
         <svg
           width="15"

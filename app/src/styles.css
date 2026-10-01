@@ -54,11 +54,11 @@
 
   --rail-w: 70px;
   /*
-   * The expanded column holds conversation titles above the rail's labels, and
-   * at 204px a title got about 24 characters -- which truncated every row to
-   * "Explain the sidecar stdi…". The width is set by the list now, not by the
-   * icons, because a truncated title is useless in the one place where the
-   * title is the entire content.
+   * The expanded column is shared by the rail's labels and the conversation
+   * titles below them, and at 204px a title got about 24 characters -- which
+   * truncated every row to "Explain the sidecar stdi…". The width is set by the
+   * list, not by the icons, because a truncated title is useless in the one
+   * place where the title is the entire content.
    */
   --rail-w-expanded: 236px;
   --topbar-h: 42px;
@@ -67,6 +67,26 @@
   --radius: 10px;
   --radius-sm: 7px;
   --radius-pill: 999px;
+
+  /*
+   * Motion, kept apart from the hover transitions below.
+   *
+   * The 0.12s transitions on hover are about state; these are about a surface
+   * arriving and leaving. Two separate scales because they answer different
+   * questions: a hover is answered instantly, an exit needs to be seen to be
+   * understood, and sharing one value would make one of the two wrong.
+   *
+   * Short on purpose. This is a desktop tool that people keep open all day, not
+   * something to be impressed by -- anything past ~200ms reads as lag rather
+   * than as polish.
+   */
+  --motion-fast: 110ms;
+  --motion-base: 160ms;
+  --motion-slow: 240ms;
+  /* Decelerating: entering elements arrive quickly and settle. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Accelerating: leaving elements leave without dawdling. */
+  --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
 
   /*
    * Self-hosted, not `system-ui`.
@@ -192,9 +212,15 @@ body {
 
 /*
  * The conversation list and the icon rail are one column, not two. They are the
- * same "what can I do here" region split by weight -- history above, actions
+ * same "what can I do here" region split by weight -- actions on top, history
  * below -- and giving each its own track meant the rail could not keep its
  * width while the list grew.
+ *
+ * Order is actions first. The rail is a fixed handful of buttons that must sit
+ * in the same place all session; the list is however many conversations the
+ * account has accumulated. Putting the variable length one on top meant a cap
+ * had to be invented for it, and the cap then decided where the buttons landed.
+ * Below, the list takes what is left and the rail can never be displaced.
  */
 .sidecol {
   grid-column: 1;
@@ -225,7 +251,7 @@ body {
 /* --- conversation list ---------------------------------------------------- */
 
 /*
- * Above the rail, not replacing it. The rail is "what can I do" and the list is
+ * Below the rail, not replacing it. The rail is "what can I do" and the list is
  * "what did I do"; stacking them keeps one place to look, and neither has to be
  * collapsed to see the other.
  */
@@ -243,10 +269,11 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  /* The list takes what it needs; the rail below keeps the rest. Without a cap
-     a hundred conversations push the actions off the bottom of the window. */
-  max-height: 45%;
-  border-bottom: 1px solid var(--border-soft);
+  /* Takes whatever the rail above did not, and scrolls inside itself. There is
+     no cap to invent any more: the actions are already pinned at the top, so a
+     hundred conversations cannot push them off the window. */
+  flex: 1;
+  border-top: 1px solid var(--border-soft);
 }
 
 .chatlist-new {
@@ -287,6 +314,8 @@ body {
   padding: 0 8px 8px;
   overflow-y: auto;
   min-height: 0;
+  /* Only the rows scroll; the "New chat" button above them stays put. */
+  flex: 1;
 }
 
 .chatrow {
@@ -439,6 +468,9 @@ body {
   padding: 10px 0;
   overflow: hidden;
   width: var(--rail-w);
+  /* Sized by its buttons, never by the leftover height: the conversation list
+     below is the part of the column that grows and scrolls. */
+  flex: none;
   /*
    * No width transition: the grid track snaps to the new width at the same
    * moment, so animating only the rail would leave it visibly sliding inside a
@@ -537,10 +569,6 @@ body {
   /* Same reason as the status bar: the count changes as the turn streams. */
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
-}
-
-.rail-spacer {
-  flex: 1;
 }
 
 /* --- top bar ------------------------------------------------------------- */
@@ -802,10 +830,6 @@ body {
 @keyframes thinking-pulse {
   0%, 100% { opacity: 0.25; }
   50% { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .thinking-live { animation: none; }
 }
 
 .thinking-warn {
@@ -1936,4 +1960,263 @@ body {
 
 .md-link:hover {
   text-decoration: underline;
+}
+
+/* --- motion ---------------------------------------------------------------- */
+
+/*
+ * Every animated surface in the app, in one place.
+ *
+ * The rule these all follow: a surface renders conditionally and mounts with no
+ * prior state, so it cannot transition *into* existence -- CSS transitions need
+ * a before and an after, and a node that did not exist has no before. The
+ * enter animation therefore has to be a keyframe, driven by a `data-state` the
+ * component sets on mount, and the exit has to be the same keyframe played by
+ * the same node with the other value. `useDelayedUnmount` is what keeps that
+ * node alive long enough for the exit to be seen; nothing here works without
+ * it, and nothing here is needed if it is removed.
+ *
+ * `both` fill on every animation is deliberate. Without it the element snaps
+ * back to its unanimated style in the frame after the animation ends, which on
+ * a fade is a visible flash at the end of the fade.
+ */
+
+/* Enter and exit pairs. Kept as separate keyframes rather than one reversed:
+   the two directions do not want the same geometry, so `rise-out` is shorter
+   than `rise-in` and a menu does not scale from the corner it opened at. */
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+@keyframes rise-out {
+  to { opacity: 0; transform: translateY(4px); }
+}
+
+/* The row menu: it grows out of the button that opened it. */
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.96); }
+}
+
+@keyframes menu-out {
+  to { opacity: 0; transform: scale(0.98); }
+}
+
+/* Backdrops are a full-window tint, so they fade only -- translating a layer
+   that covers everything just reveals the edges. `fade-*` is the generic pair
+   and `scrim-*` is its alias for the files panel's dismiss layer; they are
+   kept as separate names so a future scrim that wants different timing does not
+   have to move every backdrop to get it. */
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+
+@keyframes fade-out {
+  to { opacity: 0; }
+}
+
+@keyframes scrim-in {
+  from { opacity: 0; }
+}
+
+@keyframes scrim-out {
+  to { opacity: 0; }
+}
+
+/* The files sidebar is docked to the right edge, so it slides in from it. */
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(16px); }
+}
+
+@keyframes slide-out-right {
+  to { opacity: 0; transform: translateX(16px); }
+}
+
+/* The log strip animates its own height rather than a wrapper's, because its
+   height is capped by `max-height: 150px` and it has to reach that cap. */
+@keyframes strip-open {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 150px; }
+}
+
+@keyframes strip-close {
+  from { opacity: 1; max-height: 150px; }
+  to { opacity: 0; max-height: 0; }
+}
+
+/* --- surfaces -------------------------------------------------------------- */
+
+/*
+ * A closing overlay must stop eating clicks the instant it is dismissed.
+ * It is still on screen for the length of the exit animation, and a full-window
+ * backdrop left clickable for 150ms after the user closed the dialog is a
+ * window in which the next click goes nowhere.
+ */
+.rowmenu[data-state="closed"],
+.modal-backdrop[data-state="closed"],
+.sidebar[data-state="closed"],
+.sidebar-scrim[data-state="closed"],
+.logstrip[data-state="closed"] {
+  pointer-events: none;
+}
+
+.rowmenu[data-state="open"] {
+  animation: menu-in var(--motion-fast) var(--ease-out) both;
+}
+
+.rowmenu[data-state="closed"] {
+  animation: menu-out var(--motion-fast) var(--ease-in) both;
+}
+
+/*
+ * `transform-origin` matters because `.rowmenu` is `position: fixed` and scaled.
+ * Scaling a fixed element about its centre would drag it away from the button
+ * the user clicked; the top-left corner is the anchor.
+ */
+.rowmenu {
+  transform-origin: top left;
+}
+
+.modal-backdrop[data-state="open"] {
+  animation: fade-in var(--motion-base) var(--ease-out) both;
+}
+
+.modal-backdrop[data-state="closed"] {
+  animation: fade-out var(--motion-fast) var(--ease-in) both;
+}
+
+/*
+ * The dialog inside the backdrop rises while the backdrop fades. Two elements,
+ * two animations, because a single opacity change on the pair makes the dialog
+ * look like it is fading rather than arriving.
+ *
+ * `> .modal` covers the search panel too: it is `class="modal search-modal"`,
+ * so `.search-modal` is a width override, not a second kind of dialog. Listing
+ * it separately would be a rule that silently stops applying the day that
+ * component drops the redundant class.
+ */
+.modal-backdrop[data-state="open"] > .modal {
+  animation: rise-in var(--motion-base) var(--ease-out) both;
+}
+
+.modal-backdrop[data-state="closed"] > .modal {
+  animation: rise-out var(--motion-fast) var(--ease-in) both;
+}
+
+.sidebar[data-state="open"] {
+  animation: slide-in-right var(--motion-base) var(--ease-out) both;
+}
+
+.sidebar[data-state="closed"] {
+  animation: slide-out-right var(--motion-fast) var(--ease-in) both;
+}
+
+.sidebar-scrim[data-state="open"] {
+  animation: scrim-in var(--motion-base) var(--ease-out) both;
+}
+
+.sidebar-scrim[data-state="closed"] {
+  animation: scrim-out var(--motion-fast) var(--ease-in) both;
+}
+
+.logstrip[data-state="open"] {
+  animation: strip-open var(--motion-base) var(--ease-out) both;
+}
+
+.logstrip[data-state="closed"] {
+  animation: strip-close var(--motion-fast) var(--ease-in) both;
+}
+
+/* --- arriving content ------------------------------------------------------ */
+
+/*
+ * The rail's labels fade in after the column has snapped to its new width.
+ * The width itself cannot be transitioned -- the grid track has already moved
+ * by then, so a sliding rail would visibly slide inside a track that snapped
+ * (see `.rail`). Fading the text in after the snap makes the snap read as
+ * deliberate instead of abrupt.
+ */
+.rail.rail-expanded .rail-label {
+  animation: fade-in var(--motion-base) var(--ease-out) both;
+}
+
+/*
+ * Conversation rows, and only the last few.
+ *
+ * A transcript of two hundred rows replaying its own fade-in on open reads as a
+ * slideshow, and the user is waiting for the *end* of it. New messages append
+ * at the tail, so a short stagger on the last four covers what is actually
+ * watched and nothing else.
+ *
+ * These are `.row`, not bubbles, because the tool cards and thinking panel are
+ * rows too and a turn should arrive as one movement rather than as three
+ * unrelated ones.
+ *
+ * Streaming does not re-trigger this: the row is updated in place, so its
+ * animation has already played and is not restarted.
+ */
+.row:nth-last-child(-n + 4) {
+  animation: rise-in var(--motion-base) var(--ease-out) both;
+  animation-delay: 66ms;
+}
+
+/* Same specificity as the rule above, so source order decides: each narrows
+   the tail by one and wins. Deliberately not `calc()` on a custom property --
+   four explicit rules are easier to check against the intent than an
+   arithmetic expression. */
+.row:nth-last-child(-n + 3) { animation-delay: 44ms; }
+.row:nth-last-child(-n + 2) { animation-delay: 22ms; }
+.row:nth-last-child(1) { animation-delay: 0ms; }
+
+/*
+ * Every conversation row at once, with no stagger: the list mounts in a single
+ * frame, so they all animate in the same frame and the list reads as one block
+ * settling rather than as items being dealt out.
+ */
+.chatrow {
+  animation: rise-in var(--motion-base) var(--ease-out) both;
+}
+
+/* --- reduced motion -------------------------------------------------------- */
+
+/*
+ * One block, listing every animation in this file by name. Motion here is
+ * decoration over a state change that is already complete and already
+ * announced in the DOM, so removing it costs nothing -- there is no
+ * information carried by the movement that the `data-state` and `aria-*`
+ * attributes do not already carry. Someone who has asked their operating
+ * system to stop moving things gets a still app, not a slightly less animated
+ * one.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .thinking-live { animation: none; }
+
+  /*
+   * The repeated `[data-state]` halves are not noise, and `!important` was
+   * deliberately not used to avoid them. Every rule being cancelled here is
+   * written `.thing[data-state="open"]` or `.thing[data-state="closed"]`,
+   * which is two classes of specificity; a plain `.thing` here would lose to it
+   * on specificity no matter how much later in the file it is declared. The
+   * animations would then keep playing for precisely the people who asked for
+   * them not to -- a preference silently ignored, which is worse than one that
+   * was never offered. Each selector below therefore matches the specificity of
+   * the rule it overrides, and later source order does the rest.
+   */
+  .rowmenu,
+  .rowmenu[data-state],
+  .modal-backdrop,
+  .modal-backdrop[data-state],
+  .modal-backdrop > .modal,
+  .modal-backdrop[data-state] > .modal,
+  .sidebar,
+  .sidebar[data-state],
+  .sidebar-scrim,
+  .sidebar-scrim[data-state],
+  .logstrip,
+  .logstrip[data-state],
+  .rail.rail-expanded .rail-label,
+  .row:nth-last-child(-n + 4),
+  .chatrow {
+    animation: none;
+  }
 }

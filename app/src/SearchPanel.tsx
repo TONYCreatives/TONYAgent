@@ -13,6 +13,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { Overlay } from "./Overlay.js";
 
 /** One hit, mirroring the `grep_result` artifact the core returns. */
 export interface SearchMatch {
@@ -83,7 +84,7 @@ export function SearchPanel({ connected, hasProject, onClose, onSearch }: Props)
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
+    <Overlay open onDismiss={onClose}>
       <div
         className="modal search-modal"
         role="dialog"
@@ -161,6 +162,6 @@ export function SearchPanel({ connected, hasProject, onClose, onSearch }: Props)
           </div>
         )}
       </div>
-    </div>
+    </Overlay>
   );
 }
