@@ -5,7 +5,7 @@
 and named conversations (see 1.13)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 502 passed, TypeScript 126 passed,
+protocol method.** Everything green: **Python 502 passed, TypeScript 135 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **502 passed, 7 skipped** with Docker Desktop running.
@@ -62,7 +62,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 126 passed (protocol, reducer, markdown, components; no Rust needed)
+cd app && npm test                     # 135 passed (protocol, reducer, markdown, components; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -776,7 +776,7 @@ app/
     backend.ts              the protocol client
     test-dom.ts             installs jsdom on the globals; imported first
     test-render.ts          mount / act / type / press / query helpers
-    *.test.ts, *.test.tsx   126 tests, all run by `npm test`
+    *.test.ts, *.test.tsx   135 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
     capabilities/default.json
@@ -874,10 +874,47 @@ polls must return inside that or it fails with "timed out waiting for the
 expression" -- send the action in one call and poll in later ones rather than
 in one long `await`.
 
-**Still not proven by a run:** the confirmation dialog. It needs a destructive
-tool call, which needs a project folder, and the only way to set one is the
-native folder picker, which CDP cannot drive. It renders through the same
-`Overlay` as settings and search, which were both driven for real.
+**The confirmation dialog is closed now** -- covered by
+`app/src/ConfirmDialog.test.tsx` (9 tests). It genuinely cannot be reached in a
+running app, and the reason is sharper than "needs the picker":
+`tools/orchestrator.py` checks for a project folder *before* it asks, and the
+one tool exempt from that check (`http_request`) is `destructive = False`, so
+it can never reach the confirmation branch at all. No prompt gets there without
+`sandbox.start`, and only the native picker calls it.
+
+So the test renders the real `ConfirmDialog` through props built by the real
+`applyEvent` from the exact payload `session._on_confirmation_requested` emits,
+inside the real `Overlay`, with the real `styles.css` loaded into the document.
+That last part is what makes two of the assertions real rather than nominal:
+jsdom resolves no `animation-name` (every one reads back `none`), so the
+keyframe names are asserted against the stylesheet's text; but it *does* cascade
+ordinary declarations, so `pointer-events` and `--motion-fast` are the browser's
+real values.
+
+The keyframe names were then confirmed in the live webview on the settings
+overlay, which rides the identical `.modal-backdrop[data-state] > .modal` rules:
+open `fade-in`+`rise-in` @160ms with exactly one backdrop, close `fade-out`+
+`rise-out` @110ms, `pointer-events: none`, `elementFromPoint` at the window
+centre hits `.empty` rather than the backdrop, and the node leaves the DOM 149ms
+after the close. (In Chromium `--motion-fast` reads back `.11s`, not `110ms` --
+the re-serialisation from the first pass.
+
+**Found while observing, not fixed (no features this pass):** nothing handles
+Escape while the confirmation is up. `App.tsx` binds Escape for the Files
+overlay, `ConversationList` for its inline rename, and `ConfirmDialog` binds no
+key. The turn stays blocked until Allow or Deny is clicked, or the core's own
+60s timeout denies it. The dialog's comment argues a stray *click* must not
+read as an answer; that reasoning was never carried to the keyboard, where
+Escape is the reflexive "get this off my screen". Asserted as observed
+behaviour in `ConfirmDialog.test.tsx` so it is a visible test, not a blocked turn
+somebody has to diagnose. There is also no cancel button *named* cancel -- the
+buttons are "Allow" and "Deny".
+
+`scripts/observe_confirm_contract.py` covers the core half end to end against the
+real `ToolOrchestrator` and the real `write_file`: one request per untrusted
+destructive call, the five payload keys the dialog reads, approve runs the tool
+and writes the file, deny returns CANCELLED with the filesystem untouched, and a
+second answer for the same call changes nothing.
 
 
 Every value is sampled from a full-resolution screenshot of the Freebuff
