@@ -1,8 +1,9 @@
 # TONYAgent — Project Summary
 
-**Updated:** 2026-10-01 · **Tests:** Python 590 passed, 7 skipped
-(Docker 꺼져 있으면: 589 passed + 1 failed), TypeScript 252 passed
+**Updated:** 2026-10-02 · **Tests:** Python 590 passed, 7 skipped
+(Docker 꺼져 있으면: 589 passed + 1 failed), TypeScript 293 passed
 **Build:** Tauri MSI + NSIS installers produced; app verified running end to end
+(`decorations: false` — 시스템 타이틀 바를 빼고 앱이 직접 그립니다)
 
 ---
 
@@ -131,9 +132,12 @@ MSVC 블로커는 **해결됨** (Visual Studio Community 2026, VC tools 14.51.36
 python -m compileall -q src
 python -m pytest tests -q                    # 590 passed, 7 skipped (Docker up)
 python scripts/check_all.py --fast           # 3 checks
-cd app && npm test                           # 252 passed (Rust 불필요)
+cd app && npm test                           # 293 passed (Rust 불필요)
 python scripts/verify_composer_pass.py       # 패키징된 앱 DOM: 전송 아이콘, 첨부,
                                              # 모델 메뉴, tool call 예산
+python scripts/verify_pass_b.py              # 패키징된 앱 실측: rail 정렬, 자체 타이틀
+                                             # 바, 캡션 권한, 자유 입력 예산
+python scripts/mutate_pass_b.py              # 결함을 되살려 테스트가 빨개지는지 확인
 ```
 
 TypeScript 프로토콜 테스트가 Rust·Tauri·Python 없이 도는 것은 의도된 설계입니다.
@@ -255,3 +259,60 @@ parts로 저장·복원되고, 이를 문자열을 기대하는 컴포넌트에 
   의존하고, 호출부의 `onLoad`는 매 렌더 새 인라인 arrow입니다. `loaded` ref를
   지우면 fetch → 재렌더 → 새 arrow → 다시 fetch로 영원히 돕니다. 뮤테이션
   테스트는 실패하지 않았습니다 — 테스트가 끝나지 않았습니다.
+
+---
+
+## 최근 추가분: pass B — 팝오버 · 커스텀 한도 · 자체 타이틀 바
+
+사용자가 실제로 겪은 네 가지입니다. 커밋은 둘: `16edd40`(팝오버 + 자유 입력),
+`08b3bfb`(타이틀 바 + rail 정렬). **단언이 아니라 측정**으로 확인했습니다.
+
+| 항목 | 무엇이 틀렸는가 | 무엇을 바꿨는가 | 실측 |
+|---|---|---|---|
+| 사이드바 다시 열기 버튼 | `.rail-toggle`의 `align-self: flex-start`가 rail의 `align-items: center`를 덮어씀. 펼친 상태에서는 버튼이 `width: 100%`라 보이지 않고, 접힌 상태에서만 드러남 | 규칙을 `.rail.rail-expanded .rail-toggle { align-self: stretch }`로 좁힘 | 접힌 rail: 토글 x=0 → **x=16** (아이콘과 일치) |
+| 모델 검색창을 누르면 창이 닫힘 | 캡처 단계 `pointerdown`이 **누가 눌렸는지 확인하지 않고** 항상 닫음. 캡처는 DOM보다 먼저 firing | 규칙을 `useDismiss.ts` 한 곳으로. 질문을 "누른 곳이 이 표면 안인가"로 바꿈 | 필터 눌러도 `data-state="open"` 유지 |
+| tool call 한도 커스텀 입력 | 프리셋 5개뿐 | 프리셋 옆에 1–200 자유 입력(Enter 또는 `Set`), **입력 중에는 클램프하지 않고 거절** | 0 입력 → 팝오버 안에 사유 표시, 아무것도 적용 안 됨 |
+| 시스템 기본 title bar | 시스템 캡션 위에 이미 topbar가 있어서 이중 바 | `decorations: false` + 자체 캡션 3버튼, `topbar`가 `.app`의 첫 자식으로 전체 폭 | `is_decorated() === false`, 버튼 우측 1108/1154/1200 |
+
+### 조용히 실패하던 것 세 가지
+
+- **`core:window:default`는 getter만 줍니다.** `minimize` / `toggle_maximize` /
+  `close` / `start_dragging`은 `capabilities/default.json`에 각각 명시해야
+  합니다. 빠지면 캡션은 콘솔에 로그만 남기는 죽은 버튼 3개가 되고, 창은
+  움직이지 않습니다.
+- **`data-tauri-drag-region="deep"`** 가 필요합니다. `"true"`나 속성만 있는
+  형태는 **직접 누른 곳**에서만 발동하므로 사실상 빈 여백에서만 창이
+  움직입니다. 구현은 `tauri-2.12.0/src/window/scripts/drag.js`.
+- **`.topbar`는 `.main`을 벗어났습니다.** 이제 `.app`의 첫 자식이고
+  `grid-column: 1 / -1`이라 캡션이 **창**의 오른쪽 끝에 붙습니다. transcript
+  열에 두면 Files 패널이 그 열을 덮는 순간 캡션이 통째로 가려집니다. `.app`은
+  2행 grid이고 **나머지 in-flow 자식은 전부 `grid-row: 2`를 명시**해야 합니다 —
+  자동 배치면 Files 패널이 없는 빌드에서 rail이 타이틀 바 행에 들어가 창 전체가
+  42px 아래로 밀립니다.
+
+### 이번에 만난 함정
+
+- **캡처 단계 `pointerdown`은 DOM이 "누가 눌렸는지" 알기 전에 발동합니다.**
+  그래서 "창 안인지" 검사 하나가 없으면, 메뉴를 *열어 주는* 클릭이 메뉴를 닫습니다.
+  표면을 감싸는 ref는 패널이 아니라 **wrapper**여야 합니다 — 칩과 버튼이 안에
+  있기 때문입니다.
+- **`align-self` 하나가 테스트로는 안 잡힙니다.** CSS 텍스트로는 멀쩡하고
+  캐스케이드에서만 어긋납니다. 그래서 `layout.test.ts`는 텍스트 매칭이 아니라
+  **해소된 규칙**을 읽습니다.
+- **스타일시트를 읽는 테스트는 reduced-motion 블록도 벗겨야 합니다.**
+  `audit_reduced_motion.py`가 모든 애니메이션의 취소를 요구하므로
+  `.sidebar`의 마지막 선언은 `animation: none`입니다. 주석만 지우면
+  `.sidebar`가 애니메이션으로 해소되어 `top` 단언이 전부 실패합니다.
+- **Windows에서 TypeScript 스위트에 flaky 테스트 하나.** `ComposerAttach`
+  strip 테스트 4개가 전체 실행 5회 중 1회 정도 `0 !== 1`로 떨어집니다. 지난
+  두 패스의 변경을 전부 stash한 상태에서도 재현되므로 **기존 문제**입니다.
+  믿기 전에 다시 실행하고, 쫓지 마세요.
+- **대소문자만 다른 파일명.** `windowControls.ts`와 `WindowControls.tsx`가
+  나란히 있으면 Windows에서만 TS1149/TS1261입니다. 훅은 `useWindowControls.ts`.
+- **앱이 떠 있으면 빌드가 `PermissionDenied`로 죽습니다**(`tauri-build`
+  `lib.rs:164`). 빌드 **전에** `tonyagent-app.exe`와 `msedgewebview2.exe`를
+  먼저 죽이세요.
+- **두 검증기가 같은 칩을 누릅니다.** `verify_pass_b.py`는 모델 메뉴를 열어둔
+  채로 끝나고, `verify_composer_pass.py`는 그 칩을 눌러 토글하므로
+  `send_is_icon`/`model_menu`이 근거 없이 실패합니다. 중간에
+  `location.reload()`을 한 번 돌리세요.

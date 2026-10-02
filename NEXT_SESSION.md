@@ -1,11 +1,12 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-09-30, after the reasoning channel, the thinking panel
-and named conversations (see 1.13)
+**Last updated:** 2026-10-02, after the second UI pass — popovers that survive
+their own clicks, a typeable tool-call limit, and the app's own title bar (see
+"The second UI pass" at the end)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 590 passed, TypeScript 252 passed,
+protocol method.** Everything green: **Python 590 passed, TypeScript 293 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **590 passed, 7 skipped** with Docker Desktop running.
@@ -62,7 +63,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 252 passed (protocol, reducer, markdown, components; no Rust needed)
+cd app && npm test                     # 293 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -84,6 +85,21 @@ because Vite resolves without one and Node does not.
 serialise the whole jsdom element to build its failure message, which took 91
 seconds on a single assertion. `assert.equal(all(c, ".x").length, 0)` fails the
 same way and reads instantly — the whole suite runs in about 2s.
+
+**One test in the TypeScript suite is flaky on Windows.** The four
+`ComposerAttach` strip tests ("a text file is named rather than previewed",
+"picking one shows it before anything is sent", "it can be taken back", "the
+remove button says which file it removes") fail in roughly one full run out of
+five, with `0 !== 1` on the `.attach-item` count — the async file read has not
+landed yet. Confirmed pre-existing: it reproduces with every change of the last
+two passes stashed. Re-run before believing it, and do not chase it.
+
+**A test that reads `styles.css` must strip the reduced-motion block too.**
+`audit_reduced_motion.py` requires every animation to be cancelled under
+`@media (prefers-reduced-motion: reduce)`, so `.sidebar`'s last declaration
+*is* `animation: none`. A reader that only removes comments resolves `.sidebar`
+to its animation and fails any assertion about its `top`. Strip both; see
+`reducedMotion.test.ts` for the pattern.
 
 **Run `e2e_no_docker.py` with the daemon actually stopped.** It prints a
 warning and still passes if a daemon is reachable, so a green run against a
@@ -771,12 +787,16 @@ app/
     IconRail.tsx            left rail (new chat, clear, stop, placeholders)
     Overlay.tsx             dismissible backdrop surface: owns its own lifecycle
     useDelayedUnmount.ts    how long a dismissed surface lingers; useLastValue
-    TopBar.tsx              toggle, conversation tab, new chat
+    useDismiss.ts           the one rule for closing a surface on an outside press
+    TopBar.tsx              the window's own title bar: drag region, tab, caption
+    WindowControls.tsx      the three caption buttons, presentational only
+    useWindowControls.ts    caption actions; null outside the Tauri shell
     styles.css              dark-only tokens sampled from the Freebuff app
     backend.ts              the protocol client
     test-dom.ts             installs jsdom on the globals; imported first
     test-render.ts          mount / act / type / press / query helpers
-    *.test.ts, *.test.tsx   252 tests, all run by `npm test`
+    layout.test.ts          reads the stylesheet's cascade, not its text
+    *.test.ts, *.test.tsx   293 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
     capabilities/default.json
@@ -1684,3 +1704,135 @@ rewrites the user's `config.toml`, so both are proven by unit tests instead.
   removing the `loaded` ref makes the effect call `onLoad`, re-render, get a
   new arrow, and run again forever. The mutation test did not fail -- the test
   run never finished.
+
+### The second UI pass: the popovers, the limit, and the window's own title bar
+
+Four things a person reported, committed in two: `16edd40` (the popovers and the
+typed limit) and `08b3bfb` (the title bar and the rail). Both are measured, not
+asserted — see "Live verification" below.
+
+#### The popovers closed on the press that reached them
+
+`ModelPicker`, `ToolBudgetControl` and `ConversationList`'s row menu each closed
+on a `pointerdown` they listened for during the **capture** phase, and did not
+check where the press landed. Capture runs before the DOM has any say, so
+clicking the model filter — the one thing the menu exists for — closed the menu
+on the way in, and the list was unreachable. Reading as "the control is broken".
+
+The rule now lives once, in [useDismiss.ts](app/src/useDismiss.ts), and asks the
+only question that matters: **is the press inside the surface?** Three copies of
+the listener were how the three drifted into agreeing with each other and not
+with the fix; a fourth surface would have been a fourth copy.
+
+The ref that goes with it is the *wrapper*, not the panel. The model chip and
+the budget button live inside the wrapper, so ref-ing the panel would classify
+a press on the chip as an outside press and close the menu on the same click
+that opened it.
+
+#### A limit you can type
+
+The budget offered 3/5/10/20/50 and nothing else, so a turn that wants 40 calls
+had no way to ask for one. The presets stay; beside them is a field, prefilled
+with the core's own value, `1`–`200`, applying on Enter or on the `Set` button.
+
+`parseBudget` is a pure exported function and it **refuses rather than clamps**,
+including while you are still typing — a field that rewrites "1" to "0" under
+the cursor is worse than one that says no. `Number`, not `parseInt`, so `12abc`
+is a refusal and not a silently accepted 12. A refusal renders *inside the
+popover*, next to the field, with `role="alert"`: the window's error banner is
+several hundred pixels from the person who just pressed Enter, and it persists
+long after they have looked at the field again.
+
+#### The window draws its own title bar
+
+`decorations: false` and `shadow: false` in `tauri.conf.json`, and three SVG
+buttons in `TopBar`. What that required, all of it silent otherwise:
+
+- **`core:window:default` is getters only** (plus
+  `allow-internal-toggle-maximize`). `minimize`, `toggle_maximize`, `close` and
+  `start_dragging` each need their own entry in `capabilities/default.json`, or
+  the caption is three dead buttons that log to the console and a window that
+  cannot be moved. `verify_pass_b.py` proves them by toggling the window,
+  checking it changed, and toggling it back.
+- **`data-tauri-drag-region="deep"`**, not `"true"`. Bare and `"true"` fire only
+  on a *direct* press, which in practice means the empty pixels; `"deep"` covers
+  the subtree, so a press on the tab pill's padding moves the window. Clickable
+  elements (`BUTTON`, `INPUT`, …) still swallow it unless they carry the
+  attribute themselves. The implementation is
+  `tauri-2.12.0/src/window/scripts/drag.js`.
+- **`.topbar` had to leave `.main`.** It is now the first child of `.app` and
+  spans `grid-column: 1 / -1`, so the caption sits at the right edge of the
+  *window* rather than of the transcript column — the Files panel overlays that
+  column, and a caption inside it is covered the moment the panel opens. `.app`
+  is a two-row grid and **every in-flow child names `grid-row: 2` explicitly**:
+  with auto-placement a build that renders no Files panel would push the rail
+  into the title bar's row and render the whole window 42px lower.
+  `.sidebar`/`.sidebar-scrim` start at `top: var(--topbar-h)`, so the panel
+  overlays the transcript and never the caption.
+
+#### The reopen button was against the window edge
+
+`.rail-toggle` carried `align-self: flex-start`, overriding the rail's
+`align-items: center` in *both* states. Expanded it bought nothing —
+`.rail-expanded .rail-btn` is `width: 100%` there, so cross-axis placement is
+invisible — and collapsed it put the one control that brings the sidebar back at
+x=0 while every other icon sat at x=16. The fix narrows the rule to
+`.rail.rail-expanded .rail-toggle { align-self: stretch }`.
+
+This is the kind of bug a screenshot catches and a stylesheet test does not:
+nothing in the CSS is wrong on its own, it is the cascade. Hence
+[layout.test.ts](app/src/layout.test.ts) reads resolved rules rather than
+matching text.
+
+#### Live verification
+
+`scripts/verify_pass_b.py` — six CDP probes against the packaged app, because
+three of the four fixes are facts about the *shipped window* and no unit test can
+see them:
+
+```
+rail_collapsed_alignment   {"railWidth":70,"lefts":[16],"aligned":true}
+title_bar_is_ours          {"dragRegion":"deep",0..1200,"buttons":[3 correct labels, all drawn]}
+window_is_undecorated      {"decorated":false}
+caption_commands_are_permitted  {"before":false,"after":true,"restored":false}
+budget_free_field          prefilled "10"; 0 refused in place, popover still open, nothing applied
+pressing_the_model_filter_keeps_the_menu  {"state":"open"}
+```
+
+Build and run it with the app **not** already running:
+
+```bash
+cmd //c ".\Build TONYAgent.bat" /q > /tmp/build.log 2>&1 &   # ~4 min; poll
+taskkill //IM tonyagent-app.exe //F && taskkill //IM msedgewebview2.exe //F
+(WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 \
+  ./app/src-tauri/target/release/tonyagent-app.exe > /tmp/app.log 2>&1 &) ; sleep 28
+python scripts/verify_pass_b.py
+python scripts/verify_composer_pass.py     # reload the page first, see below
+```
+
+`scripts/mutate_pass_b.py` puts each of the four defects back and requires at
+least one test to go red, then restores every file — the only honest check on a
+regression test. Current result: all four caught (the dismissal rule by 8 tests,
+the rail and the drag region by `layout.test.ts`/`TopBar.test.tsx`, the clamped
+budget by the refusal test).
+
+#### Traps hit while doing this
+
+- **A build fails with `PermissionDenied` at `tauri-build` `lib.rs:164` if the
+  app is still running.** The binary is locked. `taskkill` both
+  `tonyagent-app.exe` and `msedgewebview2.exe` *before* starting a build, not
+  when it fails.
+- **Two of the two verifiers touch the model chip.** `verify_pass_b.py` leaves
+  the model menu open; `verify_composer_pass.py` presses the chip to toggle it,
+  and then fails `send_is_icon`/`model_menu` for reasons that have nothing to do
+  with the code under test. Run `location.reload()` in the CDP target between
+  them.
+- **A filename that differs only in case.** `windowControls.ts` next to
+  `WindowControls.tsx` is TS1149/TS1261 on Windows and passes anywhere else. The
+  hook is `useWindowControls.ts`.
+- **CRLF is not uniform.** `app/src/styles.css` and `app/src/backend.ts` are
+  CRLF; most of `app/src/*.tsx` are LF. A patch anchored on `\r\n` silently
+  misses a file that is LF, and a patch that writes LF into a CRLF file shows up
+  later as a whole-file diff.
+- **Nested triple quotes inside `python -c` heredocs break.** One-shot patchers
+  go in `scripts/_something.py`, get deleted afterwards, and are never staged.
