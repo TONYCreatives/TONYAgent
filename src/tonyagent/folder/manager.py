@@ -21,11 +21,50 @@ class FolderManager:
         self._lock_callbacks: list[Callable[[bool, str], None]] = []
         self._lock = Lock()
 
-        # Load last used folder from settings
-        if settings.folder.current:
-            path = Path(settings.folder.current)
+        restored = self._restored_folder()
+        if restored:
+            path = Path(restored)
             if path.exists() and path.is_dir():
                 self._current_folder = path
+            else:
+                # Worth saying out loud. A folder that has been moved or renamed
+                # leaves the tools with no workspace at all, and every one of
+                # them answers "No project folder selected" -- which reads as
+                # "you never picked one" rather than "the one you picked is
+                # gone". The recent list still has it, and the user can re-pick.
+                logger.warning(
+                    f"The last project folder is no longer there: {restored}"
+                )
+
+    @staticmethod
+    def _restored_folder() -> str:
+        """The last chosen folder, from wherever it was actually written.
+
+        **The config file is the source of truth, not `settings`.**
+        `settings.folder.current` is only ever assigned by `set_folder`, which
+        updates this process and nothing else -- nothing loads config.toml into
+        the settings model. So reading it here returned "" on every launch and
+        the restore never once worked, however many times the user picked a
+        folder.
+
+        Reading the file directly is what the sidecar already does for the saved
+        provider (`headless/server.py`), for the same reason: the sidecar never
+        populates `settings` from disk. A folder chosen last week survived a
+        restart in the config file and was still ignored.
+
+        The model is consulted as well, because the Tkinter path populates it,
+        and either source agreeing is harmless.
+        """
+        if settings.folder.current:
+            return settings.folder.current
+        try:
+            from tonyagent.config.migration import load_config
+
+            section = load_config().get("folder") or {}
+            return str(section.get("current") or "").strip()
+        except Exception as exc:  # noqa: BLE001 - no config is not an error
+            logger.warning(f"Could not read the saved project folder: {exc}")
+            return ""
 
     @property
     def current_folder(self) -> Optional[Path]:
@@ -57,6 +96,24 @@ class FolderManager:
             self._current_folder = path
             self._update_recent_folders(path)
             settings.folder.current = str(path)
+            # Written to disk as well as to the model. Assigning to `settings`
+            # only updates this process: nothing writes config.toml on attribute
+            # assignment, so without this the choice worked for the session and
+            # then evaporated on the next launch. What the user saw after that
+            # was the worst version of it -- the sidebar still showed the
+            # project, because a conversation records its own `project` on disk,
+            # while every tool answered "No project folder selected", because the
+            # folder itself came back empty.
+            #
+            # Best-effort, and deliberately not fatal: a read-only config file
+            # must not stop the user working in the folder they just opened.
+            # The choice holds for this session either way.
+            try:
+                from tonyagent.config.migration import save_folder
+
+                save_folder(str(path), settings.folder.recent)
+            except Exception as exc:  # noqa: BLE001 - the folder still works
+                logger.warning(f"Could not remember the chosen folder: {exc}")
             logger.info(f"Set current folder: {path}")
             return True
 

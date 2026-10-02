@@ -353,8 +353,34 @@ export function Composer({
           />
 
           {busy ? (
-            <button type="button" className="btn" onClick={onCancel}>
-              Stop
+            // An icon in the send button's own box, not a text pill.
+            //
+            // It used to be a `btn` with the word "Stop" in it, which is two
+            // sizes wider than the icon it replaces -- so the control row
+            // reflowed every time a turn started, dragging the model chip and
+            // the `+` beside it sideways mid-turn. A control that moves while
+            // you are using it is a control you have to hunt for again.
+            //
+            // Filled like send rather than outlined: this is the button that
+            // stops what is happening, and leaving the accent on the send
+            // button's own position would make the two hard to tell apart at a
+            // glance -- which is precisely when you need to.
+            <button
+              type="button"
+              className="icon-btn stop-btn"
+              onClick={onCancel}
+              aria-label="Stop"
+              title="Stop"
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <rect x="6" y="6" width="12" height="12" rx="1.5" />
+              </svg>
             </button>
           ) : (
             <button

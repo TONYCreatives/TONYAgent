@@ -873,6 +873,118 @@ def test_a_restored_folder_is_reported_as_the_current_project(tmp_path, restore_
     )
 
 
+def test_choosing_a_folder_is_remembered_across_a_restart(tmp_path, monkeypatch):
+    """The chosen folder has to reach config.toml, not just the live model.
+
+    `FolderManager.set_folder` assigns to `settings.folder.current`, and
+    assigning to a pydantic model does not write the file. So the folder worked
+    for the session and was gone on the next launch.
+
+    The symptom was worse than a lost preference. A conversation records its own
+    `project` on disk, so after the restart the sidebar still drew the project
+    and "New chat" still offered to file into it -- while every tool answered
+    "No project folder selected", because the folder the tools resolve against
+    really was empty. The window said one thing and the gate enforced another.
+
+    **Asserted by reloading the file rather than by reading the model.** The
+    model always held the right value, so an assertion on it would have passed
+    throughout while the bug was live. This is the check the old code fails.
+
+    The config path is pointed at a tmp file so the test neither reads nor
+    overwrites the user's real config -- `set_folder` writes to it now, and a
+    test that did that on the real path would be editing the user's machine.
+    """
+    from tonyagent.config import migration
+    from tonyagent.folder import folder_manager
+
+    workspace = tmp_path / "chosen"
+    workspace.mkdir()
+    config_file = tmp_path / "config.toml"
+    monkeypatch.setattr(migration, "get_config_path", lambda: config_file)
+
+    previous = folder_manager.current_folder
+    try:
+        assert folder_manager.set_folder(workspace) is True
+
+        assert config_file.exists(), "nothing was written to the config file"
+        written = migration.load_config()
+        assert written.get("folder", {}).get("current") == str(workspace), (
+            "the chosen folder is not in config.toml, so it will be gone on the "
+            f"next launch; found {written.get('folder')!r}"
+        )
+        # The recent list travels with it, or the picker would offer a history
+        # that does not include the folder currently in use.
+        assert str(workspace) in written["folder"]["recent"]
+    finally:
+        if previous is not None:
+            folder_manager.set_folder(previous)
+
+
+def test_a_fresh_folder_manager_reads_the_folder_off_disk(tmp_path, monkeypatch):
+    """The other half of persisting it: something has to read it back.
+
+    `set_folder` assigns to `settings.folder.current` and to config.toml, but
+    the model is only ever populated in the process that made the assignment --
+    nothing loads config.toml into it. So `FolderManager.__init__`, which read
+    the model, returned "" on every launch and the restore had never once
+    worked, however often the user picked a folder.
+
+    Asserted by building a *new* manager over the same config, which is what a
+    relaunch does. Checking the live singleton would pass throughout while the
+    bug was in place, because the live one still had the value in memory.
+
+    The config path is redirected so this neither reads nor writes the user's
+    real config.
+    """
+    from tonyagent.config import migration
+    from tonyagent.folder.manager import FolderManager
+
+    workspace = tmp_path / "restored"
+    workspace.mkdir()
+    config_file = tmp_path / "config.toml"
+    monkeypatch.setattr(migration, "get_config_path", lambda: config_file)
+
+    # Start from nothing, so the only possible source is the file.
+    monkeypatch.setattr(
+        "tonyagent.folder.manager.settings.folder.current", "", raising=False
+    )
+
+    migration.save_folder(str(workspace), [str(workspace)])
+    fresh = FolderManager()
+
+    assert fresh.current_folder == workspace, (
+        "a fresh FolderManager did not restore the saved folder; the sidecar "
+        "reads its config file directly and never populates the settings model"
+    )
+
+
+def test_a_folder_that_moved_does_not_stop_the_launch(tmp_path, monkeypatch):
+    """Renaming the folder is not a reason to fail to start.
+
+    The folder is simply not restored, so the user re-picks one -- which is a
+    thing they can do -- rather than the process refusing to come up.
+    """
+    from tonyagent.config import migration
+    from tonyagent.folder.manager import FolderManager
+
+    vanished = tmp_path / "renamed-away"
+    vanished.mkdir()
+    config_file = tmp_path / "config.toml"
+    monkeypatch.setattr(migration, "get_config_path", lambda: config_file)
+    monkeypatch.setattr(
+        "tonyagent.folder.manager.settings.folder.current", "", raising=False
+    )
+
+    migration.save_folder(str(vanished), [str(vanished)])
+    vanished.rmdir()
+
+    fresh = FolderManager()
+    assert fresh.current_folder is None, (
+        "a folder that has moved was restored anyway, so every tool would fail "
+        "against a directory that is not there"
+    )
+
+
 # --- search ----------------------------------------------------------------
 def test_search_finds_matches_in_the_project(tmp_path, monkeypatch):
     (tmp_path / "a.py").write_text("import os\n\ndef load():\n    return 1\n", encoding="utf-8")

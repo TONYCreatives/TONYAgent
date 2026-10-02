@@ -2093,6 +2093,35 @@ body {
   filter: none;
 }
 
+/*
+ * The stop button, which replaces send while a turn runs.
+ *
+ * **Same box as send, and it gets that from `.icon-btn`.** It used to be a
+ * `.btn` -- a pill with the word "Stop" in it -- in the send button's slot, so
+ * it was wider than the icon it replaced and the control row reflowed every
+ * time a turn started, moving the model chip and the `+` sideways mid-turn.
+ *
+ * It deliberately does *not* reuse `.send-btn`. That class carries Send's
+ * accent fill, and borrowing it made "is there a send button on screen?"
+ * answer yes while Stop was up -- which is the exact question the busy-state
+ * test asks, and which the whole "replaced, not disabled" behaviour rests on.
+ *
+ * The accent fill is kept, deliberately: this is the same button in a different
+ * state, so it should look like it rather than like a different control that
+ * happened to appear. What distinguishes it is the shape inside -- a filled
+ * square against an arrow.
+ */
+.icon-btn.stop-btn {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.icon-btn.stop-btn:hover {
+  background: var(--accent);
+  color: var(--accent-fg);
+  filter: brightness(1.06);
+}
+
 .btn {
   flex: none;
   height: 30px;

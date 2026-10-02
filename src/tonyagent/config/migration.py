@@ -161,3 +161,32 @@ def reset_config() -> None:
     if config_path.exists():
         config_path.unlink()
     logger.info("Configuration reset to defaults")
+
+
+def save_folder(current: str, recent: list[str] | None = None) -> None:
+    """Record the project folder the user chose, so the next launch opens it.
+
+    **`folder_manager.set_folder` assigns to the in-memory `settings` model and
+    that is not enough.** The model is never written back on attribute
+    assignment, so the choice worked for the session and then vanished: the
+    sidebar still showed the project, because a conversation records its own
+    `project` on disk, while every tool reported "No project folder selected",
+    because the folder itself came back empty. The window and the gate
+    disagreeing about which project is open, which is the same failure as the
+    one `_bind_project` fixes -- only across a restart instead of within one.
+
+    Same read-modify-write as :func:`save_max_tool_calls`, and for the same
+    reason: the sidecar never loads ``settings``, so assembling a config dict
+    from it here would write defaults over the user's real settings.
+
+    Both ``current`` and ``recent`` are written together because they are one
+    decision. ``FolderManager`` updates them in the same call, and writing only
+    ``current`` would leave the recent list describing a folder that is no
+    longer the one in use.
+    """
+    config = load_config()
+    section = config.setdefault("folder", {})
+    section["current"] = str(current or "")
+    if recent is not None:
+        section["recent"] = [str(p) for p in recent]
+    save_config(config)

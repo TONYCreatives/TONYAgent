@@ -91,7 +91,7 @@ const sendButton = (container: HTMLElement) =>
   one(container, ".send-btn") as HTMLButtonElement | null;
 
 const stopButton = (container: HTMLElement) =>
-  one(container, ".composer-row .btn") as HTMLButtonElement | null;
+  one(container, ".stop-btn") as HTMLButtonElement | null;
 
 const messageField = (container: HTMLElement) =>
   one(container, ".composer-inner textarea") as HTMLTextAreaElement | null;
@@ -300,7 +300,41 @@ describe("the send button while the agent is working", () => {
     // interrupt" and "you can also send", which is only half true.
     const { container } = await composer({ reasoning: null, busy: true });
     assert.equal(sendButton(container), null, "a send button survived into a busy turn");
-    assert.equal(stopButton(container)!.textContent, "Stop");
+    // Named by an icon now, so the name lives in the accessibility tree rather
+    // than in the pixels -- which is the only place it can still be read.
+    assert.equal(stopButton(container)!.getAttribute("aria-label"), "Stop");
+  });
+
+  test("Stop occupies the send button's own box", async () => {
+    // It used to be a `.btn` -- a pill with the word "Stop" in it -- sitting in
+    // the send button's slot, so it was wider than the icon it replaced and the
+    // control row reflowed every time a turn started, dragging the model chip
+    // and the `+` sideways mid-turn.
+    //
+    // jsdom has no layout engine, so this cannot compare boxes. What it *can*
+    // check is the rule that makes them agree: both are `.icon-btn`, whose one
+    // declaration sets a fixed 28x28. Sharing `.send-btn` would have been the
+    // wrong way to do it -- that class carries Send's accent fill, and reusing
+    // it made "is there a send button?" answer yes while Stop was on screen.
+    const { container } = await composer({ reasoning: null, busy: true });
+    const stop = stopButton(container)!;
+    assert.ok(
+      stop.classList.contains("icon-btn"),
+      "Stop is not an icon button, so it cannot take Send's 28x28 box",
+    );
+    assert.ok(
+      !stop.classList.contains("send-btn"),
+      "Stop reuses Send's class, so anything asking 'is send on screen?' is lied to",
+    );
+  });
+
+  test("and it stops rather than sending", async () => {
+    // The two buttons look alike on purpose -- same box, same fill -- so this is
+    // the assertion that keeps "alike" from becoming "the same control".
+    const { container, calls } = await composer({ reasoning: null, busy: true });
+    await click(stopButton(container)!);
+    assert.equal(calls.cancelled, 1);
+    assert.deepEqual(calls.sent, [], "the interrupt sent a message");
   });
 
   test("Stop is the button that interrupts, and it says what it does", async () => {

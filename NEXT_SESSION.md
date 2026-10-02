@@ -11,7 +11,7 @@ from DWM, and the conversation list turned from a docked column into an
 animated overlay panel (see "The fourth UI pass" near the end)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 602 passed, TypeScript 381 passed,
+protocol method.** Everything green: **Python 581 passed, TypeScript 383 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **590 passed, 7 skipped** with Docker Desktop running.
@@ -68,7 +68,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 381 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
+cd app && npm test                     # 383 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -2437,3 +2437,69 @@ showing their choice. The bar and the gate must not disagree.
   different test each time. **Pre-existing**, reproduced on unmodified code
   earlier in the project, and unrelated — it is an attachment-preview test
   and nothing here touches attachments.
+
+## A follow-up to the permission bar: two real bugs
+
+Both found by using the app rather than by reading it, and both the same shape
+as the ones above: **the window said one thing and the core enforced another.**
+
+### 1. A chosen folder was never remembered (two bugs, not one)
+
+The report was "I already picked a folder and it says it cannot see it". The
+sidebar *did* show `WebAIAgent`, so the label was right and the tools were
+wrong.
+
+There were **two independent halves, and fixing only one changes nothing**:
+
+- **Write.** `FolderManager.set_folder` assigned to `settings.folder.current`
+  and stopped. Nothing writes config.toml on attribute assignment, so the
+  choice never left the process.
+- **Read.** Even once written, nothing read it back. `FolderManager.__init__`
+  read `settings.folder.current`, which is only ever populated *in the process
+  that made the assignment* -- the sidecar never loads config.toml into the
+  settings model. It reads the file directly for the saved provider, in
+  `headless/server.py`, for exactly this reason.
+
+**So the restore had never once worked**, however often a folder was picked.
+Fixing only the write would have looked fixed in the session and still been
+broken on the next launch, which is the more annoying shape of the bug.
+
+Why the label was still right: a conversation records its own `project` on
+disk, so the sidebar drew the project after a restart while every tool
+answered "No project folder selected". One more disagreement between a field
+and the folder the tools actually resolve against.
+
+`save_folder` in `config/migration.py` follows the existing read-modify-write
+pattern, for the documented reason (the sidecar never loads `settings`, so
+assembling a dict from it would write defaults over the user's real config).
+
+Both tests are asserted **by reloading the file and building a fresh
+`FolderManager`**, never by reading the live model -- the model held the right
+value throughout, so an assertion on it would have passed while the bug was
+live. The write test was checked to fail with the saver disabled
+("nothing was written to the config file").
+
+### 2. Stop was a wide text pill where Send is a 28px icon
+
+`.btn` with the word "Stop" in it, in the send button's slot, so it was much
+wider than the icon it replaced: **the control row reflowed every time a turn
+started**, dragging the model chip and the `+` sideways mid-turn.
+
+Now `.icon-btn.stop-btn`, so it takes its 28x28 from the same rule Send does.
+
+**It deliberately does not reuse `.send-btn`.** That was the first attempt, and
+it was wrong twice over: that class carries Send's accent fill, and reusing it
+made "is there a send button on screen?" answer *yes while Stop was up* -- which
+is the exact question the existing busy-state test asks, and which the whole
+"replaced, not disabled" behaviour rests on. The test caught it as a
+`RangeError` from node trying to diff a DOM element.
+
+### Verified
+
+- **Python 581 passed** (excluding `test_build_scripts.py`), **TypeScript 383
+  passed**, Composer 27/27 with no `RangeError`.
+- `test_build_scripts.py` fails 2-4 tests per run, **hitting different ones
+  each time**. Reproduced on unmodified code with everything stashed, so it is
+  pre-existing and environment-dependent (it runs the real launcher). Worth
+  knowing before spending time on it.
+- `ComposerAttach` still flakes ~1 run in 3 on Windows, as before.
