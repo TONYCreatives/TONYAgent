@@ -27,6 +27,10 @@
     },
     "shell:allow-stdin-write",
     "shell:allow-kill",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging"
   ]
-}
+}

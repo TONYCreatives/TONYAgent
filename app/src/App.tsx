@@ -31,6 +31,7 @@ import { SettingsPanel, type ProviderInfo } from "./SettingsPanel";
 import { StatusBar } from "./StatusBar";
 import { TopBar } from "./TopBar";
 import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount";
+import { useWindowControls } from "./useWindowControls";
 
 export function App() {
   const [state, setState] = useState<ChatState>(initialState);
@@ -104,6 +105,17 @@ export function App() {
       return false;
     }
   });
+
+  /*
+   * The caption buttons. Null outside the Tauri shell, so the bar draws nothing
+   * rather than drawing three controls with nothing behind them.
+   *
+   * Read here and passed into the bar rather than called inside it so the top
+   * bar stays a pure component -- the window is the shell's business, and a
+   * title bar that reached for it itself could not be rendered in a test or in
+   * a browser.
+   */
+  const windowControls = useWindowControls();
   useEffect(() => {
     try {
       localStorage.setItem("tonyagent.rail-expanded", railExpanded ? "1" : "0");
@@ -894,6 +906,20 @@ export function App() {
   return (
     <div className={`app${railExpanded ? " rail-open" : ""}`}>
       {/*
+        The title bar spans the window, not the transcript column.
+
+        It has to: the caption buttons have to sit at the right *edge of the
+        window*, and a bar confined to column 2 would put them 425px from that
+        edge the moment the Files panel opened -- which is where the panel's own
+        header is. It also means the whole top edge is a drag handle, rather than
+        the part of it that happens to be over the transcript.
+
+        Placed first, and pinned to row 1 in CSS along with everything else, so
+        no sibling's absence can move it into a different row.
+      */}
+      <TopBar busy={state.busy} title={activeTitle} controls={windowControls} />
+
+      {/*
         Actions above, history below. Both are still one column, but the rail
         is a fixed handful of buttons and the list is whatever the account has
         accumulated -- so the variable one goes underneath. With the list on top
@@ -929,8 +955,6 @@ export function App() {
       </div>
 
       <div className="main">
-        <TopBar busy={state.busy} title={activeTitle} />
-
         <MessageList messages={state.messages} busy={state.busy} />
 
         {state.error && <div className="banner">{state.error}</div>}

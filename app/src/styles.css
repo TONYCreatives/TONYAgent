@@ -199,7 +199,19 @@ body {
 .app {
   display: grid;
   grid-template-columns: var(--rail-w) minmax(0, 1fr) auto;
-  grid-template-rows: 100%;
+  /*
+   * Two rows, because the window has no system title bar and `.topbar` is now
+   * the one. It spans all three columns (see `.topbar`) so the caption buttons
+   * sit at the right edge of the *window* rather than of the transcript column
+   * -- the Files panel overlays that column, and a caption inside it would be
+   * covered the moment the panel opened.
+   *
+   * Every in-flow child therefore names its row explicitly. With auto-placement
+   * the grid would fill row 1 first, so a build where the Files panel is not
+   * rendered at all would push the rail into the title bar's row and render the
+   * whole window 42px lower. Placement must not depend on which siblings exist.
+   */
+  grid-template-rows: var(--topbar-h) minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
   /* Positioning context for the Files overlay and its scrim. */
@@ -224,6 +236,7 @@ body {
  */
 .sidecol {
   grid-column: 1;
+  grid-row: 2;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -246,6 +259,7 @@ body {
    * siblings happen to be rendered.
    */
   grid-column: 2;
+  grid-row: 2;
 }
 
 /* --- conversation list ---------------------------------------------------- */
@@ -520,8 +534,19 @@ body {
   padding: 10px 10px;
 }
 
-.rail-toggle {
-  align-self: flex-start;
+/*
+ * The toggle used to carry `align-self: flex-start`, which overrode the rail's
+ * `align-items: center` in *both* states. It bought nothing when expanded --
+ * `.rail-expanded .rail-btn` is `width: 100%` there, so the cross-axis
+ * placement is invisible -- and in the collapsed rail it pushed the reopen
+ * button to x=0 while every other icon sat at x=16, so the one control that
+ * brings the sidebar back was the one hanging against the window edge.
+ *
+ * Measured, not assumed: with the rule, collapsed toggle x=0 vs icons x=16;
+ * expanded, both x=10 w=216.
+ */
+.rail.rail-expanded .rail-toggle {
+  align-self: stretch;
 }
 
 .rail-expanded .rail-btn {
@@ -605,15 +630,67 @@ body {
 /* --- top bar ------------------------------------------------------------- */
 
 .topbar {
+  /* Spans every column: this is the title bar, so it is as wide as the window. */
+  grid-column: 1 / -1;
+  grid-row: 1;
   display: flex;
   align-items: center;
   gap: 8px;
   height: var(--topbar-h);
-  padding: 0 14px 0 10px;
+  padding: 0 0 0 10px;
   border-bottom: 1px solid var(--border-soft);
   /* A hair lighter than the rail and transcript. The reference uses this to
      separate the chrome from the content without a visible border. */
   background: var(--chrome);
+  /*
+   * No selection. Dragging a window by its title bar must not smear the tab
+   * pill's text across the bar, and this is the one strip of chrome where there
+   * is nothing worth selecting anyway.
+   */
+  user-select: none;
+}
+
+/*
+ * The caption buttons, drawn here because `decorations: false` removed the
+ * system ones.
+ *
+ * They run the full height of the bar and sit flush to the window edge, which is
+ * what makes them read as the frame of the window rather than as three more
+ * controls in the top right. Windows puts close last; the tint on hover matches
+ * what the system caption did, because that is the one part of the old bar whose
+ * behaviour people already have in their hands.
+ *
+ * `transition`, not `animation`, so `audit_reduced_motion.py` does not apply:
+ * a hover that fills in is a state change, and the rest of this file answers
+ * hovers the same way.
+ */
+.window-controls {
+  display: flex;
+  align-self: stretch;
+  margin-left: auto;
+}
+
+.win-btn {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.win-btn:hover,
+.win-btn:focus-visible {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.win-btn.is-close:hover,
+.win-btn.is-close:focus-visible {
+  background: var(--danger);
+  color: #1a0a08;
 }
 
 .topbar-toggle {
@@ -2127,9 +2204,18 @@ body {
  * nature obvious and gives the click-anywhere-to-dismiss behaviour that a
  * docked panel cannot have.
  */
+/*
+ * Starts below the title bar rather than at the top of the window.
+ *
+ * The panel is an overlay, so it would otherwise cover the caption -- putting
+ * its own header where the window's close button is, with the caption
+ * unreachable underneath it. It also takes the drag region with it, which would
+ * leave a window with the Files panel open impossible to move except by the
+ * narrow strip of rail beside it.
+ */
 .sidebar {
   position: absolute;
-  top: 0;
+  top: var(--topbar-h);
   right: 0;
   bottom: 0;
   z-index: 4;
@@ -2151,7 +2237,7 @@ body {
  */
 .sidebar-scrim {
   position: absolute;
-  inset: 0;
+  inset: var(--topbar-h) 0 0 0;
   z-index: 3;
   background: rgba(8, 8, 8, 0.35);
   backdrop-filter: blur(1.5px);
@@ -2305,6 +2391,7 @@ body {
 /* Reopen affordance for the collapsed sidebar: a slim handle on the edge. */
 .sidebar-reopen {
   grid-column: 3;
+  grid-row: 2;
   display: grid;
   place-items: start center;
   width: 34px;
