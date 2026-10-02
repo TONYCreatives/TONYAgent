@@ -88,19 +88,17 @@
 
   --rail-w: 52px;
   /*
-   * The expanded column is shared by the rail's labels and the conversation
-   * titles below them, and at 204px a title got about 24 characters -- which
-   * truncated every row to "Explain the sidecar stdi…". The width is set by the
-   * list, not by the icons, because a truncated title is useless in the one
-   * place where the title is the entire content.
+   * The open column is the rail and the list side by side: 52px of --chrome and
+   * 255px of --bg, which is what the reference measures at x=0..92 and
+   * x=92..538 of a full-DPI capture. 307 is their sum, not a chosen width.
    *
-   * The reference's own list is 204px, and this stays 20px wider than that on
-   * purpose: matching it exactly means bringing back the truncation, and a
-   * palette is a design decision while a truncated title is a broken one. The
-   * rail above is 52px either way, so the column still reads as the same
-   * proportion at a glance.
+   * The list therefore gets the reference's 255px rather than a width picked to
+   * avoid truncation -- which was the argument for 236px back when the rail
+   * *was* the column and the list sat underneath it. Matching the reference
+   * turns out to give the list more room than the compromise did, because the
+   * rail no longer has to share it.
    */
-  --rail-w-expanded: 236px;
+  --rail-w-expanded: 307px;
   /* 85 physical pixels of bar in the full-DPI capture. 46px was measured off a
      * downscaled screenshot and came out two pixels short. */
   --topbar-h: 48px;
@@ -285,7 +283,17 @@ body {
   grid-column: 1;
   grid-row: 2;
   display: flex;
-  flex-direction: column;
+  /*
+   * A row, not a column: the rail is a fixed 52px strip and the conversation
+   * list fills what is left of it. They used to be stacked, actions above
+   * history, which meant the rail could not be full height -- it was sized by
+   * its buttons and stopped at the last icon -- and which put a 236px chrome
+   * block over the list the moment the sidebar opened. Side by side, the strip
+   * runs the length of the window the way the reference's does.
+   *
+   * Order is still rail first, so it is the left edge of the column.
+   */
+  flex-direction: row;
   min-width: 0;
   height: 100%;
   overflow: hidden;
@@ -325,10 +333,9 @@ body {
  * collapsed to see the other.
  */
 /*
- * Hidden while the rail is collapsed. At 70px a conversation title has room for
- * about six characters, so a list there is not a compact list -- it is a column
- * of unreadable slivers, and it costs the icons their window. The rail's own
- * toggle is the way back in.
+ * Hidden while the sidebar is collapsed. The column is 52px then, which is
+ * exactly the rail's width, so the strip is left alone rather than being
+ * squeezed to nothing -- and the rail's own toggle is the way back in.
  */
 .sidecol:not(.rail-open) .chatlist {
   display: none;
@@ -338,14 +345,15 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  /* Takes whatever the rail above did not, and scrolls inside itself. There is
-     no cap to invent any more: the actions are already pinned at the top, so a
-     hundred conversations cannot push them off the window. */
+  min-width: 0;
+  /* Takes the width the rail did not, and scrolls inside itself. `min-width: 0`
+     is what lets it shrink: a flex item's automatic minimum size is its
+     content, so a long conversation title would otherwise widen the column past
+     the grid track and push the transcript. */
   flex: 1;
-  /* Back to --bg, so the rail's --chrome above it reads as a full-height strip
-     rather than as the column's own colour. */
+  /* --bg against the rail's --chrome, with no divider between them: the
+     reference's two columns meet on a hard edge, not on a hairline. */
   background: var(--bg);
-  border-top: 1px solid var(--border-soft);
 }
 
 .chatlist-new {
@@ -570,9 +578,20 @@ body {
   gap: 4px;
   padding: 10px 0;
   overflow: hidden;
+  /*
+   * Always --rail-w. The rail used to widen to --rail-w-expanded and grow text
+   * labels, which is the one thing the reference never does: its rail is a
+   * strip of icons at every width, and the conversation titles live in the list
+   * beside it. The labels went with that -- `title` and `aria-label` already
+   * carry the name, which is where a keyboard user reads it.
+   *
+   * `align-self` is left alone on purpose: the container's default `stretch` is
+   * what makes the strip run the full height of the column, and saying so here
+   * would be one more declaration to keep in step with it.
+   */
   width: var(--rail-w);
-  /* Sized by its buttons, never by the leftover height: the conversation list
-     below is the part of the column that grows and scrolls. */
+  /* No cross-axis growth, and no main-axis growth: the strip is its buttons on
+     a full-height column, and the list beside it takes the width. */
   flex: none;
   /*
    * No width transition: the grid track snaps to the new width at the same
@@ -582,47 +601,13 @@ body {
 }
 
 /*
- * Expanded: the rail grows and each row becomes icon + label. The labels are
- * real text, not tooltips, so keyboard users get them for free; `title` stays
- * for the closed rail, where there is no room for text.
- */
-.rail.rail-expanded {
-  width: var(--rail-w-expanded);
-  align-items: stretch;
-  padding: 10px 10px;
-}
-
-/*
  * The toggle used to carry `align-self: flex-start`, which overrode the rail's
- * `align-items: center` in *both* states. It bought nothing when expanded --
- * `.rail-expanded .rail-btn` is `width: 100%` there, so the cross-axis
- * placement is invisible -- and in the collapsed rail it pushed the reopen
- * button to x=0 while every other icon sat at x=16, so the one control that
- * brings the sidebar back was the one hanging against the window edge.
- *
- * Measured, not assumed: with the rule, collapsed toggle x=0 vs icons x=16;
- * expanded, both x=10 w=216.
+ * `align-items: center`. In the collapsed rail it pushed the reopen button to
+ * x=0 while every other icon sat at x=16, so the one control that brings the
+ * sidebar back was the one hanging against the window edge. Asserted as the
+ * *absence* of a declaration in layout.test.ts, because any value here
+ * reintroduces the misalignment and only the rail's own centring gets it right.
  */
-.rail.rail-expanded .rail-toggle {
-  align-self: stretch;
-}
-
-.rail-expanded .rail-btn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  height: 36px;
-  padding: 0 10px;
-  justify-content: flex-start;
-}
-
-.rail-label {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 13px;
-}
 
 .rail-logo {
   display: grid;
@@ -2795,17 +2780,6 @@ body {
 /* --- arriving content ------------------------------------------------------ */
 
 /*
- * The rail's labels fade in after the column has snapped to its new width.
- * The width itself cannot be transitioned -- the grid track has already moved
- * by then, so a sliding rail would visibly slide inside a track that snapped
- * (see `.rail`). Fading the text in after the snap makes the snap read as
- * deliberate instead of abrupt.
- */
-.rail.rail-expanded .rail-label {
-  animation: fade-in var(--motion-base) var(--ease-out) both;
-}
-
-/*
  * Conversation rows, and only the last few.
  *
  * A transcript of two hundred rows replaying its own fade-in on open reads as a
@@ -2910,7 +2884,6 @@ body {
   .sidebar-scrim[data-state],
   .logstrip,
   .logstrip[data-state],
-  .rail.rail-expanded .rail-label,
   .row:nth-last-child(-n + 4),
   .chatrow {
     animation: none;

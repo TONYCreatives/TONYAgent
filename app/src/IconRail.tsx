@@ -136,7 +136,14 @@ export function IconRail({
   );
 
   return (
-    <nav className={`rail${expanded ? " rail-expanded" : ""}`} aria-label="Primary">
+    // No expanded variant of the rail itself. It used to widen to 236px and
+    // grow a text label beside every icon, which meant the rail and the
+    // conversation list were stacked and shared one column. The reference puts
+    // them side by side -- a fixed 52px strip and a 255px list -- and leaves the
+    // rail a strip. `expanded` now only decides whether the list is shown at
+    // all; the name survives on `title` and `aria-label`, which is where a
+    // keyboard user reads it anyway.
+    <nav className="rail" aria-label="Primary">
       <button
         type="button"
         className="rail-btn rail-toggle"
@@ -165,7 +172,6 @@ export function IconRail({
           aria-label={item.label}
         >
           <Icon>{item.icon}</Icon>
-          {expanded && <span className="rail-label">{item.label}</span>}
           {item.badge !== undefined && <span className="rail-badge">{item.badge}</span>}
         </button>
       ))}

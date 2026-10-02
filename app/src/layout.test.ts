@@ -103,14 +103,16 @@ describe("the sidebar's reopen button", () => {
   });
 
   test("the expanded rail still gives it the full width", () => {
-    // Not redundant with the rule above. `stretch` only reproduces what
-    // `align-items: stretch` already does in the expanded rail; dropping it is
-    // harmless, and asserting its absence instead would pin a line that has no
-    // job. What has to survive is that the toggle is a full-width row there,
-    // like every other button.
-    const expanded = bodies(".rail.rail-expanded .rail-toggle").join("\n");
-    assert.match(expanded, /align-self:\s*stretch/, "the expanded toggle lost its row");
-    assert.match(body(".rail.rail-expanded"), /align-items:\s*stretch/);
+    // There is no expanded rail any more. It used to widen to
+    // --rail-w-expanded and stretch its rows, which needed a
+    // `.rail.rail-expanded .rail-toggle` rule to keep the toggle a full-width
+    // row; the rail is now a fixed 52px strip beside the list and the labels
+    // are gone, so both rules went with it. Asserting the absence is the
+    // assertion -- a rule that widened the rail again is exactly what would
+    // break the match with the reference, and it would be easy to reintroduce
+    // by copying the old block back.
+    assert.doesNotMatch(STYLESHEET, /\.rail\.rail-expanded/);
+    assert.match(body(".rail"), /align-items:\s*center/);
   });
 
   test("the icons themselves are still centred, which is what it now relies on", () => {
@@ -293,6 +295,35 @@ describe("the rail is a full-height strip down the left edge", () => {
     // strip at the last icon.
     assert.match(body(".sidecol"), /background:\s*var\(--chrome\)/);
     assert.match(body(".chatlist"), /background:\s*var\(--bg\)/);
+  });
+
+  test("and the column is a row, so the rail can be beside the list", () => {
+    // Stacked, the rail was content-height -- a strip that stopped at the last
+    // icon -- and opening the sidebar put a 236px chrome block *above* the
+    // list. The reference is two columns at every width: a 52px strip and a
+    // 255px list.
+    assert.match(body(".sidecol"), /flex-direction:\s*row\b/);
+    // The list must be allowed to shrink: a flex item's automatic minimum size
+    // is its content, so one long conversation title would otherwise widen the
+    // column past its grid track and push the transcript.
+    assert.match(body(".chatlist"), /min-width:\s*0\b/);
+  });
+
+  test("the rail keeps its width at every sidebar state", () => {
+    // The rail used to widen to --rail-w-expanded and grow text labels beside
+    // its icons. The reference never does that -- its rail is a strip of icons
+    // and the titles live in the list next to it -- so there is no expanded
+    // rail rule left to override, and asserting its absence is the point: a
+    // rule that would widen it again is exactly what would break the match.
+    assert.doesNotMatch(STYLESHEET, /\.rail\.rail-expanded|\.rail-label/);
+    assert.match(body(".rail"), /width:\s*var\(--rail-w\)/);
+  });
+
+  test("the open column is the rail and the list, not a wider rail", () => {
+    // 307px = the reference's 52 + 255. The earlier 236px was a compromise
+    // against truncating titles in a column the rail shared; with the rail out
+    // of the way the list gets the reference's own 255px.
+    assert.match(STYLESHEET, /--rail-w-expanded:\s*307px/);
   });
 });
 

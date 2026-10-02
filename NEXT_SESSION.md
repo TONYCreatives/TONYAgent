@@ -7,7 +7,7 @@ which corrected the scale factor and with it the sidebar, the title bar and the
 composer (see "Measuring the reference" near the end)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 590 passed, TypeScript 319 passed,
+protocol method.** Everything green: **Python 590 passed, TypeScript 322 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **590 passed, 7 skipped** with Docker Desktop running.
@@ -64,7 +64,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 319 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
+cd app && npm test                     # 322 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -797,7 +797,7 @@ app/
     test-dom.ts             installs jsdom on the globals; imported first
     test-render.ts          mount / act / type / press / query helpers
     layout.test.ts          reads the stylesheet's cascade, not its text
-    *.test.ts, *.test.tsx   319 tests, all run by `npm test`
+    *.test.ts, *.test.tsx   322 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
     build.rs                app_manifest: the ACL name for the one app command
@@ -1108,6 +1108,23 @@ the *column* that is painted, with `.chatlist` painting `--bg` back over it, and
 not `.rail` alone: the rail is sized by its buttons (`flex: none`) and the list is
 what fills the rest of the column, so a background on `.rail` stops the strip at
 the last icon. This is the clearest single difference between the two apps.
+
+**The rail became a strip, and the list moved beside it.** They used to be
+stacked in one column — actions above, history below — which meant the rail
+could not be full height (it stopped at the last icon) and opening the sidebar
+put a 236px chrome block *above* the list. The reference is two columns at every
+width: a 52px strip and a 255px list, so `.sidecol` is a `row` now,
+`--rail-w-expanded` is 307 (52 + 255, their sum), and the rail has no expanded
+state at all. **Its text labels went with it** — the reference never labels its
+rail, and the conversation titles belong in the list anyway. `title` and
+`aria-label` still carry each icon's name, which is where a keyboard user reads
+it, so nothing became unreachable.
+
+The 236px width had a documented reason: at the reference's list width a
+conversation title truncated to "Explain the sidecar stdi…". Matching the
+reference *solves* that rather than trading against it — the list gets the
+reference's own 255px, which is 19px more than the compromise gave it, because
+the rail no longer has to share the column.
 
 **Dark only.** The reference is dark-only and a light theme would need a second
 full palette to be worth shipping. The Tkinter UI keeps its own light/dark
@@ -1811,6 +1828,13 @@ buttons in `TopBar`. What that required, all of it silent otherwise:
 invisible — and collapsed it put the one control that brings the sidebar back at
 x=0 while every other icon sat at x=16. The fix narrows the rule to
 `.rail.rail-expanded .rail-toggle { align-self: stretch }`.
+
+> **Superseded.** There is no expanded rail any more — see "The rail became a
+> strip" below. The rail is a fixed 52px column at every width, so both that rule
+> and `.rail.rail-expanded .rail-btn` went with it, and the toggle's fix is now
+> simply *not* declaring a cross-axis placement of its own. The test asserts the
+> absence, because any value there reintroduces the misalignment and only the
+> rail's own centring gets it right.
 
 This is the kind of bug a screenshot catches and a stylesheet test does not:
 nothing in the CSS is wrong on its own, it is the cascade. Hence
