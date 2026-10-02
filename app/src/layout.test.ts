@@ -470,3 +470,56 @@ describe("the bar and the tab pill, re-measured at full DPI", () => {
     assert.doesNotMatch(body(".tab"), /var\(--border-strong\)/);
   });
 });
+
+// --- projects in the conversation panel -------------------------------------
+describe("conversations are grouped under a project header", () => {
+  test("the group's rows are indented, so the hierarchy reads without a legend", () => {
+    // A list is scanned, not read. Indent is the cue that says "these belong to
+    // the name above" without needing a colour key or a border, and it is what
+    // the reference does.
+    assert.match(body(".chatproj-rows"), /padding:\s*0 0 0 14px/);
+  });
+
+  test("the header is a control, so it says whether it is open", () => {
+    // It folds its conversations away, and a fold that only shows in the caret's
+    // shape leaves a screen reader reporting a full project as though it were
+    // the only thing on screen.
+    assert.match(body(".chatproj-head"), /display:\s*flex/);
+    // The header is not selectable-looking: a filled row here would be one more
+    // thing in the list that looks like a conversation and is not.
+    assert.doesNotMatch(body(".chatproj-head"), /background:\s*var\(--(raised|chip)\)/);
+  });
+
+  test("the header can shrink its own name rather than widening the panel", () => {
+    // The panel is 255px and a project is a full path. Without `min-width: 0`
+    // the flex item's automatic minimum size is its content, so one long
+    // folder name would push the panel past its fixed width -- the same trap
+    // `.chatlist` itself is documented against.
+    assert.match(body(".chatproj-toggle"), /min-width:\s*0\b/);
+    assert.match(body(".chatproj-name"), /text-overflow:\s*ellipsis/);
+  });
+
+  test("the caret has its own box, because a glyph's box is not its shape", () => {
+    // Without the fixed width the arrow's advance box sits a pixel off the
+    // folder outline beside it, and the two read as misaligned rather than as
+    // one row.
+    assert.match(body(".chatproj-caret"), /width:\s*8px/);
+  });
+
+  test("the project name on the New chat button is pushed to the far edge", () => {
+    // `margin-left: auto` is what puts it there. It is the button's state rather
+    // than a second label, so it belongs at the end of the line where the eye
+    // finishes, and it has to truncate rather than push "New chat" off.
+    assert.match(body(".chatlist-new-project"), /margin-left:\s*auto/);
+    assert.match(body(".chatlist-new-project"), /text-overflow:\s*ellipsis/);
+  });
+
+  test("and the scroll region still holds the groups", () => {
+    // The groups went *inside* `.chatlist-rows` rather than beside it, so the
+    // "New chat" button above stays put while a long project's conversations
+    // scroll. A structure that put the label outside this box would scroll the
+    // heading away with its rows.
+    assert.match(body(".chatlist-rows"), /flex:\s*1/);
+    assert.match(body(".chatlist-rows"), /overflow-y:\s*auto/);
+  });
+});

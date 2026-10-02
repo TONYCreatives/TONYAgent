@@ -54,8 +54,21 @@ import { useWindowControls } from "./useWindowControls.js";
  * mid-session, and treating it as a prop that could change would mean every
  * effect that reaches for the backend would have to handle being swapped under
  * it.
+ *
+ * `pickProject` is the same kind of seam for the folder picker, and it is here
+ * for one reason rather than for symmetry: "New chat" asks for a folder when
+ * none is open, so that branch opens a *native dialog*, and a native dialog is
+ * not reachable from jsdom. Left un-injected it could only ever be verified by
+ * driving the packaged app and watching a folder picker appear -- which is
+ * exactly how the project binding went unnoticed for as long as it did.
  */
-export function App({ backend: injected }: { backend?: TauriBackend } = {}) {
+export function App({
+  backend: injected,
+  pickProject: injectedPick,
+}: {
+  backend?: TauriBackend;
+  pickProject?: () => Promise<string | null>;
+} = {}) {
   const [state, setState] = useState<ChatState>(initialState);
   const [connected, setConnected] = useState(false);
   const [provider, setProvider] = useState("");
@@ -216,6 +229,15 @@ export function App({ backend: injected }: { backend?: TauriBackend } = {}) {
   // test never reaches `makeSidecarTransport`.
   const backendRef = useRef<TauriBackend | null>(injected ?? null);
   if (backendRef.current === null) backendRef.current = new TauriBackend();
+
+  // The folder picker, on the same terms as the backend: the real one by
+  // default, a stub where a test can choose what "the user picked a folder" and
+  // "the user cancelled" look like. Both are outcomes the window has to handle
+  // differently, and neither can be produced from a test without this.
+  //
+  // Assigned once and read through `pickRef`, so a caller cannot swap the
+  // picker out mid-session -- the same reason the backend is held in a ref.
+  const pickRef = useRef(injectedPick ?? pickFolder);
 
   // Pull provider/sandbox out of the event stream. Kept separate from ChatState
   // because these survive a `clear`, and re-reading them on every chat event
@@ -697,23 +719,120 @@ export function App({ backend: injected }: { backend?: TauriBackend } = {}) {
     [showMessages, refreshConversations, closePanelToComposer],
   );
 
-  const createConversation = useCallback(async () => {
-    setState((prev) => ({ ...prev, error: null, busy: true }));
+  /**
+   * Point the sandbox at a folder and record it as the current project.
+   *
+   * Split out of `chooseFolder` rather than called from it, because "New chat"
+   * needs the same two steps -- bind the folder, then create under it -- and
+   * they have to happen in that order. A conversation created before its folder
+   * was bound would be filed under the *previous* project, and its tools would
+   * act on a directory the user never picked.
+   *
+   * Returns the project it settled on, or "" if the folder did not take. The
+   * caller has to know either way: a conversation filed under a project that
+   * failed to open is a row the user cannot work in, and no row is the better
+   * failure. Returning the path rather than a boolean is what lets a caller
+   * that just changed the folder file the next chat under it without waiting
+   * for a render to tell it what the state now says.
+   */
+  const attachProject = useCallback(async (path: string): Promise<string> => {
+    setSettingsError(null);
+    setSettingsNotice(null);
     try {
-      const result = (await backendRef.current!.call("conversations.create")) as {
-        conversation?: ConversationSummary;
-      };
-      showMessages([]);
-      if (result.conversation) setConversation(result.conversation.id);
-      await refreshConversations();
-    } catch (error: unknown) {
-      setState((prev) => ({
-        ...prev,
-        busy: false,
-        error: error instanceof Error ? error.message : String(error),
-      }));
+      const result = (await backendRef.current!.call("sandbox.start", {
+        path,
+      })) as { running: boolean; isolated?: boolean; project?: string };
+      if (!result.running) {
+        setSettingsError("The sandbox did not start. See the log below for the reason.");
+        return "";
+      }
+      const settled = result.project ?? path;
+      setProject(settled);
+      // A runtime is not the same as containment. Without Docker the tools
+      // still work, but only the two that execute code are unavailable, and
+      // saying so is more useful than a green tick that implies otherwise.
+      if (result.isolated === false) {
+        setSettingsNotice(
+          "Working without an isolated sandbox: file, search, web and browser tools are available, but running commands and JavaScript needs Docker.",
+        );
+      }
+      return settled;
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : String(error));
+      return "";
     }
-  }, [showMessages, refreshConversations]);
+  }, []);
+
+  /**
+   * Start a conversation, filed under `project`.
+   *
+   * The project is sent rather than left to the core's current one, because the
+   * whole point of the sidebar's grouping is that a conversation says which
+   * project it belongs to -- and a chat that inherited whatever folder happened
+   * to be open would be filed under a project the user never chose for it.
+   */
+  const createConversation = useCallback(
+    async (project = "") => {
+      setState((prev) => ({ ...prev, error: null, busy: true }));
+      try {
+        const result = (await backendRef.current!.call("conversations.create", {
+          project,
+        })) as {
+          conversation?: ConversationSummary;
+        };
+        showMessages([]);
+        if (result.conversation) setConversation(result.conversation.id);
+        await refreshConversations();
+      } catch (error: unknown) {
+        setState((prev) => ({
+          ...prev,
+          busy: false,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      }
+    },
+    [showMessages, refreshConversations],
+  );
+
+  /**
+   * What "New chat" does, which depends on whether a project is open.
+   *
+   * **With a project already chosen, it asks nothing.** The second chat in a
+   * folder is the common case by far, and a dialog in front of it every time
+   * would make the common path the slow one. Changing project is a deliberate
+   * act -- the "+" beside the open project -- and is reachable from there.
+   *
+   * **With no project at all, it asks first**, because a chat with no project
+   * is a chat whose tools have nothing to act on: every file path resolves
+   * against "no project folder selected". Creating it and failing later, on the
+   * first attempt to read a file, would be a worse answer than one question up
+   * front.
+   *
+   * A cancelled picker creates nothing. Cancelling is a normal outcome, and an
+   * empty untitled conversation left behind would make the button look like it
+   * had worked.
+   */
+  const startNewChat = useCallback(async () => {
+    // "New chat" leaves an empty transcript behind, which the panel would then
+    // sit on top of -- the same problem as picking a conversation, and the same
+    // fix. See `closePanelToComposer`.
+    closePanelToComposer();
+
+    // Read into a local rather than re-reading `project` after the await. The
+    // state variable belongs to this render, and `attachProject` setting it does
+    // not update the closure that is already running -- so a chat created after
+    // a fresh pick would be filed under the empty string, which is precisely
+    // the bug this flow exists to prevent. `attachProject` returns the project
+    // it settled on for exactly this.
+    let target = project;
+    if (target === "") {
+      const chosen = await pickRef.current();
+      if (!chosen) return;
+      target = await attachProject(chosen);
+      if (!target) return;
+    }
+    await createConversation(target);
+  }, [project, attachProject, closePanelToComposer, createConversation]);
 
   const deleteConversation = useCallback(
     async (id: string) => {
@@ -785,34 +904,16 @@ export function App({ backend: injected }: { backend?: TauriBackend } = {}) {
    * vanished, a backend that will not start -- surfaces verbatim.
    */
   const chooseFolder = useCallback(async () => {
-    const chosen = await pickFolder();
+    const chosen = await pickRef.current();
     if (!chosen) return;
-    setSettingsError(null);
-    setSettingsNotice(null);
-    try {
-      const result = (await backendRef.current!.call("sandbox.start", {
-        path: chosen,
-      })) as { running: boolean; isolated?: boolean; project?: string };
-      if (!result.running) {
-        setSettingsError("The sandbox did not start. See the log below for the reason.");
-        return;
-      }
-      setProject(result.project ?? chosen);
-      // The Files panel is the view of this folder; opening it here is what
-      // makes the pick feel like it did something.
-      setFilesOpen(true);
-      // A runtime is not the same as containment. Without Docker the tools
-      // still work, but only the two that execute code are unavailable, and
-      // saying so is more useful than a green tick that implies otherwise.
-      if (result.isolated === false) {
-        setSettingsNotice(
-          "Working without an isolated sandbox: file, search, web and browser tools are available, but running commands and JavaScript needs Docker.",
-        );
-      }
-    } catch (error) {
-      setSettingsError(error instanceof Error ? error.message : String(error));
-    }
-  }, []);
+    const attached = await attachProject(chosen);
+    if (attached === "") return;
+    // The Files panel is the view of this folder; opening it here is what
+    // makes the pick feel like it did something. Only here and not in
+    // `attachProject`, because a chat that was asked for should not drag a
+    // second panel over the transcript the user is about to type into.
+    setFilesOpen(true);
+  }, [attachProject]);
 
   /**
    * Escape closes the two overlays.
@@ -1038,15 +1139,11 @@ export function App({ backend: injected }: { backend?: TauriBackend } = {}) {
           open={railExpanded}
           conversations={conversations}
           active={conversation}
+          project={project}
           busy={state.busy}
           connected={connected}
-          onNew={() => {
-            // "New chat" leaves an empty transcript behind, which the panel
-            // would then sit on top of -- the same problem as picking a
-            // conversation, and the same fix.
-            closePanelToComposer();
-            void createConversation();
-          }}
+          onNew={() => void startNewChat()}
+          onChooseProject={chooseFolder}
           onOpen={(id) => void openConversation(id)}
           onDelete={(id) => void deleteConversation(id)}
           onRename={(id, title) => void renameConversation(id, title)}

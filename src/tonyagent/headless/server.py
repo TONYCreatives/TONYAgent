@@ -84,7 +84,17 @@ class StdioServer:
             self._load_into_session(conversation_id)
         # The project folder the sandbox is attached to, echoed back by `state`
         # so a window that reloads knows what it is working on.
-        self.project: str = ""
+        #
+        # Read from `folder_manager` rather than left empty, because that is the
+        # folder the file tools are already resolving against. `folder_manager`
+        # restores the last choice from settings at import, so a window launched
+        # with a project open had a working folder and no record of it: `state`
+        # reported none, "New chat" asked for a folder the user had already
+        # chosen, and a chat created after a restart was filed under nothing.
+        # Same disagreement as the one `_bind_project` fixes, one level up.
+        from tonyagent.folder import folder_manager as _folder_manager
+
+        self.project: str = str(_folder_manager.current_folder or "")
         # Async handlers awaiting a reply, keyed by request id.
         self._pending: dict[Any, Any] = {}
         self._handlers: dict[str, Callable[[dict], Any]] = {
@@ -170,6 +180,51 @@ class StdioServer:
         # switching chats must not silently reset it to the model default.
         session.set_reasoning_effort(self.session.reasoning_effort)
         return session
+
+    def _bind_project(self, project: str) -> None:
+        """Point the working folder at ``project``.
+
+        **Why this is not just bookkeeping on ``self.project``.** The file
+        tools and ``search`` resolve their paths against ``folder_manager``, not
+        against the field ``state`` echoes back. A conversation carries the
+        project it belongs to, so opening one whose project differs from the
+        current folder has to move the folder too -- otherwise the window says
+        one project while every tool reads another, and the agent edits files in
+        a directory the user is not looking at.
+
+        Switching is not *starting*: this records the folder and leaves any
+        running sandbox alone, because mounting a container is the user's
+        explicit act and a background restart on every conversation click would
+        be a surprising thing for a click to do.
+
+        A folder that has since been moved or deleted is reported rather than
+        raised. The conversation is still perfectly readable and its transcript
+        still loads; refusing the switch would trade a degraded workspace for a
+        window that cannot open a chat at all. The old folder is kept, so the
+        tools keep working against something real instead of nothing.
+        """
+        project = str(project or "")
+        if not project:
+            # Nothing to bind. Clearing the folder here would take away a
+            # working one on behalf of a conversation that simply has no project
+            # recorded -- the shape every conversation saved before `project`
+            # existed is in.
+            return
+        from pathlib import Path
+
+        from tonyagent.folder import folder_manager
+
+        current = folder_manager.current_folder
+        if current is not None and str(current) == project:
+            self.project = project
+            return
+        if folder_manager.set_folder(Path(project)):
+            self.project = project
+            return
+        logger.warning(
+            f"Could not open project folder {project}; keeping {current}. "
+            "Its tools will not resolve against the conversation's project."
+        )
 
     def _persist(self) -> None:
         """Write the current transcript to disk.
@@ -525,7 +580,10 @@ class StdioServer:
         project = str(params.get("project") or self.project or "")
         conversation = store.create(title="New chat", project=project)
         self._persist()  # Bank the outgoing conversation before leaving it.
-        self.project = project
+        # The folder moves *before* the session is replaced, so the tools the
+        # new chat will use already resolve against its own project. See
+        # `_bind_project` for why this is not optional bookkeeping.
+        self._bind_project(project)
         self._load_into_session(conversation.id)
         return {"conversation": conversation.summary()}
 
@@ -538,7 +596,7 @@ class StdioServer:
         if conversation is None:
             raise RpcError(f"No such conversation: {conversation_id}")
         self._persist()
-        self.project = conversation.project
+        self._bind_project(conversation.project)
         self._load_into_session(conversation_id)
         return {
             "conversation": conversation.summary(),
@@ -627,6 +685,7 @@ class StdioServer:
             if not folder_manager.set_folder(Path(requested)):
                 raise RpcError(f"Not a usable folder: {requested}")
 
+        # The folder was registered above, before the container was asked for.
         ok = await self.session.start_sandbox(requested)
         # The folder is recorded whether or not a container came up. It is what
         # the file tools and `search` resolve against, so tying it to container
@@ -634,7 +693,9 @@ class StdioServer:
         # while the core had a perfectly usable workspace.
         from tonyagent.folder import folder_manager
 
-        self.project = str(folder_manager.current_folder or params.get("path", ""))
+        self._bind_project(
+            str(folder_manager.current_folder or params.get("path", ""))
+        )
         # `isolated` is reported separately and on purpose. A local runtime
         # means most tools work; only code execution needs the container, and
         # the UI should say which of the two it got rather than showing one

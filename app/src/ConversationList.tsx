@@ -30,7 +30,7 @@
  * styles.css can tell an arriving panel from a leaving one.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount.js";
 import { useDismiss } from "./useDismiss.js";
 
@@ -41,6 +41,78 @@ export interface ConversationSummary {
   created_at: number;
   updated_at: number;
   message_count: number;
+}
+
+/**
+ * One project folder, and the conversations filed under it.
+ *
+ * Derived from the list the core reports rather than kept alongside it. A
+ * project is not a thing the user creates -- it is the folder a conversation
+ * was started in -- so a separate registry of them would be a second source of
+ * truth about a list that changes while you are looking at it, and every way of
+ * emptying a project's only conversation would leave an empty folder behind
+ * that no longer corresponds to anything.
+ */
+interface ProjectGroup {
+  /** The folder's full path, which is also what identifies it. */
+  path: string;
+  /** The last path segment: `TONYAgent`, not `C:\Users\...\TONYAgent`. */
+  name: string;
+  conversations: ConversationSummary[];
+}
+
+/**
+ * A project is shown by its folder name, not its path.
+ *
+ * The path is what identifies it and is kept as the `title`, because two
+ * projects called `api` in different trees are the same row otherwise -- and
+ * which of the two is open is not something a user can work out from a name
+ * they chose themselves.
+ */
+function projectName(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, "");
+  const cut = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  return cut >= 0 ? trimmed.slice(cut + 1) : trimmed;
+}
+
+/**
+ * Group conversations under their project.
+ *
+ * **The active project goes first, and the rest keep the order the core sent.**
+ * The core sorts by most recently updated, so first-seen is newest-first, and
+ * that ordering is worth keeping: the project someone is working in is the one
+ * whose rows they are most likely scanning for. Pinning the active one keeps it
+ * reachable at the top when they are in a different folder, and the rest stay
+ * in recency order rather than being re-sorted by name -- alphabetical would
+ * bury the project they used yesterday under projects they have not opened in
+ * months.
+ *
+ * Conversations with no project are grouped under `""` rather than dropped. A
+ * chat saved before `project` existed, or one started with no folder, is still a
+ * real conversation the user can open; hiding it would be the list quietly
+ * losing rows.
+ */
+function groupByProject(
+  conversations: ConversationSummary[],
+  active: string,
+): ProjectGroup[] {
+  const byPath = new Map<string, ProjectGroup>();
+  for (const conversation of conversations) {
+    const path = conversation.project || "";
+    let group = byPath.get(path);
+    if (!group) {
+      group = { path, name: projectName(path), conversations: [] };
+      byPath.set(path, group);
+    }
+    group.conversations.push(conversation);
+  }
+  const groups = [...byPath.values()];
+  // Only reordered when the active project is actually present. Before the
+  // first conversation exists there is nothing to pin, and a group list with a
+  // hole in it would be a rendering of an absence.
+  const index = active ? groups.findIndex((g) => g.path === active) : -1;
+  if (index > 0) groups.unshift(...groups.splice(index, 1));
+  return groups;
 }
 
 interface Props {
@@ -56,9 +128,19 @@ interface Props {
   conversations: ConversationSummary[];
   /** The conversation currently open, or "" before the first is created. */
   active: string;
+  /**
+   * The folder new conversations will be filed under, or "" when none is open.
+   *
+   * Read here rather than inferred from the rows: a project the user has just
+   * opened has no conversations yet, and a list that only knew about projects
+   * it could see would not be able to say so.
+   */
+  project: string;
   busy: boolean;
   connected: boolean;
   onNew: () => void;
+  /** Open the folder picker, to file the next chat somewhere else. */
+  onChooseProject: () => void;
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
@@ -96,9 +178,11 @@ export function ConversationList({
   open,
   conversations,
   active,
+  project,
   busy,
   connected,
   onNew,
+  onChooseProject,
   onOpen,
   onDelete,
   onRename,
@@ -121,6 +205,37 @@ export function ConversationList({
   // rather than the menu being dismissed underneath it. Shared with the model
   // picker and the budget popover, which had the same unguarded listener.
   const menuNodeRef = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * Which projects are folded away.
+   *
+   * A set rather than a boolean per project so a group that has not been folded
+   * needs no key here at all. Local state, not persisted: it is a view of the
+   * list in front of the user, and a fold remembered across launches would hide
+   * a project's rows behind a caret nobody can find the state of.
+   */
+  const [folded, setFolded] = useState<Set<string>>(() => new Set());
+  const toggleProject = (path: string) =>
+    setFolded((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(path)) next.add(path);
+      return next;
+    });
+
+  const groups = useMemo(
+    () => groupByProject(conversations, project),
+    [conversations, project],
+  );
+
+  /**
+   * The folder the next chat will be filed under.
+   *
+   * Shown from `project` rather than from the groups, for the reason given on
+   * the prop: a project can be open before it has any conversations, and a
+   * label derived from the rows would read "no project" at exactly the moment
+   * the user is deciding where to type.
+   */
+  const projectLabel = project ? projectName(project) : "";
 
   const openMenu = (id: string, x: number, y: number) => setOpenMenuAt({ id, x, y });
   const closeMenu = () => setOpenMenuAt(null);
@@ -189,7 +304,11 @@ export function ConversationList({
         className="chatlist-new"
         onClick={onNew}
         disabled={!connected || busy}
-        title="New conversation"
+        title={
+          projectLabel
+            ? `New conversation in ${projectLabel}`
+            : "Choose a project folder for the new conversation"
+        }
       >
         <svg
           width="15"
@@ -204,92 +323,163 @@ export function ConversationList({
           <path d="M12 5v14M5 12h14" />
         </svg>
         <span>New chat</span>
+        {/*
+          Naming the project on the button, because "New chat" is now a
+          decision about where a conversation lives. A button that silently
+          files the chat under whatever folder was open last is how a
+          conversation ends up somewhere the user did not mean.
+        */}
+        <span className="chatlist-new-project">
+          {projectLabel || "Choose folder"}
+        </span>
       </button>
 
-      {conversations.length === 0 ? (
+      {groups.length === 0 ? (
         // Silent rather than a placeholder: an empty list with one button in it
         // already says what to do, and a line of text saying "no conversations"
         // just pushes the button down.
         <div className="chatlist-empty" />
       ) : (
-        <ul className="chatlist-rows">
-          {conversations.map((conversation) => (
-            <li
-              key={conversation.id}
-              className={`chatrow${
-                conversation.id === active ? " is-active" : ""
-              }`}
-              onContextMenu={(event) => {
-                // The browser's own menu offers "search image for" and
-                // "inspect", neither of which means anything on a title.
-                event.preventDefault();
-                openMenu(conversation.id, event.clientX, event.clientY);
-              }}
-            >
-              {editing === conversation.id ? (
-                <input
-                  ref={inputRef}
-                  className="chatrow-input"
-                  value={draft}
-                  aria-label="Conversation name"
-                  onChange={(event) => setDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      commitRename(true);
-                    } else if (event.key === "Escape") {
-                      event.preventDefault();
-                      commitRename(false);
-                    }
-                  }}
-                  onBlur={() => commitRename(true)}
-                />
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className="chatrow-open"
-                    onClick={() => onOpen(conversation.id)}
-                    disabled={busy}
-                    title={conversation.title}
-                  >
-                    <span className="chatrow-title">{conversation.title}</span>
-                    <span className="chatrow-meta">
-                      {when(conversation.updated_at)}
-                      {conversation.message_count > 0 && (
-                        <> · {conversation.message_count}</>
-                      )}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="chatrow-more"
-                    onClick={(event) => {
-                      const box = event.currentTarget.getBoundingClientRect();
-                      openMenu(conversation.id, box.left, box.bottom + 4);
-                    }}
-                    title="Rename, duplicate or delete"
-                    aria-label={`Options for ${conversation.title}`}
-                    aria-haspopup="menu"
-                    aria-expanded={menu?.id === conversation.id}
-                  >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                      aria-hidden="true"
+        <>
+          <div className="chatlist-label">Projects</div>
+          <div className="chatlist-rows">
+            {groups.map((group) => {
+              const isFolded = folded.has(group.path);
+              return (
+                <section className="chatproj" key={group.path}>
+                  <div className="chatproj-head">
+                    <button
+                      type="button"
+                      className="chatproj-toggle"
+                      onClick={() => toggleProject(group.path)}
+                      aria-expanded={!isFolded}
+                      title={group.path || "No project folder"}
                     >
-                      <circle cx="5" cy="12" r="1.7" />
-                      <circle cx="12" cy="12" r="1.7" />
-                      <circle cx="19" cy="12" r="1.7" />
-                    </svg>
-                  </button>
-                </>
-              )}
-            </li>
-          ))}
-        </ul>
+                      <span className="chatproj-caret" aria-hidden="true">
+                        {isFolded ? "▸" : "▾"}
+                      </span>
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.7"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                      </svg>
+                      <span className="chatproj-name">
+                        {group.path ? group.name : "No project"}
+                      </span>
+                    </button>
+                    {/*
+                      Only on the group new chats actually go into. On any other
+                      it would be a lie: the conversation would be created under
+                      whatever project is open, not this one.
+                    */}
+                    {group.path === project && (
+                      <button
+                        type="button"
+                        className="chatproj-add"
+                        onClick={onChooseProject}
+                        title="Choose a different project folder"
+                        aria-label="Choose a different project folder"
+                      >
+                        +
+                      </button>
+                    )}
+                  </div>
+                  {!isFolded && (
+                    <ul className="chatproj-rows">
+                      {group.conversations.map((conversation) => (
+                        <li
+                          key={conversation.id}
+                          className={`chatrow${
+                            conversation.id === active ? " is-active" : ""
+                          }`}
+                          onContextMenu={(event) => {
+                            // The browser's own menu offers "search image for"
+                            // and "inspect", neither of which means anything on
+                            // a title.
+                            event.preventDefault();
+                            openMenu(conversation.id, event.clientX, event.clientY);
+                          }}
+                        >
+                          {editing === conversation.id ? (
+                            <input
+                              ref={inputRef}
+                              className="chatrow-input"
+                              value={draft}
+                              aria-label="Conversation name"
+                              onChange={(event) => setDraft(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  commitRename(true);
+                                } else if (event.key === "Escape") {
+                                  event.preventDefault();
+                                  commitRename(false);
+                                }
+                              }}
+                              onBlur={() => commitRename(true)}
+                            />
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="chatrow-open"
+                                onClick={() => onOpen(conversation.id)}
+                                disabled={busy}
+                                title={conversation.title}
+                              >
+                                <span className="chatrow-title">
+                                  {conversation.title}
+                                </span>
+                                <span className="chatrow-meta">
+                                  {when(conversation.updated_at)}
+                                  {conversation.message_count > 0 && (
+                                    <> · {conversation.message_count}</>
+                                  )}
+                                </span>
+                              </button>
+                              <button
+                                type="button"
+                                className="chatrow-more"
+                                onClick={(event) => {
+                                  const box = event.currentTarget.getBoundingClientRect();
+                                  openMenu(conversation.id, box.left, box.bottom + 4);
+                                }}
+                                title="Rename, duplicate or delete"
+                                aria-label={`Options for ${conversation.title}`}
+                                aria-haspopup="menu"
+                                aria-expanded={menu?.id === conversation.id}
+                              >
+                                <svg
+                                  width="13"
+                                  height="13"
+                                  viewBox="0 0 24 24"
+                                  fill="currentColor"
+                                  aria-hidden="true"
+                                >
+                                  <circle cx="5" cy="12" r="1.7" />
+                                  <circle cx="12" cy="12" r="1.7" />
+                                  <circle cx="19" cy="12" r="1.7" />
+                                </svg>
+                              </button>
+                            </>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+        </>
       )}
 
       {/*

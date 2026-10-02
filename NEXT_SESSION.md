@@ -1,12 +1,15 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-10-02, after the fourth UI pass — rounded window corners
+**Last updated:** 2026-10-02, after the fifth UI pass — conversations
+filed under the project folder they belong to (see "The fifth UI pass"
+near the end)
+**Was:** 2026-10-02, after the fourth UI pass — rounded window corners
 from DWM, and the conversation list turned from a docked column into an
 animated overlay panel (see "The fourth UI pass" near the end)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 590 passed, TypeScript 341 passed,
+protocol method.** Everything green: **Python 592 passed, TypeScript 361 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **590 passed, 7 skipped** with Docker Desktop running.
@@ -63,7 +66,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 341 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
+cd app && npm test                     # 361 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -2244,3 +2247,95 @@ because each would have been "fixed" by weakening the assertion:
 - `.logstrip` is not in the DOM while the log bar is closed — deliberately. A
   test asserting on it there would have passed against a window that dropped
   every line of the core's stderr.
+
+## The fifth UI pass — conversations belong to a project
+
+The reference's sidebar has a **Projects** section: a project folder with its
+threads nested underneath it. TONYAgent now does the same, and "New chat" asks
+which folder a conversation is about when none has been chosen yet.
+
+**The core already had all of this.** `Conversation.project` has been persisted
+and returned in every summary since it was added; `conversations.create` has
+always taken a `project` argument; `sandbox.start` already registered the folder
+with `folder_manager`. The whole change is the window drawing a structure that
+the data already carried — which is worth knowing, because "add projects" reads
+like a core feature and was not one.
+
+### The bug this found
+
+`conversations.switch` set `self.project` and stopped there. But the file tools
+and `search` resolve their paths against **`folder_manager`**, not against the
+field `state` echoes back. So opening a conversation from a second project left
+the window *claiming* that project while every tool still read the first one —
+and the agent went on editing files in a directory nobody was looking at.
+
+Nothing had caught it because the only thing asserted was the reply, and the
+reply was correct. This is the same shape as the log-strip bug in the fourth
+pass: **a correct answer on the wrong subject.**
+
+`_bind_project` in `server.py` now moves the folder on every path that names a
+project — switch, create, and `sandbox.start`. Three decisions inside it:
+
+- **Switching does not start a sandbox.** It records the folder and leaves any
+  running container alone. Mounting one is the user's explicit act, and a
+  background restart on every conversation click would be a surprising thing
+  for a click to do.
+- **A conversation with no project clears nothing.** Every chat saved before
+  `project` existed has none. Clearing the folder on one of those would take
+  away a working workspace on behalf of a conversation that merely predates the
+  field.
+- **A folder that has moved is a warning, not an error.** The transcript is on
+  disk and readable; raising would trade a log line for a window that cannot
+  open a chat at all.
+
+### Two bugs the tests caught in the new code
+
+Both were in `App.tsx`, and both are the kind that only composition tests see:
+
+1. **`startNewChat` closed over a stale `project`.** It read `project === ""`,
+   awaited `attachProject`, then passed `project` to `createConversation` — and
+   the state variable belongs to the render that started, so the value was still
+   `""`. Every chat created after a *fresh* folder pick was filed under the
+   empty string. `attachProject` now returns the project it settled on, and the
+   flow files the chat under that.
+2. **The folder picker was untestable, so its branch was untested.** "New chat"
+   opens a *native dialog* when no project is set, and jsdom cannot open one —
+   so the branch could only have been verified by driving the packaged app and
+   watching a dialog appear. `App` now takes an optional `pickProject` prop,
+   for the same reason it takes `backend`: the seam is what makes the path
+   testable, and the path is where the bugs were.
+
+### What the panel draws
+
+Projects are **derived from the conversations the core reports**, not kept in a
+registry. A project is not something the user creates — it is the folder a
+conversation was started in — so a registry would be a second source of truth
+about a list that changes while you are looking at it, and every way of emptying
+a project's only chat would leave a folder behind corresponding to nothing.
+
+- The **active project is pinned first**; the rest keep the core's newest-first
+  order rather than being re-sorted by name, which would bury the project used
+  yesterday under ones untouched for months.
+- Conversations with **no project** group under `"No project"` rather than being
+  dropped. Hiding them would make the list quietly lose rows.
+- The header **folds**, with `aria-expanded` on the button — a fold that only
+  shows in a caret's shape reports a full project as if it were all there.
+- **"New chat" names the project** it will file under, or says "Choose folder"
+  when there is none. A button that silently files a chat under whatever folder
+  was open last is how a conversation ends up somewhere the user did not mean.
+- The **"+" opens the picker on the open project only**, because it picks the
+  project for the *next* chat rather than moving the current one.
+
+`groupByProject` and `projectName` are module-level in `ConversationList.tsx`
+and covered directly; the folding, the label, and the picker are covered
+through the panel, and the whole "New chat" flow through `App.test.tsx`.
+
+### Verified
+
+- **Python 592 passed, 7 skipped.** Three new tests in `test_headless_core.py`,
+  and the key one was **checked to fail without the fix** (it reported `alpha`
+  where `beta` was expected) — the first time in this project a regression test
+  was proven to have teeth before being believed.
+- **TypeScript 361 passed** (was 341), zero `act` warnings.
+- `audit_reduced_motion.py` clean: the new rules carry no animations, only the
+  `transition` on `.chatproj-add`, matching `.chatrow-more`.

@@ -69,6 +69,7 @@ function conversation(over: Partial<ConversationSummary> = {}): ConversationSumm
 
 interface Handlers {
   onNew: () => void;
+  onChooseProject: () => void;
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
@@ -81,6 +82,7 @@ let calls: Handlers & {
   deleted: string[];
   duplicated: string[];
   news: number;
+  picks: number;
 };
 
 /** Mount the list. Cleaned up after each test by the shared harness. */
@@ -88,10 +90,14 @@ async function renderList(
   rows: ConversationSummary[],
   active = "",
   open = true,
+  project = "",
 ): Promise<HTMLElement> {
   calls = {
     onNew: () => {
       calls.news += 1;
+    },
+    onChooseProject: () => {
+      calls.picks += 1;
     },
     onOpen: (id) => {
       calls.opened.push(id);
@@ -110,6 +116,7 @@ async function renderList(
     deleted: [],
     duplicated: [],
     news: 0,
+    picks: 0,
   };
 
   return render(
@@ -117,6 +124,7 @@ async function renderList(
       open={open}
       conversations={rows}
       active={active}
+      project={project}
       busy={false}
       connected
       {...calls}
@@ -126,6 +134,9 @@ async function renderList(
 
 const rows = (container: HTMLElement) => all(container, ".chatrow");
 const titles = (container: HTMLElement) => texts(container, ".chatrow-title");
+/** The project group headers, in the order they are drawn. */
+const projectNames = (container: HTMLElement) =>
+  texts(container, ".chatproj-name");
 const input = (container: HTMLElement) =>
   one(container, ".chatrow-input") as HTMLInputElement | null;
 
@@ -169,6 +180,7 @@ describe("the panel reports which way it is moving", () => {
         open={false}
         conversations={[conversation()]}
         active=""
+        project=""
         busy={false}
         connected
         {...calls}
@@ -503,5 +515,140 @@ describe("renaming a conversation", () => {
     await setValue(field, "코어 동작 설명");
     await press("Enter", field);
     assert.deepEqual(calls.renamed, [[conversation().id, "코어 동작 설명"]]);
+  });
+});
+
+// --- projects --------------------------------------------------------------
+describe("conversations are filed under the project they belong to", () => {
+  // Windows paths, escaped twice. A single backslash here would be an escape
+  // sequence that JS eats -- `"\Users"` is `Users` -- and the test would then
+  // be grouping on a path no Windows machine has ever produced.
+  const TONY = "C:\\Users\\iig2y\\Desktop\\TONYAgent";
+  const API = "D:\\work\\api";
+
+  test("a conversation appears under its own project, not a flat list", async () => {
+    // The whole point of the change. A flat list cannot answer "which project
+    // is this chat about", and the answer is what decides whether picking the
+    // row does anything useful.
+    const container = await renderList([
+      conversation({ title: "Alpha work", project: TONY }),
+      conversation({ id: "b", title: "Endpoint notes", project: API }),
+    ]);
+
+    assert.deepEqual(projectNames(container), ["TONYAgent", "api"]);
+    // Still both reachable: grouping reorders, it never drops.
+    assert.deepEqual(titles(container), ["Alpha work", "Endpoint notes"]);
+  });
+
+  test("one header per project, however many chats are under it", async () => {
+    const container = await renderList([
+      conversation({ title: "One", project: TONY }),
+      conversation({ id: "b", title: "Two", project: TONY }),
+      conversation({ id: "c", title: "Three", project: API }),
+    ]);
+
+    assert.deepEqual(projectNames(container), ["TONYAgent", "api"]);
+    assert.equal(all(container, ".chatproj").length, 2);
+    // The count is the real one, so a folded group still says what it hides.
+    assert.deepEqual(titles(container), ["One", "Two", "Three"]);
+  });
+
+  test("the open project comes first, and the rest keep the core's order", async () => {
+    // The user is working in `api`; the project they are scanning for should not
+    // be below two others, and the rest should stay newest-first rather than
+    // being re-sorted by name.
+    const container = await renderList(
+      [
+        conversation({ title: "Alpha work", project: TONY }),
+        conversation({ id: "b", title: "Endpoint notes", project: API }),
+        conversation({ id: "c", title: "Older alpha", project: TONY }),
+      ],
+      "",
+      true,
+      API,
+    );
+
+    assert.deepEqual(projectNames(container), ["api", "TONYAgent"]);
+    assert.deepEqual(titles(container), [
+      "Endpoint notes",
+      "Alpha work",
+      "Older alpha",
+    ]);
+  });
+
+  test("a chat with no project is grouped, not hidden", async () => {
+    // Every conversation saved before `project` existed has none. Dropping them
+    // would lose rows the user can still open -- and the list silently
+    // shrinking is the kind of thing nobody notices until they need one.
+    const container = await renderList([
+      conversation({ title: "Old chat", project: "" }),
+      conversation({ id: "b", title: "New chat", project: TONY }),
+    ]);
+
+    assert.deepEqual(projectNames(container), ["No project", "TONYAgent"]);
+    assert.deepEqual(titles(container), ["Old chat", "New chat"]);
+  });
+
+  test("the header folds its conversations away and brings them back", async () => {
+    const container = await renderList([
+      conversation({ title: "Alpha work", project: TONY }),
+    ]);
+
+    const toggle = one(container, ".chatproj-toggle")!;
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+
+    await click(toggle);
+    assert.deepEqual(titles(container), [], "the fold did not hide the rows");
+    assert.equal(
+      one(container, ".chatproj-toggle")!.getAttribute("aria-expanded"),
+      "false",
+      "a folded group still claims to be open",
+    );
+
+    await click(one(container, ".chatproj-toggle")!);
+    assert.deepEqual(titles(container), ["Alpha work"]);
+  });
+
+  test("New chat says which project it will file under", async () => {
+    // Silently filing a chat under whatever folder was open last is how a
+    // conversation ends up somewhere the user did not mean, so the button has to
+    // show it before the press rather than after.
+    const container = await renderList([conversation({ project: TONY })], "", true, TONY);
+    assert.deepEqual(texts(container, ".chatlist-new-project"), ["TONYAgent"]);
+  });
+
+  test("and says it will ask when there is no project yet", async () => {
+    const container = await renderList([conversation()]);
+    assert.deepEqual(texts(container, ".chatlist-new-project"), ["Choose folder"]);
+  });
+
+  test("the folder picker is offered on the open project only", async () => {
+    // It picks the project for the *next* chat, so drawing it on every group
+    // would offer a control that does nothing to the group it sits on.
+    const container = await renderList(
+      [
+        conversation({ title: "Alpha work", project: TONY }),
+        conversation({ id: "b", title: "Endpoint notes", project: API }),
+      ],
+      "",
+      true,
+      API,
+    );
+
+    const adds = all(container, ".chatproj-add");
+    assert.equal(adds.length, 1);
+    await click(adds[0]);
+    assert.equal(calls.picks, 1);
+  });
+
+  test("the header's tooltip carries the whole path, not just the name", async () => {
+    // Two projects called `api` in different trees are the same row otherwise,
+    // and which one is open is not something the user can work out from a name
+    // they chose themselves.
+    const container = await renderList([conversation({ project: API })]);
+    assert.ok(
+      one(container, ".chatproj-toggle")!.title.includes("D:\\work\\api"),
+      `the tooltip lost the path: ${one(container, ".chatproj-toggle")!.title}`,
+    );
   });
 });

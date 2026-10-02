@@ -167,6 +167,44 @@ interface Mounted {
   container: HTMLElement;
   transport: FakeTransport;
   backend: TauriBackend;
+  /** Every path the stubbed folder picker was asked for, in order. */
+  picked: (string | null)[];
+}
+
+/**
+ * Mount the window with the folder picker stubbed.
+ *
+ * The stub is the point. "New chat" asks for a folder when none is open, and
+ * the real picker is a native dialog that cannot open in jsdom -- so without
+ * this the one branch where a chat gets a project could only ever be verified
+ * by driving the packaged app and watching a dialog appear. That is how the
+ * project binding stayed broken for as long as it did: the reply was correct,
+ * so nothing that checked the reply ever saw it.
+ *
+ * `answer` is what the user does: a path, or null for cancel. Both are
+ * outcomes the window must handle, so both are reachable from a test.
+ */
+async function mountWithPicker(
+  results: Record<string, unknown>,
+  answer: (() => Promise<string | null>) | null,
+): Promise<Mounted> {
+  const transport = new FakeTransport({ ...BOOT, ...results });
+  const backend = new TauriBackend(() => transport);
+  const picked: (string | null)[] = [];
+  const container = await render(
+    <App backend={backend} pickProject={async () => {
+      const next = answer ? await answer() : null;
+      picked.push(next);
+      return next;
+    }} />,
+  );
+
+  for (let i = 0; i < 50; i++) {
+    if (texts(container, ".statusbar").join(" ").includes("openrouter")) break;
+    await wait(20);
+  }
+  await wait(80);
+  return { container, transport, backend, picked };
 }
 
 /**
@@ -195,7 +233,7 @@ async function mount(results: Record<string, unknown> = {}): Promise<Mounted> {
   // than no warning at all: it trains you to ignore the line.
   await wait(80);
 
-  return { container, transport, backend };
+  return { container, transport, backend, picked: [] };
 }
 
 const panel = (c: HTMLElement) => one(c, ".chatlist");
@@ -325,6 +363,10 @@ describe("the sidebar, driven through the window", () => {
 
   test("New chat closes it too, for the same reason", async () => {
     const { container, transport } = await mount({
+      // A project is open, so "New chat" files straight into it. The
+      // folder-picking branch is the tests below; this one is about the panel
+      // and the caret, which are the same either way.
+      state: { ...BOOT.state, project: "C:/work/api" },
       "conversations.create": { conversation: conversation() },
     });
 
@@ -395,5 +437,132 @@ describe("what the core pushes while the window is up", () => {
     await wait(60);
     const logs = texts(container, ".logstrip").join(" ");
     assert.match(logs, /something went wrong/, "the core's stderr was dropped");
+  });
+});
+
+// --- where a new chat is filed ---------------------------------------------
+describe("New chat files the conversation under a project", () => {
+  const FOLDER = "D:/work/api";
+
+  /** The `project` argument the window sent to `conversations.create`. */
+  function createdWith(transport: FakeTransport): unknown {
+    const request = transport.sent.find((r) => r.method === "conversations.create");
+    return request?.params?.project;
+  }
+
+  test("with no project open it asks for a folder and files the chat there", async () => {
+    // The case the user actually described: no folder chosen yet, so pick one
+    // and put the chat inside it. Asserted on the *order* too -- binding the
+    // folder before creating is what stops the chat being filed under whatever
+    // was open before.
+    const { container, transport, picked } = await mountWithPicker(
+      {
+        "sandbox.start": { running: true, project: FOLDER },
+        "conversations.create": { conversation: conversation({ project: FOLDER }) },
+      },
+      async () => FOLDER,
+    );
+
+    await click(one(container, ".rail-toggle")!);
+    await click(one(container, ".chatlist-new")!);
+    await wait(80);
+
+    assert.deepEqual(picked, [FOLDER], "the folder picker was never opened");
+    assert.ok(
+      transport.methods().includes("sandbox.start"),
+      "the picked folder was never bound, so the chat's tools would have nothing to act on",
+    );
+    assert.equal(createdWith(transport), FOLDER, "the chat was not filed under the picked folder");
+
+    const order = transport
+      .methods()
+      .filter((m) => m === "sandbox.start" || m === "conversations.create");
+    assert.deepEqual(
+      order,
+      ["sandbox.start", "conversations.create"],
+      "the folder must be bound before the chat is created",
+    );
+  });
+
+  test("with a project already open it asks nothing", async () => {
+    // The second chat in a folder is the common case. A dialog in front of it
+    // every time would make the common path the slow one.
+    const { container, transport, picked } = await mountWithPicker(
+      {
+        state: { ...BOOT.state, project: FOLDER },
+        "conversations.create": { conversation: conversation({ project: FOLDER }) },
+      },
+      async () => "S:/somewhere/else",
+    );
+
+    await click(one(container, ".rail-toggle")!);
+    await click(one(container, ".chatlist-new")!);
+    await wait(80);
+
+    assert.deepEqual(picked, [], "a project was open, so nothing should have been asked");
+    assert.ok(!transport.methods().includes("sandbox.start"));
+    assert.equal(createdWith(transport), FOLDER);
+  });
+
+  test("a cancelled picker creates nothing", async () => {
+    // Cancelling is a normal outcome. An empty untitled conversation left
+    // behind would make the button look like it had worked.
+    const { container, transport, picked } = await mountWithPicker(
+      { "conversations.create": { conversation: conversation() } },
+      async () => null,
+    );
+
+    await click(one(container, ".rail-toggle")!);
+    await click(one(container, ".chatlist-new")!);
+    await wait(80);
+
+    assert.deepEqual(picked, [null], "the picker was not opened at all");
+    assert.ok(
+      !transport.methods().includes("conversations.create"),
+      "a cancelled picker still left a conversation behind",
+    );
+  });
+
+  test("a folder that will not start produces no conversation", async () => {
+    // A chat filed under a project that failed to open is a row the user cannot
+    // work in. No row is the better failure, and it is what this returns.
+    const { container, transport } = await mountWithPicker(
+      {
+        "sandbox.start": { running: false },
+        "conversations.create": { conversation: conversation() },
+      },
+      async () => FOLDER,
+    );
+
+    await click(one(container, ".rail-toggle")!);
+    await click(one(container, ".chatlist-new")!);
+    await wait(80);
+
+    assert.ok(
+      !transport.methods().includes("conversations.create"),
+      "a conversation was created under a folder that never opened",
+    );
+  });
+
+  test("the list groups what the core reports, active project first", async () => {
+    // The window passes the list through and lets the panel group it. This is
+    // the check that the *project* reaches the panel at all -- `state.project`
+    // is what decides which group is pinned to the top, and it arrives on a
+    // different call from the list it orders.
+    const { container } = await mountWithPicker(
+      {
+        state: { ...BOOT.state, project: "D:/work/api" },
+        "conversations.list": {
+          conversations: [
+            conversation({ id: "a", title: "Alpha work", project: "C:/x/tony" }),
+            conversation({ id: "b", title: "Endpoint notes", project: "D:/work/api" }),
+          ],
+        },
+      },
+      async () => null,
+    );
+
+    await click(one(container, ".rail-toggle")!);
+    assert.deepEqual(texts(container, ".chatproj-name"), ["api", "tony"]);
   });
 });

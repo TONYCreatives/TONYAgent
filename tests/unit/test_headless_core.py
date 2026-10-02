@@ -719,6 +719,160 @@ def test_providers_list_reports_credential_presence_after_a_save(fake_keyring):
     assert _KEY not in json.dumps(frames)
 
 
+# --- projects --------------------------------------------------------------
+def _drive_with_store(requests, store):
+    """``_drive`` for a server that has conversations to work with."""
+    stdin = io.StringIO("\n".join(json.dumps(r) for r in requests) + "\n")
+    stdout = io.StringIO()
+    asyncio.run(
+        StdioServer(_session(), stdin, stdout, store=store).serve()
+    )
+    return [json.loads(l) for l in stdout.getvalue().splitlines() if l.strip()]
+
+
+@pytest.fixture
+def restore_folder():
+    """Put ``folder_manager`` back, and blank the setting it persists to.
+
+    It is a module-level singleton that also writes the chosen folder into
+    settings, so without this a tmp path chosen by one test would leak into the
+    real next launch -- and into every later test in the session.
+    """
+    from tonyagent.folder import folder_manager
+
+    previous = folder_manager.current_folder
+    yield folder_manager
+    if previous is not None:
+        folder_manager.set_folder(previous)
+
+
+def test_switching_to_a_conversation_moves_the_working_folder_to_its_project(
+    tmp_path, restore_folder
+):
+    """The tools must follow the chat, not just the label.
+
+    ``conversations.switch`` used to set ``self.project`` and stop there. But
+    the file tools and ``search`` resolve against ``folder_manager``, not
+    against the field ``state`` echoes back -- so opening a conversation from a
+    second project left the window claiming that project while every tool still
+    read the first one, and the agent would go on editing files in a directory
+    nobody was looking at.
+
+    Nothing caught it because the only thing asserted was the reply, and the
+    reply was correct. This asserts on ``folder_manager`` instead, because that
+    is what the agent's hands are actually on.
+    """
+    from tonyagent.core.conversations import ConversationStore
+
+    alpha = tmp_path / "alpha"
+    beta = tmp_path / "beta"
+    alpha.mkdir()
+    beta.mkdir()
+
+    restore_folder.set_folder(alpha)
+    assert str(restore_folder.current_folder) == str(alpha)
+
+    # A conversation belonging to beta, saved while alpha is the open folder --
+    # which is exactly the state the bug produced, and the one a user reaches by
+    # creating a chat in one project and then switching back to another.
+    store = ConversationStore(tmp_path / "chats")
+    stored = store.create(title="Beta work", project=str(beta))
+
+    frames = _drive_with_store(
+        [{"id": 1, "method": "conversations.switch", "params": {"id": stored.id}}],
+        store=store,
+    )
+
+    assert "error" not in frames[0], frames[0]
+    assert str(restore_folder.current_folder) == str(beta), (
+        "the conversation's project was recorded, but the tools still point at "
+        f"{restore_folder.current_folder}"
+    )
+
+
+def test_a_conversation_with_no_project_leaves_the_folder_alone(
+    tmp_path, restore_folder
+):
+    """Every chat saved before ``project`` existed has none.
+
+    Clearing the folder on one of those would take away a working workspace on
+    behalf of a conversation that merely predates the field, leaving the tools
+    resolving against nothing -- which is the failure this whole change exists
+    to prevent, reached by the opposite route.
+    """
+    from tonyagent.core.conversations import ConversationStore
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = ConversationStore(tmp_path / "chats")
+    orphan = store.create(title="Old chat")  # project defaults to ""
+    assert orphan.project == ""
+
+    restore_folder.set_folder(workspace)
+    frames = _drive_with_store(
+        [{"id": 1, "method": "conversations.switch", "params": {"id": orphan.id}}],
+        store=store,
+    )
+
+    assert "error" not in frames[0], frames[0]
+    assert str(restore_folder.current_folder) == str(workspace), (
+        "a conversation with no project cleared the folder its tools were using"
+    )
+
+
+def test_a_project_folder_that_has_gone_does_not_stop_the_switch(tmp_path):
+    """A moved folder is a degraded workspace, not an unopenable chat.
+
+    The transcript is on disk and perfectly readable. Raising here would trade a
+    warning in the log for a window that cannot open a conversation at all --
+    and this is not hypothetical: it is what happens the day someone renames
+    the folder a project lives in.
+    """
+    from tonyagent.core.conversations import ConversationStore
+
+    # Never created, so it is gone in the way that matters rather than in a way
+    # this test has to clean up after itself.
+    vanished = tmp_path / "renamed-away"
+    store = ConversationStore(tmp_path / "chats")
+    stored = store.create(title="Moved", project=str(vanished))
+
+    frames = _drive_with_store(
+        [{"id": 1, "method": "conversations.switch", "params": {"id": stored.id}}],
+        store=store,
+    )
+
+    assert "error" not in frames[0], frames[0]
+    assert frames[0]["result"]["project"] == str(vanished), (
+        "the conversation still reports the project it belongs to, even though "
+        "the folder could not be opened"
+    )
+
+
+def test_a_restored_folder_is_reported_as_the_current_project(tmp_path, restore_folder):
+    """A window launched with a project open must say so.
+
+    `folder_manager` restores the last chosen folder from settings at import, so
+    the tools came up with a working folder. But `StdioServer` used to start
+    with `project = ""`, so `state` reported none: the window showed "no
+    project", "New chat" asked for a folder the user had already chosen, and a
+    chat created after a restart was filed under nothing at all.
+
+    The disagreement is the same one `_bind_project` fixes lower down -- the
+    field and the folder disagreeing -- and it is only visible across a restart,
+    which is why it survived being correct in every single-session test.
+    """
+    workspace = tmp_path / "restored"
+    workspace.mkdir()
+    restore_folder.set_folder(workspace)
+
+    server = StdioServer(_session(), io.StringIO(""), io.StringIO())
+
+    assert server.project == str(workspace), (
+        "the folder the tools resolve against is not the project the window "
+        f"reports: {server.project!r}"
+    )
+
+
 # --- search ----------------------------------------------------------------
 def test_search_finds_matches_in_the_project(tmp_path, monkeypatch):
     (tmp_path / "a.py").write_text("import os\n\ndef load():\n    return 1\n", encoding="utf-8")
