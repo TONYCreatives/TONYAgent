@@ -25,10 +25,12 @@ from pathlib import Path
 import pytest
 
 from tonyagent.core.events import EventBus
-from tonyagent.core.modes import MODE_ORDER
+from tonyagent.core.modes import MODE_ORDER, PERMISSIONS
 from tonyagent.core.session import AgentSession
+from tonyagent.folder import folder_manager
 from tonyagent.headless.server import StdioServer
 from tonyagent.providers.base import ChatMessage
+from tonyagent.tools.base import ToolResultStatus
 
 MUTATING = {"write_file", "edit_file", "delete_file", "execute_command"}
 
@@ -143,10 +145,40 @@ def test_read_only_modes_hide_every_mutating_tool(mode):
 
 @pytest.mark.parametrize("mode", ["build", "mission"])
 def test_writing_modes_keep_every_mutating_tool(mode):
+    """A writing mode must not be the thing that hides a mutating tool.
+
+    The permission level is raised first because the schema is the *intersection*
+    of the two axes, and the default level is Medium, which withholds
+    `execute_command` on purpose. Setting it to Full is what isolates this test
+    to the question it is actually asking -- "does the mode withhold it?" --
+    instead of re-testing the ladder every time a level changes.
+
+    That this started failing is the point, not an inconvenience: the two axes
+    were previously one, so a default could quietly cost a tool with nothing to
+    show for it.
+    """
     session = AgentSession(bus=EventBus())
+    session.set_permission("full")
     session.set_mode(mode)
     names = {s.name for s in session._tool_schemas()}
     assert MUTATING <= names
+
+
+def test_the_permission_level_withholds_a_tool_the_mode_allows():
+    """Medium edits files but refuses to execute commands.
+
+    The middle rung that did not exist before: there used to be no way to say
+    "let it change things, but not run code", and the only honest settings were
+    Build (which shells out) or Plan (which cannot write at all).
+    """
+    session = AgentSession(bus=EventBus())
+    session.set_mode("build")
+    session.set_permission("medium")
+    names = {s.name for s in session._tool_schemas()}
+    assert "execute_command" not in names
+    # And it really is only the command that is withheld -- writing still works.
+    assert {"write_file", "edit_file", "delete_file"} <= names
+    assert {"read_file", "grep"} <= names
 
 
 def test_every_registered_tool_is_reachable_in_some_mode():
@@ -463,3 +495,190 @@ def test_short_arguments_are_still_shown_in_full(project):
 
     joined = "\n".join(lines)
     assert "path='short.py'" in joined
+
+
+# --- permissions ------------------------------------------------------------
+
+def _permission(name: str):
+    """The real level object, so a test cannot drift from the core's data."""
+    return PERMISSIONS[name]
+
+
+async def _answer(orch, request) -> None:
+    """Approve a confirmation a few ticks later, as the real bridge does."""
+    await asyncio.sleep(0)
+    orch.respond_to_confirmation(request.tool_call.id, True)
+
+
+def test_the_four_levels_are_ordered_low_to_full():
+    """The bar is a ladder, and the order is the claim it makes.
+
+    Asserted against the tuple rather than against a set so a level inserted in
+    the wrong place fails here instead of rendering as a control whose meaning
+    is reversed -- a bar reading Full, High, Medium, Low would still *work*.
+    """
+    from tonyagent.core.modes import PERMISSION_ORDER, PERMISSIONS
+
+    assert PERMISSION_ORDER == ("low", "medium", "high", "full")
+    # Each rung must actually be a strict superset of the one below it, or the
+    # ladder is decorative.
+    previous: set[str] = set()
+    for name in PERMISSION_ORDER:
+        allowed = set(PERMISSIONS[name].allowed_tools)
+        assert previous <= allowed, (
+            f"{name} withholds a tool {PERMISSION_ORDER[PERMISSION_ORDER.index(name) - 1]} "
+            "allowed, so the ladder goes backwards"
+        )
+        previous = allowed
+
+
+def test_only_full_skips_the_confirmation_prompt():
+    """One level, and only one, is marked as not asking.
+
+    If this ever became true for two levels the bar would be offering the same
+    power twice under different names.
+    """
+    from tonyagent.core.modes import PERMISSION_ORDER, PERMISSIONS
+
+    skipping = [n for n in PERMISSION_ORDER if PERMISSIONS[n].skips_confirmation]
+    assert skipping == ["full"]
+
+
+def test_full_adds_no_tool_over_high():
+    """Full removes the question. It does not remove a gate.
+
+    The distinction the whole level rests on: `Full` differs from `High` only in
+    whether the user is asked. A test asserting the *equality* of the two
+    allow-lists is what stops a later edit from quietly handing Full a tool
+    nobody reviewed -- which would make the level above it meaningless.
+    """
+    from tonyagent.core.modes import PERMISSIONS
+
+    assert (
+        PERMISSIONS["full"].allowed_tools == PERMISSIONS["high"].allowed_tools
+    ), "Full gained a tool; the ladder says it should not have"
+
+
+async def test_full_skips_confirmation_for_an_untrusted_project(tmp_path, monkeypatch):
+    """The reason Full exists.
+
+    Trusting a folder is a setting in a panel that tends to stay set. Full is
+    the per-turn answer to "I trust this one job", and it is deliberately the
+    broader of the two -- otherwise a user who has never touched Settings could
+    not reach it at all.
+    """
+    from tonyagent.tools import ToolCall
+    from tonyagent.tools.orchestrator import ToolOrchestrator
+
+    monkeypatch.setattr(folder_manager, "_current_folder", tmp_path)
+    orch = ToolOrchestrator()
+    orch.set_permission(_permission("full"))
+    assert orch.is_trusted(str(tmp_path)) is False
+
+    # Any confirmation at all is the failure: the point is that none is asked.
+    orch.set_confirmation_callback(
+        lambda req: (_ for _ in ()).throw(AssertionError("asked, at Full"))
+    )
+    call = ToolCall(id="f1", name="write_file", arguments={"path": "n.txt", "content": "x"})
+    result = await orch.execute_tool_async(call)
+    assert result.status is ToolResultStatus.SUCCESS
+    assert (tmp_path / "n.txt").read_text() == "x"
+
+
+async def test_high_still_asks_for_an_untrusted_project(tmp_path, monkeypatch):
+    """The negative of the test above, and the one that would catch a leak.
+
+    If a later change made `High` skip as well, the bar would be offering Full
+    under a second name and the user would have no way to choose to be asked.
+    """
+    from tonyagent.tools import ToolCall
+    from tonyagent.tools.orchestrator import ToolOrchestrator
+
+    monkeypatch.setattr(folder_manager, "_current_folder", tmp_path)
+    orch = ToolOrchestrator()
+    orch.set_permission(_permission("high"))
+    assert orch.is_trusted(str(tmp_path)) is False
+
+    async def approve(tool_call, tool):
+        await asyncio.sleep(0)
+        orch.respond_to_confirmation(tool_call.id, True)
+
+    def on_confirm(request):
+        asyncio.get_running_loop().create_task(approve(request.tool_call, request.tool))
+
+    orch.set_confirmation_callback(on_confirm)
+    call = ToolCall(id="h1", name="write_file", arguments={"path": "m.txt", "content": "y"})
+    result = await orch.execute_tool_async(call)
+    assert result.status is ToolResultStatus.SUCCESS
+
+
+async def test_full_still_refuses_a_command_off_the_allowlist(tmp_path, monkeypatch):
+    """**The boundary that matters most.**
+
+    The allow-list matches on the executable's name and cannot see what it is
+    handed, so at Full a trusted project can already run `python -c "<anything>"`.
+    Full must therefore *not* become a way past the allow-list itself, or the
+    ladder's top rung would stop being a permission choice and start being a
+    bypass. This asserts the refusal survives the level.
+    """
+    from tonyagent.tools import ToolCall
+    from tonyagent.tools.orchestrator import ToolOrchestrator
+
+    monkeypatch.setattr(folder_manager, "_current_folder", tmp_path)
+    orch = ToolOrchestrator()
+    orch.set_trusted(str(tmp_path), True)
+    orch.set_permission(_permission("full"))
+
+    asked = []
+
+    def on_confirm(request):
+        asked.append(request.tool_call.name)
+        # Never answered: the assertion is that we got here at all.
+        asyncio.get_running_loop().create_task(_answer(orch, request))
+
+    orch.set_confirmation_callback(on_confirm)
+    call = ToolCall(
+        id="c1",
+        name="execute_command",
+        arguments={"command": "format C:", "cwd": "."},
+    )
+    result = await orch.execute_tool_async(call)
+
+    assert asked == ["execute_command"], (
+        "Full waved through a command that is not on the allow-list"
+    )
+    assert result.status is ToolResultStatus.ERROR
+
+
+async def test_switching_conversation_keeps_the_permission_level(tmp_path):
+    """The bar and the gate must not disagree.
+
+    A replacement session starts at the default level, so without carrying the
+    choice across, switching chats would quietly hand the agent back permissions
+    the user had just taken away -- while the window went on drawing their
+    choice. The user would be looking at Medium and the core would be running
+    Full, with nothing on screen to say so.
+    """
+    from tonyagent.core.conversations import ConversationStore
+
+    store = ConversationStore(tmp_path / "chats")
+    stored = store.create(title="Earlier", project=str(tmp_path))
+    session = AgentSession(bus=EventBus())
+    session.set_permission("full")
+
+    from tonyagent.headless.server import StdioServer
+
+    replacement = StdioServer(session, io.StringIO(""), io.StringIO(), store=store)
+    assert replacement._new_session().permission_name == "full"
+
+
+def test_permission_survives_a_mode_switch():
+    """Changing what the agent is *for* must not change how far it may go.
+
+    `set_mode` clears the conversation, so anything riding along in the session
+    has to be reapplied deliberately or it silently reverts to the default.
+    """
+    session = AgentSession(bus=EventBus())
+    session.set_permission("low")
+    session.set_mode("build")
+    assert session.permission_name == "low"

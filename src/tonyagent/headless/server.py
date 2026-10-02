@@ -53,6 +53,29 @@ def _dumps(obj: Any) -> str:
     return json.dumps(obj, default=str, ensure_ascii=False)
 
 
+def _permission_payload(level: Any) -> dict[str, Any]:
+    """One permission level, as the window needs to draw it.
+
+    Sends ``runs_commands`` and ``skips_confirmation`` as booleans rather than
+    making the frontend infer them from the label or the description. The bar
+    has to be able to say what a level actually permits -- that is the whole
+    point of it -- and prose is not something to parse.
+    """
+    return {
+        "name": level.name,
+        "label": level.label,
+        "description": level.description,
+        # The one fact the bar most needs: whether a shell command can even be
+        # attempted. Low and Medium differ from High by exactly this, and it is
+        # what separates the two middle rungs at a glance.
+        "runs_commands": "execute_command" in level.allowed_tools,
+        # Whether the user is asked before a destructive tool runs. Reported
+        # separately because it is a different kind of permission from the
+        # allow-list: Full adds no tool and removes only the question.
+        "skips_confirmation": level.skips_confirmation,
+    }
+
+
 class StdioServer:
     """Reads requests from stdin, writes replies and events to stdout.
 
@@ -120,6 +143,8 @@ class StdioServer:
             "models.list": self._h_models_list,
             "tools.get": self._h_tools_get,
             "tools.set": self._h_tools_set,
+            "permission.list": self._h_permission_list,
+            "permission.set": self._h_permission_set,
             "conversations.list": self._h_conversations_list,
             "conversations.create": self._h_conversations_create,
             "conversations.switch": self._h_conversations_switch,
@@ -179,6 +204,12 @@ class StdioServer:
         # The effort is a property of the window, not of one conversation, so
         # switching chats must not silently reset it to the model default.
         session.set_reasoning_effort(self.session.reasoning_effort)
+        # Same for the permission level, and for a stronger reason. A fresh
+        # session starts at the default level, so switching conversations would
+        # quietly hand the agent back the permissions the user had just taken
+        # away -- and the window's bar would go on showing their choice while
+        # the core enforced something else. The bar and the gate have to agree.
+        session.set_permission(self.session.permission_name)
         return session
 
     def _bind_project(self, project: str) -> None:
@@ -545,6 +576,11 @@ class StdioServer:
             "messages": len(self.session.messages),
             "project": self.project,
             "mode": self.session.mode_name,
+            # Reported in `state` as well as `permission.list` so a reloaded
+            # window draws the level the core is actually enforcing. Reading it
+            # from the core's own session rather than from local state is what
+            # stops the bar claiming Medium while the gate is set to Full.
+            "permission": self.session.permission_name,
             "conversation": self.conversation_id,
             "reasoning_effort": self.session.reasoning_effort,
         }
@@ -838,6 +874,33 @@ class StdioServer:
             logger.error(f"Could not save the tool call budget: {exc}")
             return {"max_tool_calls": applied, "persisted": False}
         return {"max_tool_calls": applied, "persisted": True}
+
+    # -- permissions --------------------------------------------------------
+    def _h_permission_set(self, params: dict) -> Any:
+        """Change what the agent is allowed to do on the next turn.
+
+        Returns the level that is actually in force rather than the one that
+        was asked for, for the same reason `mode.set` does: an unrecognised
+        name resolves to the default, so a frontend echoing the request back
+        would be labelling a level the core is not enforcing.
+        """
+        requested = str(params.get("permission", ""))
+        level = self.session.set_permission(requested)
+        return _permission_payload(level)
+
+    def _h_permission_list(self, params: dict) -> Any:
+        """The available levels, in display order.
+
+        Not hardcoded in the frontend, for the reason `mode.list` documents: a
+        level the UI cannot draw is a level nobody can pick, and the labels
+        would drift from the allow-lists they describe.
+        """
+        from tonyagent.core.modes import PERMISSION_ORDER, PERMISSIONS
+
+        return {
+            "permissions": [_permission_payload(PERMISSIONS[n]) for n in PERMISSION_ORDER],
+            "permission": self.session.permission_name,
+        }
 
     # -- modes ---------------------------------------------------------------
     def _h_mode_set(self, params: dict) -> Any:

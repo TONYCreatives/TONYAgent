@@ -1751,6 +1751,186 @@ body {
 }
 
 /*
+ * The permission bar: how much the agent may do, above the composer.
+ *
+ * Above the field and not inside it, because it is a property of the *window*
+ * rather than of the message being written. Putting it inside the composer
+ * would tie a per-session ceiling to a control that reads as per-message, and
+ * the composer's own row already carries four segmented groups -- a fifth there
+ * would be one too many.
+ *
+ * Shares the composer's 720px measure so the bar lines up with the field below
+ * it. A narrower control against a wider field reads as a different surface
+ * rather than as part of the same one.
+ */
+.permbar {
+  position: relative;
+  max-width: 720px;
+  margin: 0 auto 8px;
+}
+
+.permbar-trigger {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg-mute);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.permbar-trigger:hover:not(:disabled),
+.permbar-trigger[aria-expanded="true"] {
+  background: var(--raised);
+  border-color: var(--border-strong, var(--border));
+}
+
+.permbar-trigger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.permbar-label {
+  /* Dimmer than the level name beside it. The label is the control's caption
+     and is the same on every rung; the level is what changes. */
+  color: var(--fg-dim);
+}
+
+/*
+ * The four rungs, drawn as one bar rather than as four buttons.
+ *
+ * A position on a scale, not a set of choices: every step up to and including
+ * the current one is filled. Four separate buttons would say "pick one of
+ * four", which is a different claim and would make the current one look
+ * selected rather than in force.
+ *
+ * `--fg-dim` for the filled steps and `--border` for the empty ones, so the
+ * bar sits at the same weight as the field's hairline rather than drawing
+ * attention away from the transcript.
+ */
+.permbar-steps {
+  display: flex;
+  gap: 2px;
+}
+
+.permbar-step {
+  width: 15px;
+  height: 3px;
+  border-radius: 1px;
+  background: var(--border);
+  transition: background 0.12s ease;
+}
+
+.permbar-step.is-on {
+  background: var(--fg-dim);
+}
+
+.permbar-value {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+/*
+ * The menu, opened above the composer rather than below the trigger.
+ *
+ * Opening downward would put it over the composer's own controls, which is the
+ * one surface the user is reaching for; opening upward leaves the transcript
+ * visible, so the list being chosen from and the chat it applies to are both on
+ * screen at once.
+ */
+.permmenu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 320px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+  animation: rise-in var(--motion-fast) var(--ease-out) both;
+}
+
+.permmenu-item {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 1px);
+  background: none;
+  color: var(--fg-mute);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.permmenu-item:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.permmenu-item.is-active {
+  background: var(--chip);
+  color: var(--fg);
+}
+
+.permmenu-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.permmenu-name {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+/*
+ * The marker on the one rung that acts without asking.
+ *
+ * `--accent`, not `--danger`. Nothing here is broken or refused -- the level
+ * works exactly as designed -- so it is not an error colour. It is also not
+ * `--fg-dim`, because this is the one thing in the menu a user should not have
+ * to read the description to notice.
+ */
+.permmenu-warn {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--chip);
+  color: var(--accent);
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.permmenu-desc {
+  display: block;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--fg-dim);
+}
+
+/*
+ * What the next rung adds, in words.
+ *
+ * Present because the labels do not carry the difference: "Medium" and "High"
+ * are names, and the fact that High may execute code while Medium may not is
+ * the entire decision the user is making at this menu.
+ */
+.permmenu-gain {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--fg-mute);
+}
+
+/*
  * Two rows in one field: the textarea on top, then a control row. The reference
  * does this rather than putting buttons beside the input, which keeps the text
  * area full width and stops the send button from stealing line length.
@@ -3103,6 +3283,7 @@ body {
    */
   .rowmenu,
   .rowmenu[data-state],
+  .permmenu,
   .modal-backdrop,
   .modal-backdrop[data-state],
   .modal-backdrop > .modal,

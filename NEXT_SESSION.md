@@ -1,7 +1,9 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-10-02, after the fifth UI pass — conversations
+**Last updated:** 2026-10-02, after the sixth pass — a four-rung
+permission bar above the composer (see "The sixth pass" near the end)
+**Was:** 2026-10-02, after the fifth UI pass — conversations
 filed under the project folder they belong to (see "The fifth UI pass"
 near the end)
 **Was:** 2026-10-02, after the fourth UI pass — rounded window corners
@@ -9,7 +11,7 @@ from DWM, and the conversation list turned from a docked column into an
 animated overlay panel (see "The fourth UI pass" near the end)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 592 passed, TypeScript 361 passed,
+protocol method.** Everything green: **Python 602 passed, TypeScript 381 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **590 passed, 7 skipped** with Docker Desktop running.
@@ -66,7 +68,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 361 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
+cd app && npm test                     # 381 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -2339,3 +2341,99 @@ through the panel, and the whole "New chat" flow through `App.test.tsx`.
 - **TypeScript 361 passed** (was 341), zero `act` warnings.
 - `audit_reduced_motion.py` clean: the new rules carry no animations, only the
   `transition` on `.chatproj-add`, matching `.chatrow-more`.
+
+## The sixth pass — a permission bar, Low / Medium / High / Full
+
+Asked for as "a permission bar above the chat window". Built on the axis the
+core already had rather than as a new concept: `modes.py` already carries
+per-mode `allowed_tools`, and the module's own docstring states the rule this
+whole feature turns on —
+
+> **Plan refuses writes, it does not merely discourage them.** A mode that only
+> changes the prompt produces a model that says "I will not modify the file"
+> right before it does. Prompt text is a request; the allow-list is a fact.
+
+So a permission level is an **allow-list**, enforced in the orchestrator, and
+the bar reads what the core says rather than naming four things itself.
+
+### What is actually new
+
+Only **Medium**. Low is exactly `Plan`/`Skills`, High is exactly
+`Build`/`Mission`, and both were already selectable — so the bar would have
+been two already-known settings wearing new names.
+
+Medium is the rung that did not exist: *edit files, refuse to execute code*.
+Before this there was no way to say it. The honest settings were Build (which
+shells out) or Plan (which cannot write at all), so a user who wanted the agent
+to fix source but not run it had to pick one and give up the other half.
+
+**Default is Medium, deliberately.** A window that can run shell commands the
+moment it opens has already been given more than the user asked for, and Medium
+vs High is exactly one tool — the one that executes model-authored code.
+
+### Full: what it really is
+
+The user asked for Full and accepted responsibility for it, which is the right
+call. But it is worth being exact about what the level does, because the
+difference matters:
+
+- **Full adds no tool.** `PERMISSIONS["full"].allowed_tools == PERMISSIONS["high"]
+  .allowed_tools` is asserted directly, so a later edit cannot quietly hand Full
+  something nobody reviewed.
+- **Full removes one thing: the question.** It does not lift the command
+  allow-list, and it does not lift the sandbox requirement. `execute_command`
+  still refuses without an isolating backend behind it.
+
+There is a test for that boundary specifically — `test_full_still_refuses_a_
+command_off_the_allowlist` — because it is the line the level must not cross.
+**It was verified to fail** when the allow-list check was reverted to
+`skip_confirm = True`. Full becoming a way past the allow-list is exactly the
+kind of change that would be invisible in review and permanent in practice.
+
+Full is also *broader* than the existing per-project trust flag, on purpose.
+Trust is a setting in Settings that tends to stay set; Full is visible in the
+bar and read every turn, which makes it the answer for "I trust this one job".
+Neither one alone is required — the check is `full or trusted`.
+
+### The line the bar draws about `python -c`
+
+Stated in the UI, because it is the truth about this control: the allow-list
+matches on the **executable's name** and cannot see what it is handed. So at
+Full on a trusted project, `python -c "<anything>"` runs. Full does not create
+that — it makes it visible instead of leaving it buried in a trust toggle.
+
+### Two axes, intersecting
+
+`Mode` decides what the agent is *for*; the permission level decides how far it
+may go. `ToolOrchestrator.tool_permitted` returns the **intersection**, so
+either can only ever narrow what the other allows. Asking for Full while in
+Plan mode does not put `write_file` back.
+
+`_new_session` now carries the level across a conversation switch. A replacement
+session starts at the default, so without that, switching chats would hand the
+agent back permissions the user had just taken away — while the bar went on
+showing their choice. The bar and the gate must not disagree.
+
+### What the tests caught
+
+1. **`test_writing_modes_keep_every_mutating_tool` started failing.** Not a bad
+   test — a real collision. It asserts that Build/Mission withhold no mutating
+   tool, which is still true; it just could not see that the *schema* is now the
+   intersection of two axes, and the default level withholds
+   `execute_command` on purpose. Fixed by raising the permission first, which is
+   what isolates the question it was asking.
+2. **`.permmenu` was missing from the reduced-motion block**, and
+   `scripts/audit_reduced_motion.py` caught it on its first run. That script has
+   now earned its keep twice: it once found `.tab-spinner` and now found a
+   selector added after it was written.
+
+### Verified
+
+- **Python 602 passed, 7 skipped.** Seven new tests, including the Full/allowlist
+  boundary proven to fail without its fix.
+- **TypeScript 381 passed** (was 361), zero `act` warnings.
+- `audit_reduced_motion.py` clean.
+- `ComposerAttach` flakes roughly one run in three on Windows, hitting a
+  different test each time. **Pre-existing**, reproduced on unmodified code
+  earlier in the project, and unrelated — it is an attachment-preview test
+  and nothing here touches attachments.

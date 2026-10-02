@@ -77,6 +77,8 @@ class ToolOrchestrator:
         self._trusted_projects: set[str] = set()
         #: Active mode, or None for unrestricted (the Tkinter UI's behaviour).
         self._mode: Any = None
+        # The permission level, intersecting with the mode. See `tool_permitted`.
+        self._permission: Any = None
 
     def set_trusted(self, project: str, trusted: bool = True) -> None:
         """Mark a project folder as trusted (skip per-command confirmations)."""
@@ -101,11 +103,32 @@ class ToolOrchestrator:
         self._mode = mode
 
     def tool_permitted(self, name: str) -> bool:
-        """Whether the active mode allows this tool."""
+        """Whether the active permission level allows this tool.
+
+        **The intersection, not an override.** A mode and a permission level are
+        two independent limits and a tool has to satisfy both: asking for Full
+        does not put `write_file` back in reach while Plan mode is on, and Plan
+        does not withdraw `execute_command` while Full is. Each can only ever
+        make the set smaller, so there is no combination of the two controls
+        that widens access past what Build mode and Full together already allow.
+        """
         mode = self._mode
-        if mode is None:
-            return True
-        return name in mode.allowed_tools
+        permission = self._permission
+        if mode is not None and name not in mode.allowed_tools:
+            return False
+        if permission is not None and name not in permission.allowed_tools:
+            return False
+        return True
+
+    def set_permission(self, permission: Any) -> None:
+        """Apply a permission level, or ``None`` for unrestricted.
+
+        Same reasoning as `set_mode`: the session pushes the level here so the
+        decision is made by the layer that runs tools, not the one that lists
+        them. A level enforced only by filtering the schema would be a
+        suggestion to the model.
+        """
+        self._permission = permission
 
     def set_confirmation_callback(self, callback: Callable[[ConfirmationRequest], None]) -> None:
         self._confirmation_callback = callback
@@ -166,17 +189,39 @@ class ToolOrchestrator:
             return ToolResult(status=ToolResultStatus.ERROR, error="No project folder selected")
         
         if tool.destructive and tool.requires_confirmation:
-            # Per-session "trust this project": skip the modal for trusted
-            # folders, but non-allowlisted shell commands always ask.
-            skip_confirm = False
+            # Two ways to stop asking, either of which is enough.
+            #
+            # **Trust** is the per-session statement about a folder: this code is
+            # mine, stop interrupting me. It predates the permission levels and
+            # is unchanged by them.
+            #
+            # **Full** is the user choosing, for this window, not to be asked.
+            # It is the *broader* of the two on purpose: trust is set in
+            # Settings and tends to stay set, while Full is visible in the bar
+            # and read on every turn. That makes it the answer for "I trust this
+            # one job" without going to change a setting first.
+            #
+            # What Full deliberately does not do is widen anything. The mode and
+            # permission checks above ran already, the allow-list below still
+            # has the last word on commands, and `execute_command` still refuses
+            # without an isolating sandbox. It removes the question, not the
+            # gates -- which is why the ladder above it still means something.
+            permission = self._permission
+            full = bool(getattr(permission, "skips_confirmation", False))
             current = folder_manager.current_folder
-            if current is not None and self.is_trusted(str(current)):
+            trusted = current is not None and self.is_trusted(str(current))
+            skip_confirm = False
+            if full or trusted:
                 if tool_call.name == "execute_command":
                     from tonyagent.tools.shell_tools import _is_command_allowed
 
+                    # An off-allowlist command asks either way. Letting Full
+                    # override this would make the allow-list decorative and the
+                    # level above it meaningless.
                     allowed, _ = _is_command_allowed(tool_call.arguments.get("command", ""))
                     skip_confirm = allowed
                 else:
+                    skip_confirm = True
                     skip_confirm = True
             if not skip_confirm:
                 result = await self._request_confirmation(tool_call, tool)

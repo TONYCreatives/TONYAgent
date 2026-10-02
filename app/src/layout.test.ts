@@ -523,3 +523,50 @@ describe("conversations are grouped under a project header", () => {
     assert.match(body(".chatlist-rows"), /overflow-y:\s*auto/);
   });
 });
+
+// --- the permission bar ------------------------------------------------------
+describe("the permission bar reads as a position on a scale", () => {
+  test("it shares the composer's measure, so the two are one surface", () => {
+    // A narrower control against a wider field reads as a different surface
+    // rather than as part of the same one, and 720px is the composer's measured
+    // width -- the same number, asserted so the two cannot drift apart.
+    assert.match(body(".permbar"), /max-width:\s*720px/);
+    assert.match(body(".composer-inner"), /max-width:\s*720px/);
+  });
+
+  test("the rungs are a filled run, not four equal blocks", () => {
+    // `.is-on` is applied to every step up to the current one, which is what
+    // makes the control say "you are here" rather than "you picked one of
+    // four". A rule that made all four identical would make the level
+    // unreadable from the bar alone.
+    assert.match(STYLESHEET, /\.permbar-step\.is-on/);
+    // And the two states must be distinguishable at all.
+    assert.match(body(".permbar-step"), /background:\s*var\(--border\)/);
+    assert.match(body(".permbar-step.is-on"), /background:\s*var\(--fg-dim\)/);
+  });
+
+  test("the menu opens above the bar, not downward over the composer", () => {
+    // Downward would cover the composer's own controls -- the one surface the
+    // user is reaching for -- and hide the transcript the level applies to.
+    // Asserted as the anchor rather than the absence of a rule, because the
+    // animation below moves the node and `top` is what must not be set.
+    assert.match(body(".permmenu"), /bottom:\s*calc\(100%/);
+    assert.doesNotMatch(body(".permmenu"), /top:\s*0\b/);
+  });
+
+  test("the rung that acts unasked is marked in the accent, not in danger", () => {
+    // Nothing here is broken or refused -- the level works as designed -- so an
+    // error colour would be a lie. And `--fg-dim` would be too quiet for the
+    // one thing in the menu a user must not have to read the description to
+    // notice.
+    assert.match(body(".permmenu-warn"), /color:\s*var\(--accent\)/);
+    assert.doesNotMatch(body(".permmenu-warn"), /var\(--danger\)/);
+  });
+
+  test("it is a border, not a fill, so it does not compete with the transcript", () => {
+    // The bar sits above the composer, in the transcript's column. Filled, it
+    // would be the brightest thing between the user and what they were reading.
+    assert.match(body(".permbar-trigger"), /border:\s*1px solid var\(--border\)/);
+    assert.doesNotMatch(body(".permbar-trigger"), /background:\s*var\(--(raised|chip)\)/);
+  });
+});

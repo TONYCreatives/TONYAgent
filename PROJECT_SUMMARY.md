@@ -132,9 +132,9 @@ MSVC 블로커는 **해결됨** (Visual Studio Community 2026, VC tools 14.51.36
 
 ```bash
 python -m compileall -q src
-python -m pytest tests -q                    # 592 passed, 7 skipped (Docker up)
+python -m pytest tests -q                    # 602 passed, 7 skipped (Docker up)
 python scripts/check_all.py --fast           # 3 checks
-cd app && npm test                           # 361 passed (Rust 불필요)
+cd app && npm test                           # 381 passed (Rust 불필요)
 python scripts/verify_composer_pass.py       # 패키징된 앱 DOM: 전송 아이콘, 첨부,
                                              # 모델 메뉴, tool call 예산
 python scripts/verify_pass_b.py              # 패키징된 앱 실측: rail 정렬, 자체 타이틀

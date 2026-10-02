@@ -118,6 +118,16 @@ export interface CoreMethods {
   "mode.list": Record<string, never>;
   "mode.set": { mode: string };
   /**
+   * How much the agent is allowed to do, and which level is in force.
+   *
+   * A separate axis from `mode` on purpose. A mode decides what the agent is
+   * *for* (plan a change, make one); this decides how far it may go (read only,
+   * edit, run commands, run them unasked). They intersect, so either can only
+   * ever narrow what the other allows.
+   */
+  "permission.list": Record<string, never>;
+  "permission.set": { permission: string };
+  /**
    * How hard the bound model can be asked to think.
    *
    * `supported: false` means the model does not reason at all, and the core

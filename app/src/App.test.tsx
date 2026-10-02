@@ -33,7 +33,14 @@ import {
   type EventType,
   type LineTransport,
 } from "./backend.js";
-import { click, one, render, texts, wait } from "./test-render.js";
+import {
+  all,
+  click,
+  one,
+  render,
+  texts,
+  wait,
+} from "./test-render.js";
 import { exitDurationMs } from "./useDelayedUnmount.js";
 import { dom } from "./test-dom.js";
 
@@ -132,6 +139,42 @@ const BOOT = {
   },
   "tools.get": { max_tool_calls: 10 },
   "reasoning.list": null,
+  // The ladder the bar draws. Answered from boot so the bar exists: a control
+  // that depends on a boot call nobody answers draws itself blank for a frame
+  // on every launch, and is untestable besides.
+  "permission.list": {
+    permission: "medium",
+    permissions: [
+      {
+        name: "low",
+        label: "Low",
+        description: "Read, search and browse.",
+        runs_commands: false,
+        skips_confirmation: false,
+      },
+      {
+        name: "medium",
+        label: "Medium",
+        description: "Edit files. Shell commands are refused.",
+        runs_commands: false,
+        skips_confirmation: false,
+      },
+      {
+        name: "high",
+        label: "High",
+        description: "Everything, including running commands.",
+        runs_commands: true,
+        skips_confirmation: false,
+      },
+      {
+        name: "full",
+        label: "Full",
+        description: "Everything, without asking first.",
+        runs_commands: true,
+        skips_confirmation: true,
+      },
+    ],
+  },
 };
 
 const conversation = (over: Record<string, unknown> = {}) => ({
@@ -564,5 +607,90 @@ describe("New chat files the conversation under a project", () => {
 
     await click(one(container, ".rail-toggle")!);
     assert.deepEqual(texts(container, ".chatproj-name"), ["api", "tony"]);
+  });
+});
+
+// --- the permission bar, driven through the window --------------------------
+describe("the permission bar reflects the core", () => {
+  const steps = (c: HTMLElement) =>
+    all(c, ".permbar-step").map((e) => e.classList.contains("is-on"));
+
+  test("it draws the level the core reported, not a local default", async () => {
+    // `state` is what a reloaded window reads, so it is the level that has to
+    // be right. A bar seeded with its own default would agree with the core
+    // today and disagree the first time anything changed it elsewhere.
+    const { container, transport } = await mount({
+      state: { ...BOOT.state, permission: "high" },
+      "permission.list": {
+        permission: "high",
+        permissions: BOOT["permission.list"].permissions,
+      },
+    });
+
+    assert.ok(
+      transport.methods().includes("permission.list"),
+      "the ladder was never read from the core",
+    );
+    assert.deepEqual(texts(container, ".permbar-value"), ["High"]);
+    assert.deepEqual(steps(container), [true, true, true, false]);
+  });
+
+  test("choosing a level asks the core, which decides what is really in force", async () => {
+    const { container, transport } = await mount({
+      "permission.set": { permission: "full" },
+    });
+
+    await click(one(container, ".permbar-trigger")!);
+    await click(all(container, ".permmenu-item")[3]);
+    await wait(80);
+
+    const request = transport.sent.find((r) => r.method === "permission.set");
+    assert.equal(request?.params?.permission, "full");
+    assert.deepEqual(texts(container, ".permbar-value"), ["Full"]);
+    assert.deepEqual(steps(container), [true, true, true, true]);
+  });
+
+  test("a level the core resolved differently is corrected", async () => {
+    // An unrecognised name falls back to the core's default. A bar that echoed
+    // the request back would be labelling a level the orchestrator is not
+    // enforcing, which is the one thing this control must never do.
+    const { container } = await mount({
+      "permission.set": { permission: "low" },
+    });
+
+    await click(one(container, ".permbar-trigger")!);
+    await click(all(container, ".permmenu-item")[3]);
+    await wait(80);
+
+    assert.deepEqual(
+      texts(container, ".permbar-value"),
+      ["Low"],
+      "the bar kept showing a level the core had resolved away",
+    );
+    assert.deepEqual(steps(container), [true, false, false, false]);
+  });
+
+  test("the bar is disabled while a turn is in flight", async () => {
+    // Changing the ceiling under a half-built answer is how a turn comes back
+    // obeying a rule that moved after it started.
+    //
+    // Driven by the core's own `turn.started` rather than by pressing send: the
+    // fake's `send` answer carries no `turn_id`, so a click would leave the
+    // window in `busy` only by accident, and a test that asserted on that would
+    // be asserting on the fake's shape.
+    const { container, transport } = await mount();
+    const trigger = one(container, ".permbar-trigger") as HTMLButtonElement;
+    assert.equal(trigger.disabled, false, "the bar starts enabled");
+
+    await push(() => {
+      transport.emit(pushed("turn.started", { model: "m" }, "t9"));
+    });
+    await wait(60);
+
+    assert.equal(
+      (one(container, ".permbar-trigger") as HTMLButtonElement).disabled,
+      true,
+      "the permission could be changed while a turn was running",
+    );
   });
 });

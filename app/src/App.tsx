@@ -25,6 +25,10 @@ import {
   type PendingAttachment,
 } from "./attachments.js";
 import type { ModelList } from "./ModelPicker.js";
+import {
+  PermissionBar,
+  type PermissionList,
+} from "./PermissionBar.js";
 import { Overlay } from "./Overlay.js";
 import { SearchPanel, type SearchMatch } from "./SearchPanel.js";
 import { SettingsPanel, type ProviderInfo } from "./SettingsPanel.js";
@@ -113,6 +117,20 @@ export function App({
   const [conversation, setConversation] = useState("");
   const [modes, setModes] = useState<ModeInfo[]>([]);
   const [mode, setMode] = useState("build");
+  /**
+   * How much the agent may do, and the ladder it sits on.
+   *
+   * `permissionList` is null until the core has read it, which is why the bar
+   * renders nothing in that window: a row of segments naming a choice nobody
+   * has been told the terms of is worse than no bar.
+   *
+   * Held as the core reported it rather than as a local guess. An unrecognised
+   * name resolves to the core's default, so a bar that echoed the request back
+   * would be labelling a level the orchestrator is not enforcing -- and this
+   * control's whole claim is that it is real.
+   */
+  const [permissionList, setPermissionList] = useState<PermissionList | null>(null);
+  const [permission, setPermission] = useState("");
   const [reasoning, setReasoning] = useState<ReasoningInfo | null>(null);
   /**
    * Folders this window has trusted.
@@ -315,6 +333,7 @@ export function App({
           bound?: boolean;
           project?: string;
           mode?: string;
+          permission?: string;
           conversation?: string;
         };
         // Provider names come from the core's registry. A local copy would
@@ -330,6 +349,7 @@ export function App({
         setProject(snapshot.project ?? "");
         setProviders(listed.providers ?? []);
         setMode(snapshot.mode ?? "build");
+        if (snapshot.permission) setPermission(snapshot.permission);
         if (snapshot.conversation) setConversation(snapshot.conversation);
         await refreshConversations();
         // Modes come from the core for the same reason providers do: a pill
@@ -342,6 +362,14 @@ export function App({
         if (cancelled) return;
         setModes(modeList.modes ?? []);
         if (modeList.mode) setMode(modeList.mode);
+        // The ladder itself. Read from the core because the four levels carry
+        // the tool allow-lists they enforce, and a frontend copy would drift
+        // from them silently -- the bar would read "Medium" over a gate that
+        // had since become Full.
+        const permissions = (await backend.call("permission.list")) as PermissionList;
+        if (cancelled) return;
+        setPermissionList(permissions);
+        if (permissions.permission) setPermission(permissions.permission);
         // No rebind here. The core restores the saved provider itself, and
         // `state` reports a name only when one is genuinely bound -- so this
         // used to be a workaround for a core that claimed a provider it did
@@ -1040,6 +1068,40 @@ export function App({
     return result.matches ?? [];
   }, []);
 
+  const changePermission = useCallback((name: string) => {
+    // Painted straight away, for the reason `changeReasoning` paints: the bar is
+    // a control the user is about to act on, and a bar that lags a round trip
+    // reads as not having registered the press. The reply then corrects it to
+    // whatever the core resolved, which is the same contract the others have.
+    setPermission(name);
+    void backendRef.current!
+      .call("permission.set", { permission: name })
+      .then((result) => {
+        const applied = result as { permission?: string };
+        if (applied.permission && applied.permission !== name) {
+          setPermission(applied.permission);
+        }
+      })
+      .catch((error: unknown) => {
+        setState((prev) => ({
+          ...prev,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+        // Back to what the core is actually enforcing, rather than leaving the
+        // bar showing a level that was refused -- which would be the one place
+        // a user looks to find out what the agent is allowed to do.
+        void backendRef.current!
+          .call("permission.list")
+          .then((list) => {
+            const current = (list as PermissionList).permission;
+            if (current) setPermission(current);
+          })
+          .catch(() => {
+            /* The banner already says the switch failed. */
+          });
+      });
+  }, []);
+
   const changeMode = useCallback((name: string) => {
     // Optimistic on purpose: the pills feel dead otherwise. The reply then
     // corrects the state to whatever the core actually resolved -- including
@@ -1186,6 +1248,19 @@ export function App({
             </div>
           )}
         </div>
+
+        {/*
+          Above the composer rather than inside it: this is a property of the
+          window rather than of the message being written, and the composer's
+          own row already carries four segmented groups. See `.permbar`.
+        */}
+        <PermissionBar
+          list={permissionList}
+          value={permission}
+          busy={state.busy}
+          disabled={!connected}
+          onChange={changePermission}
+        />
 
         <Composer
           inputRef={composerRef}

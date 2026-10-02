@@ -85,6 +85,118 @@ _MUTATING_TOOLS = _READ_ONLY_TOOLS | {
     "http_request",
 }
 
+#: Permission levels, in order. The tuple is the order for the UI, which must
+#: not have to hardcode the list -- see `MODE_ORDER` for why that mattered once.
+PERMISSION_ORDER = ("low", "medium", "high", "full")
+
+#: The level a session starts in.
+#:
+#: `medium`, deliberately and not `high`. A fresh window that can run shell
+#: commands the moment it opens is a window whose first turn has already been
+#: given more than the user asked for, and the difference between "medium" and
+#: "high" is exactly one tool: the one that executes model-authored code. Build
+#: mode already grants that per-turn, so nothing is lost by starting one step
+#: down and saying so in the bar.
+DEFAULT_PERMISSION = "medium"
+
+
+@dataclass(frozen=True)
+class Permission:
+    """One rung on the permission ladder.
+
+    **This is the allow-list, not the prompt.** The same rule the module
+    docstring states about modes applies here, and it is the whole reason this
+    is a separate axis rather than four more modes: `Mode.system_prompt` asks the
+    model to behave, while `allowed_tools` decides what it *can* do, enforced in
+    the orchestrator. A permission level that only rewrote the prompt would
+    produce a model that says "I won't run that" and then runs it.
+
+    `skips_confirmation` is deliberately separate from `allowed_tools`, because
+    it is a different kind of permission: the tool still runs only if its own
+    gates pass (the command allow-list, and the sandbox isolation check), but
+    the user is no longer asked first. That is why it is confined to `full` and
+    why it does not widen the allow-list by even one tool.
+    """
+
+    name: str
+    label: str
+    description: str
+    allowed_tools: frozenset[str]
+    #: Whether this level stops asking before a destructive tool runs.
+    skips_confirmation: bool = False
+
+
+#: Read-only: observe the project, change nothing. Same set as Plan and Skills.
+_LOW = Permission(
+    name="low",
+    label="Low",
+    description="Read, search and browse. Nothing in the project is changed.",
+    allowed_tools=_READ_ONLY_TOOLS,
+)
+
+#: Edit without running anything.
+#:
+#: **The level that did not exist before.** Plan and Build were adjacent: one
+#: could not write, the other could write *and* shell out. A window editing
+#: source files but refusing to run the test suite had no way to say so, and the
+#: only honest setting for "let it fix things, but do not let it execute code"
+#: was to pick one of the two and give up the other half.
+_MEDIUM = Permission(
+    name="medium",
+    label="Medium",
+    description="Read, search, edit and write files. Shell commands are refused.",
+    allowed_tools=_MUTATING_TOOLS - {"execute_command"},
+)
+
+#: Full tool access. Still gated twice: a command must be on the allow-list, and
+#: `execute_command` refuses to run without an isolating sandbox behind it. So
+#: "High" grants the *attempt*, and the two gates decide whether it happens.
+_HIGH = Permission(
+    name="high",
+    label="High",
+    description=(
+        "Everything, including running commands. Commands must still be "
+        "allow-listed and the sandbox must be running."
+    ),
+    allowed_tools=_MUTATING_TOOLS,
+)
+
+#: High, without the confirmation prompt.
+#:
+#: **What this really means, stated plainly because the UI has to say it too.**
+#: It does not add a single tool, and it does not lift the command allow-list or
+#: the sandbox requirement. It removes one thing: the question. With the project
+#: marked trusted, `python -c "<anything>"` already runs, because the allow-list
+#: is matched on the executable's name and cannot see what it is handed. This
+#: level makes that visible instead of leaving it buried in a trust toggle --
+#: the same power, chosen in the open.
+_FULL = Permission(
+    name="full",
+    label="Full",
+    description=(
+        "Everything High allows, without asking first. Commands still run only "
+        "if allow-listed and sandboxed. Choose this only for a project you "
+        "trust: a trusted command runner can execute arbitrary code."
+    ),
+    allowed_tools=_MUTATING_TOOLS,
+    skips_confirmation=True,
+)
+
+PERMISSIONS: dict[str, Permission] = {
+    p.name: p for p in (_LOW, _MEDIUM, _HIGH, _FULL)
+}
+
+
+def get_permission(name: str) -> Permission:
+    """Look up a permission level, falling back to the default.
+
+    Falls back rather than raising for the same reason `get_mode` does: a
+    frontend sending a stale or invented name should get a level that is safe,
+    not a rejection the user has to diagnose.
+    """
+    return PERMISSIONS.get((name or "").strip().lower(), PERMISSIONS[DEFAULT_PERMISSION])
+
+
 _BUILD = Mode(
     name="build",
     label="Build",

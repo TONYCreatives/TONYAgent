@@ -23,7 +23,14 @@ from tonyagent.api import LLMError
 from tonyagent.api.dialects import ReasoningSpec
 from tonyagent.core.attachments import build_parts
 from tonyagent.core.events import Event, EventType, bus as default_bus
-from tonyagent.core.modes import DEFAULT_MODE, Mode, get_mode
+from tonyagent.core.modes import (
+    DEFAULT_MODE,
+    DEFAULT_PERMISSION,
+    Mode,
+    Permission,
+    get_mode,
+    get_permission,
+)
 from tonyagent.providers import (
     ChatCompletionChunk,
     ChatMessage,
@@ -119,6 +126,11 @@ class AgentSession:
         self._reasoning_spec: Any = _UNRESOLVED
         #: Composer mode. Governs the system prompt and which tools exist.
         self._mode: Mode = get_mode(DEFAULT_MODE)
+        # The permission level, intersecting with the mode. Separate from
+        # `max_tool_calls` because it changes what the agent may *do* rather
+        # than how much, and it is worth being able to raise the budget without
+        # also handing over the keys.
+        self._permission: Permission = get_permission(DEFAULT_PERMISSION)
         #: 1-based tool-round numbers executed in the turn in flight, so the
         #: closing digest can name the results the model just produced.
         self._round_orders: list[int] = []
@@ -526,7 +538,7 @@ class AgentSession:
         """
         # ALL_SCHEMAS entries carry extra UI-only keys, so use the dedicated
         # converter rather than **schema.
-        allowed = self._mode.allowed_tools
+        allowed = self._mode.allowed_tools & self._permission.allowed_tools
         return [
             ToolSchema.from_tool_schema_dict(s)
             for s in ALL_SCHEMAS
@@ -537,6 +549,32 @@ class AgentSession:
     @property
     def mode_name(self) -> str:
         return self._mode.name
+
+    @property
+    def permission_name(self) -> str:
+        return self._permission.name
+
+    def set_permission(self, name: str) -> Permission:
+        """Switch permission level and return the one that ended up active.
+
+        Returns the resolved level rather than the string asked for, for the
+        same reason `set_mode` does: an unrecognised name falls back to a safe
+        default, and the caller has to report what is actually in force rather
+        than what it hoped for.
+
+        **Deliberately does not clear the conversation**, unlike `set_mode`. A
+        mode change re-shapes what the agent is *for*, so the old turns are
+        about a different task. A permission change does not: the user is the
+        same, the project is the same, and only the ceiling moved. Throwing the
+        transcript away would lose work for a change the user can see and
+        reverse in one click.
+        """
+        self._permission = get_permission(name)
+        # Push it to the layer that enforces it, for the reason `set_mode`
+        # does -- setting it here alone would filter the schema and nothing
+        # else, which is advice rather than a rule.
+        tool_orchestrator.set_permission(self._permission)
+        return self._permission
 
     def set_mode(self, name: str) -> Mode:
         """Switch mode and return the mode that ended up active.
