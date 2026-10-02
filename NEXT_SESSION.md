@@ -2091,10 +2091,20 @@ needs no entry in `build.rs` or `capabilities/default.json`. A failure is logged
 and ignored: the realistic failure is a Windows build that does not know the
 attribute, which is cosmetic and not a reason to refuse to open the window.
 
-Verified by reading the attribute back off the live window:
-`DwmGetWindowAttribute(hwnd, 33)` → `hr = S_OK`, value `2` (`DWMWCP_ROUND`),
-`IsZoomed` false. **The pixels were not checked** — the window was occluded on
-screen, and confirming them would have meant bringing it forward.
+Verified two ways. Read the attribute back off the live window —
+`DwmGetWindowAttribute(hwnd, 33)` returns `hr = S_OK` and value `2`
+(`DWMWCP_ROUND`), with `IsZoomed` false — and then confirmed the pixels, which
+the user checked visually.
+
+**A trap if you try to measure the corner yourself.** The pixels at the window's
+origin are a gradient (`#09090a` → `#101011` → `#1e1e1f` → `#343435` over about
+10px), not a clean edge, and that is **not** the radius. It is the invisible
+resize border: tao keeps `WS_THICKFRAME` on an undecorated window, so
+`GetWindowRect` includes a border the user cannot see and cannot click. Any
+"first window pixel along the edge" measurement therefore lands on the border's
+blend and reports ~5px regardless of what the corner is doing. Measure against
+`DwmGetWindowAttribute(DWMWA_EXTENDED_FRAME_BOUNDS)` — the rectangle of the
+*visible* frame — or just look at it, which is what settled it.
 
 ### The conversation list is an overlay, and that is why it can animate
 
