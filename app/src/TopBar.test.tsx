@@ -13,10 +13,17 @@
  *   than no glyphs, so each button is asserted against the action it names, and
  *   the middle one is asserted to change what it offers when the window is
  *   maximized.
+ * - **A right-click on the bar opens the system menu**, and only that. Windows
+ *   answers a right-click on the caption with the window menu, and the webview
+ *   answers the same press with its own -- so the bar has to claim it, and the
+ *   test asserts both halves: the menu was asked for, and the page's menu was
+ *   stopped.
  *
  * The bar is rendered with `controls` supplied rather than calling
  * `useWindowControls` itself, which is what keeps it renderable here at all: in
- * jsdom there is no Tauri shell, so the hook reports null by design.
+ * jsdom there is no Tauri shell, so the hook reports null by design. The
+ * shortcut behind the menu is in `useWindowControls.test.tsx`, where the shell
+ * can be stood up.
  */
 
 import "./test-dom.js";
@@ -24,12 +31,13 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { TopBar } from "./TopBar.js";
-import { all, click, one, render, texts } from "./test-render.js";
+import { all, click, contextMenu, one, render, texts } from "./test-render.js";
 
 interface Calls {
   minimized: number;
   toggled: number;
   closed: number;
+  menus: number;
 }
 
 /** Mount the bar with a caption that records what it was asked to do. */
@@ -39,7 +47,7 @@ async function bar(options: {
   busy?: boolean;
   title?: string;
 } = {}): Promise<{ container: HTMLElement; calls: Calls }> {
-  const calls: Calls = { minimized: 0, toggled: 0, closed: 0 };
+  const calls: Calls = { minimized: 0, toggled: 0, closed: 0, menus: 0 };
   const withCaption = options.caption ?? true;
   const container = await render(
     <TopBar
@@ -52,6 +60,7 @@ async function bar(options: {
               minimize: () => (calls.minimized += 1),
               toggleMaximize: () => (calls.toggled += 1),
               close: () => (calls.closed += 1),
+              showSystemMenu: () => (calls.menus += 1),
             }
           : null
       }
@@ -137,7 +146,7 @@ describe("the caption buttons", () => {
     const { container, calls } = await bar();
     await click(buttons(container)[0]);
     await click(buttons(container)[2]);
-    assert.deepEqual(calls, { minimized: 1, toggled: 0, closed: 1 });
+    assert.deepEqual(calls, { minimized: 1, toggled: 0, closed: 1, menus: 0 });
   });
 
   test("the middle button offers to restore a maximized window", async () => {
@@ -157,6 +166,48 @@ describe("the caption buttons", () => {
     // look like they work and do not are the failure this replaces.
     const { container } = await bar({ caption: false });
     assert.equal(one(container, ".window-controls"), null);
+  });
+});
+
+// --- the system menu --------------------------------------------------------
+describe("a right-click on the title bar", () => {
+  test("opens the window's own menu", async () => {
+    // Restore, Move, Size, Minimize, Maximize, Close -- and the two in the
+    // middle of that list are drag loops the OS runs. Without them an
+    // undecorated window cannot be placed or resized, which is why this is on
+    // the bar and not only behind Alt+Space.
+    const { container, calls } = await bar();
+    await contextMenu(one(container, ".topbar")!);
+    assert.equal(calls.menus, 1);
+  });
+
+  test("and not the webview's menu as well", async () => {
+    // Two menus for one right-click, one of them offering to reload a document
+    // that is not a document. `preventDefault` is the whole difference and
+    // nothing in the markup shows it, which is why it is asserted.
+    const { container } = await bar();
+    const event = await contextMenu(one(container, ".topbar")!);
+    assert.equal(event.defaultPrevented, true, "the webview menu was not stopped");
+  });
+
+  test("a right-click on a caption button opens it too", async () => {
+    // What Windows does: the caption is the frame, and the frame's menu does
+    // not stop at the glyphs. Also the reason the handler is on the header
+    // rather than on the one empty patch of bar between the title and the
+    // buttons.
+    const { container, calls } = await bar();
+    await contextMenu(buttons(container)[2]);
+    assert.equal(calls.menus, 1);
+  });
+
+  test("where there is no window, the page keeps its own right-click", async () => {
+    // A browser preview has a document, a selection and a save-as. Swallowing
+    // its context menu to open a window menu would take away something that
+    // works, in exchange for something that cannot.
+    const { container, calls } = await bar({ caption: false });
+    const event = await contextMenu(one(container, ".topbar")!);
+    assert.equal(calls.menus, 0);
+    assert.equal(event.defaultPrevented, false);
   });
 });
 

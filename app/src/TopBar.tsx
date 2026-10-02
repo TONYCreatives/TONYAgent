@@ -22,6 +22,24 @@
  * is this program", the question the taskbar and the window icon already
  * answer, and left the useful one -- the name of the thing you are reading, and
  * the one that changes when you rename it -- unasked.
+ *
+ * - **The system menu.** Turning the decorations off took away the right-click
+ *   on the caption as well as the caption, and Windows answers that right-click
+ *   with the window menu: Restore, Move, Size, Minimize, Maximize, Close. Move
+ *   and Size are the two that cannot be rebuilt -- they are drag loops the OS
+ *   runs, and without them an undecorated window cannot be positioned or
+ *   resized at all. So the press is claimed here and handed to the OS rather
+ *   than answered with a menu of our own; the coordinates are not passed
+ *   because the system menu opens at the cursor on its own.
+ *
+ *   `preventDefault()` is load-bearing rather than tidy: the webview answers a
+ *   right-click with its own context menu, and a user who right-clicks the
+ *   title bar would get two menus, one of them for a document that is not a
+ *   document.
+ *
+ *   The keyboard route to the same menu is F10, and it belongs to
+ *   `useWindowControls` rather than here: the key is the window's, not the
+ *   bar's, and it has to work with the caret in the composer.
  */
 
 import { WindowControls } from "./WindowControls.js";
@@ -42,7 +60,17 @@ interface Props {
 
 export function TopBar({ busy, title, controls }: Props) {
   return (
-    <header className="topbar" data-tauri-drag-region="deep">
+    <header
+      className="topbar"
+      data-tauri-drag-region="deep"
+      onContextMenu={(event) => {
+        // No window, no menu: in a browser preview the right-click belongs to
+        // whatever the page has, which is the honest answer there.
+        if (!controls) return;
+        event.preventDefault();
+        controls.showSystemMenu();
+      }}
+    >
       <div className="tab">
         {busy && <span className="tab-spinner" aria-label="Working" />}
         <span className="tab-title" title={title || undefined}>

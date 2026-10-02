@@ -88,16 +88,27 @@ export async function click(element: Element): Promise<void> {
   });
 }
 
-/** Fire a context menu at a row. */
+/**
+ * Fire a context menu at a row, and hand back the event.
+ *
+ * The event is returned because `preventDefault()` is part of what these tests
+ * check: a component that shows its own menu *and* lets the webview's through
+ * answers a right-click twice, and only `defaultPrevented` says which happened.
+ */
 export async function contextMenu(
   element: Element,
   position: { clientX: number; clientY: number } = { clientX: 40, clientY: 20 },
-): Promise<void> {
+): Promise<MouseEvent> {
+  let event!: MouseEvent;
   await act(async () => {
-    element.dispatchEvent(
-      new window.MouseEvent("contextmenu", { bubbles: true, ...position }),
-    );
+    event = new window.MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      ...position,
+    });
+    element.dispatchEvent(event);
   });
+  return event;
 }
 
 /**
@@ -128,12 +139,30 @@ export async function blur(element: HTMLElement): Promise<void> {
   });
 }
 
-/** Press a key, bubbling from `element` (or the window when omitted). */
-export async function press(key: string, element?: Element): Promise<void> {
+/**
+ * Press a key, bubbling from `element` (or the window when omitted).
+ *
+ * The modifiers and `code` are settable because two features here are about a
+ * *combination* -- Alt+Space for the window's system menu -- and `key` alone
+ * cannot express one. The event comes back for the same reason as
+ * `contextMenu`'s: whether the default was prevented is part of the behaviour.
+ */
+export async function press(
+  key: string,
+  element?: Element,
+  options: KeyboardEventInit = {},
+): Promise<KeyboardEvent> {
+  let event!: KeyboardEvent;
   await act(async () => {
-    const event = new window.KeyboardEvent("keydown", { key, bubbles: true });
+    event = new window.KeyboardEvent("keydown", {
+      key,
+      bubbles: true,
+      cancelable: true,
+      ...options,
+    });
     (element ?? window).dispatchEvent(event);
   });
+  return event;
 }
 
 /**

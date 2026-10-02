@@ -24,6 +24,17 @@ tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# One Win32 call, for one thing the app cannot do without the OS: the window
+# has no system title bar, so it has to ask for the system menu itself. The
+# version matches the one tauri already resolves, so this adds a feature and
+# not a second copy of the crate. Target-scoped, because the call it exists for
+# is Windows' and the command that uses it is `#[cfg(windows)]`.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
 [profile.release]
 # The sidecar is a separate process; the Rust shell is a thin window manager
 # around it, so an optimised build is small and fast to link.
