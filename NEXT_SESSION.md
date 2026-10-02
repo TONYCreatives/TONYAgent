@@ -6,7 +6,7 @@ from DWM, and the conversation list turned from a docked column into an
 animated overlay panel (see "The fourth UI pass" near the end)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 590 passed, TypeScript 333 passed,
+protocol method.** Everything green: **Python 590 passed, TypeScript 341 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **590 passed, 7 skipped** with Docker Desktop running.
@@ -63,7 +63,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 333 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
+cd app && npm test                     # 341 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -796,7 +796,7 @@ app/
     test-dom.ts             installs jsdom on the globals; imported first
     test-render.ts          mount / act / type / press / query helpers
     layout.test.ts          reads the stylesheet's cascade, not its text
-    *.test.ts, *.test.tsx   333 tests, all run by `npm test`
+    *.test.ts, *.test.tsx   341 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
     build.rs                app_manifest: the ACL name for the one app command
@@ -2199,3 +2199,48 @@ Verified live: after a row click, 60ms in, the panel is still mounted with
 `data-state="closed"` and `pointer-events: none`; after the exit it is gone,
 `.main` is back to 1114px, and `document.activeElement` is the composer textarea
 — not `<body>`.
+
+### That gap is now closed: `App` takes a backend
+
+`App({ backend })` takes an optional `TauriBackend`, defaulting to the real one.
+The window is now renderable in jsdom — see `App.test.tsx`, which covers the
+whole composition for the first time.
+
+**The prop is the concrete `TauriBackend`, not an interface.** Declaring a
+`Backend` interface was the obvious move and the wrong one: it would be a second
+statement of the protocol, and this file's own module comment records what that
+costs. `TauriBackend`'s constructor already takes a transport factory, so a test
+supplies the *bytes* and the real framing, request ids, reply routing and error
+handling still run underneath. The protocol is verified once and the window is
+verified on top of it.
+
+**Two things it cost, both worth knowing.**
+
+1. **Every import in the module graph now carries `.js`.** Node's ESM resolver
+   will not guess, so `App.tsx` could not be loaded at all until its 19
+   extensionless specifiers were fixed — and so could the three files under it
+   that were also extensionless (`ConfirmDialog.tsx`, `events.ts`). Every other
+   file in `app/src` already used `.js`, precisely because only files a test
+   loads had ever needed to. Vite resolves `.js` → `.ts`/`.tsx` unchanged, so the
+   bundle is unaffected; the packaged app was rebuilt and re-measured to confirm
+   (rail 52, `.main` 1114, bar 48).
+2. **`mount()` drains the handshake before any test body runs.** `App` makes
+   eight calls before it draws, and `node:test` awaits between tests — so the
+   late ones land in the gap and update React outside `act`. The warning that
+   produces is attributed to whichever test is running *next*, which is worse
+   than silence because it teaches you to ignore the line. The suite now runs
+   with zero `act` warnings, which is what makes the line worth reading again.
+
+**Three of the first tests were wrong and the app was right** — worth recording
+because each would have been "fixed" by weakening the assertion:
+
+- Boot calls do **not** arrive in a fixed order. `tools.get` and `reasoning.list`
+  belong to effects that start once the window connects, so they interleave with
+  the boot sequence; measured, `tools.get` arrives *before* `conversations.list`.
+  The test now asserts `state` is first and the rest is a set.
+- A `message.delta` with no matching `turn_id` appends to nothing. The assistant
+  message is keyed by the turn id the reducer got from `turn.started`, so the
+  test has to send one, exactly as the core does.
+- `.logstrip` is not in the DOM while the log bar is closed — deliberately. A
+  test asserting on it there would have passed against a window that dropped
+  every line of the core's stderr.

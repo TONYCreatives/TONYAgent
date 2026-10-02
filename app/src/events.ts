@@ -8,7 +8,7 @@
  * dropped callbacks.
  */
 
-import type { CoreEvent } from "./backend";
+import type { CoreEvent } from "./backend.js";
 
 export type Role = "user" | "assistant" | "system";
 

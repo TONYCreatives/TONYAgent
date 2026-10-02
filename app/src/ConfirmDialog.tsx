@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 
-import type { ChatState } from "./events";
+import type { ChatState } from "./events.js";
 
 interface Props {
   /**

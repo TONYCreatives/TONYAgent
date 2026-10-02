@@ -1,7 +1,7 @@
 # TONYAgent — Project Summary
 
 **Updated:** 2026-10-02 · **Tests:** Python 590 passed, 7 skipped
-(Docker 꺼져 있으면: 589 passed + 1 failed), TypeScript 333 passed
+(Docker 꺼져 있으면: 589 passed + 1 failed), TypeScript 341 passed
 **Build:** Tauri MSI + NSIS installers produced; app verified running end to end
 (`decorations: false` — 시스템 타이틀 바를 빼고 앱이 직접 그리며, 우클릭/F10으로
 **OS의 시스템 메뉴**를 열어 이동·크기 조절을 그대로 씁니다. 꺼진 타이틀 바와 함께
@@ -134,7 +134,7 @@ MSVC 블로커는 **해결됨** (Visual Studio Community 2026, VC tools 14.51.36
 python -m compileall -q src
 python -m pytest tests -q                    # 590 passed, 7 skipped (Docker up)
 python scripts/check_all.py --fast           # 3 checks
-cd app && npm test                           # 333 passed (Rust 불필요)
+cd app && npm test                           # 341 passed (Rust 불필요)
 python scripts/verify_composer_pass.py       # 패키징된 앱 DOM: 전송 아이콘, 첨부,
                                              # 모델 메뉴, tool call 예산
 python scripts/verify_pass_b.py              # 패키징된 앱 실측: rail 정렬, 자체 타이틀
@@ -311,6 +311,12 @@ parts로 저장·복원되고, 이를 문자열을 기대하는 컴포넌트에 
   strip 테스트 4개가 전체 실행 5회 중 1회 정도 `0 !== 1`로 떨어집니다. 지난
   두 패스의 변경을 전부 stash한 상태에서도 재현되므로 **기존 문제**입니다.
   믿기 전에 다시 실행하고, 쫓지 마세요.
+- **테스트가 로드하는 파일은 import에 `.js`가 붙습니다.** Node의 ESM
+  리졸버는 확장자를 추측하지 않습니다. `App.tsx`를 jsdom에서 렌더하려고
+  처음 시도했을 때, 확장자 없는 specifier 19개 때문에 모듈 그래프 자체가
+  로드되지 않았습니다. 다른 파일은 이미 전부 `.js`를 쓰고 있었습니다 — 예전에는
+  테스트가 로드하는 파일만 그럴 필요가 있었기 때문입니다. Vite는 `.js` → `.ts`로
+  그대로 해석하므로 번들에는 영향이 없습니다.
 - **대소문자만 다른 파일명.** `windowControls.ts`와 `WindowControls.tsx`가
   나란히 있으면 Windows에서만 TS1149/TS1261입니다. 훅은 `useWindowControls.ts`.
 - **앱이 떠 있으면 빌드가 `PermissionDenied`로 죽습니다**(`tauri-build`

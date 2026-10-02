@@ -1,39 +1,61 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { TauriBackend } from "./backend";
+import { TauriBackend } from "./backend.js";
 import {
   applyEvent,
   appendUserMessage,
   blankMessage,
   initialState,
   type ChatState,
-} from "./events";
-import type { ChatMessage, Role } from "./events";
-import { Composer, type ModeInfo, type ReasoningInfo } from "./Composer";
-import { ConfirmDialog } from "./ConfirmDialog";
+} from "./events.js";
+import type { ChatMessage, Role } from "./events.js";
+import { Composer, type ModeInfo, type ReasoningInfo } from "./Composer.js";
+import { ConfirmDialog } from "./ConfirmDialog.js";
 import {
   ConversationList,
   type ConversationSummary,
-} from "./ConversationList";
-import { pickFolder } from "./dialog";
-import { FileSidebar, type TreeEntry } from "./FileSidebar";
-import { IconRail } from "./IconRail";
-import { MessageList } from "./MessageList";
+} from "./ConversationList.js";
+import { pickFolder } from "./dialog.js";
+import { FileSidebar, type TreeEntry } from "./FileSidebar.js";
+import { IconRail } from "./IconRail.js";
+import { MessageList } from "./MessageList.js";
 import {
   summaryLine,
   textFromContent,
   toWire,
   type PendingAttachment,
-} from "./attachments";
-import type { ModelList } from "./ModelPicker";
-import { Overlay } from "./Overlay";
-import { SearchPanel, type SearchMatch } from "./SearchPanel";
-import { SettingsPanel, type ProviderInfo } from "./SettingsPanel";
-import { StatusBar } from "./StatusBar";
-import { TopBar } from "./TopBar";
-import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount";
-import { useWindowControls } from "./useWindowControls";
+} from "./attachments.js";
+import type { ModelList } from "./ModelPicker.js";
+import { Overlay } from "./Overlay.js";
+import { SearchPanel, type SearchMatch } from "./SearchPanel.js";
+import { SettingsPanel, type ProviderInfo } from "./SettingsPanel.js";
+import { StatusBar } from "./StatusBar.js";
+import { TopBar } from "./TopBar.js";
+import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount.js";
+import { useWindowControls } from "./useWindowControls.js";
 
-export function App() {
+/**
+ * The whole window.
+ *
+ * `backend` is a seam, not a setting. The default builds the real sidecar
+ * client, which is what the shipped window wants; a test passes one built over
+ * a fake transport, which is what makes this component renderable at all.
+ *
+ * **Why the prop is the concrete `TauriBackend` and not an interface.** The
+ * obvious move is to declare a `Backend` interface and pass a plain object, and
+ * it is the wrong one here: an interface is a second statement of the protocol,
+ * and this file's own module comment records what that costs -- a second
+ * implementation that drifts from the first. `TauriBackend`'s constructor
+ * already takes a transport factory, so a test can supply the *bytes* and still
+ * exercise the real framing, request ids, reply routing and error handling
+ * underneath. The protocol is verified once and the window is verified on top
+ * of it.
+ *
+ * Read once, on mount. A window does not change which core it is talking to
+ * mid-session, and treating it as a prop that could change would mean every
+ * effect that reaches for the backend would have to handle being swapped under
+ * it.
+ */
+export function App({ backend: injected }: { backend?: TauriBackend } = {}) {
   const [state, setState] = useState<ChatState>(initialState);
   const [connected, setConnected] = useState(false);
   const [provider, setProvider] = useState("");
@@ -189,8 +211,10 @@ export function App() {
   }, [state.messages]);
 
   // One backend per window. Held in a ref rather than state: it is not
-  // renderable, and recreating it would spawn a second sidecar.
-  const backendRef = useRef<TauriBackend | null>(null);
+  // renderable, and recreating it would spawn a second sidecar. The `?? null`
+  // is what lets an injected backend skip that construction entirely, so a
+  // test never reaches `makeSidecarTransport`.
+  const backendRef = useRef<TauriBackend | null>(injected ?? null);
   if (backendRef.current === null) backendRef.current = new TauriBackend();
 
   // Pull provider/sandbox out of the event stream. Kept separate from ChatState
