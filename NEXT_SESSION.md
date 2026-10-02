@@ -1,12 +1,13 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-10-02, after the second UI pass — popovers that survive
-their own clicks, a typeable tool-call limit, the app's own title bar, and the
-window's system menu back (see "The second UI pass" at the end)
+**Last updated:** 2026-10-02, after the third UI pass — the palette and every
+length in the stylesheet re-measured off a full-DPI screenshot of the reference,
+which corrected the scale factor and with it the sidebar, the title bar and the
+composer (see "Measuring the reference" near the end)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 590 passed, TypeScript 306 passed,
+protocol method.** Everything green: **Python 590 passed, TypeScript 319 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **590 passed, 7 skipped** with Docker Desktop running.
@@ -63,7 +64,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 306 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
+cd app && npm test                     # 319 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -796,7 +797,7 @@ app/
     test-dom.ts             installs jsdom on the globals; imported first
     test-render.ts          mount / act / type / press / query helpers
     layout.test.ts          reads the stylesheet's cascade, not its text
-    *.test.ts, *.test.tsx   306 tests, all run by `npm test`
+    *.test.ts, *.test.tsx   319 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
     build.rs                app_manifest: the ACL name for the one app command
@@ -1054,29 +1055,59 @@ and writes the file, deny returns CANCELLED with the filesystem untouched, and a
 second answer for the same call changes nothing.
 
 
-Every value is sampled from a full-resolution screenshot of the Freebuff
-desktop app (2879x1714, ~2x DPI), not eyeballed. **A partial capture is not
-enough** — the first pass here was built from one and got the accent colour
+Every value is sampled from a **full-DPI** screenshot of the Freebuff desktop
+app, not eyeballed. `scripts/shot_screen.ps1` copies the screen rectangle and
+`scripts/png_measure.py` decodes it into colour runs along a row and down a
+column, reporting physical pixels and CSS pixels side by side.
+
+**Capture at full DPI or every number here is wrong.** This is the most
+expensive mistake in this file's history, so it is worth stating plainly. The
+display is at 1.75 scale, and `CopyFromScreen` called from a DPI-unaware process
+returns *logical* pixels — a first pass measured a 1655x990 image and recorded
+`70px | 1fr | 425px` with a 42px bar. The real window is 2879x1799 physical:
+the rail is 52px, the list column 255px, the bar 48px, and the composer 720px.
+Every figure below was re-measured from a full-DPI capture. `shot_screen.ps1`
+now calls `SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)` before any GDI
+call, and reports 2880x1800 where it used to report 1646x981.
+
+**A partial capture is not enough either** — the first pass also got the accent
 wrong, because the chromatic element was outside the captured region.
 
 ```
---bg       #0a0a0a   rail and transcript, the dominant colour
---chrome   #0f0f0f   top bar — a hair lighter, so the window is not one flat field
---surface  #171717   composer field, files sidebar
---input    #1c1c1c   filter fields, inset wells
---raised   #212121   tab pill, user bubbles
---hover    #292929   the active rail well
---fg       #ebebeb   body text
---fg-dim   #9e9e9e   secondary (file tree)
---fg-mute  #7a7a7a   metadata
---accent   #bacda9   the ONE chromatic element
+--bg       #1c1d1c   72.5%  transcript, the list column, everything recessive
+--chrome   #292b2a    7.0%  the title bar AND the full-height icon rail
+--surface  #222423    4.6%  the composer's field -- the one recessed panel
+--input    #262827          inset wells and filter fields
+--raised   #313330    2.9%  raised cards
+--chip     #3b3e3a    0.4%  the selected row, the tab pill, a selected rail item
+--hover    #373a35          hover
+--border   #363836          hairlines
+--fg       #dedfdd          body text          (luminance 222)
+--fg-dim   #a1a39f          secondary text     (162)
+--fg-mute  #7c807a          metadata           (116)
+--accent   #bacda9          the ONE chromatic element
 ```
 
-**The accent is a desaturated sage, not a brand colour.** Do not "tidy" it
-towards saturation — the reference is almost monochrome and the single quiet
-hue is deliberate. A purple was tried first and was wrong.
+**The reference is 99.5% neutral — 0.47% of its pixels carry any chroma, and
+every one of them is the accent.** There is no blue-grey anywhere in it. A tint
+added "for depth" is the one change that cannot survive a side-by-side
+comparison.
 
-Layout: `70px | 1fr | 425px` grid, 42px top bar, transcript inset to 860px.
+**`#292b2a` is a warm green-grey, not a neutral dark grey.** A neutral `#2a2a2a`
+is a different colour and reads as a different app beside the reference.
+
+**The accent is a desaturated sage, not a brand colour.** Do not "tidy" it
+towards saturation. A purple was tried first and was wrong in a way only a
+comparison could have caught.
+
+Layout, all measured at 1.75 scale: `52px | 1fr | auto` grid, **48px** top bar,
+transcript inset to **720px**.
+
+**The rail is `--chrome` and runs the full height of the window.** It has to be
+the *column* that is painted, with `.chatlist` painting `--bg` back over it, and
+not `.rail` alone: the rail is sized by its buttons (`flex: none`) and the list is
+what fills the rest of the column, so a background on `.rail` stops the strip at
+the last icon. This is the clearest single difference between the two apps.
 
 **Dark only.** The reference is dark-only and a light theme would need a second
 full palette to be worth shipping. The Tkinter UI keeps its own light/dark
@@ -1948,3 +1979,60 @@ the title bar from `--topbar-h` × the monitor's DPI rather than assuming
 runs the keyboard case **first**, because a right-click off the title bar leaves
 the webview's context menu open with the input captured, and the F10 after it
 goes to that menu instead of the app.
+
+---
+
+## Measuring the reference (third UI pass)
+
+The palette and every length in `app/src/styles.css` are measurements, and this
+is the pass that made them correct ones. Four traps, in the order they cost time.
+
+### 1. A screenshot taken at logical pixels is worse than no screenshot
+
+The display is at 1.75 scale. `CopyFromScreen` from a DPI-unaware process takes
+and returns **logical** pixels, so the first pass measured a 1655x990 image and
+recorded a 425px sidebar and a 42px title bar. The real window is 2879x1799
+physical: the rail is 52px, the list column 255px, the bar 48px, the composer
+720px. Every figure was wrong by the same factor, which is what made them look
+*consistent* — the accent had come out right, so nothing looked broken.
+
+`scripts/shot_screen.ps1` now calls `SetProcessDpiAwarenessContext(-4)`
+(PER_MONITOR_AWARE_V2) before any GDI call and reports 2880x1800. The
+`Freebuff` window is 1655x990 **CSS**, 2896x1732 physical.
+
+Sanity check that costs nothing: 2879 / 1.75 = 1645 logical, and the second
+monitor's work area is 1646 wide. If a capture does not divide down to the
+monitor, it was taken at the wrong scale and every number from it is wrong.
+
+### 2. A run is reported in the colour of its *first* pixel
+
+`runs_of` merges neighbouring pixels within a tolerance so antialiased text does
+not shatter a row into hundreds of slivers. The cost is that a wide run
+beginning on a hairline border reports the **border's** colour, not the fill's.
+This reported the tab pill as `#40423e` and the send button as `#beccac`, both of
+which are one step off the truth. Sample a 3x3 patch when the answer matters.
+
+### 3. A capture at the wrong origin reads as a layout measurement
+
+Passing the monitor's *logical* origin to a DPI-aware `CopyFromScreen` captures
+mostly black with a sliver of window in it, and that sliver looks exactly like a
+narrow window. `scripts/window_rect.ps1` prints the real rectangle of a process's
+windows in physical pixels, which is what the capture arguments should be. Note
+`$pid` is read-only in PowerShell and `$using:` does not reach an
+`EnumWindows` delegate — both throw before the callback ever runs, and the
+script then reports "no windows" rather than an error.
+
+### 4. The paste pipeline shifts the accent. Do not "fix" it.
+
+The screenshots sent into the thread render TONYAgent's send button as
+`#beccac`. It is `#bacda9`. Confirmed three ways: the live document computes
+`rgb(186, 205, 169)` with no filter, blend or opacity anywhere in the ancestor
+chain; a self-taken capture at full DPI finds 2436 pixels of exact `#bacda9` and
+**zero** of `#beccac`; and the same pipeline leaves Freebuff's own `#bacda9`
+exact. It is a property of how one window's screenshot was transcribed, not of
+the app. The declaration is correct — leave it alone.
+
+Also note the bright blue `#2e6ee8` and the red `#7f434a` in a TONYAgent
+screenshot are **taskbar** pixels below y=1718, not the app's. A full-screen
+capture includes the desktop; bound the search to the window or the histogram
+will blame Windows for the palette.

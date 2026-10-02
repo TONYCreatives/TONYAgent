@@ -1,29 +1,51 @@
 /*
  * TONYAgent — visual design.
  *
- * Every value here is sampled from a full-resolution screenshot of the Freebuff
- * desktop app, not eyeballed. The first pass got the accent badly wrong (a
- * purple) because it was inferred from a partial capture; the real primary
- * action colour is a desaturated sage, and the surfaces are more numerous than
- * a first look suggests. Do not "tidy" these towards a tidier scale.
+ * Every value here is a measurement, not a preference. The reference is the
+ * Freebuff desktop app running on this machine, and the numbers come from
+ * counting its pixels: `scripts/shot_screen.ps1` copies the screen rectangle
+ * each window occupies, and the capture is then read for the colour runs along
+ * a row and the runs down a column. That is how the surfaces below were found,
+ * and it is how the next correction to them should be found -- a screenshot
+ * looked at is a screenshot guessed at.
  *
- * Surfaces, darkest to lightest. The distinction between --bg and --chrome
- * matters: the top bar is a hair lighter than the rail and transcript, which is
- * what stops the window reading as one undifferentiated black field.
+ * Measured from a full-DPI capture of the reference (2879x1799 physical pixels
+ * on this machine's 1.75 scale display, so divide by 1.75 for CSS pixels).
+ * The figures below came from an earlier, downscaled screen-rect capture and
+ * were wrong by that factor -- which is why the list column read as 204px and
+ * the title bar as 46px when the window is really 307px and 48px.
  *
- *   --bg        #0a0a0a   rail and transcript, the dominant colour
- *   --chrome    #0f0f0f   top bar
- *   --surface   #171717   composer field, files sidebar
- *   --input     #1c1c1c   filter fields, inset wells
- *   --raised    #212121   tab pill, user bubbles, tool cards
- *   --hover     #292929   the active rail well
+ *   #1c1d1c   72.5% of the screen   transcript, the list column, everything recessive
+ *   #292b2a    7.0%                the title bar and the full-height icon rail
+ *   #222423    4.6%                the composer's field -- its one recessed panel
+ *   #313330    2.9%                raised cards
+ *   #3b3e3a    0.4%                the selected row, the tab pill, a selected rail item
+ *   #dedfdd    0.4%                body text          (luminance 222)
+ *   #a1a39f            secondary text               (162)
+ *   #7c807a            metadata                     (116)
+ *   #bacda9            the accent, and the only chroma in the window
  *
- * Text is a three-step scale: #ebebeb for body, #9e9e9e for secondary (file
- * tree), #7a7a7a for metadata.
+ * and the geometry, read off the same capture:
  *
- * The accent is a *desaturated sage* (#bacda9), not a saturated brand colour.
- * Saturation here would be wrong — the reference is almost monochrome, and the
- * one chromatic element is deliberately quiet.
+ *    52px  icon rail, full height, --chrome, the selected item a 34px --chip square
+ *   255px  the list column beside it, --bg            (52 + 255 = 307px of sidebar)
+ *    48px  title bar
+ *   199px  the conversation tab pill, 30px tall, --chip on a --border hairline
+ *   719px  the composer, 118px tall, --surface, centred in the transcript column
+ *
+ * Two things that measurement corrected, and that a screenshot would not have:
+ *
+ * - **The bar is warmer and lighter than "dark grey" suggests.** #292b2a is
+ *   green-grey, not neutral. A neutral #2a2a2a is a different colour and reads
+ *   as a different app next to the reference.
+ * - **The reference is almost entirely neutral.** 0.47% of its pixels carry any
+ *   chroma at all, and every one of them is the accent. There is no blue-grey
+ *   anywhere in it. A tint added "for depth" is the one thing that cannot
+ *   survive a comparison.
+ *
+ * The accent is a *desaturated sage* (#bacda9), confirmed by counting it: 1905
+ * pixels of it in the send button alone, more than any other chromatic colour,
+ * and it is what that button and the toggles are filled with.
  *
  * Dark only. The reference is dark-only and a light theme would need a second
  * full palette to be worth shipping, so `prefers-color-scheme` is not consulted.
@@ -31,20 +53,32 @@
  */
 
 :root {
-  --bg: #0a0a0a;
-  --chrome: #0f0f0f;
-  --surface: #171717;
-  --input: #1c1c1c;
-  --raised: #212121;
-  --hover: #292929;
+  --bg: #1c1d1c;
+  --chrome: #292b2a;
+  /*
+   * The composer's field, and the reference's only large recessed panel -- 4.6%
+   * of its window, every one of those pixels inside the composer's bounds. A
+   * panel token read off the one panel big enough to measure.
+   */
+  --surface: #222423;
+  --input: #262827;
+  --raised: #313330;
+  /*
+   * The chip colour, which is a step *above* --raised: the reference's selected
+   * sidebar row and its conversation tab are both #3b3e3a, and #313330 is what
+   * its cards are. Two names for one step of a scale is how a palette drifts,
+   * so this is a token and not a literal in two rules.
+   */
+  --chip: #3b3e3a;
+  --hover: #373a35;
 
-  --border: #2f2f2f;
-  --border-soft: #1e1e1e;
-  --border-strong: #3a3a3a;
+  --border: #363836;
+  --border-soft: #2a2c2a;
+  --border-strong: #484b49;
 
-  --fg: #ebebeb;
-  --fg-dim: #9e9e9e;
-  --fg-mute: #7a7a7a;
+  --fg: #dedfdd;
+  --fg-dim: #a1a39f;
+  --fg-mute: #7c807a;
 
   --accent: #bacda9;
   --accent-fg: #14170f;
@@ -52,17 +86,25 @@
   --danger: #c9705f;
   --warn: #c9a45f;
 
-  --rail-w: 70px;
+  --rail-w: 52px;
   /*
    * The expanded column is shared by the rail's labels and the conversation
    * titles below them, and at 204px a title got about 24 characters -- which
    * truncated every row to "Explain the sidecar stdi…". The width is set by the
    * list, not by the icons, because a truncated title is useless in the one
    * place where the title is the entire content.
+   *
+   * The reference's own list is 204px, and this stays 20px wider than that on
+   * purpose: matching it exactly means bringing back the truncation, and a
+   * palette is a design decision while a truncated title is a broken one. The
+   * rail above is 52px either way, so the column still reads as the same
+   * proportion at a glance.
    */
   --rail-w-expanded: 236px;
-  --topbar-h: 42px;
-  --sidebar-w: 425px;
+  /* 85 physical pixels of bar in the full-DPI capture. 46px was measured off a
+     * downscaled screenshot and came out two pixels short. */
+  --topbar-h: 48px;
+  --sidebar-w: 256px;
 
   --radius: 10px;
   --radius-sm: 7px;
@@ -222,6 +264,11 @@ body {
   grid-template-columns: var(--rail-w-expanded) minmax(0, 1fr) auto;
 }
 
+/* The bar's indent follows the column it sits over. See `.topbar`. */
+.app.rail-open .topbar {
+  padding-left: calc(var(--rail-w-expanded) + 8px);
+}
+
 /*
  * The conversation list and the icon rail are one column, not two. They are the
  * same "what can I do here" region split by weight -- actions on top, history
@@ -242,7 +289,15 @@ body {
   min-width: 0;
   height: 100%;
   overflow: hidden;
-  background: var(--bg);
+  /*
+   * The rail is a lighter strip down the left edge, all the way to the bottom
+   * of the window -- the reference measures 52px of --chrome there beside 255px
+   * of --bg, and it is the clearest thing that separates the two apps at a
+   * glance. Painting the whole column and letting the list paint its own
+   * surface back over it is what makes the strip run full height; giving the
+   * rail alone a background would stop it at the last icon.
+   */
+  background: var(--chrome);
   border-right: 1px solid var(--border-soft);
 }
 
@@ -287,6 +342,9 @@ body {
      no cap to invent any more: the actions are already pinned at the top, so a
      hundred conversations cannot push them off the window. */
   flex: 1;
+  /* Back to --bg, so the rail's --chrome above it reads as a full-height strip
+     rather than as the column's own colour. */
+  background: var(--bg);
   border-top: 1px solid var(--border-soft);
 }
 
@@ -344,7 +402,7 @@ body {
 }
 
 .chatrow.is-active {
-  background: var(--raised);
+  background: var(--chip);
 }
 
 .chatrow-open {
@@ -637,7 +695,16 @@ body {
   align-items: center;
   gap: 8px;
   height: var(--topbar-h);
-  padding: 0 0 0 10px;
+  /*
+   * Indented past the left column, because that is where the reference puts
+   * its tab: the bar is split by the same boundary the content below it is, and
+   * the conversation's chip starts 8px inside that split rather than against
+   * the window. The caption stays hard against the right edge, where Windows
+   * puts it, so the two ends of the bar are deliberately not symmetrical.
+   *
+   * The indent tracks the rail's width, which changes when the sidebar opens.
+   */
+  padding: 0 0 0 calc(var(--rail-w) + 8px);
   border-bottom: 1px solid var(--border-soft);
   /* A hair lighter than the rail and transcript. The reference uses this to
      separate the chrome from the content without a visible border. */
@@ -710,15 +777,31 @@ body {
   color: var(--fg);
 }
 
-/* The conversation "tab": a pill, like the reference. */
+/*
+ * The conversation "tab": the reference's chip, measured at 200 x 30 CSS px with
+ * a hairline border and a 10px radius.
+ *
+ * A stadium radius rather than `--radius`, which is what this used to be, reads
+ * as a different control at a glance even at the same colour: the reference
+ * rounds its chips to a fixed radius everywhere -- the tab, the selected
+ * sidebar row, the segmented tabs in the composer -- and only its *pills* (the
+ * counters, the badges) are fully rounded. One radius for chips, one for pills,
+ * is most of what makes two windows look like they came from the same place.
+ *
+ * `--input`, not `--raised`: counted off the reference, the chip is #3b3e3a and
+ * the raised cards are #313330, a step apart.
+ */
 .tab {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 28px;
-  padding: 0 6px 0 12px;
-  border-radius: var(--radius-pill);
-  background: var(--raised);
+  height: 30px;
+  padding: 0 8px 0 12px;
+  /* #363936 where the reference outlines its pill, which is --border, not the
+     lighter --border-strong: the hairline reads as a seam, not as an edge. */
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--chip);
   color: var(--fg);
   font-size: 13px;
 }
@@ -1477,7 +1560,9 @@ body {
  * area full width and stops the send button from stealing line length.
  */
 .composer-inner {
-  max-width: 860px;
+  /* 719 CSS px in the reference -- 1258 physical pixels, centred in the
+     transcript column with a ~171px gutter either side. 860 was a guess. */
+  max-width: 720px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;

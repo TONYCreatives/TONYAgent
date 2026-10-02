@@ -183,3 +183,150 @@ describe("the budget number field", () => {
     assert.match(body(".budget-problem"), /color:\s*var\(--danger\)/);
   });
 });
+// --- the palette, measured off the reference --------------------------------
+describe("the palette is the reference's", () => {
+  // Every value here was counted out of a screenshot of the Freebuff window
+  // running on this machine, not chosen. That makes them worth pinning: a
+  // palette drifts one plausible-looking edit at a time, and the drift is
+  // invisible in a diff and in review -- the window still looks deliberate, it
+  // just no longer looks like the thing it was copied from.
+  //
+  // The accents of the scale are the ones that matter, because they are what
+  // the eye reads as "same app": the window's dominant field, the chrome above
+  // it, and the chip that sits on both.
+  const tokens = (name: string) =>
+    new RegExp(`--${name}: *(#[0-9a-f]{6})`, "i").exec(STYLESHEET)?.[1];
+
+  test("the three surfaces are the reference's three", () => {
+    assert.equal(tokens("bg"), "#1c1d1c", "the dominant field is not the reference's");
+    assert.equal(tokens("chrome"), "#292b2a", "the bar is not the reference's");
+    assert.equal(tokens("chip"), "#3b3e3a", "the chip is a step off the reference's");
+  });
+
+  test("and they are warm greys, not neutral ones", () => {
+    // The reference is 99.5% neutral with a green cast (0.47% of its pixels
+    // carry any chroma, and all of that is the accent). A neutral #1c1c1c is a
+    // different colour that reads as a different app beside it, and it is the
+    // kind of "tidy" edit nobody notices making.
+    for (const name of ["bg", "chrome", "chip"]) {
+      const hex = tokens(name)!;
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      assert.ok(
+        Math.abs(r - b) <= 2 && g >= r && g >= b,
+        `--${name} ${hex} is not the reference's warm grey`,
+      );
+    }
+  });
+
+  test("the text ramp is three steps, brightest first", () => {
+    const luminance = (name: string) => {
+      const hex = tokens(name)!;
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    assert.ok(
+      luminance("fg") > luminance("fg-dim") &&
+        luminance("fg-dim") > luminance("fg-mute"),
+      "the text ramp is not descending",
+    );
+  });
+
+  test("the accent is the reference's sage", () => {
+    // Counted off the reference: 2436 pixels of #bacda9, more than any other
+    // chromatic colour in the window, and it is what the send button is filled
+    // with. The first pass here guessed a purple and it was wrong in a way only
+    // a comparison could have caught.
+    assert.equal(tokens("accent"), "#bacda9");
+  });
+});
+
+// --- the chips ---------------------------------------------------------------
+describe("chips are rounded rectangles, not stadiums", () => {
+  test("the conversation tab uses the fixed radius", () => {
+    // The reference rounds its chips to one radius everywhere -- the tab, the
+    // selected row, the composer's segmented tabs -- and reserves the stadium
+    // for pills that are actually pills (counters, badges). A stadium on the
+    // tab reads as a different control at the same colour.
+    assert.match(body(".tab"), /border-radius:\s*var\(--radius\)/);
+    assert.doesNotMatch(body(".tab"), /border-radius:\s*var\(--radius-pill\)/);
+  });
+
+  test("it is the chip colour, and the selected row is the same one", () => {
+    // Both measured at #3b3e3a in the reference. Two literals for one step of a
+    // scale is how the scale stops meaning anything.
+    assert.match(body(".tab"), /background:\s*var\(--chip\)/);
+    assert.match(body(".chatrow.is-active"), /background:\s*var\(--chip\)/);
+  });
+});
+
+// --- the bar's indent --------------------------------------------------------
+describe("the title bar is indented past the left column", () => {
+  test("it starts inside the main column, not against the window", () => {
+    // The reference's bar is split by the same boundary the content below it
+    // is, and its conversation tab starts 8px inside that split. The caption
+    // stays hard against the right edge, so the bar's two ends are deliberately
+    // not symmetrical.
+    assert.match(body(".topbar"), /padding:\s*0 0 0 calc\(var\(--rail-w\) \+ 8px\)/);
+  });
+
+  test("and the indent follows the rail when the sidebar opens", () => {
+    // Otherwise the tab sits inside the opened sidebar's width while the column
+    // it belongs to has moved, and the two disagree by 184px.
+    assert.match(
+      body(".app.rail-open .topbar"),
+      /padding-left:\s*calc\(var\(--rail-w-expanded\) \+ 8px\)/,
+    );
+  });
+});
+
+// --- the rail strip ---------------------------------------------------------
+describe("the rail is a full-height strip down the left edge", () => {
+  test("the column paints --chrome, and the list paints --bg back over it", () => {
+    // Measured in a full-DPI capture of the reference: 52px of #292b2a running
+    // from the title bar to the bottom of the window, with 255px of #1c1d1c
+    // beside it. That strip is the single clearest thing separating the two
+    // apps at a glance, and it is 7% of the reference's pixels.
+    //
+    // It has to be the *column* that is painted, not the rail: the rail is
+    // sized by its buttons (`flex: none`) and the conversation list is what
+    // fills the rest of the column, so a background on `.rail` alone stops the
+    // strip at the last icon.
+    assert.match(body(".sidecol"), /background:\s*var\(--chrome\)/);
+    assert.match(body(".chatlist"), /background:\s*var\(--bg\)/);
+  });
+});
+
+// --- the composer's measured box --------------------------------------------
+describe("the composer is the size the reference draws it", () => {
+  test("720px wide, because 1258 physical pixels at 1.75 scale is 719", () => {
+    // The old 860px came from a downscaled screen-rect capture, so it was
+    // really measuring something else. In the full-DPI capture the field spans
+    // x=840..2098 and sits centred in the transcript column with a ~171px
+    // gutter either side, which is a deliberate maximum rather than a fill.
+    assert.match(body(".composer-inner"), /max-width:\s*720px/);
+  });
+
+  test("and its field is the reference's one recessed panel", () => {
+    // #222423 is 4.6% of the reference's window, and every one of those pixels
+    // lies inside the composer's bounds -- it is the only panel big enough to
+    // read a recessed colour off.
+    assert.match(STYLESHEET, /--surface: *#222423/i);
+  });
+});
+
+// --- re-measured at full DPI ------------------------------------------------
+describe("the bar and the tab pill, re-measured at full DPI", () => {
+  test("the title bar is 48px, not the 46px the downscaled capture gave", () => {
+    // 85 physical pixels of bar in the reference. 46px was read off a capture
+    // that had already lost the 1.75 scale factor.
+    assert.match(STYLESHEET, /--topbar-h:\s*48px/);
+  });
+
+  test("the tab pill's hairline is --border, not the lighter --border-strong", () => {
+    // #363936 outlines the reference's pill, which is --border. --border-strong
+    // is two steps up the scale and draws a visible frame around a chip that is
+    // meant to sit flush on the chrome.
+    assert.match(body(".tab"), /border:\s*1px solid var\(--border\)/);
+    assert.doesNotMatch(body(".tab"), /var\(--border-strong\)/);
+  });
+});
