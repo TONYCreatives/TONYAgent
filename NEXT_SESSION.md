@@ -2,11 +2,11 @@
 
 **Project:** TONYAgent — local-first desktop AI agent
 **Last updated:** 2026-10-02, after the second UI pass — popovers that survive
-their own clicks, a typeable tool-call limit, and the app's own title bar (see
-"The second UI pass" at the end)
+their own clicks, a typeable tool-call limit, the app's own title bar, and the
+window's system menu back (see "The second UI pass" at the end)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 590 passed, TypeScript 293 passed,
+protocol method.** Everything green: **Python 590 passed, TypeScript 305 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **590 passed, 7 skipped** with Docker Desktop running.
@@ -63,7 +63,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 293 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
+cd app && npm test                     # 305 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -790,15 +790,17 @@ app/
     useDismiss.ts           the one rule for closing a surface on an outside press
     TopBar.tsx              the window's own title bar: drag region, tab, caption
     WindowControls.tsx      the three caption buttons, presentational only
-    useWindowControls.ts    caption actions; null outside the Tauri shell
+    useWindowControls.ts    caption actions, the system menu, F10; null in a browser
     styles.css              dark-only tokens sampled from the Freebuff app
     backend.ts              the protocol client
     test-dom.ts             installs jsdom on the globals; imported first
     test-render.ts          mount / act / type / press / query helpers
     layout.test.ts          reads the stylesheet's cascade, not its text
-    *.test.ts, *.test.tsx   293 tests, all run by `npm test`
+    *.test.ts, *.test.tsx   305 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
+    build.rs                app_manifest: the ACL name for the one app command
+    src/system_menu.rs      GetSystemMenu + TrackPopupMenu, ~40 lines of unsafe
     capabilities/default.json
     Cargo.toml, build.rs, src/main.rs, src/lib.rs
     icons/                  generated from icons/icon.svg
@@ -1836,3 +1838,113 @@ budget by the refusal test).
   later as a whole-file diff.
 - **Nested triple quotes inside `python -c` heredocs break.** One-shot patchers
   go in `scripts/_something.py`, get deleted afterwards, and are never staged.
+
+#### The system menu, and the three things that were not markup
+
+`decorations: false` took more than the bar. It took the menu on Alt+Space, the
+menu on a right-click, and **Move and Size** — and the last two are drag loops
+the OS runs, so a window without them cannot be placed or resized at all. No
+React component stands in for that.
+
+The window still carries `WS_SYSMENU`: tao keeps the window style and only tells
+`WM_NCCALCSIZE` that the client area is the whole window (`to_window_styles`
+keeps `WS_CAPTION | WS_THICKFRAME | WS_SYSMENU`; only
+`to_adjusted_window_styles` clears the first two, and that one is for sizing).
+**So `decorations: false` does not cost Aero Snap or the resize borders** — the
+obvious fear, and the thing to check in `to_window_styles` before assuming it.
+The OS is already holding the right menu, so the app asks for it —
+[`system_menu.rs`](app/src-tauri/src/system_menu.rs), one command, one Win32 call:
+
+```rust
+let hmenu = GetSystemMenu(hwnd.0, 0);
+GetCursorPos(&mut at);
+let chosen = TrackPopupMenu(hmenu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON
+                                 | TPM_RETURNCMD, at.x, at.y, 0, hwnd.0, null());
+if chosen > 0 { PostMessageW(hwnd.0, WM_SYSCOMMAND, chosen as usize, 0); }
+```
+
+`TPM_RETURNCMD` so the chosen item comes back as a value and the window's own
+message loop acts on it, which is what happens when a user clicks the menu.
+`TrackPopupMenu` blocks, because a menu is a modal loop — the webview is another
+process, so the app keeps painting.
+
+**`WM_SYSCOMMAND` + `SC_KEYMENU` does not work here.** It is the message the OS
+sends itself for Alt+Space and the obvious way in; posted at this window from
+outside the app, with no IPC in the way, it produces nothing. A frameless tao
+window does not pass it to `DefWindowProc`.
+
+**Alt+Space is not bound.** On this machine it is a global hotkey (Copilot): the
+OS consumes it before any window sees it, so a binding would be a line of code
+that can never run. `F10` is the other name Windows has for the same menu.
+Measured, by recording what reaches the page with the app in front:
+
+| key | reaches the page |
+|---|---|
+| **F10** | **yes** (and `defaultPrevented: true`, so the handler ran) |
+| F9, F11, M, Space, Escape | no — WebView2 keeps them |
+| Alt+M | yes (`key` `Alt`, then `m`) |
+
+Note WebView2 reports **`event.code === ""`**, so a hook that reads only `code`
+sees nothing. `useWindowControls` accepts `code` or `key`.
+
+#### The app's own command needs a name in three places
+
+An app command is ACL-checked whenever the app ships a capability file, which
+this one does. Three names have to agree, and a typo in any of them is a menu
+that never opens with the reason only in the console:
+
+- the command, `show_system_menu` in `lib.rs` (`#[cfg(windows)]`, so the
+  `generate_handler!` is behind a `cfg` too);
+- `tauri_build::AppManifest::new().commands(&["show_system_menu"])` in
+  `build.rs`, which writes `permissions/autogenerated/show_system_menu.toml`
+  (gitignored — it is a build product);
+- `allow-show-system-menu` in `capabilities/default.json` — **dashes**, because
+  the identifier slugifies the command's underscores.
+
+`windows-sys 0.61` goes in under `[target.'cfg(windows)'.dependencies]` with
+`Win32_Foundation` (for `POINT`) and `Win32_UI_WindowsAndMessaging`. It is the
+version tauri already resolves, so this adds a feature, not a second crate.
+
+#### Reading a menu off the screen (three ways to get it wrong)
+
+`scripts/verify_system_menu.py` drives the packaged app with real input and
+finds the menu as a visible top-level window of class `#32768`. Getting there
+took three corrections, each of which had the verifier confidently reporting "no
+menu" for a menu that was plainly on screen:
+
+1. **Not by `GW_OWNER`.** The app's own system menu reads owner **0**. The menu
+   window is created by the thread that called `TrackPopupMenu`, so the honest
+   discriminator is the **process**: the app's pid for this menu,
+   `msedgewebview2.exe`'s for the webview's context menu.
+2. **The menu stays where you left it.** A menu the verifier failed to
+   recognise stays open, covers the title bar, and swallows the next
+   right-click — which then reports the menu as missing. `EndMenu` to dismiss
+   (Escape goes to whatever has the focus, and a menu is not it), and `EndMenu`
+   again in the `finally` so a run that dies mid-case cannot leave one over the
+   user's desktop.
+3. **Seven items, not six, and the greyed-out rule is the opposite of what it
+   looks like.** There is a separator at index 5, and the item that is *off* is
+   the one that would do nothing: **Restore** greyed on a normal window,
+   **Maximize** greyed on a maximized one. Labels are localised and carry their
+   mnemonics (`&Move`, `Mi&nimize`, `&Close\tAlt+F4`), so assert by **position**
+   and read `maximized` from the window's own `WS_MAXIMIZE` — never from how big
+   the window looks. (This window is dragged out past its work area and is *not*
+   maximized by the style's account, and the menu agrees with the style.)
+
+The cases that justify the feature: `move` and `size` are driven from the
+keyboard — F10, the mnemonic, six arrow presses, Enter — and the rectangle
+before and after is compared, then the window is put back with `SetWindowPos`.
+Both pass. `WS_MAXIMIZE` is `0x01000000`; `0x00010000` is `WS_MAXIMIZEBOX` and
+reading that instead is how a normal window gets reported as maximized.
+
+#### Being a guest on someone's desktop
+
+The verifier takes the focus (F10 needs it) and moves the pointer, so it puts
+both back: `SetForegroundWindow` to whatever was in front, `SetCursorPos` to
+where the cursor was, in a `finally`. It does not move or resize the window
+except in the Move/Size cases, which restore the original rectangle. It measures
+the title bar from `--topbar-h` × the monitor's DPI rather than assuming
+(42 CSS px is 74 physical px on the 175% display the app was tested on), and it
+runs the keyboard case **first**, because a right-click off the title bar leaves
+the webview's context menu open with the input captured, and the F10 after it
+goes to that menu instead of the app.
