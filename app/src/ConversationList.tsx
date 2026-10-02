@@ -20,6 +20,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount.js";
+import { useDismiss } from "./useDismiss.js";
 
 export interface ConversationSummary {
   id: string;
@@ -94,6 +95,10 @@ export function ConversationList({
   // simply vanished.
   const menu = useLastValue(openMenuAt);
   const menuMounted = useDelayedUnmount(openMenuAt !== null);
+  // The menu node, so a press on one of its items is the item being pressed
+  // rather than the menu being dismissed underneath it. Shared with the model
+  // picker and the budget popover, which had the same unguarded listener.
+  const menuNodeRef = useRef<HTMLDivElement | null>(null);
 
   const openMenu = (id: string, x: number, y: number) => setOpenMenuAt({ id, x, y });
   const closeMenu = () => setOpenMenuAt(null);
@@ -106,31 +111,24 @@ export function ConversationList({
   }, [editing]);
 
   // The menu is anchored to a click, so anything else that happens closes it:
-  // a click elsewhere, a scroll, Escape, or the window losing focus.
+  // a click elsewhere, Escape, or the window losing focus. A menu that only
+  // closes on a second right-click is one a user has to hunt for the exit to.
   //
-  // Keyed on `openMenuAt`, not on `menu`. `menu` is retained so the node can
-  // animate out, which means it never returns to null and an effect watching
-  // it would leave four listeners on the window for the rest of the session.
-  // What these listeners are for is the time the menu is *open*, so that is what
-  // they watch.
+  // Keyed on `openMenuAt`, not on `menu`: `menu` is retained so the node can
+  // animate out, which means it never returns to null, and an effect watching
+  // it would leave its listeners on the window for the rest of the session.
+  // What they are for is the time the menu is *open*, so that is what they
+  // watch.
+  useDismiss(openMenuAt !== null, closeMenu, menuNodeRef);
+
+  // A resize is its own case: the menu is positioned in page pixels against a
+  // window that just changed size, so it would be left pointing at the wrong
+  // row. Closing it is the honest answer, because there is nothing to re-anchor
+  // it to.
   useEffect(() => {
     if (!openMenuAt) return;
-    const dismiss = closeMenu;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") dismiss();
-    };
-    // Capture, so a click on another row opens that row's menu rather than
-    // being eaten by this one closing.
-    window.addEventListener("pointerdown", dismiss, true);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("blur", dismiss);
-    window.addEventListener("resize", dismiss);
-    return () => {
-      window.removeEventListener("pointerdown", dismiss, true);
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("blur", dismiss);
-      window.removeEventListener("resize", dismiss);
-    };
+    window.addEventListener("resize", closeMenu);
+    return () => window.removeEventListener("resize", closeMenu);
   }, [openMenuAt]);
 
   const startRename = (conversation: ConversationSummary) => {
@@ -276,6 +274,7 @@ export function ConversationList({
       */}
       {menuMounted && menu && (
         <div
+          ref={menuNodeRef}
           className="rowmenu"
           role="menu"
           data-state={openMenuAt ? "open" : "closed"}

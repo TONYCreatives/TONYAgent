@@ -364,4 +364,43 @@ describe("dismissing the model menu", () => {
     await wait(250);
     assert.equal(menu(container), null);
   });
+
+  test("pressing the filter does not close the menu the filter is in", async () => {
+    // The bug that sent this to a session: `window.addEventListener("pointerdown",
+    // close, true)` fires on the way *down*, for every press, and this one
+    // landed inside the menu. Clicking the box meant closing the menu before
+    // the box could be typed into.
+    //
+    // Asserted on `data-state`, because the node stays mounted after a close so
+    // the exit has something to animate -- "closed" here is a state, and an
+    // assertion on the node merely being present would pass either way.
+    const { container } = await live();
+    await click(chip(container));
+    await pointerDown(field(container)!);
+    assert.equal(
+      menu(container)!.dataset.state,
+      "open",
+      "pressing the filter dismissed the menu it was in",
+    );
+  });
+
+  test("pressing an item does not close the menu before the item is trusted", async () => {
+    // The same listener, one step further on. A dismissal on the way down means
+    // the item's own click lands on a menu that is already closing, which is
+    // how "clicking an entry did nothing" happens.
+    const { container, chosen } = await live();
+    await click(chip(container));
+    await pointerDown(all(container, ".modelpicker-item")[0]);
+    assert.equal(
+      menu(container)!.dataset.state,
+      "open",
+      "pressing an item dismissed the menu it was in",
+    );
+    // And the click behind that press still lands, which is the part that
+    // matters: the state above could be right while the handler was ignored.
+    await click(all(container, ".modelpicker-item")[0]);
+    assert.deepEqual(chosen(), ["anthropic/claude-sonnet-4.5"]);
+    await wait(250);
+    assert.equal(menu(container), null, "the choice did not close the menu");
+  });
 });

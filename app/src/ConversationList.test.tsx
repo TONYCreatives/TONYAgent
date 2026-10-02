@@ -322,6 +322,38 @@ describe("the row menu", () => {
     await chooseMenuItem(container, "Delete");
     assert.deepEqual(calls.deleted, [conversation().id]);
   });
+
+  test("pressing a menu item is not a press elsewhere", async () => {
+    // The same unguarded capture-phase `pointerdown` the model menu and the
+    // budget popover had: it fired on the way *down*, for presses that landed
+    // inside the menu, so a press on an item closed the menu underneath the
+    // item that was being pressed.
+    //
+    // `data-state` rather than presence, because a closed menu is still in the
+    // tree so the exit has something to animate.
+    const container = await renderList([conversation()]);
+    await rightClick(rows(container)[0]);
+    const item = all(container, ".rowmenu [role='menuitem']")[0];
+    await pointerDown(item);
+    assert.equal(
+      one(container, ".rowmenu")!.dataset.state,
+      "open",
+      "pressing a menu item dismissed the menu it was in",
+    );
+  });
+
+  test("the item behind that press still acts", async () => {
+    // The consequence of the previous one, and the reason it matters: a press
+    // that closes the menu is a press whose click lands on a menu that is on its
+    // way out. Asserting the action, not just the state, is what proves the
+    // handler is being believed.
+    const container = await renderList([conversation()]);
+    await rightClick(rows(container)[0]);
+    const item = all(container, ".rowmenu [role='menuitem']")[1];
+    await pointerDown(item);
+    await click(item);
+    assert.deepEqual(calls.duplicated, [conversation().id]);
+  });
 });
 
 // --- the inline editor ----------------------------------------------------

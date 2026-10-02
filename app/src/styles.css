@@ -1173,6 +1173,92 @@ body {
   font-size: 11.5px;
 }
 
+/*
+ * The typed budget, beside the presets rather than instead of them.
+ *
+ * One row: the field takes what is left and the button is its own size, so the
+ * two read as a single control. `Set` is a word and not a glyph because a lone
+ * arrow next to a number field is ambiguous about what it applies to.
+ */
+.budget-custom-row {
+  display: flex;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+/*
+ * The native number field is styled directly, for the reason the file input and
+ * the settings select are: a styled wrapper leaves the platform's own control
+ * visible on top of it, and on Windows that is a white box in a black popover.
+ *
+ * `appearance: none` is what actually removes the spinners. Hiding them instead
+ * (`::-webkit-inner-spin-button`) leaves a number field that still refuses
+ * letters on some paths, and the validation below is the thing that should be
+ * deciding what a field accepts.
+ */
+.budget-custom-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius-sm) - 1px);
+  background: var(--input);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  appearance: none;
+}
+
+.budget-custom-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.budget-custom-input:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.budget-custom-apply {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius-sm) - 1px);
+  background: var(--raised);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.budget-custom-apply:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.budget-custom-apply:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/*
+ * Why the typed value was refused, in the popover rather than in the window's
+ * error banner.
+ *
+ * The banner sits above the transcript, several hundred pixels from the field
+ * that caused the rejection, and it persists; a person who typed 0 and pressed
+ * Enter is still looking at the field. `--danger` is the same token the row
+ * menu's Delete uses, for the same reason: the value would have refused every
+ * tool in the turn.
+ */
+.budget-problem {
+  margin: 6px 0 0;
+  color: var(--danger);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
 .budget-done {
   margin-top: 8px;
   font-size: 11.5px;

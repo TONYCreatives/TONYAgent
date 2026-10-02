@@ -22,6 +22,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useDismiss } from "./useDismiss.js";
 import { useDelayedUnmount } from "./useDelayedUnmount.js";
 
 /** What `models.list` returns. */
@@ -91,6 +92,10 @@ export function ModelPicker({
   const [open, setOpen] = useState(false);
   const mounted = useDelayedUnmount(open);
   const filterRef = useRef<HTMLInputElement | null>(null);
+  // The wrap, not the menu panel: the chip lives inside it, and a press on the
+  // chip is the chip's own toggle. This is also what keeps a press on the
+  // filter from dismissing the menu it is the filter for.
+  const wrapRef = useRef<HTMLDivElement | null>(null);
   // Whether the list has been asked for. A ref, not state: it gates a fetch
   // and must not itself cause a render, and re-rendering on every open just to
   // remember what was already fetched is how a list gets requested twice.
@@ -124,24 +129,8 @@ export function ModelPicker({
   }, [open, onLoad]);
 
   // Anything else closes it: a click elsewhere, Escape, the window losing
-  // focus. Keyed on `open`, not on `mounted` -- the node outlives the close so
-  // it can animate out, so an effect watching it would never see the close.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    // Capture, so a press on the chip toggles rather than being eaten by
-    // this closing on the way through.
-    window.addEventListener("pointerdown", close, true);
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("blur", close);
-    return () => {
-      window.removeEventListener("pointerdown", close, true);
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("blur", close);
-    };
-  });
+  // focus -- but not a click *inside* it, which is the filter being used.
+  useDismiss(open, close, wrapRef);
 
   // The filter is the first thing focused, so a user can type straight away.
   useEffect(() => {
@@ -163,7 +152,7 @@ export function ModelPicker({
   }
 
   return (
-    <div className="modelpicker-wrap">
+    <div className="modelpicker-wrap" ref={wrapRef}>
       <button
         type="button"
         className="chip"
