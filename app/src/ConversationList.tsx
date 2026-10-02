@@ -1,5 +1,5 @@
 /**
- * The conversation list, docked above the icon rail.
+ * The conversation list, as a floating panel beside the icon rail.
  *
  * Presentational only: it renders whatever the core reports and calls back.
  * The core owns which conversations exist and what is in them -- a list built
@@ -16,6 +16,13 @@
  * anyone not holding a mouse button -- a right-click-only control cannot be
  * reached from the keyboard at all, which would make deleting a conversation
  * impossible for exactly the people most likely to have a long list of them.
+ *
+ * `open` is passed in rather than read here because the *lifetime* of this
+ * panel belongs to the parent: it keeps the node mounted through the exit
+ * animation, which is the only way the close has something to animate. What this
+ * component does with `open` is say which way the motion runs, via `data-state`
+ * -- the same contract `<Overlay>` and the files panel use, and the reason
+ * styles.css can tell an arriving panel from a leaving one.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -32,6 +39,15 @@ export interface ConversationSummary {
 }
 
 interface Props {
+  /**
+   * Open, or on its way out.
+   *
+   * The panel stays mounted after this goes false for the length of the exit
+   * animation, so `false` means "closing" rather than "gone" -- which is why it
+   * is a `data-state` on the node rather than a decision about whether to
+   * render one.
+   */
+  open: boolean;
   conversations: ConversationSummary[];
   /** The conversation currently open, or "" before the first is created. */
   active: string;
@@ -72,6 +88,7 @@ interface Menu {
 }
 
 export function ConversationList({
+  open,
   conversations,
   active,
   busy,
@@ -157,7 +174,11 @@ export function ConversationList({
   };
 
   return (
-    <nav className="chatlist" aria-label="Conversations">
+    <nav
+      className="chatlist"
+      data-state={open ? "open" : "closed"}
+      aria-label="Conversations"
+    >
       <button
         type="button"
         className="chatlist-new"

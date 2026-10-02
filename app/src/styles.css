@@ -26,10 +26,18 @@
  *   #bacda9            the accent, and the only chroma in the window
  *
  * and the geometry, read off the same capture:
- *
- *    52px  icon rail, full height, --chrome, the selected item a 34px --chip square
+ **   52px  icon rail, full height, --chrome, the selected item a 34px --chip square
  *   255px  the list column beside it, --bg            (52 + 255 = 307px of sidebar)
  *    48px  title bar
+ *
+ * and one deliberate difference from the reference: that 255px list is an
+ * **overlay** here rather than a column, so it floats over the transcript
+ * instead of narrowing it. The reference can afford to dock it because it
+ * always knows how wide the window is; this one does not, and a 255px column
+ * that is always there is 255px of transcript gone before the user has said
+ * anything. The geometry is unchanged -- the panel is still 255px beside a
+ * 52px strip -- so the window reads the same when the panel is open. See the
+ * `.chatlist` rule for why this is also what makes the panel animatable.
  *   199px  the conversation tab pill, 30px tall, --chip on a --border hairline
  *   719px  the composer, 118px tall, --surface, centred in the transcript column
  *
@@ -88,17 +96,19 @@
 
   --rail-w: 52px;
   /*
-   * The open column is the rail and the list side by side: 52px of --chrome and
-   * 255px of --bg, which is what the reference measures at x=0..92 and
-   * x=92..538 of a full-DPI capture. 307 is their sum, not a chosen width.
+   * The conversation list's own width: the reference's 255px, which is what a
+   * full-DPI capture measures at x=92..538 beside the rail's x=0..92.
    *
-   * The list therefore gets the reference's 255px rather than a width picked to
-   * avoid truncation -- which was the argument for 236px back when the rail
-   * *was* the column and the list sat underneath it. Matching the reference
-   * turns out to give the list more room than the compromise did, because the
-   * rail no longer has to share it.
+   * This used to be `--rail-w-expanded: 307px`, the sum of the two, sized as a
+   * grid track that the rail and the list shared. The list is an overlay now,
+   * so there is no track to size and no rail to share with -- it is its own
+   * panel, and 307 is no longer a width anything has. The rail's 52 is the
+   * strip that stays put; this is the panel that floats over the transcript,
+   * anchored to the rail's right edge, so the two still measure 307 between
+   * the window's left edge and the panel's right edge exactly as the
+   * reference does.
    */
-  --rail-w-expanded: 307px;
+  --list-w: 255px;
   /* 85 physical pixels of bar in the full-DPI capture. 46px was measured off a
      * downscaled screenshot and came out two pixels short. */
   --topbar-h: 48px;
@@ -225,16 +235,18 @@ body {
 /* --- app shell ----------------------------------------------------------- */
 
 /*
- * The rail is always rendered: closed it is the narrow icon strip, expanded it
- * widens in place. The column never disappears, so `.main` stays pinned to
- * column 2 -- but the column has to *follow* the rail, not stay at the closed
- * width. It used to be fixed at `--rail-w`, so the expanded rail overflowed its
- * own track and painted over the first 178px of the chat area. The comment
- * above the original rule described the intent and quietly assumed the thing
- * that was broken.
+ * Three columns, and the first one never changes width: 52px of rail, the
+ * transcript, and `auto` for the Files panel's reopen handle. That constancy is
+ * the whole point of this layout. The conversation list used to be this grid's
+ * second state -- `.app.rail-open` widened column 1 to 307px and the transcript
+ * moved -- which meant opening the sidebar re-laid-out the transcript, and
+ * re-laying-out a column of text is exactly what cannot be animated smoothly.
+ * The list is an overlay now, so the grid has nothing to do when it opens and
+ * the transcript stays where it was.
  *
- * `.rail-open` is set from React rather than derived from the rail's own width,
- * because a grid track cannot be sized by a sibling's computed width.
+ * So `.app.rail-open` is gone entirely. React still sets the class name off
+ * `railExpanded` -- it is what the panel's own `data-state` animation is keyed
+ * on -- but no rule in this file reads it, and `layout.test.ts` asserts that.
  */
 .app {
   display: grid;
@@ -254,60 +266,19 @@ body {
   grid-template-rows: var(--topbar-h) minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
-  /* Positioning context for the Files overlay and its scrim. */
+  /* Positioning context for the conversation panel, the Files overlay and its scrim. */
   position: relative;
 }
 
-.app.rail-open {
-  grid-template-columns: var(--rail-w-expanded) minmax(0, 1fr) auto;
-}
-
-/* The bar's indent follows the column it sits over. See `.topbar`. */
-.app.rail-open .topbar {
-  padding-left: calc(var(--rail-w-expanded) + 8px);
-}
-
 /*
- * The conversation list and the icon rail are one column, not two. They are the
- * same "what can I do here" region split by weight -- actions on top, history
- * below -- and giving each its own track meant the rail could not keep its
- * width while the list grew.
- *
- * Order is actions first. The rail is a fixed handful of buttons that must sit
- * in the same place all session; the list is however many conversations the
- * account has accumulated. Putting the variable length one on top meant a cap
- * had to be invented for it, and the cap then decided where the buttons landed.
- * Below, the list takes what is left and the rail can never be displaced.
+ * The rail is the window's left edge and it is always there: 52px of --chrome
+ * from below the title bar to the bottom of the window, which is what the
+ * reference measures and the single clearest thing separating the two apps at a
+ * glance. It is a grid item in column 1 in its own right rather than something
+ * inside a wider sidebar column, because the conversation list no longer shares
+ * a column with it -- that panel is an overlay now. See `.chatlist`, and
+ * `.rail` in the icon-rail section for the rule that places it.
  */
-.sidecol {
-  grid-column: 1;
-  grid-row: 2;
-  display: flex;
-  /*
-   * A row, not a column: the rail is a fixed 52px strip and the conversation
-   * list fills what is left of it. They used to be stacked, actions above
-   * history, which meant the rail could not be full height -- it was sized by
-   * its buttons and stopped at the last icon -- and which put a 236px chrome
-   * block over the list the moment the sidebar opened. Side by side, the strip
-   * runs the length of the window the way the reference's does.
-   *
-   * Order is still rail first, so it is the left edge of the column.
-   */
-  flex-direction: row;
-  min-width: 0;
-  height: 100%;
-  overflow: hidden;
-  /*
-   * The rail is a lighter strip down the left edge, all the way to the bottom
-   * of the window -- the reference measures 52px of --chrome there beside 255px
-   * of --bg, and it is the clearest thing that separates the two apps at a
-   * glance. Painting the whole column and letting the list paint its own
-   * surface back over it is what makes the strip run full height; giving the
-   * rail alone a background would stop it at the last icon.
-   */
-  background: var(--chrome);
-  border-right: 1px solid var(--border-soft);
-}
 
 .main {
   display: flex;
@@ -328,32 +299,94 @@ body {
 /* --- conversation list ---------------------------------------------------- */
 
 /*
- * Below the rail, not replacing it. The rail is "what can I do" and the list is
- * "what did I do"; stacking them keeps one place to look, and neither has to be
- * collapsed to see the other.
+ * An overlay panel, not a column. Beside the rail and over the transcript.
+ *
+ * Three reasons, and the first is the reason the reference itself does not
+ * share:
+ *
+ * - **The transcript is the point of the window.** Docked, an empty list held
+ *   255px of a 1200px window open indefinitely to say "no conversations yet",
+ *   and every message in it re-wrapped when it opened. The Files panel had
+ *   already been moved over the transcript for exactly this reason; this is the
+ *   same argument about the same window, and only one of the two panels was
+ *   taking it.
+ * - **It cannot animate otherwise.** A column's width is a grid track, and a
+ *   grid track cannot be transitioned: it snaps, and the text inside it
+ *   re-wraps on every intermediate frame. Floating it means the only thing
+ *   that moves is a `transform`, which is the one property that can be animated
+ *   without the layout underneath it being recomputed. This is why the panel is
+ *   an overlay rather than merely a narrower column -- the animation and the
+ *   layout fix are the same change.
+ * - **The window is resizable and the list is not.** 255px is the reference's
+ *   own sidebar width, which it can afford because it is always the same
+ *   window. Here it is 255px of a column that might be 900px or 2400px, and at
+ *   the narrow end that is the difference between a transcript that reads and
+ *   one that is a column of hyphenated fragments.
+ *
+ * Anchored to the rail rather than to the window edge, so the rail stays
+ * visible and operable while the panel is open. The rail's toggle is the only
+ * way to close this panel, so a panel that covered the rail would be a panel
+ * with no exit.
+ *
+ * `left` and `top` are the two things that make it an overlay: taken out of
+ * flow and pinned against the rail's right edge and the title bar's underside.
+ * `top: var(--topbar-h)` for the reason `.sidebar` also starts there -- it
+ * would otherwise cover the caption buttons and take the drag region with them.
  */
-/*
- * Hidden while the sidebar is collapsed. The column is 52px then, which is
- * exactly the rail's width, so the strip is left alone rather than being
- * squeezed to nothing -- and the rail's own toggle is the way back in.
- */
-.sidecol:not(.rail-open) .chatlist {
-  display: none;
-}
-
 .chatlist {
+  position: absolute;
+  top: var(--topbar-h);
+  left: var(--rail-w);
+  bottom: 0;
+  z-index: 4;
   display: flex;
   flex-direction: column;
+  /* The reference's own 255px, not a width picked to avoid truncation. */
+  width: var(--list-w);
   min-height: 0;
+  /* A fixed width makes `min-width: 0` redundant here, but it is what lets a
+     long conversation title truncate rather than stretch the panel: the title's
+     own rule is `text-overflow: ellipsis` with `min-width: 0`, and that only
+     fires if the flex item above it is allowed to be narrower than its content. */
   min-width: 0;
-  /* Takes the width the rail did not, and scrolls inside itself. `min-width: 0`
-     is what lets it shrink: a flex item's automatic minimum size is its
-     content, so a long conversation title would otherwise widen the column past
-     the grid track and push the transcript. */
-  flex: 1;
-  /* --bg against the rail's --chrome, with no divider between them: the
-     reference's two columns meet on a hard edge, not on a hairline. */
+  /* --bg against the rail's --chrome, with a hairline on the far side only: the
+     reference's two columns meet on a hard edge, and the edge that needs
+     separating is the panel's, since the rail's is a boundary between two
+     always-present surfaces rather than between a surface and the window. */
+  border-right: 1px solid var(--border);
   background: var(--bg);
+  /* The shadow is what says "this is on top of that" rather than "that is
+     beside this". Without it a floating panel on a near-black UI reads as a
+     column with a misplaced edge -- the same failure the Files panel's scrim
+     exists to solve, solved here with depth instead of a scrim. */
+  box-shadow: 18px 0 40px rgba(0, 0, 0, 0.35);
+}
+
+/*
+ * The panel's own enter and exit.
+ *
+ * A translation, not a width, because the panel's width is fixed and because
+ * translating is the only way to move a 255px panel over the transcript without
+ * the transcript underneath re-laying-out as it passes. It slides *from* the
+ * left edge, the way `.sidebar` slides from the right, because that is the
+ * edge it is anchored to: a panel that appeared 20px to the left of where it
+ * belongs would look like it was escaping from under the rail.
+ *
+ * The exit is shorter and accelerating, like every other exit in this file. A
+ * panel that eases out as slowly as it eased in makes closing it feel like
+ * something to wait for.
+ */
+.chatlist[data-state="open"] {
+  animation: slide-in-left var(--motion-base) var(--ease-out) both;
+}
+
+.chatlist[data-state="closed"] {
+  animation: slide-out-left var(--motion-fast) var(--ease-in) both;
+  /* The panel is still on screen for the length of the exit, and a 255px
+     column of click targets left live for 110ms after the user closed it is a
+     region where the next click goes nowhere. Same reason as
+     `.sidebar[data-state="closed"]`. */
+  pointer-events: none;
 }
 
 .chatlist-new {
@@ -571,7 +604,30 @@ body {
 
 /* --- icon rail ----------------------------------------------------------- */
 
+/*
+ * Column 1, row 2, and a full-height --chrome strip: 52px down the left edge
+ * from under the title bar to the bottom of the window.
+ *
+ * Three of those four facts are grid placement, and they are here rather than
+ * near `.app` because this is the only rule that has anything to say about the
+ * rail at all. It is a grid item in its own right: the conversation list used to
+ * share a column with it and has been moved out to an overlay (`.chatlist`), so
+ * the rail is now what column 1 *is* rather than the left part of something
+ * wider. It names its row and column explicitly for the reason every other
+ * in-flow child of the shell does -- auto-placement must not decide where the
+ * rail goes based on which siblings happen to render.
+ *
+ * `align-self` is deliberately absent and `height: 100%` deliberately present.
+ * The grid's default `stretch` would do the same job, but an explicit height is
+ * what makes the strip's full height readable here, where the thing being
+ * avoided is not obvious from `display: flex` and `flex-direction: column`.
+ * (The test that used to assert the absence of `align-self` is on
+ * `.rail-toggle`, not on the rail: that is a different declaration, on a
+ * different element, and it is still asserted.)
+ */
 .rail {
+  grid-column: 1;
+  grid-row: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -581,22 +637,33 @@ body {
   /*
    * Always --rail-w. The rail used to widen to --rail-w-expanded and grow text
    * labels, which is the one thing the reference never does: its rail is a
-   * strip of icons at every width, and the conversation titles live in the list
-   * beside it. The labels went with that -- `title` and `aria-label` already
-   * carry the name, which is where a keyboard user reads it.
-   *
-   * `align-self` is left alone on purpose: the container's default `stretch` is
-   * what makes the strip run the full height of the column, and saying so here
-   * would be one more declaration to keep in step with it.
+   * strip of icons at every width, and the conversation titles live in the
+   * panel beside it. The labels went with that -- `title` and `aria-label`
+   * already carry the name, which is where a keyboard user reads it.
    */
   width: var(--rail-w);
-  /* No cross-axis growth, and no main-axis growth: the strip is its buttons on
-     a full-height column, and the list beside it takes the width. */
+  min-width: 0;
+  height: 100%;
+  /*
+   * No cross-axis growth, and no main-axis growth: the strip is its buttons on
+   * a full-height column, and the overlay panel beside it takes its own width.
+   */
   flex: none;
   /*
-   * No width transition: the grid track snaps to the new width at the same
-   * moment, so animating only the rail would leave it visibly sliding inside a
-   * track that has already moved. Snapping reads as one action.
+   * --chrome, because the reference measures 52px of #292b2a running the whole
+   * height of the window there. Painted on the rail itself now rather than on a
+   * parent column that the list then painted --bg back over: the rail *is* the
+   * column, so there is nothing to paint over it and nothing that could stop the
+   * strip short at the last icon.
+   */
+  background: var(--chrome);
+  border-right: 1px solid var(--border-soft);
+  /*
+   * No width transition, and none is wanted. The rail's width has not changed
+   * since the panel became an overlay -- it is 52px whether or not the
+   * conversation list is open -- so there is nothing here to animate, and an
+   * animated width on the one column that never changes would be motion for no
+   * state change at all.
    */
 }
 
@@ -2666,6 +2733,24 @@ body {
   to { opacity: 0; transform: translateX(16px); }
 }
 
+/*
+ * The conversation panel's mirror of the two above, anchored to the rail on its
+ * left instead of to the window on its right.
+ *
+ * 16px, the same distance, and for the same reason the files panel uses that
+ * number rather than its own full width: the panel should read as having slid
+ * out from under the rail rather than as having been assembled out of nothing.
+ * A larger distance looks like a different animation, and at a panel width of
+ * 255px a slide of even half that would cross a third of the transcript.
+ */
+@keyframes slide-in-left {
+  from { opacity: 0; transform: translateX(-16px); }
+}
+
+@keyframes slide-out-left {
+  to { opacity: 0; transform: translateX(-16px); }
+}
+
 /* The log strip animates its own height rather than a wrapper's, because its
    height is capped by `max-height: 150px` and it has to reach that cap. */
 @keyframes strip-open {
@@ -2878,6 +2963,8 @@ body {
   .modal-backdrop[data-state],
   .modal-backdrop > .modal,
   .modal-backdrop[data-state] > .modal,
+  .chatlist,
+  .chatlist[data-state],
   .sidebar,
   .sidebar[data-state],
   .sidebar-scrim,

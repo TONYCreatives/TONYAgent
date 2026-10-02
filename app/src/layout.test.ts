@@ -69,6 +69,26 @@ function withoutReducedMotion(css: string): string {
 
 const RULES = rules(STYLESHEET);
 
+/**
+ * The stylesheet with its comments removed, for asserting that a selector or
+ * token is *absent*.
+ *
+ * Separate from `STYLESHEET` because the two answer different questions. "Does
+ * a rule for this selector exist?" wants the whole file -- the rules are found
+ * through `RULES`, which strips comments for exactly the reason `rules`
+ * documents. "Does this string appear anywhere?" does not: the prose in this
+ * file explains what was removed and why, and it names the removed selectors
+ * while doing so. A comment saying "`.app.rail-open` is gone entirely" is the
+ * most useful comment in the file, and it would fail an absence test run
+ * against the text.
+ *
+ * `withoutReducedMotion` is deliberately not applied here. The block being
+ * asked about is not motion the user can turn off -- a reduced-motion
+ * cancellation of a selector that no longer exists is harmless, and a
+ * cancellation of one that does is a *feature*.
+ */
+const SOURCE = STYLESHEET.replace(/\/\*[\s\S]*?\*\//g, "");
+
 /** Every declaration block written for exactly `selector`, in source order. */
 function bodies(selector: string): string[] {
   return RULES.filter((rule) => rule.selectors.includes(selector)).map((rule) => rule.body);
@@ -106,12 +126,12 @@ describe("the sidebar's reopen button", () => {
     // There is no expanded rail any more. It used to widen to
     // --rail-w-expanded and stretch its rows, which needed a
     // `.rail.rail-expanded .rail-toggle` rule to keep the toggle a full-width
-    // row; the rail is now a fixed 52px strip beside the list and the labels
-    // are gone, so both rules went with it. Asserting the absence is the
-    // assertion -- a rule that widened the rail again is exactly what would
-    // break the match with the reference, and it would be easy to reintroduce
-    // by copying the old block back.
-    assert.doesNotMatch(STYLESHEET, /\.rail\.rail-expanded/);
+    // row; the rail is now a fixed 52px strip and the labels are gone, so both
+    // rules went with it. Asserting the absence is the assertion -- a rule that
+    // widened the rail again is exactly what would break the match with the
+    // reference, and it would be easy to reintroduce by copying the old block
+    // back.
+    assert.doesNotMatch(SOURCE, /\.rail\.rail-expanded/);
     assert.match(body(".rail"), /align-items:\s*center/);
   });
 
@@ -143,14 +163,35 @@ describe("the app shell's rows", () => {
     // Auto-placement fills row 1 first. A build that renders no Files panel at
     // all would then push the rail into the title bar's row and move the whole
     // window down 42px, and nothing about that failure points at the grid.
-    for (const selector of [".sidecol", ".main", ".sidebar-reopen"]) {
+    for (const selector of [".rail", ".main", ".sidebar-reopen"]) {
       assert.match(body(selector), /grid-row:\s*2\b/, `${selector} does not name row 2`);
     }
     // And each names its column, for the same reason: `.main` was once
     // auto-placed and landed in the collapsed rail's track.
-    assert.match(body(".sidecol"), /grid-column:\s*1\b/);
+    assert.match(body(".rail"), /grid-column:\s*1\b/);
     assert.match(body(".main"), /grid-column:\s*2\b/);
     assert.match(body(".sidebar-reopen"), /grid-column:\s*3\b/);
+  });
+
+  test("the shell has one column layout, because the rail never changes width", () => {
+    // The decisive structural fact, and the reason the conversation panel can
+    // animate at all. `.app.rail-open` used to widen column 1 to 307px, which
+    // made opening the sidebar a *layout* change: the transcript re-wrapped,
+    // and a grid track cannot be transitioned, so the track snapped while the
+    // content inside it tried to follow.
+    //
+    // Asserted as the absence of the rule *and* of the class. A rule here
+    // reading `--rail-w-expanded` would silently undo the overlay, because
+    // opening the panel would start pushing the transcript again underneath a
+    // panel that is supposed to float over it.
+    assert.doesNotMatch(SOURCE, /\.app\.rail-open/);
+    assert.doesNotMatch(SOURCE, /\.sidecol/);
+    assert.doesNotMatch(body(".app"), /rail-w-expanded/);
+    assert.match(
+      body(".app"),
+      /grid-template-columns:\s*var\(--rail-w\) minmax\(0, 1fr\) auto/,
+      "column 1 must be the rail and only the rail",
+    );
   });
 
   test("the Files overlay starts below the title bar", () => {
@@ -271,59 +312,127 @@ describe("the title bar is indented past the left column", () => {
     assert.match(body(".topbar"), /padding:\s*0 0 0 calc\(var\(--rail-w\) \+ 8px\)/);
   });
 
-  test("and the indent follows the rail when the sidebar opens", () => {
-    // Otherwise the tab sits inside the opened sidebar's width while the column
-    // it belongs to has moved, and the two disagree by 184px.
+  test("and the indent does NOT follow the conversation panel", () => {
+    // This used to be the other way round: `.app.rail-open .topbar` indented by
+    // `--rail-w-expanded` so the tab moved right with the widened column.
+    //
+    // Now it must not, and the reason is the panel's position rather than a
+    // preference. The panel is anchored *below* the bar (`top:
+    // var(--topbar-h)`), the same as the Files panel and for the same reason --
+    // a panel that started at y=0 would cover the caption buttons and take the
+    // drag region with them. So the bar's left region is always exactly the
+    // rail, open panel or not, and an indent that tracked the panel would put
+    // the tab 255px right of the panel's own left edge with nothing under it.
+    assert.doesNotMatch(SOURCE, /\.app\.rail-open \.topbar/);
+    assert.match(body(".chatlist"), /top:\s*var\(--topbar-h\)/);
+  });
+});
+
+// --- the conversation panel is an overlay -----------------------------------
+describe("the conversation list floats over the transcript", () => {
+  test("it is absolutely positioned, not a grid item", () => {
+    // The change that makes it animatable. A column's width is a grid track,
+    // and a grid track cannot be transitioned -- it snaps, and everything
+    // inside it re-wraps on the way. Taking the panel out of flow means the
+    // only thing that moves is a `transform`.
+    assert.match(body(".chatlist"), /position:\s*absolute/);
+    assert.match(body(".chatlist"), /left:\s*var\(--rail-w\)/);
+    assert.match(body(".chatlist"), /bottom:\s*0\b/);
+    // `absolute` with no `grid-column`/`grid-row`: those would be inert, and
+    // inert declarations are how a rule ends up documenting an arrangement that
+    // stopped existing.
+    assert.doesNotMatch(body(".chatlist"), /grid-/);
+  });
+
+  test("and it is the reference's 255px, pinned to the rail's right edge", () => {
+    // Measured at x=92..538 of a full-DPI capture, beside the rail's x=0..92.
+    // The old 236px was a compromise against truncating titles in a column the
+    // rail shared; the rail is out of the way now, so the reference's own width
+    // costs nothing and the compromise can go.
+    assert.match(STYLESHEET, /--list-w:\s*255px/);
+    assert.match(body(".chatlist"), /width:\s*var\(--list-w\)/);
+    // The sum is still the reference's 307px of sidebar, measured from the
+    // window's left edge to the panel's right edge. Worth pinning because it is
+    // the number a reader will check against the reference.
+    assert.equal(52 + 255, 307);
+  });
+
+  test("it slides, from the edge it is anchored to", () => {
+    // A translation, not a width, and in from the *left* because that is the
+    // edge it hangs off: a panel appearing 20px to the left of where it belongs
+    // would look like it were escaping from under the rail.
+    assert.match(body('.chatlist[data-state="open"]'), /animation:\s*slide-in-left/);
     assert.match(
-      body(".app.rail-open .topbar"),
-      /padding-left:\s*calc\(var\(--rail-w-expanded\) \+ 8px\)/,
+      body('.chatlist[data-state="closed"]'),
+      /animation:\s*slide-out-left/,
     );
+    // 16px, the same distance and for the same reason the files panel uses it.
+    const keyframes = /@keyframes slide-in-left\s*\{([^}]*)\}/.exec(STYLESHEET);
+    assert.ok(keyframes, "the panel has no enter animation");
+    assert.match(keyframes[1], /translateX\(-16px\)/);
+  });
+
+  test("a closing panel is inert, so the next click is not eaten", () => {
+    // It is still on screen for the length of the exit. 110ms of a 255px column
+    // of live click targets is a region where the next click goes nowhere.
+    assert.match(body('.chatlist[data-state="closed"]'), /pointer-events:\s*none/);
+  });
+
+  test("it has a shadow, because depth is what says 'over' rather than 'beside'", () => {
+    // On a near-black UI a panel with no shadow and no hairline reads as a
+    // column with a misplaced edge. The Files panel solves the same problem
+    // with a scrim; a shadow is the right answer for a panel the user keeps
+    // open, since a scrim would dim the transcript behind it continuously.
+    assert.match(body(".chatlist"), /box-shadow:/);
   });
 });
 
 // --- the rail strip ---------------------------------------------------------
 describe("the rail is a full-height strip down the left edge", () => {
-  test("the column paints --chrome, and the list paints --bg back over it", () => {
+  test("the rail itself paints --chrome, over its own full height", () => {
     // Measured in a full-DPI capture of the reference: 52px of #292b2a running
     // from the title bar to the bottom of the window, with 255px of #1c1d1c
     // beside it. That strip is the single clearest thing separating the two
     // apps at a glance, and it is 7% of the reference's pixels.
     //
-    // It has to be the *column* that is painted, not the rail: the rail is
-    // sized by its buttons (`flex: none`) and the conversation list is what
-    // fills the rest of the column, so a background on `.rail` alone stops the
-    // strip at the last icon.
-    assert.match(body(".sidecol"), /background:\s*var\(--chrome\)/);
+    // Painted on `.rail` now rather than on a parent `.sidecol` column that the
+    // list then painted --bg back over. The rail *is* column 1 -- the list has
+    // been moved out to an overlay -- so there is nothing left to paint over it,
+    // and the old arrangement had a way to go wrong: a strip whose background
+    // belonged to a container sized by its contents stops at the last icon.
+    assert.match(body(".rail"), /background:\s*var\(--chrome\)/);
     assert.match(body(".chatlist"), /background:\s*var\(--bg\)/);
+    assert.match(body(".rail"), /height:\s*100%/);
   });
 
-  test("and the column is a row, so the rail can be beside the list", () => {
-    // Stacked, the rail was content-height -- a strip that stopped at the last
-    // icon -- and opening the sidebar put a 236px chrome block *above* the
-    // list. The reference is two columns at every width: a 52px strip and a
-    // 255px list.
-    assert.match(body(".sidecol"), /flex-direction:\s*row\b/);
-    // The list must be allowed to shrink: a flex item's automatic minimum size
-    // is its content, so one long conversation title would otherwise widen the
-    // column past its grid track and push the transcript.
+  test("it is a column of its own, at a width nothing else can change", () => {
+    // `grid-column: 1` on the rail itself rather than on a wrapper, so the grid
+    // track and the element that fills it cannot drift apart -- which is what
+    // happened when the rail overflowed a track pinned to the closed width.
+    assert.match(body(".rail"), /grid-column:\s*1\b/);
+    assert.match(body(".rail"), /width:\s*var\(--rail-w\)/);
+    // The list must still be allowed to shrink: a flex item's automatic minimum
+    // size is its content, so one long conversation title would otherwise widen
+    // the panel past its fixed width.
     assert.match(body(".chatlist"), /min-width:\s*0\b/);
   });
 
   test("the rail keeps its width at every sidebar state", () => {
     // The rail used to widen to --rail-w-expanded and grow text labels beside
     // its icons. The reference never does that -- its rail is a strip of icons
-    // and the titles live in the list next to it -- so there is no expanded
+    // and the titles live in the panel next to it -- so there is no expanded
     // rail rule left to override, and asserting its absence is the point: a
     // rule that would widen it again is exactly what would break the match.
-    assert.doesNotMatch(STYLESHEET, /\.rail\.rail-expanded|\.rail-label/);
+    assert.doesNotMatch(SOURCE, /\.rail\.rail-expanded|\.rail-label/);
     assert.match(body(".rail"), /width:\s*var\(--rail-w\)/);
   });
 
-  test("the open column is the rail and the list, not a wider rail", () => {
-    // 307px = the reference's 52 + 255. The earlier 236px was a compromise
-    // against truncating titles in a column the rail shared; with the rail out
-    // of the way the list gets the reference's own 255px.
-    assert.match(STYLESHEET, /--rail-w-expanded:\s*307px/);
+  test("and there is no width transition on it, because it never changes", () => {
+    // Asserted because the absence is the point and a transition here would be
+    // motion with no state change behind it: the rail is 52px whether or not the
+    // panel is open, so there is nothing to animate and `transition: width`
+    // would be a promise the layout cannot keep.
+    assert.doesNotMatch(body(".rail"), /transition/);
   });
 });
 

@@ -93,10 +93,12 @@ export function App() {
   const [logLines, setLogLines] = useState<string[]>([]);
   const [logsOpen, setLogsOpen] = useState(false);
   /**
-   * The left rail's expanded state. FALSE by default: the closed rail is the
-   * 70px icon strip, and the wide labelled version is the thing the user
-   * opens deliberately. Persisted, because a chrome preference that resets on
-   * every launch reads as broken.
+   * Whether the conversation panel is open.
+   *
+   * FALSE by default: an empty panel held 255px of the window open to report
+   * that there was nothing to report, and it covered the transcript while it
+   * did. Persisted, because a chrome preference that resets on every launch
+   * reads as broken.
    */
   const [railExpanded, setRailExpanded] = useState<boolean>(() => {
     try {
@@ -105,6 +107,17 @@ export function App() {
       return false;
     }
   });
+
+  /**
+   * The panel stays mounted for the length of its exit animation.
+   *
+   * Without this the panel is deleted from the tree the instant it closes, and
+   * an unmounted node has no box to animate -- so `slide-out-left` could never
+   * play and closing would be a cut however long the keyframe claimed to be.
+   * This is the same hook the files panel and the row menu use, and the reason
+   * it exists rather than a plain conditional is in its own comment.
+   */
+  const conversationsMounted = useDelayedUnmount(railExpanded);
 
   /*
    * The caption buttons. Null outside the Tauri shell, so the bar draws nothing
@@ -744,21 +757,30 @@ export function App() {
   }, []);
 
   /**
-   * Escape closes the Files overlay.
+   * Escape closes the two overlays.
    *
    * An overlay you can only dismiss by aiming at a small close button is a trap
-   * for the keyboard, and the scrim makes the click-anywhere target invisible --
-   * there is nothing on screen to say "click here to close". Escape is the
-   * affordance that does not depend on seeing anything.
+   * for the keyboard, and the Files panel's scrim makes the click-anywhere
+   * target invisible -- there is nothing on screen to say "click here to
+   * close". Escape is the affordance that does not depend on seeing anything.
+   *
+   * Both are handled here rather than in `useDismiss`, which is the wrong tool
+   * for this: it dismisses on a press *outside* the surface, and a full-height
+   * overlay panel has no meaningful inside to protect -- a press on the
+   * transcript is a press the user may well have meant for the transcript.
    */
   useEffect(() => {
-    if (!filesOpen) return;
+    if (!filesOpen && !railExpanded) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setFilesOpen(false);
+      if (event.key !== "Escape") return;
+      // Files first: it is the panel that opened on top, and the conversation
+      // panel is the one further back.
+      if (filesOpen) setFilesOpen(false);
+      else setRailExpanded(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [filesOpen]);
+  }, [filesOpen, railExpanded]);
 
   const stopSandbox = useCallback(() => {
     void backendRef.current!.call("sandbox.stop").catch((error: unknown) => {
@@ -904,7 +926,7 @@ export function App() {
   }, []);
 
   return (
-    <div className={`app${railExpanded ? " rail-open" : ""}`}>
+    <div className="app">
       {/*
         The title bar spans the window, not the transcript column.
 
@@ -920,28 +942,42 @@ export function App() {
       <TopBar busy={state.busy} title={activeTitle} controls={windowControls} />
 
       {/*
-        Actions above, history below. Both are still one column, but the rail
-        is a fixed handful of buttons and the list is whatever the account has
-        accumulated -- so the variable one goes underneath. With the list on top
-        it was capped at 45% of the window and the cap, not the list, decided
-        where the buttons ended up.
+        The rail, alone in the shell's first column.
+
+        It used to wrap the rail and the conversation list together as one
+        sidebar column, which meant the column changed width when the panel
+        opened and the transcript re-laid-out to make room. The list is an
+        overlay now (see `.chatlist`), so the rail is the whole of column 1 and
+        its width never changes -- which is also what lets the panel animate,
+        since nothing underneath it moves.
       */}
-      <div className={`sidecol${railExpanded ? " rail-open" : ""}`}>
-        <IconRail
-          connected={connected}
-          busy={state.busy}
-          messageCount={state.messages.length}
-          expanded={railExpanded}
-          onToggle={() => setRailExpanded((open) => !open)}
-          onClear={clear}
-          onCancel={cancel}
-          onSettings={() => {
-            setSettingsError(null);
-            setSettingsOpen(true);
-          }}
-          onSearch={() => setSearchOpen(true)}
-        />
+      <IconRail
+        connected={connected}
+        busy={state.busy}
+        messageCount={state.messages.length}
+        expanded={railExpanded}
+        onToggle={() => setRailExpanded((open) => !open)}
+        onClear={clear}
+        onCancel={cancel}
+        onSettings={() => {
+          setSettingsError(null);
+          setSettingsOpen(true);
+        }}
+        onSearch={() => setSearchOpen(true)}
+      />
+
+      {/*
+        The conversation panel, floating over the transcript beside the rail.
+
+        `conversationsMounted &&` rather than `railExpanded &&`, and `data-state`
+        rather than a mount/unmount pair: the node has to still be here on its
+        way out for `slide-out-left` to have anything to play. `data-state` is
+        what tells the two apart, and the closed state is inert -- see
+        `.chatlist[data-state="closed"]`.
+      */}
+      {conversationsMounted && (
         <ConversationList
+          open={railExpanded}
           conversations={conversations}
           active={conversation}
           busy={state.busy}
@@ -952,7 +988,7 @@ export function App() {
           onRename={(id, title) => void renameConversation(id, title)}
           onDuplicate={(id) => void duplicateConversation(id)}
         />
-      </div>
+      )}
 
       <div className="main">
         <MessageList messages={state.messages} busy={state.busy} />

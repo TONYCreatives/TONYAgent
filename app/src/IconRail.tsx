@@ -1,9 +1,14 @@
 /**
- * Left icon rail, with an optional expanded (fully open) state.
+ * Left icon rail: a fixed 52px strip down the window's left edge.
  *
- * Closed: a 70px strip of icons -- the shape the app has always had. Expanded:
- * the rail widens and each button grows a text label, in the manner of the
- * reference design's fully-open sidebar.
+ * It is always that width and always there. It used to widen and grow text
+ * labels beside its icons, then widen again to 307px to hold the conversation
+ * list underneath it -- neither of which is anything the reference does, whose
+ * rail is a strip of icons at every size and whose conversation titles live in
+ * a panel beside it. That panel is an overlay now, so the rail's own width
+ * never changes and `expanded` says one thing only: whether the panel beside it
+ * is open. It still has to reach the toggle's icon, its tooltip and its
+ * `aria-expanded`, because those are how the panel's state is announced.
  *
  * Presentational chrome: the buttons are here because the reference design has
  * them, but they only act where the core already supports the action. Anything
@@ -18,7 +23,11 @@ interface Props {
   connected: boolean;
   busy: boolean;
   messageCount: number;
-  /** Fully open: wide rail with text labels. Closed is the icon strip. */
+  /**
+   * The conversation panel beside the rail is open. Does not change this
+   * component's own width, which is fixed; it names the toggle's icon, its
+   * label and its `aria-expanded`.
+   */
   expanded: boolean;
   onToggle: () => void;
   onClear: () => void;
@@ -96,7 +105,7 @@ export function IconRail({
   // choice. The panel already covers the project folder and the sandbox together
   // -- both are "what is this window working on" -- so one entry says that once.
   // Search keeps its own panel because it is a query with results, not a setting.
-  // No "New chat" entry: the conversation list below owns that action, and two
+  // No "New chat" entry: the conversation panel owns that action, and two
   // controls for one action is duplication rather than choice.
   const items: Item[] = [
     {
@@ -136,13 +145,13 @@ export function IconRail({
   );
 
   return (
-    // No expanded variant of the rail itself. It used to widen to 236px and
-    // grow a text label beside every icon, which meant the rail and the
-    // conversation list were stacked and shared one column. The reference puts
-    // them side by side -- a fixed 52px strip and a 255px list -- and leaves the
-    // rail a strip. `expanded` now only decides whether the list is shown at
-    // all; the name survives on `title` and `aria-label`, which is where a
-    // keyboard user reads it anyway.
+    // No expanded variant of the rail itself, and no `rail-open` class. It used to
+    // widen to 236px and grow a text label beside every icon, and then to 307px
+    // to hold the conversation list underneath it -- the reference does neither.
+    // The rail is a strip of icons at every width; `expanded` now only decides
+    // whether the panel beside it is shown, plus this button's own icon and
+    // label. The names survive on `title` and `aria-label`, which is where a
+    // keyboard user reads them anyway.
     <nav className="rail" aria-label="Primary">
       <button
         type="button"

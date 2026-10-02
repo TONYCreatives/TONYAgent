@@ -24,14 +24,17 @@ tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# One Win32 call, for one thing the app cannot do without the OS: the window
-# has no system title bar, so it has to ask for the system menu itself. The
-# version matches the one tauri already resolves, so this adds a feature and
-# not a second copy of the crate. Target-scoped, because the call it exists for
-# is Windows' and the command that uses it is `#[cfg(windows)]`.
+# Two sets of Win32 calls, for two things the app cannot do without the OS: the
+# window has no system title bar, so it has to ask for the system menu itself
+# (system_menu.rs), and turning the decorations off also turned off the rounded
+# corners Windows 11 was drawing around the window, so it has to ask for those
+# back (window_corners.rs). The version matches the one tauri already resolves,
+# so this adds features and not a second copy of the crate. Target-scoped,
+# because both calls are Windows' and both callers are `#[cfg(windows)]`.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
+  "Win32_Graphics_Dwm",
   "Win32_UI_WindowsAndMessaging",
 ] }
 

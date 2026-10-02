@@ -1,13 +1,12 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-10-02, after the third UI pass — the palette and every
-length in the stylesheet re-measured off a full-DPI screenshot of the reference,
-which corrected the scale factor and with it the sidebar, the title bar and the
-composer (see "Measuring the reference" near the end)
+**Last updated:** 2026-10-02, after the fourth UI pass — rounded window corners
+from DWM, and the conversation list turned from a docked column into an
+animated overlay panel (see "The fourth UI pass" near the end)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 590 passed, TypeScript 322 passed,
+protocol method.** Everything green: **Python 590 passed, TypeScript 330 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **590 passed, 7 skipped** with Docker Desktop running.
@@ -64,7 +63,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 322 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
+cd app && npm test                     # 330 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -797,7 +796,7 @@ app/
     test-dom.ts             installs jsdom on the globals; imported first
     test-render.ts          mount / act / type / press / query helpers
     layout.test.ts          reads the stylesheet's cascade, not its text
-    *.test.ts, *.test.tsx   322 tests, all run by `npm test`
+    *.test.ts, *.test.tsx   330 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
     build.rs                app_manifest: the ACL name for the one app command
@@ -2060,3 +2059,93 @@ Also note the bright blue `#2e6ee8` and the red `#7f434a` in a TONYAgent
 screenshot are **taskbar** pixels below y=1718, not the app's. A full-screen
 capture includes the desktop; bound the search to the window or the histogram
 will blame Windows for the palette.
+
+---
+
+## The fourth UI pass
+
+Three changes, two of them inseparable. The corner radius is one Win32 call; the
+overlay is a layout change that happens to be the *only* way the panel could be
+animated at all.
+
+### Rounded corners are a window attribute, not a radius
+
+`decorations: false` took the title bar away, and with it the rounded corners
+Windows 11 was drawing around the window. They come back with
+`DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND)` —
+`app/src-tauri/src/window_corners.rs`, called once from `run()`'s `setup` hook.
+
+**Why not a CSS `border-radius` on `body`.** The corner outside the radius shows
+whatever is *behind* the window, so a radius is only visible through a
+transparent window. Making the window transparent to get there is not free: it
+puts the whole window on the layered path, where the drop shadow, the resize
+borders and DWM's own corner masking all behave differently — and `WS_THICKFRAME`
+is the reason the window still snaps and resizes (see `system_menu.rs`). Asking
+DWM keeps an ordinary opaque window.
+
+**Why it is not a command.** The system menu is a command because a *person*
+asks for it. Nothing in the UI ever wants a different corner shape, so the
+plumbing would exist only to let the frontend set a constant. Doing it in
+`setup` also means it cannot be skipped by a frontend that fails to load, and it
+needs no entry in `build.rs` or `capabilities/default.json`. A failure is logged
+and ignored: the realistic failure is a Windows build that does not know the
+attribute, which is cosmetic and not a reason to refuse to open the window.
+
+Verified by reading the attribute back off the live window:
+`DwmGetWindowAttribute(hwnd, 33)` → `hr = S_OK`, value `2` (`DWMWCP_ROUND`),
+`IsZoomed` false. **The pixels were not checked** — the window was occluded on
+screen, and confirming them would have meant bringing it forward.
+
+### The conversation list is an overlay, and that is why it can animate
+
+`.sidecol` is gone. The rail is column 1 on its own, and `.chatlist` is an
+absolutely positioned panel at `left: var(--rail-w)` and `top: var(--topbar-h)`,
+255px wide, floating over the transcript with a shadow.
+
+The animation and the layout fix are the same change, which is the whole reason
+to do it this way:
+
+- **A grid track cannot be transitioned.** The old `.app.rail-open` widened
+  column 1 from 52px to 307px. That is a *layout* change: the transcript
+  re-wrapped on every intermediate frame and the track itself snapped, which is
+  why the previous rail comment said no width transition was used — the rail
+  would have slid inside a track that had already moved.
+- **Floating it means only a `transform` moves**, and a transform is the one
+  property that can animate without the layout underneath being recomputed.
+
+`--rail-w-expanded: 307px` became `--list-w: 255px`. 307 is no longer a width
+anything has; it is 52 + 255 measured from the window's left edge to the panel's
+right edge, which is still the reference's own number.
+
+Two consequences worth knowing:
+
+- **`.app.rail-open` no longer exists and no rule reads it.** React still sets
+  `railExpanded`, but it now only feeds the panel's `data-state` and the rail
+  toggle's icon/label/`aria-expanded`. `layout.test.ts` asserts the absence, so
+  a rule reintroducing it fails rather than silently un-floating the panel.
+- **`.app.rail-open .topbar` had to go too, and deliberately.** The panel starts
+  *below* the title bar — for the same reason `.sidebar` does, so the caption
+  buttons and the drag region stay reachable — so the bar's left region is
+  always exactly the 52px rail. An indent that tracked the panel would put the
+  tab 255px right of the panel's own left edge with nothing underneath it.
+
+Verified live over CDP: rail `52 × 752` at `(0,48)`, `.chatlist` `255 × 752` at
+`(52,48)`, `position: absolute`, and **`.main` still 1114px wide with the panel
+open** — which is the whole point. 30ms after closing, the node is still in the
+tree with `data-state="closed"`, `pointer-events: none` and `slide-out-left`
+running; it unmounts after the exit.
+
+### The panel has no scrim, unlike the Files panel
+
+Worth recording because it looks like an inconsistency and is not. The Files
+panel is a temporary thing you look at and dismiss, so dimming the window behind
+it is honest. The conversation panel is navigation you keep open while you read
+and write — a scrim over the transcript would be dimming the surface the panel
+exists to get out of the way of. A drop shadow carries the same "this is on top
+of that" information without the cost.
+
+Escape closes both overlays now (one `keydown` listener in `App.tsx`, files
+first). `useDismiss` is the wrong tool here: it dismisses on a press *outside*
+the surface, and a full-height overlay has no meaningful inside to protect — a
+press on the transcript is a press the user may well have meant for the
+transcript.

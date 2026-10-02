@@ -28,6 +28,7 @@ import {
   pointerDown,
   press,
   render,
+  rerender,
   setValue,
   texts,
   wait,
@@ -86,6 +87,7 @@ let calls: Handlers & {
 async function renderList(
   rows: ConversationSummary[],
   active = "",
+  open = true,
 ): Promise<HTMLElement> {
   calls = {
     onNew: () => {
@@ -112,6 +114,7 @@ async function renderList(
 
   return render(
     <ConversationList
+      open={open}
       conversations={rows}
       active={active}
       busy={false}
@@ -128,6 +131,41 @@ const input = (container: HTMLElement) =>
 
 const menuItems = (container: HTMLElement) =>
   texts(container, ".rowmenu [role='menuitem']");
+
+// --- the panel's own state ------------------------------------------------
+describe("the panel reports which way it is moving", () => {
+  test("open says so on the node, not by being absent", async () => {
+    // The panel is an overlay with an enter and an exit, and both are CSS
+    // animations keyed off `data-state`. So "open" cannot mean "the node is
+    // there": a node that only exists while open has no closed state to animate
+    // out of, and the exit would be a cut however long the keyframe claimed to
+    // run. Asserted on the attribute because that is the whole contract the
+    // stylesheet has.
+    const container = await renderList([conversation()]);
+    assert.equal(one(container, ".chatlist")!.dataset.state, "open");
+  });
+
+  test("a closing panel keeps its rows, and says closed while it does", async () => {
+    // Same reason the row menu retains its items: a panel that emptied itself
+    // on close would visibly collapse from nothing on its way out, which reads
+    // as the animation announcing its own bug.
+    const container = await renderList([conversation()]);
+    const list = one(container, ".chatlist")!;
+    await rerender(
+      <ConversationList
+        open={false}
+        conversations={[conversation()]}
+        active=""
+        busy={false}
+        connected
+        {...calls}
+      />,
+    );
+    assert.equal(one(container, ".chatlist"), list, "the node was replaced on close");
+    assert.equal(list.dataset.state, "closed");
+    assert.deepEqual(titles(container), ["Original title"]);
+  });
+});
 
 async function rightClick(row: HTMLElement): Promise<void> {
   await contextMenu(row);
