@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type RefObject } from "react";
 
 import {
   MAX_ATTACHMENTS,
@@ -68,6 +68,18 @@ interface Props {
   onModelMenuClose: () => void;
   onModelChange: (model: string) => void;
   onModelListLoad: () => void;
+  /**
+   * The textarea, so the window can move focus into it.
+   *
+   * Optional and injected rather than imported, because "put the caret here" is
+   * the one thing about the composer that belongs to the *window* rather than
+   * to the composer: switching conversation closes the sidebar, and a sidebar
+   * that closes under the caret without putting it somewhere deliberate leaves
+   * a keyboard user tabbing from the top of the document every time. The
+   * composer still owns the element; it just does not decide when it is
+   * focused.
+   */
+  inputRef?: RefObject<HTMLTextAreaElement | null>;
 }
 
 export function Composer({
@@ -92,6 +104,7 @@ export function Composer({
   onModelMenuClose,
   onModelChange,
   onModelListLoad,
+  inputRef,
 }: Props) {
   const [text, setText] = useState("");
   // The files read so far. Held here rather than in the window because they
@@ -159,6 +172,7 @@ export function Composer({
     <div className="composer">
       <div className="composer-inner">
         <textarea
+          ref={inputRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           className={readOnly ? "is-readonly" : undefined}

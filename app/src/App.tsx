@@ -615,9 +615,43 @@ export function App() {
    * the window would otherwise keep showing the old transcript until the reply
    * arrives -- so a click that worked still looks broken while it works.
    */
+  /**
+   * The composer's textarea, so closing the sidebar can put the caret somewhere
+   * deliberate. See `ConversationList` for why the sidebar closes at all.
+   */
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+
+  /**
+   * Close the conversation panel and hand the caret to the composer.
+   *
+   * The panel is an overlay, so it covers the conversation the user just chose.
+   * Leaving it up means the thing they switched to is half hidden by the list
+   * of what they could switch to instead -- and on a narrow window that is the
+   * whole transcript.
+   *
+   * **The focus move is not tidying, it is the other half of the change.** The
+   * click landed on a row inside the panel, and the panel is about to leave the
+   * document. Without this the focused element is deleted out from under the
+   * caret and focus falls back to `<body>`, so the next Tab starts again from
+   * the top of the window: a keyboard user switching conversations would walk
+   * past the title bar, the rail and the whole panel every single time.
+   *
+   * The composer is the right destination rather than the transcript because it
+   * is the thing one does *next* with a conversation -- the panel's job was to
+   * get out of the way of reading and replying. `requestAnimationFrame` because
+   * the panel does not leave synchronously (`useDelayedUnmount` holds it for the
+   * exit), and focusing an element while something overlapping it is still on
+   * its way out would scroll the departing panel back into view.
+   */
+  const closePanelToComposer = useCallback(() => {
+    setRailExpanded(false);
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }, []);
+
   const openConversation = useCallback(
     async (id: string) => {
       setState((prev) => ({ ...prev, error: null, busy: true }));
+      closePanelToComposer();
       try {
         const result = (await backendRef.current!.call("conversations.switch", {
           id,
@@ -636,7 +670,7 @@ export function App() {
         }));
       }
     },
-    [showMessages, refreshConversations],
+    [showMessages, refreshConversations, closePanelToComposer],
   );
 
   const createConversation = useCallback(async () => {
@@ -982,7 +1016,13 @@ export function App() {
           active={conversation}
           busy={state.busy}
           connected={connected}
-          onNew={createConversation}
+          onNew={() => {
+            // "New chat" leaves an empty transcript behind, which the panel
+            // would then sit on top of -- the same problem as picking a
+            // conversation, and the same fix.
+            closePanelToComposer();
+            void createConversation();
+          }}
           onOpen={(id) => void openConversation(id)}
           onDelete={(id) => void deleteConversation(id)}
           onRename={(id, title) => void renameConversation(id, title)}
@@ -1027,6 +1067,7 @@ export function App() {
         </div>
 
         <Composer
+          inputRef={composerRef}
           busy={state.busy}
           disabled={!connected}
           model={model}

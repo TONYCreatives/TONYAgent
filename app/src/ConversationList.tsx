@@ -17,9 +17,14 @@
  * reached from the keyboard at all, which would make deleting a conversation
  * impossible for exactly the people most likely to have a long list of them.
  *
- * `open` is passed in rather than read here because the *lifetime* of this
- * panel belongs to the parent: it keeps the node mounted through the exit
- * animation, which is the only way the close has something to animate. What this
+ * **Opening a conversation is not handled here.** This component fires `onOpen`
+ * and lets the parent close the panel, because the panel's lifetime already
+ * belongs to the parent -- see `open` below -- and closing it is a decision
+ * about the window, not about a list. Doing it here would mean the list unmounts
+ * itself, which is the thing `useDelayedUnmount` in `App.tsx` exists to prevent:
+ * an unmounted node has no box, so there would be no exit to play.
+ *
+ * `open` is passed in rather than read here for the same reason. What this
  * component does with `open` is say which way the motion runs, via `data-state`
  * -- the same contract `<Overlay>` and the files panel use, and the reason
  * styles.css can tell an arriving panel from a leaving one.

@@ -145,6 +145,19 @@ describe("the panel reports which way it is moving", () => {
     assert.equal(one(container, ".chatlist")!.dataset.state, "open");
   });
 
+  test("choosing a conversation reports it and leaves closing to the parent", async () => {
+    // The panel closes when you pick a conversation, and it has to close *from
+    // the outside*. A list that unmounted itself would delete the node holding
+    // the caret mid-press and, worse, leave no box for the exit animation to
+    // play -- the close would be a cut. So this asserts both halves: `onOpen`
+    // fires, and the panel is still there afterwards, still open.
+    const container = await renderList([conversation({ title: "Chosen" })]);
+    await click(one(container, ".chatrow-open")!);
+    assert.deepEqual(calls.opened, [conversation().id]);
+    assert.equal(one(container, ".chatlist")!.dataset.state, "open");
+    assert.deepEqual(titles(container), ["Chosen"]);
+  });
+
   test("a closing panel keeps its rows, and says closed while it does", async () => {
     // Same reason the row menu retains its items: a panel that emptied itself
     // on close would visibly collapse from nothing on its way out, which reads

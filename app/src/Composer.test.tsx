@@ -21,10 +21,12 @@
 import "./test-dom.js";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import { createRef, type RefObject } from "react";
 
 import { Composer, type ModeInfo, type ReasoningInfo } from "./Composer.js";
 import type { ModelList } from "./ModelPicker.js";
 import { all, click, one, press, render, setValue, texts } from "./test-render.js";
+import { dom } from "./test-dom.js";
 
 const MODES: ModeInfo[] = [
   { name: "build", label: "Build", description: "Anything goes", writes: true },
@@ -50,10 +52,13 @@ async function composer(props: {
   disabled?: boolean;
   maxToolCalls?: number | null;
   modelList?: ModelList | null;
+  /** Injected by the window when it needs to move the caret here. */
+  inputRef?: RefObject<HTMLTextAreaElement | null>;
 }) {
   const calls = { efforts: [] as string[], sent: [] as string[], cancelled: 0 };
   const container = await render(
     <Composer
+      inputRef={props.inputRef}
       busy={props.busy ?? false}
       disabled={props.disabled ?? false}
       model="stealth/space-bunny-alpha"
@@ -302,5 +307,33 @@ describe("the send button while the agent is working", () => {
     const { container, calls } = await composer({ reasoning: null, busy: true });
     await click(stopButton(container)!);
     assert.equal(calls.cancelled, 1);
+  });
+});
+
+// --- the caret the window puts somewhere ----------------------------------
+describe("the field the window can put the caret in", () => {
+  test("an injected ref lands on the textarea, and focus really moves there", async () => {
+    // Choosing a conversation closes the sidebar, and the click landed inside
+    // it -- so the element holding the caret is about to leave the document.
+    // The window has to put it somewhere deliberate, and the only thing that
+    // works is if the ref points at the element a user would actually type in.
+    // Asserting the identity rather than "focus went somewhere": focusing the
+    // wrapper would look the same on screen and swallow every keystroke.
+    const ref = createRef<HTMLTextAreaElement>();
+    const { container } = await composer({ reasoning: null, inputRef: ref });
+
+    assert.ok(ref.current, "the ref was never filled");
+    assert.equal(ref.current, messageField(container));
+    assert.equal(ref.current.tagName, "TEXTAREA");
+
+    ref.current!.focus();
+    assert.equal(ref.current, dom.window.document.activeElement);
+  });
+
+  test("it is optional, because a composer rendered on its own still works", async () => {
+    // Nothing else may pass one -- the settings preview and any future embed.
+    // A required ref would be a prop with exactly one caller.
+    const { container } = await composer({ reasoning: null });
+    assert.ok(messageField(container), "the field went missing without a ref");
   });
 });

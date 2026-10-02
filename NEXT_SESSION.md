@@ -6,7 +6,7 @@ from DWM, and the conversation list turned from a docked column into an
 animated overlay panel (see "The fourth UI pass" near the end)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 590 passed, TypeScript 330 passed,
+protocol method.** Everything green: **Python 590 passed, TypeScript 333 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **590 passed, 7 skipped** with Docker Desktop running.
@@ -63,7 +63,7 @@ python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refus
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 330 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
+cd app && npm test                     # 333 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -796,7 +796,7 @@ app/
     test-dom.ts             installs jsdom on the globals; imported first
     test-render.ts          mount / act / type / press / query helpers
     layout.test.ts          reads the stylesheet's cascade, not its text
-    *.test.ts, *.test.tsx   330 tests, all run by `npm test`
+    *.test.ts, *.test.tsx   333 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
     build.rs                app_manifest: the ACL name for the one app command
@@ -2159,3 +2159,43 @@ first). `useDismiss` is the wrong tool here: it dismisses on a press *outside*
 the surface, and a full-height overlay has no meaningful inside to protect — a
 press on the transcript is a press the user may well have meant for the
 transcript.
+
+### Opening a conversation closes the panel, and moves the caret with it
+
+Picking a row (or pressing **New chat**) closes the panel. It is an overlay
+that would otherwise sit on top of the conversation just chosen, which is the
+opposite of what it is for.
+
+**The non-obvious half is the focus.** The press landed on a row *inside* the
+panel, and the panel is about to leave the document. Delete the focused element
+and focus falls back to `<body>`, so the next Tab restarts from the top of the
+window — a keyboard user switching conversations would walk past the title bar,
+the rail and the whole panel every single time. So `closePanelToComposer` also
+puts the caret in the composer textarea, which is what one does *next* with a
+conversation.
+
+Three details that are load-bearing:
+
+- **The panel is not closed by the list.** `ConversationList` fires `onOpen` and
+  leaves closing to `App.tsx`. A list that unmounted itself would have no box
+  left for the exit animation — the close would be a cut. The test asserts the
+  panel is still there, still `open`, after the click.
+- **Focus is moved in `requestAnimationFrame`.** The panel does not leave
+  synchronously (`useDelayedUnmount` holds it for the exit), and focusing an
+  element while something overlapping it is still on its way out scrolls the
+  departing panel back into view.
+- **`Composer` takes an optional `inputRef`.** Focus belongs to the window, not
+  to the composer — but the composer still owns the element. The ref is
+  optional, so the settings preview and any future embed are unaffected.
+
+**Not unit-tested at the `App.tsx` level, and that is a real gap.** `App.tsx`
+constructs `new TauriBackend()` in a ref with no injection seam, so rendering it
+in a test would spawn a real sidecar. The two component-level halves are pinned
+instead (`onOpen` fires without self-closing; the ref lands on the textarea) and
+the wiring was verified live over CDP. Adding a backend prop to `App` would
+close the gap and is worth doing on its own.
+
+Verified live: after a row click, 60ms in, the panel is still mounted with
+`data-state="closed"` and `pointer-events: none`; after the exit it is gone,
+`.main` is back to 1114px, and `document.activeElement` is the composer textarea
+— not `<body>`.
