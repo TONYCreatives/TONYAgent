@@ -161,6 +161,23 @@ describe("the caption buttons", () => {
     assert.equal(calls.toggled, 1);
   });
 
+  test("they are buttons, which is what makes them keyboard-operable", async () => {
+    // Windows' own caption has no mnemonics on its buttons -- the system menu is
+    // where the keyboard goes, and this bar now opens that same menu on F10 and
+    // on a right-click. What the buttons themselves owe a keyboard user is
+    // being real buttons: Tab reaches them and Enter or Space presses them,
+    // which is true of a `<button>` and false of a `<div>` with a click handler
+    // dressed up as one. Asserted on the tag, because jsdom's Enter handling is
+    // its own business and the tag is the thing a browser acts on.
+    const { container } = await bar();
+    for (const button of buttons(container)) {
+      assert.equal(button.tagName, "BUTTON");
+      assert.equal(button.getAttribute("type"), "button", "a submit in a form");
+      assert.notEqual(button.getAttribute("tabindex"), "-1", "out of the tab order");
+      assert.equal(button.getAttribute("disabled"), null);
+    }
+  });
+
   test("the caption is not drawn where there is no window to caption", async () => {
     // In a browser preview there is nothing to minimize. Three buttons that
     // look like they work and do not are the failure this replaces.
