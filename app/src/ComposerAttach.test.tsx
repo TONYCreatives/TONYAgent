@@ -21,7 +21,7 @@ import { describe, test } from "node:test";
 
 import { act } from "react";
 
-import { Composer, type ModeInfo, type ReasoningInfo } from "./Composer.js";
+import { Composer, type ModeInfo } from "./Composer.js";
 import type { ModelList } from "./ModelPicker.js";
 import { all, click, one, render, setValue } from "./test-render.js";
 import { dom } from "./test-dom.js";
@@ -41,8 +41,6 @@ async function composer() {
       model="stub/model"
       modes={MODES}
       mode="build"
-      reasoning={null as ReasoningInfo | null}
-      onReasoningChange={() => {}}
       onModeChange={() => {}}
       onSend={(text, files) => sent.push({ text, files: files.length })}
       onCancel={() => {}}
@@ -136,8 +134,6 @@ describe("the attach button", () => {
         model="stub/model"
         modes={MODES}
         mode="build"
-        reasoning={null as ReasoningInfo | null}
-        onReasoningChange={() => {}}
         onModeChange={() => {}}
         onSend={() => {}}
         onCancel={() => {}}

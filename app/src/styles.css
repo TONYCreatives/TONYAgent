@@ -388,6 +388,35 @@ body {
      `.sidebar[data-state="closed"]`. */
   pointer-events: none;
 }
+/*
+ * The scrim behind the conversation panel.
+ *
+ * Identical treatment to `.sidebar-scrim`, and for the reason that rule
+ * gives: on a near-black UI a dark scrim changes nothing on its own, so
+ * the panel read as a layout break rather than as something opened over
+ * the window. The blur and the light tint are what make it legible.
+ *
+ * `left: var(--rail-w)`, unlike `.sidebar-scrim`'s full-width inset, and
+ * the difference is deliberate. The rail is the window's only always-on
+ * control strip, and covering it would put Stop and Settings -- the two
+ * buttons a user reaches for mid-turn -- behind a backdrop they have to
+ * dismiss first. The panel is anchored to the rail for the same reason;
+ * the scrim stops where the rail begins.
+ *
+ * Below the title bar for the reason `.sidebar` is: it would otherwise
+ * cover the caption buttons and take the drag region with them.
+ */
+.chatlist-scrim {
+  position: absolute;
+  inset: var(--topbar-h) 0 0 var(--rail-w);
+  z-index: 3;
+  background: rgba(8, 8, 8, 0.35);
+  backdrop-filter: blur(1.5px);
+  border: 0;
+  padding: 0;
+  cursor: default;
+}
+
 
 .chatlist-new {
   display: flex;
@@ -1248,34 +1277,6 @@ body {
   overflow-wrap: anywhere;
 }
 
-/* Effort picker, sitting with the other quiet composer controls. */
-.thinking-chip {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 6px 0 9px;
-}
-
-.thinking-chip-label {
-  color: var(--fg-mute);
-}
-
-.thinking-select {
-  border: 0;
-  background: transparent;
-  color: var(--fg-dim);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  /* The native arrow sits over the chip's own padding otherwise. */
-  padding: 0 2px 0 0;
-}
-
-.thinking-select:focus-visible {
-  outline: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-}
-
 .bubble-user .tools {
   margin-top: 6px;
 }
@@ -1751,186 +1752,6 @@ body {
 }
 
 /*
- * The permission bar: how much the agent may do, above the composer.
- *
- * Above the field and not inside it, because it is a property of the *window*
- * rather than of the message being written. Putting it inside the composer
- * would tie a per-session ceiling to a control that reads as per-message, and
- * the composer's own row already carries four segmented groups -- a fifth there
- * would be one too many.
- *
- * Shares the composer's 720px measure so the bar lines up with the field below
- * it. A narrower control against a wider field reads as a different surface
- * rather than as part of the same one.
- */
-.permbar {
-  position: relative;
-  max-width: 720px;
-  margin: 0 auto 8px;
-}
-
-.permbar-trigger {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--fg-mute);
-  font: inherit;
-  font-size: 11.5px;
-  cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
-}
-
-.permbar-trigger:hover:not(:disabled),
-.permbar-trigger[aria-expanded="true"] {
-  background: var(--raised);
-  border-color: var(--border-strong, var(--border));
-}
-
-.permbar-trigger:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.permbar-label {
-  /* Dimmer than the level name beside it. The label is the control's caption
-     and is the same on every rung; the level is what changes. */
-  color: var(--fg-dim);
-}
-
-/*
- * The four rungs, drawn as one bar rather than as four buttons.
- *
- * A position on a scale, not a set of choices: every step up to and including
- * the current one is filled. Four separate buttons would say "pick one of
- * four", which is a different claim and would make the current one look
- * selected rather than in force.
- *
- * `--fg-dim` for the filled steps and `--border` for the empty ones, so the
- * bar sits at the same weight as the field's hairline rather than drawing
- * attention away from the transcript.
- */
-.permbar-steps {
-  display: flex;
-  gap: 2px;
-}
-
-.permbar-step {
-  width: 15px;
-  height: 3px;
-  border-radius: 1px;
-  background: var(--border);
-  transition: background 0.12s ease;
-}
-
-.permbar-step.is-on {
-  background: var(--fg-dim);
-}
-
-.permbar-value {
-  color: var(--fg);
-  font-weight: 500;
-}
-
-/*
- * The menu, opened above the composer rather than below the trigger.
- *
- * Opening downward would put it over the composer's own controls, which is the
- * one surface the user is reaching for; opening upward leaves the transcript
- * visible, so the list being chosen from and the chat it applies to are both on
- * screen at once.
- */
-.permmenu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  z-index: 40;
-  width: 320px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
-  animation: rise-in var(--motion-fast) var(--ease-out) both;
-}
-
-.permmenu-item {
-  display: block;
-  width: 100%;
-  padding: 7px 10px;
-  border: 0;
-  border-radius: calc(var(--radius-sm) - 1px);
-  background: none;
-  color: var(--fg-mute);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.permmenu-item:hover {
-  background: var(--hover);
-  color: var(--fg);
-}
-
-.permmenu-item.is-active {
-  background: var(--chip);
-  color: var(--fg);
-}
-
-.permmenu-head {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.permmenu-name {
-  font-size: 12.5px;
-  font-weight: 500;
-}
-
-/*
- * The marker on the one rung that acts without asking.
- *
- * `--accent`, not `--danger`. Nothing here is broken or refused -- the level
- * works exactly as designed -- so it is not an error colour. It is also not
- * `--fg-dim`, because this is the one thing in the menu a user should not have
- * to read the description to notice.
- */
-.permmenu-warn {
-  padding: 1px 5px;
-  border-radius: var(--radius-sm);
-  background: var(--chip);
-  color: var(--accent);
-  font-size: 9.5px;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-}
-
-.permmenu-desc {
-  display: block;
-  font-size: 11.5px;
-  line-height: 1.4;
-  color: var(--fg-dim);
-}
-
-/*
- * What the next rung adds, in words.
- *
- * Present because the labels do not carry the difference: "Medium" and "High"
- * are names, and the fact that High may execute code while Medium may not is
- * the entire decision the user is making at this menu.
- */
-.permmenu-gain {
-  display: block;
-  margin-top: 2px;
-  font-size: 11px;
-  color: var(--fg-mute);
-}
-
-/*
  * Two rows in one field: the textarea on top, then a control row. The reference
  * does this rather than putting buttons beside the input, which keeps the text
  * area full width and stops the send button from stealing line length.
@@ -2360,6 +2181,15 @@ body {
 
 .modal {
   width: min(500px, 100%);
+  /* Bounded, because this one class is all three dialogs and the settings
+     panel is taller than a short window. `max-height: 100%` resolves against
+     the backdrop's content box -- the viewport less its 24px padding -- so an
+     over-tall panel scrolls inside itself instead of hanging off the top of
+     the screen, where its last group and its Close button cannot be reached.
+     The search panel caps itself lower (`.search-modal`) and scrolls its own
+     result list, so it is unaffected. */
+  max-height: 100%;
+  overflow-y: auto;
   padding: 18px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -2551,6 +2381,260 @@ body {
   color: var(--fg-mute);
   font-size: 11px;
   line-height: 1.5;
+}
+
+/*
+ * Permission and Thinking: the two controls that decide how much this
+ * window may do without asking.
+ *
+ * **One set of parts for both, in the settings panel rather than the
+ * composer.** The ladder was a bar above the field and the thinking dial
+ * a native `<select>` in the field's own row, which put the two most
+ * consequential settings in the two least consequential places -- one a
+ * strip you scroll past, one a system dropdown with a system font and a
+ * light background on a black panel. They are rendered by one component
+ * (`SettingsMenus`), so these rules are one vocabulary rather than two
+ * that happen to look alike.
+ *
+ * **The trigger reads as a field, not a button.** It sits in a panel of
+ * other settings rows, and `border` plus `--input` is what the inputs
+ * beside it use. A filled or outlined button would read as an action,
+ * and choosing a level is not one -- it is a statement of what is in
+ * force, and the row says which by naming it.
+ *
+ * **The menu opens upward.** These rows sit at the *bottom* of a modal
+ * the user may have to scroll, so a menu opening downward would render
+ * off the bottom of it. Upward puts the options over the panel's own
+ * upper half -- the surface being replaced, which is exactly what should
+ * be covered. This is the same reason `.budget-popover` and
+ * `.modelpicker` open upward at the bottom of the window.
+ */
+/*
+ * The permission bar: how much the agent may do, above the composer.
+ *
+ * Above the field and not inside it, because it is a property of the *window*
+ * rather than of the message being written. Putting it inside the composer
+ * would tie a per-session ceiling to a control that reads as per-message, and
+ * the composer's own row already carries four segmented groups -- a fifth there
+ * would be one too many.
+ *
+ * Shares the composer's 720px measure so the bar lines up with the field below
+ * it. A narrower control against a wider field reads as a different surface
+ * rather than as part of the same one.
+ */
+.permchoice {
+  /* The positioning context for the menu, and nothing else: the panel is a
+     scrolling column, so the menu has to be anchored to the row that opened it
+     rather than to the window. `width: 100%` matches the settings rows beside
+     it -- the composer's own 720px measure is gone with the control. */
+  position: relative;
+  width: 100%;
+}
+
+.permchoice-trigger {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  height: 30px;
+  padding: 0 9px;
+  /* `--input` and a hairline, which is `.settings-select`'s box verbatim. The
+     old bar was transparent because it sat over the transcript and had to stay
+     quiet there; in a panel of fields it would read as the one row that is not
+     a field, which is the opposite of what it is. */
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--input);
+  color: var(--fg-mute);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.permchoice-trigger:hover:not(:disabled),
+.permchoice-trigger[aria-expanded="true"] {
+  background: var(--raised);
+}
+
+.permchoice-trigger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.permchoice-label {
+  /* Dimmer than the value beside it. The label is the control's caption and is
+     the same at every level; the value is what changes. */
+  color: var(--fg-dim);
+}
+
+/*
+ * The four rungs, drawn as one bar rather than as four buttons.
+ *
+ * A position on a scale, not a set of choices: every step up to and including
+ * the current one is filled. Four separate buttons would say "pick one of
+ * four", which is a different claim and would make the current one look
+ * selected rather than in force.
+ *
+ * `--fg-dim` for the filled steps and `--border` for the empty ones, so the
+ * bar sits at the same weight as the field's hairline rather than drawing
+ * attention away from the value it is describing.
+ */
+.permchoice-steps {
+  display: flex;
+  gap: 2px;
+}
+
+.permchoice-step {
+  width: 15px;
+  height: 3px;
+  border-radius: 1px;
+  background: var(--border);
+  transition: background 0.12s ease;
+}
+
+.permchoice-step.is-on {
+  background: var(--fg-dim);
+}
+
+.permchoice-value {
+  /* Pushed to the far edge, because the value is the answer and the eye should
+     finish on it. Without the auto margin the label, the ladder and the value
+     would sit in a cluster at the left and the caret would have nowhere to go. */
+  margin-left: auto;
+  color: var(--fg);
+  font-weight: 500;
+}
+
+/*
+ * The menu, opening into whichever side has room.
+ *
+ * It used to open upward unconditionally, which was right when this was a bar
+ * pinned to the bottom of the composer and wrong the moment it moved into the
+ * settings panel: these rows are the panel's first group, so "up" is the one
+ * side with nothing above them -- the menu rendered off the top of the window,
+ * and being inside a scrolling modal it was clipped by the panel as well.
+ *
+ * So the direction is measured, not assumed. `ChoiceMenu` writes `data-dir`
+ * from the room it actually finds and caps `max-height` to it, which is what
+ * keeps the last row reachable when the window is short. `overflow-y: auto`
+ * is the backstop for a list taller than the cap.
+ */
+.permchoice-menu {
+  position: absolute;
+  /* `left: 0; right: 0` and no width: the menu is then exactly as wide as the
+     row that opened it, which is what makes it read as belonging to that row.
+     The 320px it had as a bar over the transcript would overflow a 500px modal
+     the moment a label beside it grew. */
+  left: 0;
+  right: 0;
+  z-index: 40;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.45);
+  animation: rise-in var(--motion-fast) var(--ease-out) both;
+}
+
+/* Over the rows above, for a trigger sitting low in the panel. */
+.permchoice-menu[data-dir="up"] {
+  bottom: calc(100% + 6px);
+}
+
+/* Over the rows below, which is the common case now that the trigger is the
+   panel's first control. */
+.permchoice-menu[data-dir="down"] {
+  top: calc(100% + 6px);
+}
+
+.permchoice-item {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 1px);
+  background: none;
+  color: var(--fg-mute);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.permchoice-item:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.permchoice-item.is-active {
+  background: var(--chip);
+  color: var(--fg);
+}
+
+.permchoice-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.permchoice-name {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+/*
+ * The marker on the one rung that acts without asking.
+ *
+ * `--accent`, not `--danger`. Nothing here is broken or refused -- the level
+ * works exactly as designed -- so it is not an error colour. It is also not
+ * `--fg-dim`, because this is the one thing in the menu a user should not have
+ * to read the description to notice.
+ */
+.permchoice-warn {
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--chip);
+  color: var(--accent);
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.permchoice-desc {
+  display: block;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--fg-dim);
+}
+
+/*
+ * What the next rung adds, in words.
+ *
+ * Present because the labels do not carry the difference: "Medium" and "High"
+ * are names, and the fact that High may execute code while Medium may not is
+ * the entire decision the user is making at this menu.
+ */
+.permchoice-gain {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--fg-mute);
+}
+
+
+/*
+ * The caret on a menu row, matching `.chip-caret`'s size and colour.
+ *
+ * Drawn rather than a native arrow for the same reason the whole menu is:
+ * the platform's own control is the one thing in this window that does
+ * not match the reference. `▾` is the same glyph `.chatproj-caret` uses,
+ * so the two menus in this panel cannot disagree about what an open
+ * menu looks like.
+ */
+.permchoice-caret {
+  color: var(--fg-mute);
+  font-size: 9px;
 }
 
 /* --- search panel -------------------------------------------------------- */
@@ -3128,6 +3212,7 @@ body {
 .modal-backdrop[data-state="closed"],
 .sidebar[data-state="closed"],
 .sidebar-scrim[data-state="closed"],
+.chatlist-scrim[data-state="closed"],
 .logstrip[data-state="closed"] {
   pointer-events: none;
 }
@@ -3199,11 +3284,13 @@ body {
   animation: slide-out-right var(--motion-fast) var(--ease-in) both;
 }
 
-.sidebar-scrim[data-state="open"] {
+.sidebar-scrim[data-state="open"],
+.chatlist-scrim[data-state="open"] {
   animation: scrim-in var(--motion-base) var(--ease-out) both;
 }
 
-.sidebar-scrim[data-state="closed"] {
+.sidebar-scrim[data-state="closed"],
+.chatlist-scrim[data-state="closed"] {
   animation: scrim-out var(--motion-fast) var(--ease-in) both;
 }
 
@@ -3312,13 +3399,15 @@ body {
    */
   .rowmenu,
   .rowmenu[data-state],
-  .permmenu,
+  .permchoice-menu,
   .modal-backdrop,
   .modal-backdrop[data-state],
   .modal-backdrop > .modal,
   .modal-backdrop[data-state] > .modal,
   .chatlist,
   .chatlist[data-state],
+  .chatlist-scrim,
+  .chatlist-scrim[data-state],
   .sidebar,
   .sidebar[data-state],
   .sidebar-scrim,

@@ -1,10 +1,18 @@
 /**
  * Settings panel.
  *
- * One modal for the two things the rail can now actually change, rather than
- * two separate surfaces: the project folder and the provider both answer "what
- * is this window working on", and splitting them would mean two modals to style
- * and two ways to reach the same core methods.
+ * One modal for everything the rail can actually change, rather than a separate
+ * surface per thing: the project folder and the provider both answer "what is
+ * this window working on", and the permission level and the thinking effort both
+ * answer "how much may it do without asking". Splitting them would mean more
+ * surfaces to style and more ways to reach the same core methods.
+ *
+ * **Permission and Thinking live here rather than in the composer.** They were
+ * a bar above the field and a native `<select>` in the field's own row, which
+ * put the two most consequential settings in the two least consequential
+ * places -- one a strip you scroll past, one a system dropdown that looked like
+ * it belonged to another application. They are rendered by `SettingsMenus`, so
+ * both come from the same parts and neither is a platform control.
  *
  * Every control here maps to a protocol method that already exists. The panel
  * deliberately contains nothing that is presentation-only -- a control the
@@ -20,6 +28,13 @@
  */
 
 import { useEffect, useState } from "react";
+
+import {
+  PermissionMenu,
+  ThinkingMenu,
+  type PermissionList,
+  type ReasoningInfo,
+} from "./SettingsMenus.js";
 
 /** Shape of one entry in the `providers.list` reply. */
 export interface ProviderInfo {
@@ -53,6 +68,17 @@ interface Props {
    * would mean the panel could disagree with the core.
    */
   trusted: boolean;
+  /**
+   * The permission ladder and the level in force, or null before the core has
+   * answered.
+   *
+   * Passed in rather than read here: the panel has no backend of its own, and
+   * the window is the only thing holding a connection.
+   */
+  permissionList: PermissionList | null;
+  permission: string;
+  /** The model's own thinking capability, or null while it is being read. */
+  reasoning: ReasoningInfo | null;
   /** Non-null while a call is in flight, so the panel can show what failed. */
   error: string | null;
   /**
@@ -64,6 +90,8 @@ interface Props {
   onClose: () => void;
   onChooseFolder: () => void;
   onStopSandbox: () => void;
+  onPermissionChange: (name: string) => void;
+  onReasoningChange: (effort: string) => void;
   onBindProvider: (name: string, model: string, baseUrl: string) => void;
   onTrust: (project: string, trusted: boolean) => void;
   onSaveKey: (provider: string, apiKey: string) => Promise<boolean>;
@@ -87,11 +115,16 @@ export function SettingsPanel({
   project,
   sandbox,
   trusted,
+  permissionList,
+  permission,
+  reasoning,
   error,
   notice,
   onClose,
   onChooseFolder,
   onStopSandbox,
+  onPermissionChange,
+  onReasoningChange,
   onBindProvider,
   onTrust,
   onSaveKey,
@@ -149,6 +182,51 @@ export function SettingsPanel({
 
         {error && <p className="warn">{error}</p>}
         {notice && <p className="notice">{notice}</p>}
+
+        {/*
+          How much this window may do, and how hard it thinks. First, because
+          they are the two answers a user opens Settings to get -- and because
+          being first is also what makes their menus open downward, over the
+          groups below, rather than off the top of the window.
+        */}
+        <section className="settings-group">
+          <h3>Permission</h3>
+          <p className="settings-note">
+            What the agent may do without asking. This is the ceiling the core
+            enforces on every tool call in this window, not a preference.
+          </p>
+          <PermissionMenu
+            list={permissionList}
+            value={permission}
+            busy={busy}
+            disabled={!connected}
+            onChange={onPermissionChange}
+          />
+        </section>
+
+        {/*
+          The whole section, not just the control. `ThinkingMenu` already
+          renders nothing for a model with no dial, but a heading over nothing
+          is worse than no heading -- it says "this window can do this" and then
+          offers no way to. So the group goes too, which means the emptiness is
+          checked in two places on purpose: once for the control and once for
+          the prose that describes it.
+        */}
+        {reasoning && reasoning.efforts.length > 0 && (
+          <section className="settings-group">
+            <h3>Thinking</h3>
+            <p className="settings-note">
+              How hard the model should think. Applies from the next message; a
+              turn already in flight keeps the effort it started with.
+            </p>
+            <ThinkingMenu
+              info={reasoning}
+              busy={busy}
+              disabled={!connected}
+              onChange={onReasoningChange}
+            />
+          </section>
+        )}
 
         <section className="settings-group">
           <h3>Project folder</h3>

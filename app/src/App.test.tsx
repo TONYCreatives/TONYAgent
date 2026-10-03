@@ -138,10 +138,13 @@ const BOOT = {
     mode: "build",
   },
   "tools.get": { max_tool_calls: 10 },
+  // No dial: the Thinking menu is absent for a model that reports none, which is
+  // the default every other test here runs against. The one test that wants it
+  // passes its own `reasoning.list`.
   "reasoning.list": null,
-  // The ladder the bar draws. Answered from boot so the bar exists: a control
-  // that depends on a boot call nobody answers draws itself blank for a frame
-  // on every launch, and is untestable besides.
+  // The ladder the menu draws. Answered from boot so the control exists: one
+  // that depends on a boot call nobody answers renders blank for a frame on
+  // every launch, and is untestable besides.
   "permission.list": {
     permission: "medium",
     permissions: [
@@ -614,14 +617,27 @@ describe("New chat files the conversation under a project", () => {
   });
 });
 
-// --- the permission bar, driven through the window --------------------------
-describe("the permission bar reflects the core", () => {
+// --- the permission menu, driven through the window ------------------------
+describe("the permission menu reflects the core", () => {
   const steps = (c: HTMLElement) =>
-    all(c, ".permbar-step").map((e) => e.classList.contains("is-on"));
+    all(c, ".permchoice-step").map((e) => e.classList.contains("is-on"));
+
+  /**
+   * Open Settings, and wait for the panel to be on screen.
+   *
+   * The panel is behind an `Overlay`, which only mounts its children while it
+   * is animating in, so a click on the rail button and an immediate lookup race
+   * the mount. Polling for the modal rather than a fixed sleep keeps the test
+   * honest about what it is waiting for.
+   */
+  const openSettings = async (c: HTMLElement) => {
+    await click(one(c, '.rail-btn[aria-label="Settings"]')!);
+    for (let i = 0; i < 50 && !one(c, ".modal"); i++) await wait(20);
+  };
 
   test("it draws the level the core reported, not a local default", async () => {
     // `state` is what a reloaded window reads, so it is the level that has to
-    // be right. A bar seeded with its own default would agree with the core
+    // be right. A menu seeded with its own default would agree with the core
     // today and disagree the first time anything changed it elsewhere.
     const { container, transport } = await mount({
       state: { ...BOOT.state, permission: "high" },
@@ -635,7 +651,17 @@ describe("the permission bar reflects the core", () => {
       transport.methods().includes("permission.list"),
       "the ladder was never read from the core",
     );
-    assert.deepEqual(texts(container, ".permbar-value"), ["High"]);
+    // Nothing about the menu may exist before Settings is opened. That is the
+    // point of the move: a control in the composer was on screen at all times,
+    // and this asserts the panel is the only place it lives.
+    assert.equal(
+      one(container, ".permchoice"),
+      null,
+      "the permission menu is on screen without the settings panel open",
+    );
+
+    await openSettings(container);
+    assert.deepEqual(texts(container, ".permchoice-value"), ["High"]);
     assert.deepEqual(steps(container), [true, true, true, false]);
   });
 
@@ -644,37 +670,39 @@ describe("the permission bar reflects the core", () => {
       "permission.set": { permission: "full" },
     });
 
-    await click(one(container, ".permbar-trigger")!);
-    await click(all(container, ".permmenu-item")[3]);
+    await openSettings(container);
+    await click(one(container, ".permchoice-trigger")!);
+    await click(all(container, ".permchoice-item")[3]);
     await wait(80);
 
     const request = transport.sent.find((r) => r.method === "permission.set");
     assert.equal(request?.params?.permission, "full");
-    assert.deepEqual(texts(container, ".permbar-value"), ["Full"]);
+    assert.deepEqual(texts(container, ".permchoice-value"), ["Full"]);
     assert.deepEqual(steps(container), [true, true, true, true]);
   });
 
   test("a level the core resolved differently is corrected", async () => {
-    // An unrecognised name falls back to the core's default. A bar that echoed
+    // An unrecognised name falls back to the core's default. A menu that echoed
     // the request back would be labelling a level the orchestrator is not
     // enforcing, which is the one thing this control must never do.
     const { container } = await mount({
       "permission.set": { permission: "low" },
     });
 
-    await click(one(container, ".permbar-trigger")!);
-    await click(all(container, ".permmenu-item")[3]);
+    await openSettings(container);
+    await click(one(container, ".permchoice-trigger")!);
+    await click(all(container, ".permchoice-item")[3]);
     await wait(80);
 
     assert.deepEqual(
-      texts(container, ".permbar-value"),
+      texts(container, ".permchoice-value"),
       ["Low"],
-      "the bar kept showing a level the core had resolved away",
+      "the menu kept showing a level the core had resolved away",
     );
     assert.deepEqual(steps(container), [true, false, false, false]);
   });
 
-  test("the bar is disabled while a turn is in flight", async () => {
+  test("it is disabled while a turn is in flight", async () => {
     // Changing the ceiling under a half-built answer is how a turn comes back
     // obeying a rule that moved after it started.
     //
@@ -683,8 +711,9 @@ describe("the permission bar reflects the core", () => {
     // window in `busy` only by accident, and a test that asserted on that would
     // be asserting on the fake's shape.
     const { container, transport } = await mount();
-    const trigger = one(container, ".permbar-trigger") as HTMLButtonElement;
-    assert.equal(trigger.disabled, false, "the bar starts enabled");
+    await openSettings(container);
+    const trigger = one(container, ".permchoice-trigger") as HTMLButtonElement;
+    assert.equal(trigger.disabled, false, "the menu starts enabled");
 
     await push(() => {
       transport.emit(pushed("turn.started", { model: "m" }, "t9"));
@@ -692,9 +721,53 @@ describe("the permission bar reflects the core", () => {
     await wait(60);
 
     assert.equal(
-      (one(container, ".permbar-trigger") as HTMLButtonElement).disabled,
+      (one(container, ".permchoice-trigger") as HTMLButtonElement).disabled,
       true,
       "the permission could be changed while a turn was running",
+    );
+  });
+
+  test("the thinking effort is in the same panel, and nowhere else", async () => {
+    // Both controls answer "how much may this window do without asking", and
+    // they used to be a bar above the composer and a native select in its
+    // control row. Asserted together because the thing being protected is that
+    // they are side by side in one place: a Thinking menu that stayed in the
+    // composer would pass a test that only looked for it in Settings.
+    //
+    // Its own `reasoning.list`, because the boot fixture reports no dial --
+    // which is the case where the menu must be absent, so a test asserting the
+    // menu is there has to hand it a model that has one.
+    const { container } = await mount({
+      "reasoning.list": {
+        supported: true,
+        efforts: ["low", "high"],
+        default_effort: "high",
+        mandatory: false,
+        effort: "high",
+      },
+    });
+    assert.equal(
+      one(container, ".composer-row select"),
+      null,
+      "the composer still has a platform control in it",
+    );
+
+    await openSettings(container);
+    assert.deepEqual(texts(container, ".permchoice-label"), [
+      "Permission",
+      "Thinking",
+    ]);
+  });
+
+  test("and a model with no dial gets no thinking menu beside the permission one", async () => {
+    // The two negatives, because showing a dial that cannot change anything
+    // teaches the reader that the row is decoration.
+    const { container } = await mount();
+    await openSettings(container);
+    assert.deepEqual(
+      texts(container, ".permchoice-label"),
+      ["Permission"],
+      "a menu appeared for a model that reports no efforts",
     );
   });
 });

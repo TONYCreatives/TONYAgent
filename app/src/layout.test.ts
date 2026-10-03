@@ -524,34 +524,69 @@ describe("conversations are grouped under a project header", () => {
   });
 });
 
-// --- the permission bar ------------------------------------------------------
-describe("the permission bar reads as a position on a scale", () => {
-  test("it shares the composer's measure, so the two are one surface", () => {
-    // A narrower control against a wider field reads as a different surface
-    // rather than as part of the same one, and 720px is the composer's measured
-    // width -- the same number, asserted so the two cannot drift apart.
-    assert.match(body(".permbar"), /max-width:\s*720px/);
-    assert.match(body(".composer-inner"), /max-width:\s*720px/);
-  });
-
+// --- the settings menus -----------------------------------------------------
+describe("permission and thinking read as one control in the settings panel", () => {
   test("the rungs are a filled run, not four equal blocks", () => {
     // `.is-on` is applied to every step up to the current one, which is what
     // makes the control say "you are here" rather than "you picked one of
     // four". A rule that made all four identical would make the level
-    // unreadable from the bar alone.
-    assert.match(STYLESHEET, /\.permbar-step\.is-on/);
+    // unreadable from the row alone.
+    assert.match(STYLESHEET, /\.permchoice-step\.is-on/);
     // And the two states must be distinguishable at all.
-    assert.match(body(".permbar-step"), /background:\s*var\(--border\)/);
-    assert.match(body(".permbar-step.is-on"), /background:\s*var\(--fg-dim\)/);
+    assert.match(body(".permchoice-step"), /background:\s*var\(--border\)/);
+    assert.match(body(".permchoice-step.is-on"), /background:\s*var\(--fg-dim\)/);
   });
 
-  test("the menu opens above the bar, not downward over the composer", () => {
-    // Downward would cover the composer's own controls -- the one surface the
-    // user is reaching for -- and hide the transcript the level applies to.
-    // Asserted as the anchor rather than the absence of a rule, because the
-    // animation below moves the node and `top` is what must not be set.
-    assert.match(body(".permmenu"), /bottom:\s*calc\(100%/);
-    assert.doesNotMatch(body(".permmenu"), /top:\s*0\b/);
+  test("the menu opens toward the side with room, not a fixed one", () => {
+    // It opened upward unconditionally, which was correct while this was a bar
+    // pinned to the bottom of the composer and wrong once it moved into the
+    // panel: these rows are the panel's *first* group, so a menu anchored above
+    // its trigger renders off the top of the window -- and, being inside a
+    // scrolling modal, is clipped by the panel as well. Measured live at
+    // y=-210 in an 800px window, with the whole ladder unreachable.
+    //
+    // Both anchors are declared, keyed on the direction the component measured.
+    // The base rule declares neither, so a missing `data-dir` cannot silently
+    // leave the menu unpositioned.
+    assert.doesNotMatch(body(".permchoice-menu"), /\b(?:top|bottom):/);
+    assert.match(body('.permchoice-menu[data-dir="up"]'), /bottom:\s*calc\(100%/);
+    assert.match(body('.permchoice-menu[data-dir="down"]'), /top:\s*calc\(100%/);
+    assert.doesNotMatch(body('.permchoice-menu[data-dir="down"]'), /\bbottom:/);
+    assert.doesNotMatch(body('.permchoice-menu[data-dir="up"]'), /\btop:/);
+  });
+
+  test("the menu is capped and scrolls, so its last row is always reachable", () => {
+    // Direction alone does not bound the menu: a model with nine efforts still
+    // renders nine rows, and the room the component measured is the only thing
+    // standing between the user and the bottom of the list. The cap is written
+    // inline from the measurement, so `overflow-y: auto` is what makes a cap
+    // that is still too tall usable rather than cut off.
+    assert.match(body(".permchoice-menu"), /overflow-y:\s*auto/);
+  });
+
+  test("the panel itself is bounded, so its last group can be reached", () => {
+    // The same `.modal` is the confirmation, the settings panel and the search
+    // panel, and it had no height limit at all. In an 800px window the settings
+    // panel measured 866px tall and started at y=-33: the Model group and the
+    // Close button were rendered off the bottom of the screen with nothing to
+    // scroll them into view.
+    //
+    // `max-height: 100%` rather than a viewport value because the backdrop
+    // already pads by 24px, so the percentage resolves against exactly the
+    // space inside that padding -- and `.search-modal` overrides it with the
+    // lower cap it wants, rather than fighting a second rule.
+    assert.match(body(".modal"), /max-height:\s*100%/);
+    assert.match(body(".modal"), /overflow-y:\s*auto/);
+  });
+
+  test("the menu is as wide as the row that opened it", () => {
+    // `left: 0; right: 0` with no width, so the panel grows with the label
+    // instead of the menu leaving the row it belongs to. A fixed 320px -- what
+    // this had as a bar over the transcript -- overflows a 500px modal the
+    // moment a label beside it grows.
+    assert.match(body(".permchoice-menu"), /left:\s*0\b/);
+    assert.match(body(".permchoice-menu"), /right:\s*0\b/);
+    assert.doesNotMatch(body(".permchoice-menu"), /width:\s*\d/);
   });
 
   test("the rung that acts unasked is marked in the accent, not in danger", () => {
@@ -559,14 +594,91 @@ describe("the permission bar reads as a position on a scale", () => {
     // error colour would be a lie. And `--fg-dim` would be too quiet for the
     // one thing in the menu a user must not have to read the description to
     // notice.
-    assert.match(body(".permmenu-warn"), /color:\s*var\(--accent\)/);
-    assert.doesNotMatch(body(".permmenu-warn"), /var\(--danger\)/);
+    assert.match(body(".permchoice-warn"), /color:\s*var\(--accent\)/);
+    assert.doesNotMatch(body(".permchoice-warn"), /var\(--danger\)/);
   });
 
-  test("it is a border, not a fill, so it does not compete with the transcript", () => {
-    // The bar sits above the composer, in the transcript's column. Filled, it
-    // would be the brightest thing between the user and what they were reading.
-    assert.match(body(".permbar-trigger"), /border:\s*1px solid var\(--border\)/);
-    assert.doesNotMatch(body(".permbar-trigger"), /background:\s*var\(--(raised|chip)\)/);
+  test("the trigger is a field, like the settings rows beside it", () => {
+    // It used to be a transparent outlined button, which was right over the
+    // transcript and wrong in a panel of fields: it was the one row there that
+    // did not read as a field, which is the opposite of what it is.
+    assert.match(body(".permchoice-trigger"), /background:\s*var\(--input\)/);
+    assert.match(body(".permchoice-trigger"), /height:\s*30px/);
+    assert.match(body(".permchoice-trigger"), /width:\s*100%/);
+  });
+
+  test("the composer's own measure is gone with the control", () => {
+    // It was 720px to line up with `.composer-inner`. In a 500px modal that
+    // number is meaningless, and a rule left behind would be a hard limit on a
+    // panel that is already the width of its container.
+    assert.doesNotMatch(SOURCE, /\.permchoice\s*\{[^}]*--composer/);
+    assert.doesNotMatch(body(".permchoice"), /max-width:\s*720px/);
+    assert.match(body(".permchoice"), /width:\s*100%/);
+  });
+
+  test("the value is pushed to the far edge, so the eye finishes on the answer", () => {
+    // Without the auto margin the label, the ladder and the value sit in a
+    // cluster at the left and the caret has nowhere to go.
+    assert.match(body(".permchoice-value"), /margin-left:\s*auto/);
+  });
+});
+
+// --- the conversation panel's scrim -----------------------------------------
+describe("the conversation panel dims what is behind it", () => {
+  test("there is a scrim, because a shadow alone does not say 'over'", () => {
+    // On a near-black UI a panel with a shadow and a hairline reads as a column
+    // with a misplaced edge. The Files panel solved this with a scrim from the
+    // start and the conversation panel now uses the same treatment.
+    assert.match(body(".chatlist-scrim"), /position:\s*absolute/);
+    assert.match(body(".chatlist-scrim"), /backdrop-filter:\s*blur/);
+  });
+
+  test("it stops at the rail, so Stop and Settings stay reachable", () => {
+    // The distinguishing fact against `.sidebar-scrim`, which spans the full
+    // width. Covering the rail would put the two buttons a user reaches for
+    // mid-turn behind a backdrop they have to dismiss first, and the panel is
+    // anchored to the rail precisely so the rail stays operable.
+    assert.match(body(".chatlist-scrim"), /inset:\s*var\(--topbar-h\) 0 0 var\(--rail-w\)/);
+  });
+
+  test("and it starts below the title bar, like the panel it dims", () => {
+    // Otherwise it covers the caption buttons and takes the drag region with
+    // them, leaving a window that cannot be moved with the panel open.
+    assert.match(body(".chatlist-scrim"), /var\(--topbar-h\)/);
+  });
+
+  test("it animates on data-state, so a dismissed scrim stops eating clicks", () => {
+    // It is still on screen for the length of its exit, and a full-window
+    // backdrop left clickable after the user closed the panel is a region where
+    // the next click goes nowhere.
+    assert.match(
+      body('.chatlist-scrim[data-state="open"]'),
+      /animation:\s*scrim-in/,
+    );
+    assert.match(
+      body('.chatlist-scrim[data-state="closed"]'),
+      /animation:\s*scrim-out/,
+    );
+    // The `pointer-events: none` is not in the scrim's own rule: it shares the
+    // file-wide list every dismissing surface is named in, so asserting against
+    // `body(...)` -- the *last* block written for the selector, which is the
+    // animation -- would read the wrong rule. The question is which selectors
+    // that one shared block names, so that is what is asserted.
+    const inert = RULES.filter((rule) =>
+      /pointer-events:\s*none/.test(rule.body),
+    );
+    assert.ok(
+      inert.some((rule) =>
+        rule.selectors.includes('.chatlist-scrim[data-state="closed"]'),
+      ),
+      "a dismissed scrim is not in the list of surfaces that stop eating clicks",
+    );
+  });
+
+  test("the panel keeps its shadow, which the scrim does not replace", () => {
+    // Two different statements: the scrim says "this is over the transcript",
+    // the shadow says "this has an edge of its own". Dropping the shadow when
+    // the scrim arrived would lose the second without gaining anything.
+    assert.match(body(".chatlist"), /box-shadow:/);
   });
 });

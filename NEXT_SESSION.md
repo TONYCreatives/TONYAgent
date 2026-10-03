@@ -1,17 +1,18 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-10-02, after the sixth pass — a four-rung
+**Last updated:** 2026-10-03, after the seventh pass — Permission and
+Thinking moved into the settings panel as one shared menu, and the conversation
+panel got the scrim that made it read as an overlay (see "The seventh pass"
+at the end)
+**Was:** 2026-10-02, after the sixth pass — a four-rung
 permission bar above the composer (see "The sixth pass" near the end)
-**Was:** 2026-10-02, after the fifth UI pass — conversations
-filed under the project folder they belong to (see "The fifth UI pass"
-near the end)
 **Was:** 2026-10-02, after the fourth UI pass — rounded window corners
 from DWM, and the conversation list turned from a docked column into an
 animated overlay panel (see "The fourth UI pass" near the end)
 **Status:** Core is UI-independent and fully tested. **The Tauri app builds,
 launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 581 passed, TypeScript 383 passed,
+protocol method.** Everything green: **Python 609 passed, TypeScript 411 passed,
 Tauri MSI + NSIS installers produced.**
 
 `pytest tests -q` reports **590 passed, 7 skipped** with Docker Desktop running.
@@ -2566,7 +2567,9 @@ stay comparable.
   pinned against `rm -rf /`, `format C:`, `shutdown /s`.
 - `test_the_ladder_reports_which_rung_widens_the_allowlist` -- the wire.
 - `PermissionBar.test.tsx` -- both markers, and High's gain is now the
-  allow-list sentence.
+  allow-list sentence. **Deleted in the seventh pass**, when the bar it
+  tested became the first group of the settings panel;
+  `SettingsMenus.test.tsx` covers the same menu.
 
 ### Counts
 
@@ -2651,3 +2654,153 @@ designed behaviour.
 
 So: the honest description of Full is "any command, inside the sandbox, except
 the handful of machine-destroyers above". Do not describe it as safe on its own.
+
+## The seventh pass: the settings menu, and the sidebar that says "over"
+
+Three changes, all in the same direction: put a control where a user goes to
+look for it, and stop letting a platform widget be the one thing in the window
+that does not match the reference.
+
+### 1. The conversation panel got a scrim
+
+The panel was already an overlay -- `position: absolute`, anchored to the rail,
+sliding in from the left -- and it already had a shadow. What it did not have
+was the thing that makes an overlay legible: the Files panel has had one since
+it became an overlay, and it is a blur plus a *light* tint, because on a
+near-black UI a dark scrim changes nothing and the panel read as a layout break
+rather than as something opened over the window.
+
+`.chatlist-scrim` is now the same rule, with one deliberate difference:
+`inset: var(--topbar-h) 0 0 var(--rail-w)` rather than the Files panel's
+full-width inset. **The scrim stops at the rail on purpose.** Covering the rail
+would put Stop and Settings -- the two buttons reached for mid-turn -- behind a
+backdrop that has to be dismissed first, and the panel is anchored to the rail
+precisely so the rail stays operable. `layout.test.ts` asserts the difference
+against `.sidebar-scrim` so the two cannot converge by accident.
+
+It is a `<button tabIndex={-1}>` for the same reason `.sidebar-scrim` is: a
+full-window backdrop in the tab order is something a keyboard user tabs past to
+reach the rail. Escape and the rail toggle both already close the panel.
+
+### 2. Thinking was a native `<select>`, and is now a menu
+
+This was the reported bug, and the cause was structural rather than cosmetic.
+The Thinking control was a real `<select>`, so on Windows it rendered the
+platform's own list: a light box, a system font, a system arrow, on a black
+panel. It was the one control in the window that did not come from this
+stylesheet, and no amount of styling around it changes that.
+
+Permission already had a proper menu. Rather than write a second menu and let
+the two look alike by accident, **both now come from one component** --
+`SettingsMenus.tsx`, with a `ChoiceMenu` that draws the trigger, the list and the
+rows. `PermissionMenu` and `ThinkingMenu` differ only in the rows they pass.
+
+Class names moved with it, from `.permbar*`/`.permmenu*` to `.permchoice*`,
+because the vocabulary is no longer one control's: `.permchoice-warn` sits
+beside a thinking effort as readily as beside a permission level. The composer's
+720px measure is gone with the control -- it meant "line up with the field",
+which is meaningless in a 500px modal -- and the menu is now `left: 0; right: 0`
+so it is exactly as wide as the row that opened it.
+
+### 3. Both moved into the settings panel
+
+Permission and Thinking answer the same question -- *how much may this window do
+without asking* -- and they were in the two worst possible places: a strip above
+the composer you scroll past, and a native dropdown in the field's own row. They
+are now the first two groups in Settings.
+
+**Nothing is duplicated.** The composer lost both, and `App.test.tsx` asserts
+that nothing about either control exists before the panel is opened.
+
+### The gear was a sun
+
+Separately: the rail's settings icon was two concentric circles with eight
+radial ticks, which is what you get by writing a gear as "a body and some
+teeth" rather than as a shape. It reads as a sun or a brightness icon, and at
+17px the ticks are far enough apart that the eye never joins them to the body. It
+is now one continuous outline -- hub and toothed body in the same silhouette --
+which is the only thing that survives being drawn at that size.
+
+`IconRail.test.tsx` asserts on the shape rather than the pixels, because the
+shape is the checkable part: no `<circle>` (that is what a sun is), all marks
+are `<path>`, and there is more than one of them.
+
+### One real bug the mutation check found
+
+A throwaway script sabotaged each behaviour in turn and required the suite to
+notice -- 22 cases, all caught -- then was deleted rather than kept. It found
+that **`ThinkingMenu`'s no-dial guard lived in its caller**, not in the
+component: rendered on its own, it produced a menu with exactly one entry --
+"Default" -- for a model that reports no dial. A control offering only the
+choice that does nothing. The check now lives in the component, and the panel
+checks it a second time because a heading over nothing is worse than no heading.
+
+The script itself needed two things worth remembering if the technique is ever
+reused: it must recompile before each run (the tests execute out of `.tmp/`, so
+a source sabotage is invisible until `tsc` has re-run), and it must match each
+file's own line endings (several files here are CRLF and an `\n` anchor matches
+nothing in them -- which reads as "untested" rather than as "not found").
+
+### Counts
+
+**TypeScript 411 passed** (up from 382: +22 for the settings menus, +8 for the
+rail, and the Thinking dial's 15 moved out of `Composer.test.tsx` rather than
+being copied). **Python 609 passed, 7 skipped**, unchanged -- this pass touched
+no core code. `audit_reduced_motion.py` clean, with both new selectors
+(`.chatlist-scrim`, `.permchoice-menu`) in the reduced-motion block.
+
+`ComposerAttach.test.tsx` still flakes about one run in three on Windows, a
+different test each time; `tests/unit/test_build_scripts.py` still fails 3-5 per
+run on unmodified code. Neither is related to this pass.
+### What driving the real app found
+
+The first build of all this looked finished in jsdom and was broken in the
+window, and both defects were of the same kind: **a rule that was correct for
+where the control used to live.**
+
+1. **The settings panel did not fit.** `.modal` is one class shared by all three
+   dialogs -- confirmation, settings, search -- and it had no height bound at
+   all. Measured live in an 800px window: 866px tall, starting at y=-33, so the
+   Model group and the Close button were rendered off the bottom of the screen
+   with nothing to scroll them into view. `max-height: 100%` (against the
+   backdrop's content box, which is already inset by its 24px padding) plus
+   `overflow-y: auto` fixes it without touching the search panel, which caps
+   itself lower and scrolls its own result list.
+
+2. **Both menus opened above the top of the screen.** `.permchoice-menu` was
+   `bottom: calc(100% + 6px)` -- correct while this was a bar pinned to the
+   bottom of the composer, and exactly wrong once the rows became the panel's
+   *first* group. Measured live: the permission menu at y=-210 (294px tall), the
+   thinking menu at y=-14. Being inside a scrolling modal, they were clipped by
+   the panel as well, so this was not merely off-screen but unreachable.
+
+   The fix is to stop declaring the direction. `measureMenu()` takes the
+   trigger's rectangle and the panel's and returns the side with more room plus
+   that room as a `max-height`, written inline; the stylesheet declares both
+   anchors on `[data-dir]` and the base rule declares neither, so a menu that
+   never got a direction renders unpositioned rather than silently opening the
+   wrong way. `overflow-y: auto` on the menu is the backstop for a list taller
+   than the cap. A tie opens **down**, which is the case the panel is actually
+   in now.
+
+Both are asserted in `layout.test.ts` against the live measurements, because
+the assertions that would have caught them ("the menu opens upward") were the
+ones that were wrong.
+
+### What is still true, and one thing that is not
+
+Verified live, over CDP, against the packaged build: the gear opens the panel;
+both menus render inside it and name the values the core reported; picking
+`Low` and `xhigh` round-tripped through `permission.set` and `reasoning.set`
+and came back on reopening the panel; Escape closes the menu without closing the
+panel behind it; an outside pointerdown and a re-click of the trigger each
+dismiss; the scrim dims and swallows clicks over the composer while leaving the
+rail live.
+
+**One asymmetry worth knowing before anyone reports it as a bug:**
+`reasoning.set` writes the effort to config (`save_reasoning_effort`) and
+survives a restart; `permission.set` is session-only, so a respawned sidecar
+comes back at `medium`. That is pre-existing and defensible -- a permission
+level that silently stayed at Full across a restart would be the worse
+behaviour -- but it means the two controls sitting side by side in the same
+panel do not persist the same way. Nothing in the UI says so.

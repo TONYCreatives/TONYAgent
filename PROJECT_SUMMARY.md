@@ -1,8 +1,8 @@
 # TONYAgent — Project Summary
 
-**Updated:** 2026-10-03 · **Tests:** Python 607 passed, 7 skipped
+**Updated:** 2026-10-03 · **Tests:** Python 609 passed, 7 skipped
 (`test_build_scripts.py` 는 실행 환경 의존이라 3~5개가 매번 다른 이름으로
-실패 — 커밋 전 코드로도 재현됨), TypeScript 382 passed (`ComposerAttach`
+실패 — 커밋 전 코드로도 재현됨), TypeScript 411 passed (`ComposerAttach`
 Windows flake 1개)
 **Build:** Tauri MSI + NSIS installers produced; app verified running end to end
 (`decorations: false` — 시스템 타이틀 바를 빼고 앱이 직접 그리며, 우클릭/F10으로
@@ -134,9 +134,9 @@ MSVC 블로커는 **해결됨** (Visual Studio Community 2026, VC tools 14.51.36
 
 ```bash
 python -m compileall -q src
-python -m pytest tests -q                    # 581 passed, 7 skipped
+python -m pytest tests -q                    # 609 passed, 7 skipped
 python scripts/check_all.py --fast           # 3 checks
-cd app && npm test                           # 383 passed (Rust 불필요)
+cd app && npm test                           # 411 passed (Rust 불필요)
 python scripts/verify_composer_pass.py       # 패키징된 앱 DOM: 전송 아이콘, 첨부,
                                              # 모델 메뉴, tool call 예산
 python scripts/verify_pass_b.py              # 패키징된 앱 실측: rail 정렬, 자체 타이틀

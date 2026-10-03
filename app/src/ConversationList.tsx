@@ -1,6 +1,13 @@
 /**
  * The conversation list, as a floating panel beside the icon rail.
  *
+ * **It is an overlay with a scrim, exactly like the Files panel.** It used to
+ * be an overlay with only a shadow, which made it read as a column that had
+ * always been there rather than as something opened over the transcript. The
+ * scrim is what says "over", and its click is the dismiss that a docked panel
+ * has no way to offer. See the comment on the scrim below for why it stops at
+ * the rail rather than covering it.
+ *
  * Presentational only: it renders whatever the core reports and calls back.
  * The core owns which conversations exist and what is in them -- a list built
  * from local state would be a second source of truth about exactly the thing
@@ -138,6 +145,14 @@ interface Props {
   project: string;
   busy: boolean;
   connected: boolean;
+  /**
+   * Put the panel away, from the scrim's click.
+   *
+   * Owned by the window rather than done here, for the reason `onOpen` is:
+   * whether the panel exists is a decision about the window, and closing it
+   * from inside would mean this component unmounts itself.
+   */
+  onDismiss: () => void;
   onNew: () => void;
   /** Open the folder picker, to file the next chat somewhere else. */
   onChooseProject: () => void;
@@ -181,6 +196,7 @@ export function ConversationList({
   project,
   busy,
   connected,
+  onDismiss,
   onNew,
   onChooseProject,
   onOpen,
@@ -294,7 +310,38 @@ export function ConversationList({
   };
 
   return (
-    <nav
+    <>
+      {/*
+        The scrim, and the reason this panel now has one.
+
+        It floats over the transcript, and a floating panel over the thing the
+        window is *for* reads as a mistake rather than as a decision: without
+        something dimming what is behind it, 255px of panel looks like a column
+        that was always there. The Files panel had this from the start and the
+        conversation panel is now built the same way -- scrim, shadow, and a
+        click anywhere to dismiss, which is the affordance a docked panel
+        cannot have.
+
+        **It covers the transcript only, not the rail.** The rail stays
+        operable so the toggle that opened this panel is still reachable, and so
+        Stop does not disappear behind a scrim because a side panel is open. A
+        full-window scrim here would put the two most important rail buttons --
+        stop and settings -- under a backdrop the user then has to dismiss
+        before using them.
+
+        `tabIndex={-1}` and `aria-hidden` on the panel's behalf: it is a
+        dismiss target, not a control anyone navigates to, and it is reachable
+        from the keyboard already through the rail toggle and Escape.
+      */}
+      <button
+        type="button"
+        className="chatlist-scrim"
+        data-state={open ? "open" : "closed"}
+        onClick={onDismiss}
+        tabIndex={-1}
+        aria-label="Close conversations"
+      />
+      <nav
       className="chatlist"
       data-state={open ? "open" : "closed"}
       aria-label="Conversations"
@@ -534,5 +581,6 @@ export function ConversationList({
         </div>
       )}
     </nav>
+    </>
   );
 }

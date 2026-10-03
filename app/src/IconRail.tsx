@@ -77,15 +77,23 @@ interface Item {
   badge?: number;
 }
 
+/**
+ * The settings gear, as one path.
+ *
+ * It was two concentric circles with eight radial ticks, which is what you get
+ * by transcribing a gear as "a body and some teeth" rather than as a shape:
+ * two rings and a starburst read as a sun or a brightness icon, and at 17px
+ * the tick marks are far enough apart that the eye never joins them to the
+ * body. This is one continuous outline instead -- the teeth are part of the
+ * same silhouette as the hub -- so the shape survives being drawn small, which
+ * is the only size the rail ever draws it.
+ *
+ * Still inline SVG rather than a dependency, for the reason `Icon` documents.
+ */
 const GEAR = (
   <>
-    {/* A gear needs two rings plus eight teeth, so it cannot be a single path
-        string. The previous transcription from Feather mixed arc radii and
-        left the body unconnected to the teeth, which is what made the glyph
-        render as a malformed blob. */}
-    <circle cx="12" cy="12" r="3.2" />
-    <circle cx="12" cy="12" r="7" />
-    <path d="M19 12h2.5M12 19v2.5M5 12H2.5M12 5V2.5M16.95 16.95l1.77 1.77M7.05 7.05L5.28 5.28M16.95 7.05l1.77-1.77M7.05 16.95l-1.77 1.77" />
+    <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.09A1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
   </>
 );
 

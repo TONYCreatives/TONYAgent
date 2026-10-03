@@ -68,6 +68,7 @@ function conversation(over: Partial<ConversationSummary> = {}): ConversationSumm
 }
 
 interface Handlers {
+  onDismiss: () => void;
   onNew: () => void;
   onChooseProject: () => void;
   onOpen: (id: string) => void;
@@ -83,6 +84,7 @@ let calls: Handlers & {
   duplicated: string[];
   news: number;
   picks: number;
+  dismissals: number;
 };
 
 /** Mount the list. Cleaned up after each test by the shared harness. */
@@ -93,6 +95,9 @@ async function renderList(
   project = "",
 ): Promise<HTMLElement> {
   calls = {
+    onDismiss: () => {
+      calls.dismissals += 1;
+    },
     onNew: () => {
       calls.news += 1;
     },
@@ -117,6 +122,7 @@ async function renderList(
     duplicated: [],
     news: 0,
     picks: 0,
+    dismissals: 0,
   };
 
   return render(
@@ -189,6 +195,49 @@ describe("the panel reports which way it is moving", () => {
     assert.equal(one(container, ".chatlist"), list, "the node was replaced on close");
     assert.equal(list.dataset.state, "closed");
     assert.deepEqual(titles(container), ["Original title"]);
+  });
+});
+
+// --- the scrim -------------------------------------------------------------
+describe("the scrim behind the panel", () => {
+  test("it says which way it is moving, like the panel it dims", async () => {
+    // The scrim is a CSS-animated surface, so "open" cannot mean "the node is
+    // there": a node that only exists while open has no closed state to fade
+    // out of. Same `data-state` contract as `.chatlist` and `.sidebar-scrim`.
+    const container = await renderList([conversation()]);
+    assert.equal(one(container, ".chatlist-scrim")!.dataset.state, "open");
+
+    await rerender(
+      <ConversationList
+        open={false}
+        conversations={[conversation()]}
+        active=""
+        project=""
+        busy={false}
+        connected
+        {...calls}
+      />,
+    );
+    assert.equal(one(container, ".chatlist-scrim")!.dataset.state, "closed");
+  });
+
+  test("clicking it asks the window to put the panel away", async () => {
+    // The dismiss belongs to the window, not to this component: the panel's
+    // lifetime already does, and a list that closed itself would delete the
+    // node the exit animation is supposed to play on.
+    const container = await renderList([conversation()]);
+    await click(one(container, ".chatlist-scrim")!);
+    assert.equal(calls.dismissals, 1, "the scrim did not ask to be dismissed");
+  });
+
+  test("and it is not a tab stop, because it is a dismiss and not a control", async () => {
+    // A full-window backdrop in the tab order is the thing a keyboard user has
+    // to tab past to reach the rail's Stop button, and it is reachable already
+    // through the rail toggle and Escape.
+    const container = await renderList([conversation()]);
+    const scrim = one(container, ".chatlist-scrim") as HTMLButtonElement;
+    assert.equal(scrim.tabIndex, -1);
+    assert.equal(scrim.getAttribute("aria-label"), "Close conversations");
   });
 });
 

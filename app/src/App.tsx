@@ -8,7 +8,7 @@ import {
   type ChatState,
 } from "./events.js";
 import type { ChatMessage, Role } from "./events.js";
-import { Composer, type ModeInfo, type ReasoningInfo } from "./Composer.js";
+import { Composer, type ModeInfo } from "./Composer.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import {
   ConversationList,
@@ -25,12 +25,9 @@ import {
   type PendingAttachment,
 } from "./attachments.js";
 import type { ModelList } from "./ModelPicker.js";
-import {
-  PermissionBar,
-  type PermissionList,
-} from "./PermissionBar.js";
 import { Overlay } from "./Overlay.js";
 import { SearchPanel, type SearchMatch } from "./SearchPanel.js";
+import type { PermissionList, ReasoningInfo } from "./SettingsMenus.js";
 import { SettingsPanel, type ProviderInfo } from "./SettingsPanel.js";
 import { StatusBar } from "./StatusBar.js";
 import { TopBar } from "./TopBar.js";
@@ -1204,6 +1201,7 @@ export function App({
           project={project}
           busy={state.busy}
           connected={connected}
+          onDismiss={() => setRailExpanded(false)}
           onNew={() => void startNewChat()}
           onChooseProject={chooseFolder}
           onOpen={(id) => void openConversation(id)}
@@ -1250,18 +1248,12 @@ export function App({
         </div>
 
         {/*
-          Above the composer rather than inside it: this is a property of the
-          window rather than of the message being written, and the composer's
-          own row already carries four segmented groups. See `.permbar`.
+          The composer, and nothing else. The permission ladder used to sit
+          above it as its own bar, with the Thinking dial as a native select in
+          the control row; both are in the settings panel now, where a user goes
+          to ask what this window may do rather than scrolling past a strip to
+          find out. See `SettingsMenus`.
         */}
-        <PermissionBar
-          list={permissionList}
-          value={permission}
-          busy={state.busy}
-          disabled={!connected}
-          onChange={changePermission}
-        />
-
         <Composer
           inputRef={composerRef}
           busy={state.busy}
@@ -1269,8 +1261,6 @@ export function App({
           model={model}
           modes={modes}
           mode={mode}
-          reasoning={reasoning}
-          onReasoningChange={(effort) => void changeReasoning(effort)}
           onModeChange={changeMode}
           onSend={send}
           onCancel={cancel}
@@ -1304,11 +1294,16 @@ export function App({
             project={project}
             sandbox={sandbox}
             trusted={trustedProjects.has(project)}
+            permissionList={permissionList}
+            permission={permission}
+            reasoning={reasoning}
             error={settingsError}
             notice={settingsNotice}
             onClose={() => setSettingsOpen(false)}
             onChooseFolder={chooseFolder}
             onStopSandbox={stopSandbox}
+            onPermissionChange={changePermission}
+            onReasoningChange={(effort) => void changeReasoning(effort)}
             onBindProvider={bindProvider}
             onTrust={setTrust}
             onSaveKey={saveKey}
