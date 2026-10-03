@@ -2503,3 +2503,74 @@ is the exact question the existing busy-state test asks, and which the whole
   pre-existing and environment-dependent (it runs the real launcher). Worth
   knowing before spending time on it.
 - `ComposerAttach` still flakes ~1 run in 3 on Windows, as before.
+
+## The fifth pass: Full runs what is not on the allow-list
+
+### The decision
+
+`Full` previously widened nothing. It was High's tool set with the
+confirmation prompt removed -- `bypasses_command_allowlist` did not exist, and a
+test asserted that Full and High had identical allow-lists so nobody could
+quietly widen it later. The user then chose to widen it: at Full, commands
+outside `settings.tools.command_allowlist` run too. The denylist is unchanged,
+because "commands nobody thought of in advance" and "commands that destroy the
+machine" are separate decisions and only the first one was widened.
+
+### Where the flag lives
+
+`Permission.bypasses_command_allowlist` in `src/tonyagent/core/modes.py`, read by
+`ToolOrchestrator.allows_any_command()`. `_is_command_allowed` checks the
+denylist first and unconditionally, then returns early on the bypass. The check
+order is the thing not to get wrong: a bare flag placed before the denylist would
+widen both, and only the denylist test would notice.
+
+### One authority, not two
+
+The first attempt had `ExecuteCommandTool` read `tool_orchestrator` (the
+module-level singleton) while `ToolOrchestrator` consulted its own
+`self._permission`. A test that constructs its own orchestrator then got two
+different answers: the confirmation logic saw Full and skipped asking, while the
+tool saw the singleton's default and refused the command anyway.
+
+It is now one process-wide flag, `shell_tools._ALLOWLIST_BYPASS`, written only
+by `ToolOrchestrator.set_permission` through `set_allowlist_bypass()` and read by
+`allowlist_bypassed()`. Process-wide because the permission level is process-wide
+session state; a module flag is the honest shape, and an autouse fixture in
+`test_modes_and_diffs.py` resets it so a Full test cannot hand its authority to
+the next one.
+
+### On the wire
+
+`_permission_payload` now sends `runs_any_command`. High and Full are identical on
+`runs_commands`, which is exactly the pair the user chooses between, so a flag
+that only reports tool reachability cannot tell them apart. The bar marks the
+rung from the boolean rather than from the description -- prose is not something
+to parse for a security fact.
+
+### What the bar shows
+
+Full's row carries two markers, `any command` and `no prompts`, because those are
+two decisions: being willing to have the agent run `ls` is not the same decision
+as being willing to have it run anything unasked. `gain()` reports only the first
+difference to the rung above, so the sentence stays one clause wide and the rungs
+stay comparable.
+
+### Tests
+
+- `test_full_runs_a_command_off_the_allowlist` -- end to end through
+  `execute_tool_async`, so both gates are proven open. Verified to fail when
+  `bypasses_command_allowlist` is flipped to False.
+- `test_high_still_refuses_a_command_off_the_allowlist` -- the negative, so the
+  ladder still means something.
+- `test_full_still_refuses_a_denylisted_command` -- the line Full does not cross,
+  pinned against `rm -rf /`, `format C:`, `shutdown /s`.
+- `test_the_ladder_reports_which_rung_widens_the_allowlist` -- the wire.
+- `PermissionBar.test.tsx` -- both markers, and High's gain is now the
+  allow-list sentence.
+
+### Counts
+
+Python 605 passed / 7 skipped. TypeScript 383 tests, 382 pass with the
+`ComposerAttach` Windows flake. `test_build_scripts.py` fails 3-5 per run on
+unmodified code too -- it runs the real build script and depends on build
+freshness.

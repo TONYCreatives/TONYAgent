@@ -151,6 +151,7 @@ const BOOT = {
         description: "Read, search and browse.",
         runs_commands: false,
         skips_confirmation: false,
+        runs_any_command: false,
       },
       {
         name: "medium",
@@ -158,6 +159,7 @@ const BOOT = {
         description: "Edit files. Shell commands are refused.",
         runs_commands: false,
         skips_confirmation: false,
+        runs_any_command: false,
       },
       {
         name: "high",
@@ -165,13 +167,15 @@ const BOOT = {
         description: "Everything, including running commands.",
         runs_commands: true,
         skips_confirmation: false,
+        runs_any_command: false,
       },
       {
         name: "full",
         label: "Full",
-        description: "Everything, without asking first.",
+        description: "Everything, without asking, and any command.",
         runs_commands: true,
         skips_confirmation: true,
+        runs_any_command: true,
       },
     ],
   },

@@ -120,6 +120,14 @@ class ToolOrchestrator:
             return False
         return True
 
+    def allows_any_command(self) -> bool:
+        """Whether the active level runs commands off the allow-list.
+
+        False when nothing is set, which is what an unrestricted orchestrator
+        (the Tkinter path and most tests) wants.
+        """
+        return bool(getattr(self._permission, "bypasses_command_allowlist", False))
+
     def set_permission(self, permission: Any) -> None:
         """Apply a permission level, or ``None`` for unrestricted.
 
@@ -127,8 +135,16 @@ class ToolOrchestrator:
         decision is made by the layer that runs tools, not the one that lists
         them. A level enforced only by filtering the schema would be a
         suggestion to the model.
+
+        Also publishes the allow-list decision to `shell_tools`, because
+        `ExecuteCommandTool` needs it and must not consult an orchestrator
+        instance -- there would then be two readers of one setting. See
+        `_ALLOWLIST_BYPASS` there for what went wrong the first time.
         """
         self._permission = permission
+        from tonyagent.tools.shell_tools import set_allowlist_bypass
+
+        set_allowlist_bypass(self.allows_any_command())
 
     def set_confirmation_callback(self, callback: Callable[[ConfirmationRequest], None]) -> None:
         self._confirmation_callback = callback
@@ -215,10 +231,14 @@ class ToolOrchestrator:
                 if tool_call.name == "execute_command":
                     from tonyagent.tools.shell_tools import _is_command_allowed
 
-                    # An off-allowlist command asks either way. Letting Full
-                    # override this would make the allow-list decorative and the
-                    # level above it meaningless.
-                    allowed, _ = _is_command_allowed(tool_call.arguments.get("command", ""))
+                    # At Full the allow-list is not consulted at all -- that is
+                    # what this level now means. Below it, an off-allowlist
+                    # command still asks, so High keeps a question the user can
+                    # answer and Full is the rung that removes it.
+                    allowed, _ = _is_command_allowed(
+                        tool_call.arguments.get("command", ""),
+                        bypass_allowlist=self.allows_any_command(),
+                    )
                     skip_confirm = allowed
                 else:
                     skip_confirm = True

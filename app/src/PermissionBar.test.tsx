@@ -28,6 +28,7 @@ const level = (over: Partial<PermissionInfo> = {}): PermissionInfo => ({
   description: "Read, search and browse.",
   runs_commands: false,
   skips_confirmation: false,
+  runs_any_command: false,
   ...over,
 });
 
@@ -52,6 +53,7 @@ const LADDER: PermissionList = {
       description: "Everything, without asking first.",
       runs_commands: true,
       skips_confirmation: true,
+      runs_any_command: true,
     }),
   ],
 };
@@ -157,13 +159,23 @@ describe("the menu says what a level actually permits", () => {
       texts(items[i], ".permmenu-gain").join("") || null;
     assert.deepEqual(
       items.map((_, i) => gainOf(i)),
-      [null, "Can run shell commands", "Stops asking before each change", null],
+      [
+        null,
+        "Can run shell commands",
+        "Can run commands outside the allow-list",
+        null,
+      ],
     );
   });
 
-  test("Full is marked as the rung that acts without asking", async () => {
-    // Spelled out rather than implied: a user who cannot see this has no way
-    // to make an informed choice about handing an agent unasked access.
+  test("Full is marked with both of the powers it adds", async () => {
+    // Spelled out rather than implied: a user who cannot see these has no way
+    // to make an informed choice about handing an agent unasked access to
+    // commands the project never allow-listed.
+    //
+    // Two markers, not one, because they are two decisions. Being willing to
+    // have the agent run `ls` is not the same decision as being willing to have
+    // it run anything, unasked.
     const { container } = await renderBar();
     await click(one(container, ".permbar-trigger")!);
     const warned = all(container, ".permmenu-item").filter((item) =>
@@ -171,6 +183,8 @@ describe("the menu says what a level actually permits", () => {
     );
     assert.equal(warned.length, 1);
     assert.match(warned[0].textContent ?? "", /Full/);
+    const marks = texts(warned[0], ".permmenu-warn");
+    assert.deepEqual(marks, ["any command", "no prompts"]);
   });
 
   test("the menu opens above the bar, not over the composer", async () => {

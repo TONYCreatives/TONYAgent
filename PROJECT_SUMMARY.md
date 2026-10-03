@@ -1,7 +1,9 @@
 # TONYAgent — Project Summary
 
-**Updated:** 2026-10-02 · **Tests:** Python 592 passed, 7 skipped
-(Docker 꺼져 있으면: 591 passed + 1 failed), TypeScript 361 passed
+**Updated:** 2026-10-03 · **Tests:** Python 605 passed, 7 skipped
+(`test_build_scripts.py` 는 실행 환경 의존이라 3~5개가 매번 다른 이름으로
+실패 — 커밋 전 코드로도 재현됨), TypeScript 382 passed (`ComposerAttach`
+Windows flake 1개)
 **Build:** Tauri MSI + NSIS installers produced; app verified running end to end
 (`decorations: false` — 시스템 타이틀 바를 빼고 앱이 직접 그리며, 우클릭/F10으로
 **OS의 시스템 메뉴**를 열어 이동·크기 조절을 그대로 씁니다. 꺼진 타이틀 바와 함께

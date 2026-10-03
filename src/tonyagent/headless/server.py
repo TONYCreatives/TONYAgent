@@ -71,8 +71,13 @@ def _permission_payload(level: Any) -> dict[str, Any]:
         "runs_commands": "execute_command" in level.allowed_tools,
         # Whether the user is asked before a destructive tool runs. Reported
         # separately because it is a different kind of permission from the
-        # allow-list: Full adds no tool and removes only the question.
+        # allow-list: it removes the question, not the check.
         "skips_confirmation": level.skips_confirmation,
+        # Whether commands outside the allow-list run. Sent as its own flag so
+        # the bar can mark the one rung that widens the command allow-list
+        # without having to read the description to find out. This is the fact a
+        # user most needs before choosing Full, so it must not be prose-only.
+        "runs_any_command": level.bypasses_command_allowlist,
     }
 
 

@@ -124,6 +124,14 @@ class Permission:
     allowed_tools: frozenset[str]
     #: Whether this level stops asking before a destructive tool runs.
     skips_confirmation: bool = False
+    #: Whether this level runs commands that are *not* on the allow-list.
+    #:
+    #: Kept separate from `allowed_tools` because it widens a different axis.
+    #: The allow-list answers "may this run at all"; this answers "is this one
+    #: of the ones we know about". Folding the two together would make Full's
+    #: extra power indistinguishable from High, and there would be nothing left
+    #: above it.
+    bypasses_command_allowlist: bool = False
 
 
 #: Read-only: observe the project, change nothing. Same set as Plan and Skills.
@@ -174,12 +182,14 @@ _FULL = Permission(
     name="full",
     label="Full",
     description=(
-        "Everything High allows, without asking first. Commands still run only "
-        "if allow-listed and sandboxed. Choose this only for a project you "
-        "trust: a trusted command runner can execute arbitrary code."
+        "Everything High allows, without asking, and any command may run -- "
+        "not just the allow-listed ones. Commands still run inside the "
+        "sandbox. Choose this only when you accept responsibility for what "
+        "the agent does."
     ),
     allowed_tools=_MUTATING_TOOLS,
     skips_confirmation=True,
+    bypasses_command_allowlist=True,
 )
 
 PERMISSIONS: dict[str, Permission] = {

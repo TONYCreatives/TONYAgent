@@ -17,10 +17,11 @@
  *   whether shell commands are reachable, and that is the only thing a user
  *   needs to know about this control. So the expanded row states the
  *   difference between its neighbours rather than repeating the label.
- * - **Full is stated as what it is.** It adds no tool and lifts no gate; it
- *   stops asking. The bar says so, because a control that reads as "maximum
- *   access" when it is really "no more prompts" would be misleading at exactly
- *   the moment the user is deciding whether to trust a folder.
+ * - **Full is stated as what it is.** It runs any command, not only the
+ *   allow-listed ones, and it stops asking. Those are two different powers, so
+ *   the row marks both. A control that reads as "maximum access" when it is
+ *   really "no more prompts" would mislead at exactly the moment the user is
+ *   deciding whether to trust a folder.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -41,6 +42,14 @@ export interface PermissionInfo {
   runs_commands: boolean;
   /** Whether a destructive tool runs without asking first. */
   skips_confirmation: boolean;
+  /**
+   * Whether commands outside the allow-list run.
+   *
+   * A separate boolean rather than something read out of `description`, for the
+   * same reason as `runs_commands`: this is the difference between High and
+   * Full, and a user picking between them must not have to parse a sentence.
+   */
+  runs_any_command: boolean;
 }
 
 export interface PermissionList {
@@ -66,11 +75,16 @@ interface Props {
  *
  * Says what changes rather than what the level is called. "Runs commands" is
  * the whole difference between Medium and High, and it is the difference a user
- * is actually deciding on.
+ * is actually deciding on. Only the first gain is reported, so the sentence
+ * stays one clause wide -- a row listing three of them reads as a warning
+ * essay and stops being comparable between rungs.
  */
 function gain(here: PermissionInfo, above?: PermissionInfo): string | null {
   if (!above) return null;
   if (!here.runs_commands && above.runs_commands) return "Can run shell commands";
+  if (!here.runs_any_command && above.runs_any_command) {
+    return "Can run commands outside the allow-list";
+  }
   if (!here.skips_confirmation && above.skips_confirmation) {
     return "Stops asking before each change";
   }
@@ -160,6 +174,13 @@ export function PermissionBar({
               >
                 <span className="permmenu-head">
                   <span className="permmenu-name">{level.label}</span>
+                  {level.runs_any_command && (
+                    // The widen and the licence to act, named separately
+                    // because they are separate decisions. Someone happy to let
+                    // the agent run `ls` is not automatically someone happy to
+                    // have it run things unasked.
+                    <span className="permmenu-warn">any command</span>
+                  )}
                   {level.skips_confirmation && (
                     // Spelled out rather than implied. This is the one rung
                     // where an agent may act without asking, and a user who

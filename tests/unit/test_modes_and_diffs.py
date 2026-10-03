@@ -35,6 +35,24 @@ from tonyagent.tools.base import ToolResultStatus
 MUTATING = {"write_file", "edit_file", "delete_file", "execute_command"}
 
 
+@pytest.fixture(autouse=True)
+def reset_allowlist_bypass():
+    """Put the process-wide Full flag back after every test in this file.
+
+    The flag is process-wide on purpose (see `_ALLOWLIST_BYPASS`), which makes
+    leaking it a real hazard: a test that selects Full would otherwise hand its
+    widened authority to whatever test happened to run next, and the failure
+    would land somewhere unrelated.
+    """
+    from tonyagent.tools import shell_tools
+
+    shell_tools.set_allowlist_bypass(False)
+    try:
+        yield
+    finally:
+        shell_tools.set_allowlist_bypass(False)
+
+
 @pytest.fixture
 def project(tmp_path):
     """Point the folder manager at a tmp dir for the duration of one test."""
@@ -612,14 +630,16 @@ async def test_high_still_asks_for_an_untrusted_project(tmp_path, monkeypatch):
     assert result.status is ToolResultStatus.SUCCESS
 
 
-async def test_full_still_refuses_a_command_off_the_allowlist(tmp_path, monkeypatch):
-    """**The boundary that matters most.**
+async def test_full_runs_a_command_off_the_allowlist(tmp_path, monkeypatch):
+    """What Full now means, asserted end to end through the orchestrator.
 
-    The allow-list matches on the executable's name and cannot see what it is
-    handed, so at Full a trusted project can already run `python -c "<anything>"`.
-    Full must therefore *not* become a way past the allow-list itself, or the
-    ladder's top rung would stop being a permission choice and start being a
-    bypass. This asserts the refusal survives the level.
+    `ls` is deliberately not on the allow-list -- it is a real command a user
+    reasonably wants an agent to run, and refusing it because nobody thought of
+    it in advance was the thing being complained about. At Full it runs.
+
+    The point of running it through `execute_tool_async` rather than calling
+    `_is_command_allowed` directly is that there are two gates and this proves
+    the one in `ExecuteCommandTool` opened too.
     """
     from tonyagent.tools import ToolCall
     from tonyagent.tools.orchestrator import ToolOrchestrator
@@ -633,21 +653,71 @@ async def test_full_still_refuses_a_command_off_the_allowlist(tmp_path, monkeypa
 
     def on_confirm(request):
         asked.append(request.tool_call.name)
-        # Never answered: the assertion is that we got here at all.
         asyncio.get_running_loop().create_task(_answer(orch, request))
 
     orch.set_confirmation_callback(on_confirm)
     call = ToolCall(
         id="c1",
         name="execute_command",
-        arguments={"command": "format C:", "cwd": "."},
+        arguments={"command": "ls", "cwd": "."},
     )
     result = await orch.execute_tool_async(call)
 
-    assert asked == ["execute_command"], (
-        "Full waved through a command that is not on the allow-list"
+    assert asked == [], (
+        "Full stopped to ask about a command, so it is not doing the thing Full "
+        "is for"
     )
+    assert "not in allowlist" not in (result.error or ""), (
+        f"Full still refused an off-allow-list command: {result.error}"
+    )
+
+
+async def test_high_still_refuses_a_command_off_the_allowlist(tmp_path, monkeypatch):
+    """The negative, and the reason the ladder still means anything.
+
+    If High also ran everything, Full would be High under a second name and the
+    bar would be offering the same power twice.
+    """
+    from tonyagent.tools import ToolCall
+    from tonyagent.tools.orchestrator import ToolOrchestrator
+
+    monkeypatch.setattr(folder_manager, "_current_folder", tmp_path)
+    orch = ToolOrchestrator()
+    orch.set_trusted(str(tmp_path), True)
+    orch.set_permission(_permission("high"))
+
+    call = ToolCall(
+        id="c2",
+        name="execute_command",
+        arguments={"command": "ls", "cwd": "."},
+    )
+    result = await orch.execute_tool_async(call)
+
     assert result.status is ToolResultStatus.ERROR
+    assert "not in allowlist" in (result.error or ""), result.error
+
+
+async def test_full_still_refuses_a_denylisted_command(tmp_path, monkeypatch):
+    """**The line Full does not cross.**
+
+    Widening what may run is not the same decision as widening what may never
+    run. The allow-list is a list of commands nobody got round to trusting; the
+    denylist is the handful that destroy the machine -- `rm -rf /`,
+    `format C:`, `shutdown`, `reboot`. Full lifts the first and not the second.
+
+    A bare `bypasses_allowlist` flag would have lifted both if the check order
+    were ever swapped, which is why this asserts the *denylisted* case
+    specifically rather than reusing the allow-list case above.
+    """
+    from tonyagent.tools.shell_tools import _is_command_allowed
+
+    for command in ("rm -rf /", "format C:", "shutdown /s"):
+        allowed, reason = _is_command_allowed(command, bypass_allowlist=True)
+        assert not allowed, (
+            f"Full waved through {command!r}, which is on the denylist: {reason}"
+        )
+    # And it is still the allow-list that Full widened, not the whole function.
+    assert _is_command_allowed("ls", bypass_allowlist=True)[0] is True
 
 
 async def test_switching_conversation_keeps_the_permission_level(tmp_path):
@@ -682,3 +752,28 @@ def test_permission_survives_a_mode_switch():
     session.set_permission("low")
     session.set_mode("build")
     assert session.permission_name == "low"
+
+
+def test_the_ladder_reports_which_rung_widens_the_allowlist():
+    """The bar has to be able to say what Full adds, so the wire has to say it.
+
+    `runs_commands` alone cannot express this: High and Full are identical on
+    that flag, which is exactly the pair the user is choosing between. So the
+    payload carries `runs_any_command` as its own boolean, and the frontend
+    marks the rung from that rather than from the description -- prose is not
+    something to parse for a security fact.
+    """
+    session = AgentSession(bus=EventBus())
+    frames = drive(
+        [{"id": "1", "method": "permission.list", "params": {}}],
+        session=session,
+    )
+    levels = {p["name"]: p for p in frames[0]["result"]["permissions"]}
+
+    assert levels["full"]["runs_any_command"] is True
+    assert levels["high"]["runs_any_command"] is False
+    assert levels["medium"]["runs_any_command"] is False
+    assert levels["low"]["runs_any_command"] is False
+    # And the two rungs really are otherwise the same, so the new flag is the
+    # only thing telling them apart on the wire.
+    assert levels["high"]["runs_commands"] == levels["full"]["runs_commands"] is True

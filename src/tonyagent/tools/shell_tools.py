@@ -28,29 +28,69 @@ def _resolve_path(path: str) -> Path:
     return target
 
 
-def _is_command_allowed(command: str) -> tuple[bool, str]:
-    """Check if command is allowed by allowlist/denylist."""
+#: Whether the user has chosen a level that runs commands off the allow-list.
+#:
+#: **A module flag rather than a parameter threaded through, deliberately.**
+#: The first attempt read the level off `tool_orchestrator`, the module-level
+#: singleton -- and a test that constructs its own `ToolOrchestrator` then got
+#: two different answers from two authorities: the orchestrator's confirmation
+#: logic saw `full` and skipped asking, while `ExecuteCommandTool` saw the
+#: singleton's default and refused the command anyway. Two readers of "what may
+#: this session run" is the bug, not the fix.
+#:
+#: The permission level is session state, so one process-wide flag set by the
+#: single place that owns the level is the honest shape. Written only by
+#: `ToolOrchestrator.set_permission`.
+_ALLOWLIST_BYPASS = False
+
+
+def set_allowlist_bypass(bypassed: bool) -> None:
+    """Record whether commands off the allow-list may run. See `_ALLOWLIST_BYPASS`."""
+    global _ALLOWLIST_BYPASS
+    _ALLOWLIST_BYPASS = bool(bypassed)
+
+
+def allowlist_bypassed() -> bool:
+    return _ALLOWLIST_BYPASS
+
+
+def _is_command_allowed(command: str, bypass_allowlist: bool = False) -> tuple[bool, str]:
+    """Check if command is allowed by allowlist/denylist.
+
+    ``bypass_allowlist`` is the user having chosen the `Full` permission level:
+    commands outside the allow-list run then. **The denylist is checked first
+    and is not bypassed**, because it is not a list of commands we happen not to
+    trust -- it is the handful that destroy the machine (`rm -rf /`,
+    `format C:`, `shutdown`, `reboot`). Widening what may run does not have to
+    mean widening what may never run, and the two are separate decisions.
+    """
     parts = shlex.split(command)
     if not parts:
         return False, "Empty command"
-    
+
     base_cmd = Path(parts[0]).name.lower()
-    
-    # Check denylist first
+
+    # Check denylist first, unconditionally.
     for deny_pattern in settings.tools.command_denylist:
         if re.search(deny_pattern, command, re.IGNORECASE):
             return False, f"Command matches denylist pattern: {deny_pattern}"
-    
+
+    if bypass_allowlist:
+        logger.warning(
+            f"Running a command outside the allow-list because Full is selected: {command}"
+        )
+        return True, "OK"
+
     # Check allowlist
     allowed = False
     for allow_pattern in settings.tools.command_allowlist:
         if base_cmd == allow_pattern.lower() or base_cmd.startswith(allow_pattern.lower()):
             allowed = True
             break
-    
+
     if not allowed:
         return False, f"Command '{base_cmd}' not in allowlist"
-    
+
     return True, "OK"
 
 
@@ -120,9 +160,10 @@ class ExecuteCommandTool(Tool):
     this refuses, because "run it on the host instead" is not a lesser version
     of the same thing -- it is the thing the sandbox exists to prevent.
 
-    Three gates, in order: the command allow/deny list, then the isolation
-    check, then per-session confirmation. A trusted project skips the prompt
-    but never the allowlist.
+    Four gates, in order: the command denylist, the command allow-list, the
+    isolation check, then per-session confirmation. A trusted project skips the
+    last of those. The first is never skipped by anything -- see
+    `_is_command_allowed`.
     """
 
     name = "execute_command"
@@ -146,8 +187,12 @@ class ExecuteCommandTool(Tool):
     isolation_required = True
 
     async def execute(self, command: str, cwd: str = ".", timeout: int = 30) -> ToolResult:
-        # Validate command
-        allowed, reason = _is_command_allowed(command)
+        # Validate command. The level comes from the module flag rather than
+        # from an orchestrator instance -- see `_ALLOWLIST_BYPASS` for why there
+        # is exactly one of those.
+        allowed, reason = _is_command_allowed(
+            command, bypass_allowlist=allowlist_bypassed()
+        )
         if not allowed:
             return ToolResult(status=ToolResultStatus.ERROR, error=f"Command not allowed: {reason}")
 
