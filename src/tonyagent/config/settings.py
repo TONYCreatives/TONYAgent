@@ -85,14 +85,36 @@ class ToolsSettings(BaseModel):
     )
     command_denylist: list[str] = Field(
         default_factory=lambda: [
-            r"rm\s+-rf\s+/",
-            r"del\s+/s\s+/q",
-            r"format\s+[a-z]:",
-            r"shutdown",
-            r"reboot",
-            r"powershell\s+-enc",
-            r"curl\s+\|\s*sh",
-            r"wget\s+\|\s*sh",
+            # Recursive delete, in every spelling that means the same thing.
+            # `rm -f somefile.txt` is *not* matched: deleting one file is
+            # ordinary work, and a denylist that blocks it would push the work
+            # back through `python -c`, which is the far worse outcome.
+            r"\brm\b[^|;&]*\s-[a-z]*r[a-z]*",
+            r"\brm\b[^|;&]*--recursive",
+            # Windows recursive delete. `/s /q` and `/sq` are the same command.
+            r"\bdel\b[^|;&]*/s",
+            r"\brd\b[^|;&]*/s",
+            r"\brmdir\b[^|;&]*/s",
+            # Wipe a filesystem. The drive letter may be quoted or omitted
+            # (`format` with no argument uses the current drive).
+            r"\bformat\s+[a-z]{1,3}:",
+            r"\bformat(\s|$)",
+            # Power on/off, in both shells.
+            r"\bshutdown\b",
+            r"\breboot\b",
+            r"\bstop-computer\b",
+            r"\brestart-computer\b",
+            # PowerShell's recursive delete, which `rm` alone would not catch.
+            r"remove-item\b[^|;&]*-recurse",
+            # Encoded command: obfuscation is the point, so it never gets one.
+            # `-e(nc|ncodedcommand|c)` covers all three spellings of the flag.
+            r"powershell\s+-e(nc|ncodedcommand|c)\b",
+            r"pwsh\s+-e(nc|ncodedcommand|c)\b",
+            # Piping a download into a shell. The previous patterns here were
+            # `curl\s+\|\s*sh`, which requires the pipe to touch `curl` -- and a
+            # real command has a URL in between, so it could not match the thing
+            # it names. It looked like protection and was not.
+            r"\b(curl|wget|iwr|invoke-webrequest)\b[^|]*\|\s*(sudo\s+)?(sh|bash|zsh|python|pwsh|powershell)\b",
         ]
     )
     confirm_destructive: bool = True

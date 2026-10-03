@@ -1,6 +1,6 @@
 # TONYAgent — Project Summary
 
-**Updated:** 2026-10-03 · **Tests:** Python 605 passed, 7 skipped
+**Updated:** 2026-10-03 · **Tests:** Python 607 passed, 7 skipped
 (`test_build_scripts.py` 는 실행 환경 의존이라 3~5개가 매번 다른 이름으로
 실패 — 커밋 전 코드로도 재현됨), TypeScript 382 passed (`ComposerAttach`
 Windows flake 1개)

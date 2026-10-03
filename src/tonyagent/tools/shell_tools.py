@@ -54,6 +54,65 @@ def allowlist_bypassed() -> bool:
     return _ALLOWLIST_BYPASS
 
 
+#: Leading words that only wrap another command. Stripped before the denylist
+#: looks at anything, so `cmd /c format C:` and `powershell -Command rm -rf /`
+#: are judged on what they run rather than on how they were spelled.
+#:
+#: Two things are deliberately *not* here:
+#:
+#: * The flag requirement lives inside each branch, not after the alternation.
+#:   Written as `powershell|pwsh\s+-command`, the first branch matches bare
+#:   `powershell`, and every PowerShell command had its first word deleted
+#:   before the denylist ran.
+#: * `-enc` / `-encodedcommand` / `-ec` are **not** unwrapped. They look like a
+#:   wrapper but the payload is base64, so unwrapping one leaves an opaque blob
+#:   no pattern can read -- and it silently defeats the pattern that exists to
+#:   block it. An obfuscating flag is refused on sight, not looked inside.
+_DENYLIST_WRAPPERS = (
+    r"(?:cmd(?:\.exe)?\s+/[ck]\s+)",
+    r"(?:powershell|pwsh)(?:\.exe)?\s+-+(?:command|c)\s+",
+)
+
+
+def normalize_for_denylist(command: str) -> str:
+    """Reduce a command to the text the destructive-command patterns match on.
+
+    **What this is for.** The denylist is matched with `re.search`, so anything
+    that changes the spelling changes the answer. Three things are undone first:
+
+    * quotes are removed, so a quoted path reads the same as a bare one;
+    * runs of whitespace collapse to one space;
+    * `cmd /c` and `powershell -Command` wrappers are stripped, repeatedly, so
+      the command that actually runs is what gets judged.
+
+    **What this does not do, stated plainly.** It is a normalisation, not a
+    parser, and it is not a security boundary by itself. The built-in patterns
+    are now written broadly enough (`[^|;&]*` between the verb and its flags)
+    that most of the disguises they used to miss are caught without it -- the
+    normaliser is not what makes those tests pass. It earns its place for the
+    patterns *other people write*: `command_denylist` is a setting, and a
+    careful pattern added to `config.toml` would silently stop matching the day
+    someone quoted a path, with nothing to say so.
+
+    The real boundary is the sandbox. See `ExecuteCommandTool`'s isolation gate:
+    an allow-listed interpreter can delete a tree from inside a container the
+    agent cannot see out of, which no denylist over command strings will ever
+    prevent. This is the cheap inner ring, not the wall.
+    """
+    text = command.lower().replace("'", "").replace('"', "")
+    text = re.sub(r"\s+", " ", text)
+    # Stripped repeatedly: `cmd /c powershell -Command rm -rf /` is two deep,
+    # and a single pass would leave the inner wrapper in place for the patterns
+    # to miss.
+    for _ in range(4):
+        before = text
+        for wrapper in _DENYLIST_WRAPPERS:
+            text = re.sub(r"^\s*" + wrapper, "", text)
+        if text == before:
+            break
+    return text.strip()
+
+
 def _is_command_allowed(command: str, bypass_allowlist: bool = False) -> tuple[bool, str]:
     """Check if command is allowed by allowlist/denylist.
 
@@ -63,6 +122,10 @@ def _is_command_allowed(command: str, bypass_allowlist: bool = False) -> tuple[b
     trust -- it is the handful that destroy the machine (`rm -rf /`,
     `format C:`, `shutdown`, `reboot`). Widening what may run does not have to
     mean widening what may never run, and the two are separate decisions.
+
+    At Full this list is the *only* thing between the agent and the machine, so
+    it is matched against `normalize_for_denylist` rather than the raw string --
+    see that function for the disguises that motivated it.
     """
     parts = shlex.split(command)
     if not parts:
@@ -71,8 +134,9 @@ def _is_command_allowed(command: str, bypass_allowlist: bool = False) -> tuple[b
     base_cmd = Path(parts[0]).name.lower()
 
     # Check denylist first, unconditionally.
+    normalized = normalize_for_denylist(command)
     for deny_pattern in settings.tools.command_denylist:
-        if re.search(deny_pattern, command, re.IGNORECASE):
+        if re.search(deny_pattern, normalized):
             return False, f"Command matches denylist pattern: {deny_pattern}"
 
     if bypass_allowlist:

