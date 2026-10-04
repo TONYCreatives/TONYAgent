@@ -1,8 +1,8 @@
 # TONYAgent — Project Summary
 
-**Updated:** 2026-10-03 · **Tests:** Python 609 passed, 7 skipped
+**Updated:** 2026-10-04 · **Tests:** Python 610 passed, 7 skipped
 (`test_build_scripts.py` 는 실행 환경 의존이라 3~5개가 매번 다른 이름으로
-실패 — 커밋 전 코드로도 재현됨), TypeScript 411 passed (`ComposerAttach`
+실패 — 커밋 전 코드로도 재현됨), TypeScript 415 passed (`ComposerAttach`
 Windows flake 1개)
 **Build:** Tauri MSI + NSIS installers produced; app verified running end to end
 (`decorations: false` — 시스템 타이틀 바를 빼고 앱이 직접 그리며, 우클릭/F10으로
@@ -134,9 +134,9 @@ MSVC 블로커는 **해결됨** (Visual Studio Community 2026, VC tools 14.51.36
 
 ```bash
 python -m compileall -q src
-python -m pytest tests -q                    # 609 passed, 7 skipped
+python -m pytest tests -q                    # 610 passed, 7 skipped
 python scripts/check_all.py --fast           # 3 checks
-cd app && npm test                           # 411 passed (Rust 불필요)
+cd app && npm test                           # 415 passed (Rust 불필요)
 python scripts/verify_composer_pass.py       # 패키징된 앱 DOM: 전송 아이콘, 첨부,
                                              # 모델 메뉴, tool call 예산
 python scripts/verify_pass_b.py              # 패키징된 앱 실측: rail 정렬, 자체 타이틀
@@ -400,3 +400,109 @@ Move와 Size는 F10 → 니모닉 → 화살표 6회 → Enter로 실제 구동�
 **사용자가 두 monitor 중 어느 쪽에 창을 두든 원래 자리로 되돌려 놓고** 끝냅니다.
 포커스와 커서도 `finally`에서 원래대로 돌려놓습니다 — 다른 모니터에서 강의를
 듣는 사람 컴퓨터에서 테스트할 수 있는 최소한의 예의입니다.
+
+
+---
+
+## 최근 추가분: 액센트 색상 (팔레트 교체)
+
+`--accent` 는 이제 **이 앱 자신의 아트워크에서 읽은 값**입니다. 이전의
+`#bacda9`(sage)는 Freebuff의 색을 빌려온 것이었고, 화면 스크캔에서도 Freebuff
+캡처의 0.01~0.06% 대로 이 앱 캡처의 0.13% chroma로만 나타나 "우리 색이
+아님"이 확인됐습니다.
+
+### 무엇을 근거로 삼았는가
+
+레포 안에 색을 정의하는 아티팩트를 순서대로 뒤져봤습니다. `.freebuff/` 에는
+`project-id` 37바이트뿐이고 팔레트가 없고, README 에는 shields.io의 "blue"
+배지뿐이며, 앱 안의 `.rail-logo` 는 `--raised` 위의 회색 "TA" 텍스트입니다.
+**색을 실제로 정의하는 유일한 아티팩트는 `app/src-tauri/icons/*.png`** —
+32/64/128/128@2x 네 장을 전부 분해했습니다(zlib + PNG 필터, 이미지 라이브러리
+없음). 결과는 네 장 모두에서 **절대다수**였습니다:
+
+```
+#2f6feb   80.5% ~ 87.3% of opaque pixels   <- 본체
+#6393f0   0.1% ~ 1.4%                     <- 안티에일리어스 램프
+#97b7f5   0.1% ~ 6.7%
+#cbdbfa   0.1% ~ 1.4%
+```
+
+**본체가 아니라 램프의 `#6393f0` 을 `--accent` 로 잡았습니다.** 이유는
+대비입니다. `--accent` 는 작은 색 텍스트로도 쓰입니다(`.permchoice-gain`,
+`.linkish`, 설정 힌트의 강조).
+
+| 값 | `--bg` 위 대비 | 판정 |
+|---|---|---|
+| `#2f6feb` (본체) | 3.70:1 | 텍스트로 부적합 (4.5:1 미달) |
+| `#6393f0` (램프) | **5.61:1** | 채움·텍스트 모두 통과 |
+
+`--accent-fg` 는 같은 아이콘에 이미 있는 `#0b1020` (거의 검정)으로 두었습니다.
+`#6393f0` 위에 **6.28:1**. 즉 **새 팔레트를 하나도 지어내지 않았습니다** — 두 값
+모두 같은 PNG 안에 이미 있던 값입니다.
+
+`--accent` / `--accent-fg` 는 `:root` 맨 위에서 한 쌍으로 선언되고, 나머지
+26개 참조는 전부 그 토큰을 따라갑니다. 컴포넌트 `.tsx` 에 색 리터럴은
+여전히 0개입니다.
+
+### 오프 팔레트 3건 + 접히기 1건
+
+모두 같은 자리(스타일시트)가 같은 이유로 고쳐졌습니다 — 토큰이 닿지 않는 값은
+교환에서 살아남기 때문입니다.
+
+- **활성 모드 알약**: `#d0d0d0` 배경 + `#141414` 글자 → `var(--chip)` +
+  `var(--fg)`. 따뜻한 팔레트에 있던 순수 중성 회색이었습니다.
+- **스크롤바 엄지**: 순수 중성 `#333` / `#454545` → `var(--raised)` /
+  `var(--hover)`, `::-webkit-scrollbar-corner` 는 `transparent` 로. 스크롤바는
+  `getComputedStyle` 로 볼 수 없어 **캡처한 픽셀을 직접 읽어** 확인했습니다
+  (아래 실측).
+- **`color-scheme: dark`**: 어디에도 선언돼 있지 않아 네이티브 위젯이 밝게
+  렌더됐습니다. 이제 `:root` 에 있습니다. 앱은 dark only이고, 이건 OS가 아니라
+  **앱이 브라우저에게 말하는 것**입니다 — `prefers-color-scheme` 은 여전히
+  조회하지 않습니다.
+- **접힌 tint 세 개**: `.notice` 의 손으로 적힌 `rgba(186,205,169,0.1)` — 옛
+  액센트를 하드코딩한 바로 그 자리 — 를 `var(--accent) 10%` 로 접었습니다.
+  `.warn`, `.banner` 도 같은 방식으로 토큰 위에 올렸습니다.
+
+### `--ok` 를 액센트에서 분리
+
+`--ok` 는 `#a3c48a` 로 **값을 바꾸지 않았고**, 쓰임만 정리했습니다. 이전에는
+액센트와 색상환 **63/765** 거리 — 둘 다 초록 — 라서 "에이전트 성공"과 "이
+앱의 색"이 같은 이름이 아니라 같은 색으로 읽혔습니다. 파란 액센트와는 **215**
+거리로, 휠의 반대편입니다.
+
+### 실측 (패키징된 빌드, CDP 9333)
+
+```
+root tokens   --accent #6393f0  --accent-fg #0b1020  --ok #a3c48a
+              color-scheme: dark (computed: "dark")
+.mode.is-active   bg rgb(59,62,58)=#3b3e3a=--chip   color rgb(222,223,221)=--fg
+.send-btn         bg rgb(99,147,240)=#6393f0        color rgb(11,16,32)=#0b1020
+.btn.btn-accent   bg rgb(99,147,240)=#6393f0
+.notice tint      color(srgb 0.388 0.576 0.941 / 0.1)  == #6393f0 @ 10%
+scrollbar thumb   #313330  == var(--raised) exactly (bounding box 4x20 px)
+window-wide scan  exact #333333 : 0 px  (제거된 중성 엄지 부재 확인)
+contrast          accent on --bg 5.61:1   on --raised 4.23:1
+                  accent-fg on accent 6.28:1   --ok on --bg 8.71:1
+hue               accent 220 deg, --ok 94 deg, separation 126 deg
+```
+
+중성 표면(`--bg`, `--chrome`, `--chip`)은 이 패스에서 값이 바뀌지 않았습니다.
+
+### 테스트
+
+`layout.test.ts` 에 5개를 넣었습니다(411 → 415). 값이 아니라 **성질**을
+잡습니다:
+
+1. 액센트가 자신의 아이콘에서 읽힌 값인지 (`#6393f0` / `#0b1020`) + 대비 근거
+2. 액센트와 `--ok` 의 색상환 각도차가 60° 이상 — 두 이름이 같은 색이 아닌지
+3. 토큰이 이미 소유한 색을 어떤 규칙도 그대로 쓰지 않는지 (scrim/backdrop 계열
+   와 box-shadow 는 성격이 다르므로 예외)
+4. 브라우저가 이 창을 dark 로 아는지
+5. 선택된 모드 알약이 밝은 상자가 아니라 팔레트의 선택 단계인지
+
+**남은 갭 하나 (알고고 넘어갑니다):** `.permchoice-warn` 은 `--chip` 위의
+`--accent` 글자라 9.5px 에서 **3.6:1** 입니다 (작은 텍스트 기준 4.5:1
+미달). 액센트를 `#6393f0` 으로 옮기면서 원래 `#bacda9` 보다 낮아진 값입니다.
+이 패스는 색만 다루는 스코프라 채우기를 건드리지 않았고, 다음 패스에서
+칩 위 배지용 액센트 스텝(또는 `--accent` 위에 더 밝은 스텝)을 정하는 것이
+정확한 수순입니다.

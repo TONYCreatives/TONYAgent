@@ -274,12 +274,86 @@ describe("the palette is the reference's", () => {
     );
   });
 
-  test("the accent is the reference's sage", () => {
-    // Counted off the reference: 2436 pixels of #bacda9, more than any other
-    // chromatic colour in the window, and it is what the send button is filled
-    // with. The first pass here guessed a purple and it was wrong in a way only
-    // a comparison could have caught.
-    assert.equal(tokens("accent"), "#bacda9");
+  test("the accent is this app's own, read off its own icon", () => {
+    // The neutrals above are borrowed on purpose, and stay borrowed. The accent
+    // is not: it used to be the reference's sage, which meant the app shipped a
+    // blue icon on the taskbar and a sage window around it. It is now a value
+    // out of the shipped artwork -- #2f6feb is 80-87% of the opaque pixels of
+    // every icon size, and #6393f0 is the step on its own antialias ramp.
+    //
+    // Pinned to #6393f0 rather than #2f6feb on purpose: the icon blue is 3.70:1
+    // on --bg, which is short of the 4.5:1 body text needs, and the accent also
+    // paints small text. The ramp step is 5.61:1. Both are the icon's.
+    assert.equal(tokens("accent"), "#6393f0");
+    // And it must be readable as ink on top of itself.
+    assert.equal(tokens("accent-fg"), "#0b1020");
+  });
+
+  test("the accent and --ok are not the same hue wearing two names", () => {
+    // --ok was a green 63/765 from a green accent, so a success dot beside a
+    // filled button was a distinction of degree. Against a blue accent the same
+    // green sits on the other side of the wheel.
+    //
+    // Measured as an angle in HSL rather than a channel distance: comparing one
+    // RGB channel says nothing about hue, because blue is low in red and green
+    // is high in it, and a test built that way would have passed on two
+    // colours a person cannot tell apart.
+    const hue = (name: string) => {
+      const [r, g, b] = [1, 3, 5]
+        .map((i) => parseInt(tokens(name)!.slice(i, i + 2), 16) / 255)
+        .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const d = max - min;
+      if (d === 0) return 0;
+      let h: number;
+      if (max === r) h = ((g - b) / d) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      return ((h * 60) % 360 + 360) % 360;
+    };
+    const apart = Math.abs(hue("accent") - hue("ok"));
+    const separation = Math.min(apart, 360 - apart);
+    assert.ok(
+      separation >= 60,
+      `--accent ${tokens("accent")} and --ok ${tokens("ok")} are only `
+        + `${separation.toFixed(0)} degrees apart on the wheel`,
+    );
+  });
+
+  test("no rule paints a raw colour the tokens already own", () => {
+    // The failures this replaced were all one bug: a literal no token reached,
+    // so no palette change could reach it either -- the old accent written out
+    // by hand as rgba(186,205,169,0.1), a #d0d0d0 pill, a #333 scrollbar, a
+    // #1a0a08 ink. A token swap reaches `var(--accent)` and nothing else, so
+    // each of those would have survived it looking deliberate.
+    //
+    // `:root` is where the tokens are declared, so it is the one place a raw
+    // hex belongs. Two families of declaration are exempt, and both are exempt
+    // because their colour is not a palette value: `box-shadow`, which is the
+    // absence of light, and the near-black scrim/backdrop tints, which are
+    // "the window, dimmed" rather than any one colour. Checked against the
+    // parsed rules rather than the raw lines so prose in a comment cannot fail
+    // this.
+    const offenders: string[] = [];
+    for (const rule of RULES) {
+      if (rule.selectors.includes(":root")) continue;
+      const selector = rule.selectors.join(", ");
+      if (/-(scrim|backdrop)\b/.test(selector)) continue;
+      for (const decl of rule.body.split(";")) {
+        if (/^\s*(box-shadow|-webkit-box-shadow)\s*:/.test(decl)) continue;
+        for (const bad of decl.matchAll(/#[0-9a-fA-F]{3,8}\b|rgba?\(\s*\d/g)) {
+          offenders.push(`${selector} -> ${bad[0]}`);
+        }
+      }
+    }
+    assert.deepEqual(offenders, [], "raw colours outside :root");
+  });
+
+  test("the browser is told this window is dark", () => {
+    // Without it, scrollbars, the scrollbar corner and form-control defaults
+    // paint themselves light inside a #1c1d1c window.
+    assert.match(body(":root"), /color-scheme:\s*dark/);
   });
 });
 
@@ -614,6 +688,17 @@ describe("permission and thinking read as one control in the settings panel", ()
     assert.doesNotMatch(SOURCE, /\.permchoice\s*\{[^}]*--composer/);
     assert.doesNotMatch(body(".permchoice"), /max-width:\s*720px/);
     assert.match(body(".permchoice"), /width:\s*100%/);
+  });
+
+  test("the selected mode pill is the palette's selected step, not a light box", () => {
+    // It was #d0d0d0 on #141414 -- the brightest thing in an app whose darkest
+    // surface is #1c1d1c -- and no token reached it, so nothing could have
+    // retinted it. It now uses the same `--chip` the conversation row, the tab
+    // pill and the selected rail item use, which is what makes all four read as
+    // one "selected" rather than as four unrelated fills.
+    assert.match(body(".mode.is-active"), /background:\s*var\(--chip\)/);
+    assert.match(body(".mode.is-active"), /color:\s*var\(--fg\)/);
+    assert.doesNotMatch(body(".mode.is-active"), /#[0-9a-fA-F]{3,8}/);
   });
 
   test("the value is pushed to the far edge, so the eye finishes on the answer", () => {

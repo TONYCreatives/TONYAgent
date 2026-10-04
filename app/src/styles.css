@@ -23,7 +23,9 @@
  *   #dedfdd    0.4%                body text          (luminance 222)
  *   #a1a39f            secondary text               (162)
  *   #7c807a            metadata                     (116)
- *   #bacda9            the accent, and the only chroma in the window
+ *
+ * Every one of those is borrowed from the reference and still is. The accent
+ * is the one value that is **not** -- see the accent note below.
  *
  * and the geometry, read off the same capture:
  **   52px  icon rail, full height, --chrome, the selected item a 34px --chip square
@@ -51,16 +53,47 @@
  *   anywhere in it. A tint added "for depth" is the one thing that cannot
  *   survive a comparison.
  *
- * The accent is a *desaturated sage* (#bacda9), confirmed by counting it: 1905
- * pixels of it in the send button alone, more than any other chromatic colour,
- * and it is what that button and the toggles are filled with.
+ * **The accent is this application's own, and it comes from its own icon.**
  *
- * Dark only. The reference is dark-only and a light theme would need a second
- * full palette to be worth shipping, so `prefers-color-scheme` is not consulted.
- * The Tkinter UI keeps its own light/dark system.
+ * Every neutral above was counted out of a screenshot of the Freebuff window,
+ * and the accent was too -- it was the reference's desaturated sage (#bacda9),
+ * adopted so the two windows would sit beside each other without a seam. That
+ * was the right call while the goal was to match the reference and the wrong
+ * one now that this is its own application: the icon this app ships to the
+ * taskbar, the installer and the window frame is a blue, and the UI was
+ * carrying a colour that appears nowhere in the app's own identity.
+ *
+ * So the accent is read out of the shipped artwork instead. Decomposing
+ * `app/src-tauri/icons/*.png` gives **#2f6feb at 80-87% of the opaque pixels at
+ * every one of the four sizes**, with a ramp of lighter blues around it where
+ * the artwork antialiases -- #6393f0, #97b7f5, #cbdbfa. Those two mid-steps are
+ * the antialiasing, but they are the icon's own values and they are what make
+ * the accent usable as *text*.
+ *
+ * #2f6feb itself is 3.70:1 on `--bg`: fine as a fill, short of the 4.5:1 that
+ * body text needs, and the accent is also used for small coloured text
+ * (`.permchoice-gain`, `.linkish`, `.settings-hint` accents). **#6393f0 is
+ * therefore the token**, at 5.61:1 on `--bg` and 4.23:1 on `--raised`, with a
+ * near-black `--accent-fg` at 6.28:1 on top of it. Both numbers are in the same
+ * icon. A second palette invented here would not be this application's; this
+ * one already ships, on every icon the user sees.
+ *
+ * Dark only, and now declared as such. `color-scheme: dark` is what stops the
+ * browser's own scrollbars, form controls and scrollbar-corner painting
+ * themselves light inside a near-black window.
  */
 
 :root {
+  /*
+   * Declared, not merely implied. Without it the browser paints its own
+   * widgets -- scrollbars, the scrollbar corner, form-control defaults -- in
+   * light mode inside a #1c1d1c window, and every one of them is a light box
+   * the user did not ask for. `prefers-color-scheme` is still not consulted:
+   * this app is dark only, and this is the app telling the browser that rather
+   * than the OS being asked.
+   */
+  color-scheme: dark;
+
   --bg: #1c1d1c;
   --chrome: #292b2a;
   /*
@@ -88,10 +121,35 @@
   --fg-dim: #a1a39f;
   --fg-mute: #7c807a;
 
-  --accent: #bacda9;
-  --accent-fg: #14170f;
+  /*
+   * The accent, read out of the shipped icon artwork -- see the header. The
+   * pair is the whole contract: `--accent` paints, `--accent-fg` is the ink on
+   * top of it. They are declared together because a fill picked without its
+   * foreground is how a palette ends up with two readable colours and a third
+   * that is neither.
+   *
+   * Every surface that takes chroma takes `--accent`. The `.notice` tint is the
+   * one that used to spell the old sage out by hand as `rgba(186,205,169,0.1)`
+   * -- a value a swap could not reach, which is exactly what it did.
+   */
+  --accent: #6393f0;
+  --accent-fg: #0b1020;
+
+  /*
+   * `--ok` was #a3c48a, a green 63/765 from the old green accent: "the agent
+   * succeeded" and "this is the application's colour" were the same hue, and a
+   * status dot next to a filled button was a distinction of degree rather than
+   * of kind. Against the blue accent the same green sits 215 away, on the
+   * other side of the wheel, so the two can no longer be mistaken for each
+   * other at any size.
+   */
   --ok: #a3c48a;
   --danger: #c9705f;
+  /* The ink on a --danger fill. Same job as --accent-fg and the same reason it
+   * is a token: `#1a0a08` was written out at both call sites (the close button
+   * and the danger button), so nothing tied them to `--danger` and a future
+   * change of the fill would have left two near-blacks behind. */
+  --danger-fg: #1a0a08;
   --warn: #c9a45f;
 
   --rail-w: 52px;
@@ -982,7 +1040,7 @@ body {
 .win-btn.is-close:hover,
 .win-btn.is-close:focus-visible {
   background: var(--danger);
-  color: #1a0a08;
+  color: var(--danger-fg);
 }
 
 .topbar-toggle {
@@ -1805,7 +1863,7 @@ body {
   padding: 6px 8px 8px 10px;
 }
 
-/* Mode selector: one active pill (near-white) among quiet inactive ones. */
+/* Mode selector: one active pill among quiet inactive ones. */
 .mode-group {
   display: flex;
   align-items: center;
@@ -1833,8 +1891,21 @@ body {
 }
 
 .mode.is-active {
-  background: #d0d0d0;
-  color: #141414;
+  /* `--chip` and `--fg`, and not two hand-picked greys.
+   *
+   * This was #d0d0d0 on #141414: a near-white pill in a window whose darkest
+   * surface is #1c1d1c. It was the single brightest thing in the app by an
+   * order of magnitude, no token reached it, so no palette change could have
+   * touched it -- and being off-palette it read as an import from somewhere
+   * else rather than as a selected state.
+   *
+   * `--chip` is already the selected step for three other surfaces -- the
+   * conversation row, the tab pill, the selected rail item -- so the composer's
+   * mode pills now say "selected" in the same voice, and `layout.test.ts` can
+   * hold all four to one token.
+   */
+  background: var(--chip);
+  color: var(--fg);
   font-weight: 500;
 }
 
@@ -1969,7 +2040,7 @@ body {
 .btn-danger {
   background: var(--danger);
   border-color: var(--danger);
-  color: #1a0a08;
+  color: var(--danger-fg);
 }
 
 /*
@@ -2014,7 +2085,7 @@ body {
   padding: 8px 12px;
   border: 1px solid var(--danger);
   border-radius: var(--radius-sm);
-  background: rgba(224, 108, 92, 0.08);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
   color: var(--danger);
   font-size: 12px;
   overflow-wrap: anywhere;
@@ -2230,7 +2301,18 @@ body {
   margin: 0 0 14px;
   padding: 7px 10px;
   border-radius: var(--radius-sm);
-  background: rgba(216, 166, 87, 0.1);
+  /* The three tinted surfaces below used to spell their hue out as a raw
+   * `rgba(r, g, b, a)` triple -- `rgba(186,205,169,0.1)` here, which was the
+   * *old* accent written down by hand. A token swap reaches `var(--accent)` and
+   * nothing else, so that declaration would have kept painting sage over a blue
+   * notice for as long as the file lived, and it would have looked deliberate.
+   *
+   * `color-mix` against the token instead: the alpha is still 10% of the hue, so
+   * this is the same colour it was, but it now follows whatever `--accent` is.
+   * WebView2 has supported `color-mix` since 111 and this window is Chromium
+   * 154, so there is no fallback to write.
+   */
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
   color: var(--warn);
   font-size: 12px;
 }
@@ -2241,7 +2323,7 @@ body {
   margin: 0 0 14px;
   padding: 7px 10px;
   border-radius: var(--radius-sm);
-  background: rgba(186, 205, 169, 0.1);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
   font-size: 12px;
 }
@@ -2757,11 +2839,19 @@ body {
   border: 3px solid transparent;
   border-radius: var(--radius-pill);
   background-clip: content-box;
-  background-color: #333;
+  /* `--raised`, not #333. The thumb was a pure neutral grey in a palette whose
+     every other value is a warm green-grey -- and the header calls out exactly
+     this substitution by name, because "#333 instead of a token" is the kind of
+     tidy edit that makes a window read as a different app. */
+  background-color: var(--raised);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: #454545;
+  background-color: var(--hover);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* --- right sidebar ------------------------------------------------------- */

@@ -2804,3 +2804,136 @@ comes back at `medium`. That is pre-existing and defensible -- a permission
 level that silently stayed at Full across a restart would be the worse
 behaviour -- but it means the two controls sitting side by side in the same
 panel do not persist the same way. Nothing in the UI says so.
+
+
+---
+
+## Pass: the accent colour (팔레트 교체 — color only)
+
+### What changed, and why the evidence decided it
+
+`--accent` 는 더 이상 빌려온 색이 아닙니다. `#bacda9`(sage)은 Freebuff의
+액센트였고, 화면 스캔에서도 Freebuff 캡처에 0.01~0.06%로 나타나고 이 앱 캡처
+에는 0.13% chroma로만 나타났습니다. 즉 "우리 색"이 아니라 **증거가 붙어 있는
+남의 색**이었습니다.
+
+레포에서 색을 정의하는 아티팩트를 순서대로 확인했습니다:
+
+- `.freebuff/` → `project-id` 37바이트. 팔레트 없음.
+- README → 색 없음. shields.io "blue" 배지만 있음.
+- `.rail-logo` (in-app) → `--raised` 위의 회색 "TA" 텍스트. 색 없음.
+- **`app/src-tauri/icons/*.png`** → **여기가 유일하게 색을 정의합니다.**
+
+네 장(32/64/128/128@2x)을 전부 분해했습니다. zlib + PNG 필터만으로 쓴
+일회용 리더였고, 이 패스가 끝나면 지웠습니다. 네 장 모두 `#2f6feb` 이
+opaque 픽셀의
+80.5~87.3%였고, 그 주위에 안티에일리어스 램프
+(`#6393f0`, `#97b7f5`, `#cbdbfa`, `#bed2f8`)가 있었습니다.
+
+**본체가 아니라 `#6393f0` 을 골랐습니다.** `--accent` 는 작은 색 텍스트로도
+쓰입니다(`.permchoice-gain`, `.linkish`, 설정 힌트 강조):
+
+- `#2f6feb` on `--bg` = **3.70:1** → 작은 텍스트에 부적합
+- `#6393f0` on `--bg` = **5.61:1** → 통과. 채움으로도 좋고 텍스트로도 읽힘
+
+`--accent-fg` 는 **같은 아이콘에 있는** `#0b1020`. 그 위에서 6.28:1. 두 값
+모두 기존 PNG의 값이라 **두 번째 팔레트를 지어내지 않았습니다** — 요청이
+명시적으로 금지한 그 일입니다.
+
+### 적용 범위
+
+토큰은 `:root` 맨 위에 한 쌍으로만 선언되고, 나머지 참조는 전부 따라갑니다:
+
+```css
+--accent: #6393f0;    /* 본체 #2f6feb 가 아니라 램프 — 작은 텍스트 대비 때문에 */
+--accent-fg: #0b1020; /* 같은 아이콘의 거의 검정. 그 위에서 6.28:1 */
+```
+
+`.tsx` 의 색 리터럴은 여전히 0개입니다.
+
+### 오프 팔레트 정리 — 4곳, 한 이유
+
+모두 **토큰이 닿지 않는 값은 교환에서 살아남는다**는 같은 이유였습니다.
+
+1. `.mode.is-active` 의 `#d0d0d0` + `#141414` → `var(--chip)` + `var(--fg)`.
+   따뜻한 팔레트에 있던 순수 중성 회색이었고 팔레트에서 4단계 위라 뒤집힌
+   배지처럼 보였습니다.
+2. `::-webkit-scrollbar-thumb` 의 순수 중성 `#333` / `#454545` →
+   `var(--raised)` / `var(--hover)`. `::-webkit-scrollbar-corner` 도
+   `transparent` 로.
+3. `color-scheme: dark` 추가. 이제 없습니다 → 네이티브 위젯이 밝게 렌더되고
+   있었습니다. 앱은 dark only이므로, 이건 OS를 묻는 게 아니라 **앱이 브라우저
+   에게 말하는 것**입니다(`prefers-color-scheme` 은 여전히 미조회).
+4. `.notice` 의 손으로 적힌 `rgba(186,205,169,0.1)` → `var(--accent) 10%`.
+   **옛 액센트를 하드코딩한 바로 그 자리**였고, 그래서 감사에서 유일하게
+   실제로 남던 교환 누출자였습니다. `.warn`, `.banner` tint도 같이 접었습니다
+   (`color-mix(in srgb, <token> N%, transparent)` — Chromium 154 에서 안전).
+
+추가로 `#1a0a08` 을 **새 토큰 `--danger-fg`** 로 올렸습니다. 채움 위에 앉는
+잉크는 `--accent-fg` 와 같은 일인데 토큰이 없어 두 call site 에 각각 적혀
+있었습니다 — 알약과 정확히 같은 종류의 버그였습니다.
+
+### `--ok` 분리
+
+값은 그대로 `#a3c48a`. **쓰임만** 정리했습니다. 이전엔 액센트와 색상환
+63/765 거리로 둘 다 초록 — "성공"과 "브랜드"가 같은 색이었습니다. 이제
+**215** 거리, 휠의 반대편.
+
+### 실측 — 패키징된 빌드를 실제로 구동해서 읽은 값
+
+diff를 읽는 것으로 증명이 아니었습니다. CDP 9333으로 띄우고 계산된 색을
+읽었습니다:
+
+```
+root tokens    --accent #6393f0   --accent-fg #0b1020   --ok #a3c48a
+               color-scheme: dark  (computed: "dark")
+.mode.is-active  bg #3b3e3a = var(--chip)   color #dedfdd = var(--fg)
+.send-btn        bg #6393f0 = var(--accent) color #0b1020 = var(--accent-fg)
+.btn.btn-accent  bg #6393f0
+.notice tint     color(srgb .388 .576 .941 / .1)  == #6393f0 @ 10%
+contrast         accent on --bg 5.61:1 | on --raised 4.23:1
+                 accent-fg on accent 6.28:1 | --ok on --bg 8.71:1
+hue              accent 220°, --ok 94°, separation 126°
+```
+
+**스크롤바는 `getComputedStyle` 로 볼 수 없습니다** — `::-webkit-scrollbar-thumb`
+는 계산값 API에 나타나지 않습니다. 그래서 페이지를 캡처해서 **픽셀을 직접
+읽었습니다**. 4x20 px 크기의 thumb가 `#313330` (= `--raised`)으로
+나왔고, 창 전체 960,000 픽셀을 훑어 **정확히 `#333333` 은 0 픽셀** —
+제거된 중성 엄지가 어디에도 남아있지 않음을 확인했습니다.
+
+### 테스트
+
+`layout.test.ts` 에 5개 추가 (411 → 415, 파일 단독 56/56). 전부 **값이 아니라
+성질**을 잡습니다:
+
+1. 액센트가 자기 아이콘에서 읽힌 값인가 + 대비 근거
+2. 액센트와 `--ok` 의 색상환 각도 ≥ 60°
+3. **어떤 규칙도 토큰이 이미 소유한 색을 그대로 쓰지 않는다** — `:root` 제외,
+   scrim/backdrop 계열 제외, box-shadow 제외. 이 테스트가 `#1a0a08` 을 실제로
+   잡아냈습니다(제가 처음에 under-scope했습니다: 잉크는 채움 위에 앉는데
+   토큰이 없었던, 알약과 같은 버그).
+4. 브라우저가 이 창을 dark로 아는가
+5. 선택된 모드 알약이 밝은 상자가 아니라 팔레트의 선택 단계인가
+
+`tcs --noEmit` 클린, `npm test` 415/415, `pytest tests/unit -q`
+**610 passed / 7 skipped / 0 failed**(이 실행에서는 `test_build_scripts.py` 도
+초록), `audit_reduced_motion.py` 클린, 빌드 "Build finished."
+
+### 이 패스가 일부러 건드리지 않은 것
+
+**Experience polish은 스코프 밖입니다.** 이 요청은 색만 명시했습니다
+("Scope is color: no new components, no new UI, no layout changes, no
+reorganization of the stylesheet"), 첫-run 경험이나 empty state, 반응형
+피드백을 요구한 곳이 없습니다. User-facing 컴포넌트를 하나도 새로 만들지
+않았으므로 polisher 문단대로 **아무것도 바꾸지 않고 보고합니다.**
+
+### 다음 패스 후보
+
+1. **`.permchoice-warn` 대비** — `--chip` 위 `--accent` 9.5px = 3.6:1.
+   이번 교환으로 `#bacda9` 보다 낮아졌습니다. 칩 위 배지용 액센트 스텝이
+   필요합니다(색 스코프라 여기까지 안 건드렸습니다).
+2. **포커스 링** — 감사에서 측정했듯 지금도 UA 기본
+   `outline: 1px rgb(16,16,16)` = `--bg` 위 1.13:1, 사실상 보이지 않습니다.
+   9/9 포커스 대상이 포커스 시 아무것도 안 변했습니다.
+3. **187 클래스 중 174개가 단일 호출자** — 디자인 시스템이라 부르기엔 얇습니다.
