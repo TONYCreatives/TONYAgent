@@ -396,13 +396,20 @@ piece of work**, and its first-line hazard is already closed (see below).
    keeps no handle to poll. New RPC methods in `docker/sandbox/rpc_server.py` **and a
    container rebuild**, so it cannot be tested without Docker.
 
-Phase 6 (`workflow`) and Phase 7 (skills) follow Phase 5. `workflow` is orchestration
-over subagents, so there is nothing to build it against yet.
+Phase 6 (`workflow`) and Phase 7 (skills) follow Phase 5. **Phase 5's first slice is
+now something `workflow` can be built against**: a subagent exists, has a name, a
+budget, a state, and a final answer. What `workflow` adds is the re-entrant session
+loop — the thing that would make `send_message` (a child you may talk to again) and
+`subagent_fork` (a conversation you may copy) mean something, plus orchestration over
+several such children. The serial child built in `5abe725` is the floor, not the shape,
+of that phase: it answers once and finishes, deliberately.
 
-### Phase 5 (subagents): what it will need, and where the seams are
+### Phase 5 (subagents): what landed, and what the next session picks up
 
-**The design is not settled.** What follows is the shape the existing code forces, so
-the next session starts from the constraints instead of rediscovering them.
+**The first slice is real and tested** (commit `5abe725`): the `subagent` tool, a
+registry, and two control verbs. What follows is what is already decided (so the
+next session does not relitigate it) and what is genuinely open (so the next
+session starts there instead of at the top).
 
 * **`ToolContext` comes first, and it is not optional this time.** It was deferred out
   of Phase 0 on the agreement that it be built when a real consumer forced its shape;
@@ -428,6 +435,12 @@ the next session starts from the constraints instead of rediscovering them.
   `install_question_bridge`, explicit, which is why it is the model to copy), and
   `jobs_registry` (a singleton, but one that owns live processes). A child session is
   the first thing that makes any of them wrong rather than merely untidy.
+  **`subagent_registry` is now a fourth**, and it has a hole the others do not:
+  `SubagentRegistry.restart()` exists but nothing calls it yet — switching
+  conversations leaves finished children listed in `list_agents` and would leave a
+  *running* child running. Wiring it to the same host path that resets `user_io`
+  (`headless/server.py`, where `install_question_bridge` is called) is small and
+  belongs in the next pass before `workflow` builds on the registry.
 * **Events need attribution before anything else.** `core/events.py` has one `EventBus`
   and events carry `turn_id`; the window's reducer pairs tool calls by `id` and appends
   to the message found by `turn_id` (`app/src/events.ts`). A child emitting the same
@@ -441,14 +454,25 @@ the next session starts from the constraints instead of rediscovering them.
   is nobody to send a message *to*. Both are Phase 6 (`workflow`) work, with the
   re-entrant session loop that phase was always going to need; the synchronous
   turn loop is what made this the honest Phase 5 shape.
-* **Budget.** The parent's `max_tool_calls` bounds the parent. A child's calls must not
-  silently spend it, and a child that cannot be bounded is an unbounded cost. Decide
-  whether a child gets its own budget, and make sure the `subagent` call itself counts
-  against the parent's.
-* **Permission must not escalate.** A child inherits the parent's mode and permission
-  and may only narrow. Whatever tool module is added must be imported inside the
-  existing block in `tools/__init__.py` — the import order there is load-bearing (see
-  §0's invariants).
+* **Decided: budgets.** The child gets the parent's per-turn budget as its own
+  ceiling (its own counter); the `subagent` call itself spends one of the
+  *parent's* slots, so a fan-out is bounded by the budget the user set. A child
+  running over 120s is cancelled and the timeout is SAID in the result.
+* **Decided: permission cannot escalate.** The child inherits the parent's mode
+  and permission objects directly — there is no parameter a model could set to
+  widen them. Registering the tool happened inside the existing block in
+  `tools/__init__.py`; the import order there is still load-bearing.
+* **Open: the live window.** The unit test pins that child frames cannot corrupt
+  the parent transcript (own `turn_id`, own transcript; the parent reads only
+  `final_answer()`), but nobody has watched a real child run in the real window
+  yet. Whether the child's message frames render anywhere, duplicate, or vanish
+  in `MessageList` is known only to the code, not to a person. That check is the
+  first thing worth doing with a real provider bound.
+* **Open: nested UI (the "no frontend work" streak ends here when it is wanted).**
+  `MessageList.ToolRow` renders every tool identically; showing a child as
+  something other than a generic card means new `ToolCall` fields in
+  `app/src/events.ts`, a branch in `ToolRow`, and CSS. Fine to defer: the card
+  reads "subagent <name>: N/M tool calls" from `summary` today.
 * **The frontend changes here, and this is where the "no frontend work" streak ends.**
   A child's work has to be visible. `MessageList.ToolRow` (`app/src/MessageList.tsx`)
   renders every tool identically from `{id, name, status, detail, budget}`, so showing
