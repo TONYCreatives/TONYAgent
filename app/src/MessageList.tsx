@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatMessage } from "./events.js";
+import type { ChatMessage, SubagentChild } from "./events.js";
 import { MarkdownText } from "./MarkdownText.js";
 import { AppMark } from "./AppMark.js";
 
@@ -70,25 +70,67 @@ function isNearLimit(budget: string): boolean {
   return index >= limit - 1;
 }
 
+/**
+ * A subagent's own work, nested under the call that spawned it.
+ *
+ * The child is not a second assistant: its frames arrive tagged with this
+ * call's id (`parent_call_id`) and land here, so a reader sees what the
+ * subagent actually did -- the tools it ran, the answer it returned -- as the
+ * work of *that call*, not as something the assistant said. While the child is
+ * still running the header says so; the card itself finishes when the parent's
+ * call returns, which is what its own status and detail report.
+ */
+function SubagentWork({ child }: { child: SubagentChild }) {
+  return (
+    <div className={`subagent${child.running ? " is-running" : ""}`}>
+      <div className="subagent-head">
+        <span className="subagent-name">{child.name || "subagent"}</span>
+        <span className="subagent-state">{child.running ? "working\u2026" : "answered"}</span>
+      </div>
+      {child.tools.length > 0 && (
+        <div className="subagent-tools">
+          {child.tools.map((call) => (
+            <div key={call.id} className={`subagent-tool subagent-tool-${call.status}`}>
+              <span className="tool-mark" aria-hidden="true">
+                {STATUS_MARK[call.status]}
+              </span>
+              <span className="tool-name">{call.name}</span>
+              {call.detail && <span className="tool-detail">{call.detail}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+      {child.text && (
+        <div className="subagent-answer">
+          <MarkdownText text={child.text} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** One tool invocation inside an assistant message. */
 function ToolRow({ tool }: { tool: ChatMessage["tools"][number] }) {
   return (
-    <div className={`tool tool-${tool.status}`}>
-      <span className="tool-mark" aria-hidden="true">
-        {STATUS_MARK[tool.status]}
-      </span>
-      <span className="tool-name">{tool.name}</span>
-      {tool.budget && (
-        // The number the model also read, so the reader can see the turn
-        // approaching its limit rather than discovering it from an error.
-        <span
-          className={`tool-budget${isNearLimit(tool.budget) ? " is-near-limit" : ""}`}
-          title="Tool calls used in this turn"
-        >
-          {tool.budget}
+    <div className="tool-unit">
+      <div className={`tool tool-${tool.status}`}>
+        <span className="tool-mark" aria-hidden="true">
+          {STATUS_MARK[tool.status]}
         </span>
-      )}
-      {tool.detail && <span className="tool-detail">{tool.detail}</span>}
+        <span className="tool-name">{tool.name}</span>
+        {tool.budget && (
+          // The number the model also read, so the reader can see the turn
+          // approaching its limit rather than discovering it from an error.
+          <span
+            className={`tool-budget${isNearLimit(tool.budget) ? " is-near-limit" : ""}`}
+            title="Tool calls used in this turn"
+          >
+            {tool.budget}
+          </span>
+        )}
+        {tool.detail && <span className="tool-detail">{tool.detail}</span>}
+      </div>
+      {tool.child && <SubagentWork child={tool.child} />}
     </div>
   );
 }

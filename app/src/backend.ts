@@ -52,6 +52,16 @@ export interface CoreEvent {
   seq: number;
   turn_id: string | null;
   payload: Record<string, unknown>;
+  /**
+   * Present only on a subagent's frames: its name, and the id of the parent
+   * tool call that spawned it. See `Event.subagent` in `core/events.py`.
+   *
+   * The turn id alone cannot attribute a child's work: it is the *child's*
+   * turn, and this transcript has never seen it. The call id is the link the
+   * reducer draws the child's work under -- see `applySubagentEvent`.
+   */
+  subagent?: string;
+  parent_call_id?: string;
 }
 
 export interface CoreRequest {
@@ -174,6 +184,17 @@ export interface CoreMethods {
    * move anything.
    */
   "conversations.move": { id: string; project: string };
+  /**
+   * The skills a message may open with `/name`.
+   *
+   * Read from the core's own store, which is the same one `list_skills` and
+   * `run_skill` read, so the menu can never offer a name the agent cannot
+   * load. It is re-read whenever the menu opens rather than fetched once at
+   * mount: the user adds and edits these files in their own editor while the
+   * window is up, and a cached list would be stale exactly when it is being
+   * looked at.
+   */
+  "skills.list": Record<string, never>;
   /** Available composer modes and which one is in force. */
   "mode.list": Record<string, never>;
   "mode.set": { mode: string };

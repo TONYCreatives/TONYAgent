@@ -261,6 +261,49 @@ test("a confirmation request and its resolution clear the modal", () => {
   assert.equal(state.pendingConfirm, null);
 });
 
+test("a stopped turn takes its confirmation dialog down with it", () => {
+  // The core settles a prompt its turn ended on, and the window must not
+  // depend on that frame arriving: a stopped turn is exactly where the two can
+  // get out of order, and a dialog the turn can no longer answer is a dialog
+  // neither button means anything on. Measured before this: Stop during a
+  // destructive call left Allow / Deny on screen over a turn that had ended.
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(state, event("tool.started", { id: "d1", name: "delete_file" }));
+  state = applyEvent(
+    state,
+    event("confirmation.requested", {
+      id: "d1",
+      name: "delete_file",
+      arguments: { path: "a.py" },
+      destructive: true,
+    }),
+  );
+  assert.equal(state.pendingConfirm?.id, "d1");
+
+  state = applyEvent(state, event("turn.finished", { cancelled: true }));
+
+  assert.equal(state.pendingConfirm, null, "the dialog outlived the turn it belonged to");
+  assert.equal(state.busy, false);
+});
+
+test("another turn's terminal frame is not this turn's dialog closing", () => {
+  // The subagent guard from the nested-UI pass, from the other side: a foreign
+  // turn's `turn.finished` is ignored, so it must not take down a prompt the
+  // turn this window is rendering is still waiting on.
+  let state = applyEvent(initialState, event("turn.started", { model: "m" }, "t1"));
+  state = applyEvent(state, event("confirmation.requested", {
+    id: "d2",
+    name: "delete_file",
+    arguments: { path: "a.py" },
+    destructive: true,
+  }, "t1"));
+
+  state = applyEvent(state, event("turn.finished", {}, "t-other"));
+
+  assert.equal(state.pendingConfirm?.id, "d2");
+  assert.equal(state.busy, true, "a foreign turn ended this one");
+});
+
 test("a question and its resolution clear the ask modal", () => {
   let state = applyEvent(
     initialState,
@@ -503,4 +546,286 @@ test("an unlabelled budget is not drawn as one", () => {
     }),
   );
   assert.equal(onlyTool(state).budget, undefined);
+});
+
+// --- a subagent's turn on the shared bus ----------------------------------
+/*
+ * A child session emits its own `turn.started` .. `turn.finished` on the same
+ * bus as its parent, under its own turn id, and every one of its frames
+ * carries `subagent`/`parent_call_id` -- the link to the call that spawned it
+ * (see the core's `Event.subagent`). The frames below were captured from a
+ * real run -- one parent turn that calls `subagent`, the child running a real
+ * tool and answering, then the parent's answer -- with
+ * `scripts/capture_child_frames.py`, because a hand-written sequence is the
+ * thing the handoff warns about. Run that script to regenerate it; the ids and
+ * the stub's text differ each run, the shape is the point.
+ *
+ * Before the card existed, these frames either rendered the child as an extra,
+ * unlabelled assistant bubble (and cleared `busy` mid-turn), or -- after the
+ * active-turn guard -- vanished. They now accumulate under the `subagent`
+ * card, and these tests are the whole contract of that: one assistant message,
+ * the child's tools and answer nested in its card, `busy` owned by the parent.
+ */
+const PARENT_TURN = "6d28ea180f744f289e4da1b6fc3711d7";
+const CHILD_TURN = "1198ae0ab9dc44c4ac8de33a28515e91";
+
+/** A frame from the child: every one of them says which call owns it. */
+function childEvent(
+  type: CoreEvent["type"],
+  payload: Record<string, unknown> = {},
+): CoreEvent {
+  return { ...event(type, payload, CHILD_TURN), subagent: "probe", parent_call_id: "sub-1" };
+}
+
+const SUBAGENT_RUN: CoreEvent[] = [
+  // The parent's turn opens and announces the subagent call.
+  event("turn.started", { model: "stub-model" }, PARENT_TURN),
+  event("message.started", {}, PARENT_TURN),
+  event("message.completed", { text: "" }, PARENT_TURN),
+  event("tool.started", { id: "sub-1", name: "subagent" }, PARENT_TURN),
+  // The child's own turn, on its own id: one real tool, then its answer.
+  childEvent("turn.started", { model: "stub-model" }),
+  childEvent("message.started"),
+  childEvent("message.completed", { text: "" }),
+  childEvent("tool.started", { id: "kid-1", name: "list_agents" }),
+  childEvent("tool.completed", {
+    id: "kid-1",
+    name: "list_agents",
+    result: {
+      status: "success",
+      output: "- probe: running, mode build, permission medium, 1 used of 10 tool calls",
+      summary: "1 subagent(s)",
+      error: null,
+      artifacts: [],
+    },
+  }),
+  childEvent("message.started"),
+  childEvent("message.delta", { text: "child answer" }),
+  childEvent("message.completed", { text: "child answer" }),
+  childEvent("turn.finished"),
+  // The parent resumes and answers.
+  event(
+    "tool.completed",
+    {
+      id: "sub-1",
+      name: "subagent",
+      result: {
+        status: "success",
+        output: "child answer",
+        summary: "subagent probe: 1/10 tool calls",
+        error: null,
+        artifacts: [],
+      },
+      tool_call_budget: { index: 1, limit: 10, label: "Tool call 1/10" },
+    },
+    PARENT_TURN,
+  ),
+  event("message.started", {}, PARENT_TURN),
+  event("message.delta", { text: "parent answer" }, PARENT_TURN),
+  event("message.completed", { text: "parent answer" }, PARENT_TURN),
+  event("turn.finished", {}, PARENT_TURN),
+];
+
+test("a subagent's run is not rendered as the assistant's own", () => {
+  let state = appendUserMessage(initialState, "delegate this");
+  for (const frame of SUBAGENT_RUN) state = applyEvent(state, frame);
+
+  const assistant = state.messages.filter((m) => m.role === "assistant");
+  assert.equal(assistant.length, 1, "the child's turn was rendered as a second message");
+  assert.equal(assistant[0].text, "parent answer");
+  assert.ok(
+    !assistant[0].text.includes("child answer"),
+    "the child's answer leaked into the parent's own text",
+  );
+  assert.equal(assistant[0].tools.length, 1);
+  assert.equal(assistant[0].tools[0].name, "subagent");
+  // The parent's card reports the parent's call, not the child's work: the
+  // summary the core wrote for this call.
+  assert.equal(assistant[0].tools[0].detail, "subagent probe: 1/10 tool calls");
+  assert.equal(state.busy, false);
+  assert.equal(state.activeTurnId, null);
+});
+
+test("the child's work lands under the card that spawned it", () => {
+  let state = appendUserMessage(initialState, "delegate this");
+  for (const frame of SUBAGENT_RUN) state = applyEvent(state, frame);
+
+  const child = state.messages.filter((m) => m.role === "assistant")[0].tools[0].child;
+  assert.ok(child, "the child's frames left no nested work behind");
+  assert.equal(child.name, "probe");
+  assert.equal(child.text, "child answer");
+  assert.equal(child.running, false);
+  assert.equal(child.tools.length, 1, "the child's own tool call was not recorded");
+  assert.equal(child.tools[0].name, "list_agents");
+  assert.equal(child.tools[0].status, "ok");
+  assert.equal(child.tools[0].detail, "1 subagent(s)");
+});
+
+test("while the child is working, its block says so", () => {
+  let state = applyEvent(initialState, event("turn.started", { model: "m" }, PARENT_TURN));
+  state = applyEvent(state, event("tool.started", { id: "sub-1", name: "subagent" }, PARENT_TURN));
+  state = applyEvent(state, childEvent("turn.started", { model: "m" }));
+
+  const running = state.messages[0].tools[0].child;
+  assert.equal(running?.running, true, "a starting child must not look finished");
+  assert.equal(running?.name, "probe");
+
+  state = applyEvent(state, childEvent("turn.finished"));
+  assert.equal(state.messages[0].tools[0].child?.running, false);
+  // The child finishing is not the parent's call finishing, and it is not the
+  // parent's turn finishing either.
+  assert.equal(state.busy, true);
+  assert.equal(state.messages[0].tools[0].status, "running");
+});
+
+test("a child finishing inside the parent's turn does not end it", () => {
+  // The composer's lock and the Stop button both read `busy`; a child's
+  // `turn.finished` that cleared it mid-turn re-enabled a composer the core
+  // would refuse with "a turn is already running".
+  let state = appendUserMessage(initialState, "delegate this");
+  for (const frame of SUBAGENT_RUN) {
+    state = applyEvent(state, frame);
+    const parentDone = frame.type === "turn.finished" && frame.turn_id === PARENT_TURN;
+    assert.equal(state.busy, !parentDone, `busy moved the wrong way at ${frame.type}`);
+  }
+});
+
+test("a child with no card to land in is dropped, not bubbled", () => {
+  // The conversation was switched away, or this is a restored transcript with
+  // no cards. There is nowhere to show the child, and inventing a message for
+  // it is the bug the nested view replaced.
+  let state = initialState;
+  for (const frame of SUBAGENT_RUN.filter((f) => f.parent_call_id)) {
+    state = applyEvent(state, frame);
+  }
+  assert.equal(state.messages.length, 0);
+  assert.equal(state.busy, false);
+});
+
+test("a child that cannot say whose it is stays a foreign turn", () => {
+  // A child spawned outside a tool call (a script, a direct test) carries no
+  // `parent_call_id`, and the window has no way to attribute it. The
+  // active-turn guard is the fallback: ignored, not rendered.
+  let state = applyEvent(initialState, event("turn.started", { model: "m" }, PARENT_TURN));
+  state = applyEvent(state, event("turn.started", { model: "m" }, CHILD_TURN));
+  state = applyEvent(state, event("message.delta", { text: "stray" }, CHILD_TURN));
+  state = applyEvent(state, event("turn.finished", {}, CHILD_TURN));
+  assert.equal(state.messages.length, 1, "a foreign turn created a message");
+  assert.equal(state.messages[0].text, "");
+  assert.equal(state.busy, true);
+});
+
+test("a child's failure is not the parent's banner", () => {
+  // The audited runtime paths in tests/unit/test_subagents.py produce a real
+  // child whose provider raises. The parent reads that as a failed subagent
+  // in its tool result and carries on -- so the window must not paint the
+  // turn failed while it is still running.
+  let state = applyEvent(initialState, event("turn.started", { model: "m" }, PARENT_TURN));
+  state = applyEvent(state, event("tool.started", { id: "sub-1", name: "subagent" }, PARENT_TURN));
+  state = applyEvent(state, childEvent("turn.started", { model: "m" }));
+  state = applyEvent(state, childEvent("turn.failed", { message: "provider exploded" }));
+  assert.equal(state.error, null);
+  assert.equal(state.busy, true);
+  assert.equal(state.messages[0].tools[0].child?.running, false);
+
+  state = applyEvent(state, event("message.delta", { text: "parent answer" }, PARENT_TURN));
+  state = applyEvent(state, event("turn.finished", {}, PARENT_TURN));
+  assert.equal(state.busy, false);
+  assert.equal(state.error, null);
+  assert.equal(state.messages.filter((m) => m.role === "assistant")[0].text, "parent answer");
+});
+
+// --- the workflow verbs: a follow-up's frames land on their own card --------
+/*
+ * Phase 6 lets one child be talked to again (`send_message`) and copied
+ * (`subagent_fork`). The core stamps *each turn* with the id of the call that
+ * asked for it (`Event.parent_call_id`), so a follow-up's frames carry
+ * `send_message`'s call id and not the id of the `subagent` call that created
+ * the child.
+ *
+ * The reducer routes child frames by that id alone and never looks at the
+ * tool's name, which is what makes a follow-up render under its own card --
+ * and this is the test that would fail if that ever changed to keying off the
+ * `subagent` name.
+ */
+const CHILD_TURN_2 = "58f0d0c5f6a94e9f8a0e0d4b4e3a2c11";
+
+function childEventFor(
+  callId: string,
+  type: CoreEvent["type"],
+  payload: Record<string, unknown> = {},
+  turn = CHILD_TURN,
+): CoreEvent {
+  return { ...event(type, payload, turn), subagent: "probe", parent_call_id: callId };
+}
+
+test("a follow-up turn is drawn under the send_message card, not the subagent card", () => {
+  let state = appendUserMessage(initialState, "delegate this");
+  state = applyEvent(state, event("turn.started", { model: "m" }, PARENT_TURN));
+
+  // The first turn: `subagent` spawns `probe`, which answers.
+  state = applyEvent(state, event("tool.started", { id: "sub-1", name: "subagent" }, PARENT_TURN));
+  state = applyEvent(state, childEventFor("sub-1", "turn.started", { model: "m" }));
+  state = applyEvent(state, childEventFor("sub-1", "message.completed", { text: "child one" }));
+  state = applyEvent(state, childEventFor("sub-1", "turn.finished"));
+
+  // The second: `send_message` hands the same child another turn on the same
+  // transcript, under a different call id and a different turn id.
+  state = applyEvent(
+    state,
+    event("tool.started", { id: "msg-1", name: "send_message" }, PARENT_TURN),
+  );
+  state = applyEvent(
+    state,
+    childEventFor("msg-1", "turn.started", { model: "m" }, CHILD_TURN_2),
+  );
+  state = applyEvent(
+    state,
+    childEventFor("msg-1", "message.completed", { text: "child two" }, CHILD_TURN_2),
+  );
+  state = applyEvent(state, childEventFor("msg-1", "turn.finished", {}, CHILD_TURN_2));
+
+  const tools = state.messages.filter((m) => m.role === "assistant")[0].tools;
+  assert.equal(tools.length, 2, "the follow-up did not get a card of its own");
+  assert.equal(tools[0].name, "subagent");
+  assert.equal(tools[0].child?.text, "child one");
+  assert.equal(tools[1].name, "send_message");
+  assert.equal(tools[1].child?.text, "child two", "the follow-up landed on the wrong card");
+  // Both cards name the same child: one conversation, two of its turns.
+  assert.equal(tools[1].child?.name, "probe");
+  assert.equal(tools[1].child?.running, false);
+});
+
+test("interleaved children each keep their own card", () => {
+  // Fan-out: several children run at once, so their frames arrive interleaved
+  // -- start, start, delta, start, delta, delta. Routing by `parent_call_id`
+  // is what keeps them apart; anything that tracked "the current child" would
+  // append every delta to whichever one started last.
+  let state = appendUserMessage(initialState, "fan out");
+  state = applyEvent(state, event("turn.started", { model: "m" }, PARENT_TURN));
+  for (const id of ["c1", "c2", "c3", "c4"]) {
+    state = applyEvent(state, event("tool.started", { id, name: "subagent" }, PARENT_TURN));
+  }
+
+  const script: [string, string][] = [
+    ["c1", "one"],
+    ["c2", "two"],
+    ["c1", " and one again"],
+    ["c3", "three"],
+    ["c2", " and two again"],
+    ["c4", "four"],
+  ];
+  for (const [id, text] of script) {
+    state = applyEvent(
+      state,
+      { ...event("message.delta", { text }, `${id}-turn`), subagent: id, parent_call_id: id },
+    );
+  }
+
+  const tools = state.messages.filter((m) => m.role === "assistant")[0].tools;
+  assert.deepEqual(
+    tools.map((t) => t.child?.text),
+    ["one and one again", "two and two again", "three", "four"],
+  );
+  assert.deepEqual(tools.map((t) => t.child?.name), ["c1", "c2", "c3", "c4"]);
 });

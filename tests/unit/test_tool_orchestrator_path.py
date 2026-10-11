@@ -14,6 +14,7 @@ _tool`` for the structural half of the same problem.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,13 @@ import pytest
 
 from tonyagent.core.modes import get_mode
 from tonyagent.folder import folder_manager
-from tonyagent.tools.base import Tool, ToolResultStatus, tool_registry
+from tonyagent.tools.base import (
+    Tool,
+    ToolResult,
+    ToolResultStatus,
+    tool_registry,
+)
+from tonyagent.tools.context import current as current_context
 from tonyagent.tools.orchestrator import ToolCall, ToolOrchestrator
 from tonyagent.tools.schemas import SCHEMAS_BY_NAME
 
@@ -242,3 +249,65 @@ async def test_orchestrator_reports_missing_required_arguments(name, orchestrato
     assert "Invalid arguments" in (result.error or ""), (
         f"{name} refused a missing argument without saying which: {result.error!r}"
     )
+
+
+async def test_the_executing_call_is_recorded_for_its_own_task(monkeypatch):
+    """A tool can see which call it is running, even when a batch runs at once.
+
+    That record is what a subagent's frames are attributed by: the child copies
+    the id at spawn time, and the window draws the child's work under that
+    call's card. A batch of independent calls runs as concurrent tasks, so the
+    record has to be per-task -- an attribute on the orchestrator or the tool
+    would let one call see another's id, or a finished call's id linger into
+    whatever ran next.
+    """
+    state = {"in_flight": 0, "peak": 0}
+    seen: dict[str, str] = {}
+
+    class _Probe(Tool):
+        name = "probe"
+        description = "records the call it can see"
+        parameters = {
+            "type": "object",
+            "properties": {},
+            "required": [],
+            "additionalProperties": False,
+        }
+        folder_required = False
+        destructive = False
+
+        async def execute(self, **kwargs):
+            state["in_flight"] += 1
+            state["peak"] = max(state["peak"], state["in_flight"])
+            try:
+                await asyncio.sleep(0.02)
+                seen[self.label] = current_context().call_id
+            finally:
+                state["in_flight"] -= 1
+            return ToolResult(status=ToolResultStatus.SUCCESS, output="ok")
+
+    probes: dict[str, Any] = {}
+    for probe_name in ("probe-a", "probe-b", "probe-c"):
+        probe = _Probe()
+        probe.label = probe_name
+        probes[probe_name] = probe
+
+    monkeypatch.setattr(tool_registry, "get", lambda name: probes.get(name))
+
+    orc = ToolOrchestrator()
+    # Unrestricted: the probe is a test tool and is not in any mode's list.
+    orc._mode = None
+    orc._permission = None
+
+    await asyncio.gather(
+        orc.execute_tool_async(ToolCall(id="a", name="probe-a", arguments={})),
+        orc.execute_tool_async(ToolCall(id="b", name="probe-b", arguments={})),
+    )
+    assert state["peak"] == 2, "the two calls did not overlap, so this proves nothing"
+
+    await orc.execute_tool_async(ToolCall(id="c", name="probe-c", arguments={}))
+
+    assert seen == {"probe-a": "a", "probe-b": "b", "probe-c": "c"}
+    # The record does not outlive the call. If the reset ever came before the
+    # tool ran (or not at all), this task would still be holding the last call.
+    assert current_context().call_id == ""

@@ -19,6 +19,7 @@ from tonyagent.core.conversations import ConversationStore
 from tonyagent.core.events import EventBus, EventType
 from tonyagent.core.session import AgentSession
 from tonyagent.headless.server import StdioServer
+from tonyagent.tools.subagent_tools import subagent_registry
 
 NEWLINE = chr(10)
 
@@ -238,6 +239,48 @@ def test_switching_to_a_missing_conversation_is_a_rejection(store):
 def test_switching_without_an_id_is_a_rejection(store):
     _, frames = _drive([{"id": 1, "method": "conversations.switch"}], store=store)
     assert _by_id(frames)[1]["error"]["code"] == "rejected"
+
+
+def test_switching_conversations_forgets_the_previous_chats_children(store):
+    """A subagent belongs to the conversation whose turn spawned it.
+
+    ``subagent_registry`` is process-wide -- one window, one place for
+    ``list_agents`` to look -- so unless the host drops it on the way out, the
+    chat you left goes on answering the new chat's ``list_agents``.
+
+    Constructed, then spawned: the *construction* of a server is itself an
+    attach, so a child seeded before it would be cleared by the very wiring
+    under test and the switch assertion would pass for the wrong reason.
+    """
+    target = store.create(title="target")
+    server = StdioServer(_session(), io.StringIO(""), io.StringIO(), store=store)
+    handle = subagent_registry.spawn(server.session, seed="probe the tree", name_hint="probe")
+    subagent_registry.mark_finished(handle.name)
+    assert [s.name for s in subagent_registry.list()] == [handle.name]
+
+    server._h_conversations_switch({"id": target.id})
+
+    assert subagent_registry.list() == []
+
+
+def test_switching_conversations_stops_a_child_that_is_still_running(store):
+    """Dropping the listing is the visible half; stopping the work is the one
+    that spends a conversation's budget after the window has left it."""
+    target = store.create(title="target")
+    server = StdioServer(_session(), io.StringIO(""), io.StringIO(), store=store)
+    handle = subagent_registry.spawn(server.session, seed="stall", name_hint="live")
+
+    async def scenario() -> None:
+        task = asyncio.ensure_future(asyncio.sleep(30))
+        subagent_registry.start(handle.name, task)
+        server._h_conversations_switch({"id": target.id})
+        # A timeout so a regression fails in a second rather than sleeping
+        # until the child would have finished on its own.
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=1)
+
+    asyncio.run(scenario())
+    assert subagent_registry.list() == []
 
 
 # --- persistence -----------------------------------------------------------

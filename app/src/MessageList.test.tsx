@@ -693,3 +693,68 @@ describe("the first run", () => {
     assert.equal(all(container, ".empty").length, 1);
   });
 });
+
+// --- a subagent's nested work ---------------------------------------------
+/*
+ * Phase 5's nested UI: a child's frames accumulate under the `subagent` card
+ * that spawned it (`applySubagentEvent` in events.ts) and render here. The
+ * decision these pin is that the child is not a second assistant -- its answer
+ * and its tool calls read as the *call's* work, one indent under the row. The
+ * card's own status stays the parent call's; the nested head only says whether
+ * the child itself is still working.
+ */
+
+function subagentCard(child?: ChatMessage["tools"][number]["child"]) {
+  return toolCard({
+    id: "sub-1",
+    name: "subagent",
+    detail: "subagent probe: 1/7 tool calls",
+    child: child ?? {
+      name: "probe",
+      text: "child answer",
+      tools: [
+        { id: "kid-1", name: "list_agents", status: "ok", detail: "1 subagent(s)" },
+      ],
+      running: false,
+    },
+  });
+}
+
+describe("a subagent's nested work", () => {
+  test("the child's tools and answer render under the card", async () => {
+    const container = await transcript(subagentCard());
+    assert.equal(all(container, ".subagent").length, 1);
+    assert.equal(one(container, ".subagent-name")?.textContent, "probe");
+    assert.equal(one(container, ".subagent-state")?.textContent, "answered");
+    const rows = all(container, ".subagent-tool");
+    assert.equal(rows.length, 1);
+    assert.equal(one(rows[0], ".tool-name")?.textContent, "list_agents");
+    assert.equal(one(rows[0], ".tool-detail")?.textContent, "1 subagent(s)");
+    assert.equal(one(container, ".subagent-answer")?.textContent, "child answer");
+  });
+
+  test("a running child says so, and the rule takes the accent", async () => {
+    const container = await transcript(
+      subagentCard({ name: "probe", text: "", tools: [], running: true }),
+    );
+    assert.equal(one(container, ".subagent")?.classList.contains("is-running"), true);
+    assert.equal(one(container, ".subagent-state")?.textContent, "working\u2026");
+  });
+
+  test("a failed child tool keeps its status", async () => {
+    const container = await transcript(
+      subagentCard({
+        name: "probe",
+        text: "",
+        tools: [{ id: "kid-1", name: "write", status: "failed", detail: "denied" }],
+        running: false,
+      }),
+    );
+    assert.equal(all(container, ".subagent-tool-failed").length, 1);
+  });
+
+  test("a card with no child renders no nested block", async () => {
+    const container = await transcript(toolCard({ name: "subagent" }));
+    assert.equal(all(container, ".subagent").length, 0);
+  });
+});

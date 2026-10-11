@@ -1,7 +1,130 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-10-11, after **Phase 5's first slice (the `subagent` tool)**.
+**Last updated:** 2026-10-11, after **the adversarial gate pass** — the whole
+registered surface swept through the orchestrator, the skill store and the
+workflow fan-out probed as hostile input, three gate holes fixed, and the
+recorded `_execution_history` leak closed. See "The adversarial gate pass" below.
+**41 tools, and every gate is now swept rather than sampled, and three holes it
+found are closed.** The mode × permission matrix is checked for all 41 tools on
+all 16 combinations, with a recorder in place of every tool body so "refused"
+is measured as "the body never ran"; all four destructive tools fail closed with
+no bridge, on No, and on timeout; every path parameter of every path-taking tool
+refuses four spellings of an escape; all 14 sandbox-required tools answer with
+one sentence when nothing is attached; stopping a turn with six children in
+flight cancels all of them, leaves no task behind and restores the concurrency
+permits; and a *queued* child can be interrupted before its turn starts. What was
+actually broken: the network guard raised instead of refusing on an unparseable
+URL, allowed three spellings of loopback (`0177.0.0.1`, `0x7f000001`,
+`127.0.0.1.`) because it trusted the resolver to *fail*, and allowed the whole
+RFC 6598 range including `100.100.100.200` (Alibaba Cloud metadata); the skill
+store read an oversized file into memory before refusing it. One latent
+order-dependence in the suite was fixed on the way (a plan-mode test left the
+process-wide orchestrator in Plan and broke ten later tests), and the one item
+that pass had recorded as "purely a leak rather than a policy question" is
+closed: `_execution_history` is a 200-entry ring now, because it holds each
+call's full arguments (for `write`, the file contents) and nothing ever read it.
+**Was:** 2026-10-11, after **Phase 6 (`workflow`) complete: fan-out** —
+see "Phase 6 (workflow): what landed, and what remains" below.
+**39 tools, and Phase 6 is finished.** A parent turn can now run **several
+children at once**: there is no fan-out verb and none was needed — the session
+already executes a batch of independent tool calls concurrently, so declaring
+three `subagent` calls in one assistant message gets three children, and mixing
+`send_message` and `subagent_fork` into the same batch is the same mechanism.
+The serial gate that used to refuse that is gone. In its place are **three
+explicit bounds, all in `_drive_child`** (the one place a child's turn starts),
+all module constants, all pinned by a tripwire test and all mutation-checked:
+`MAX_CONCURRENT_CHILDREN = 4` (a *queue* — a verb without a slot waits, so asking
+for six children gets six), `MAX_CHILDREN_PER_TURN = 8` (the per-turn spend
+backstop, which is what makes the budget answer true — see below), and
+`MAX_SUBAGENT_DEPTH = 1` (one level deep, which used to fall out of the serial
+gate *by accident* and would have been silently lost with it).
+**The budget question is answered in the code, not just in prose.** The parent's
+per-turn tool budget *does* bound a fan-out whenever it is set — each verb is one
+of the parent's tool calls, counted before it runs — and `MAX_CHILDREN_PER_TURN`
+is the backstop for when the user has set it to `0`, which means "no limit".
+What is deliberately *not* bounded is what the children spend: each child's
+budget is still its own, the Phase 5 decision, unchanged.
+Re-measured: **Python 1053 passed / 11 skipped** (`-m "not docker"`, 70s),
+TypeScript **608 passed** (99 suites), e2e **54 checks, 0 failed**, typecheck +
+build clean. The three tool-safety holes from the tool-safety pass are still
+closed and still covered.
+**Was:** 2026-10-11, after **Phase 6's first slice** — `send_message`,
+`subagent_fork`, the re-entrant loop, and two pieces of ownership debt.
+**39 tools**. **A child can be talked to again, and copied.** The child session
+loop is *re-entrant*: `send_message` gives an existing child another turn on
+the transcript it already has, and `subagent_fork` copies that transcript into a
+new child and leaves the original alone. All three spawning verbs go through one
+loop (`subagent_tools._drive_child`) — the verbs differ in where the child comes
+from, not in how it runs. Attribution is **per turn, not per child**: each turn
+stamps the id of the call that asked for it, so a follow-up's frames are drawn
+under the `send_message` card and not under the `subagent` card that created the
+child (the reducer routes by call id and never by tool name — pinned on both
+sides). The ownership debt this phase touched is fixed too: the function-local
+`AgentSession` import is gone (a child is built from `type(parent)`), and
+`shell_tools`' **two parallel gating booleans** (`_ALLOWLIST_BYPASS`,
+`_HOST_EXECUTION`) are replaced by **one permission** published in the tool
+context around each call. The real-turn test found a real bug on the way:
+`final_answer` returned the *previous* turn's text when a follow-up produced
+none; it now reads only from the transcript this turn wrote.
+**Was:** 2026-10-11, after **the tool-safety pass** — see "The confirmation
+gate, and the redirect the guard missed" at the end.
+**37 tools**. **Three measured tool-safety holes are closed, each with a test that
+fails on the previous code.** The internal-address guard is now applied to *every*
+hop of a request (an httpx request hook), so a public page answering
+`Location: http://127.0.0.1:...` no longer hands back the body of a loopback or
+cloud-metadata address — measured both ways with a local listener and a public
+redirector. A destructive tool with no confirmation bridge installed is **refused**
+instead of run unasked (`delete_file` used to report `success` with the file gone).
+And the confirmation lifecycle terminates: the pending entry is dropped in a
+`finally`, Stop answers the prompt, and a turn that ends with one outstanding
+publishes `confirmation.resolved` while the reducer clears `pendingConfirm` with the
+turn — so no Allow/Deny outlives its turn and no tool sits out the 60-second wait.
+Re-measured: **Python 1029 passed / 11 skipped** (`-m "not docker"`, 44s),
+TypeScript **606 passed** (99 suites), e2e **50 checks, 0 failed**, typecheck +
+build clean.
+**Was:** 2026-10-11, after **the nested subagent UI** — see "Nested
+subagent work" at the end.
+**37 tools**. **A subagent's work is now visible in the window.** A child's
+frames carry its name and the id of the parent tool call that spawned it
+(`Event.subagent` / `Event.parent_call_id`; the orchestrator records the
+executing call in a `ContextVar`, which a parallel batch needs), and the
+reducer routes them into that call's card instead of the turn lifecycle: the
+card grows a nested block — the child's tools, its answer, its running state —
+and nothing of the child appears as the assistant's own message. This was
+checked as pixels, not only as assertions: `app/nested-preview.html` mounts the
+real `MessageList` against the real stylesheets, and the look was confirmed in
+the browser (screenshot and notes at the end). **Phase 5 is now complete in its
+synchronous form**: `subagent`, the registry, the two control verbs, the
+restart wiring, and the nested view. Peer messaging (`send_message`) and
+`subagent_fork` remain Phase 6, and **no phase beyond 5 has been started**.
+Re-measured: **Python 1019 passed / 11 skipped** (`-m "not docker"`, 42s),
+TypeScript **604 passed** (99 suites), e2e **50 checks, 0 failed**.
+**Was:** 2026-10-11, after **the pass that closed the two Phase 5 handoff
+items: the registry hole and the live-window question** — see "The registry's
+children, and the child's frames" at the end.
+**37 tools**. **The registry hole is closed**: `SubagentRegistry.restart()` existed but
+nothing called it, so switching conversations left the outgoing chat's children listed
+in the new chat's `list_agents` and left a running child running.
+`headless/server.py::_attach_session` now drops them — the one host path every session
+replacement goes through (switch, new chat, startup restore) — pinned by a registry test
+and two protocol tests. **The live-window question is answered, and answering it found
+and fixed two real window bugs.** Nobody had watched a real child in the real window, so
+instead of guessing, this pass captured the exact frame sequence a real child puts on the
+bus (`scripts/capture_child_frames.py` — a real parent turn calling `subagent` against a
+stub provider) and replayed it through the reducer. The child's answer had been rendering
+as an *extra, unlabelled assistant bubble*, and the child's `turn.finished` cleared `busy`
+while the parent was still working — re-enabling a composer the core would refuse with "a
+turn is already running". `events.ts` now tracks the window's own turn (`activeTurnId`)
+and ignores frames belonging to any other turn, on the creation, terminal and error paths;
+the App clears that id wherever it replaces the transcript. Three reducer tests replay the
+captured sequence verbatim. **What is still not watched: the live GUI with a real
+provider** — the frames and the reducer are now pinned by capture + test, but no human has
+seen a real child in the running window. That check remains the first thing to do with a
+real provider bound (see the end of this file).
+Re-measured: **Python 1016 passed / 11 skipped** (`-m "not docker"`, 42s), TypeScript
+**596 passed** (98 suites), e2e **50 checks, 0 failed**.
+**Was:** 2026-10-11, after **Phase 5's first slice (the `subagent` tool)**.
 **37 tools**. Subagents exist: `subagent` delegates self-contained leaf work to a
 real child `AgentSession` inside the parent's turn (serial, one at a time), and
 `list_agents`/`interrupt_agent` observe and stop them. The child inherits its
@@ -114,16 +237,15 @@ data: preview had ever rendered.
 "가운데 폴더 버튼" just above section 2. The empty-chat panel now names the
 project folder in the middle and offers one Change... button; leaving it
 alone keeps the folder you had.
-**Test totals:** Python unit **1013 passed / 11 skipped** (`-m "not docker"`, 42s in one
-process), TypeScript **593 passed** (98 suites, unchanged — no frontend files changed in
-the subagent pass; the per-tool card renders generically), and
-`scripts/e2e_all_tools.py --fast` **50 checks, 0 failed** across all 37 tools (the three
-new ones are the fail-closed set: no-turn refusal, empty listing, unknown-name refusal).
+**Test totals:** Python unit **1158 passed / 13 skipped** (`-m "not docker"`, in one
+process), TypeScript **626 passed** (103 suites), and `scripts/e2e_all_tools.py --fast`
+**66 checks, 0 failed** across all **41 tools**. This line read "1029 / 606 / 50 checks /
+37 tools" until it was re-measured after the gate pass, and it sits directly above a
+`Status` that gave different figures again — which is how the two came to disagree.
 `tests/unit/test_build_scripts.py` was
 rewritten for the
 one-stage build, and the flake it was documented as having turned out to be a
 millisecond-wide margin in its own fixture -- see the end of this file.
-PowerShell against a synthetic tree and nothing in this pass touches it.
 **Was:** 2026-10-04, after the visual design sweep — see "Pass: the
 visual design sweep" for every current value and where it came from
 **Was:** 2026-10-03, after the seventh pass — Permission and
@@ -139,10 +261,12 @@ animated overlay panel (see "The fourth UI pass" near the end)
 (`python -m tonyagent.window`), which starts the core as a child process and talks to
 it over the JSONL protocol; `app/` is the React page it renders. The Tauri crate and
 the Tkinter UI are both **gone from the source**.
-Re-measured 2026-10-11, after the Phase 5 slice: **Python unit 1013 passed / 11
-skipped** (`-m "not docker"`) **in 42s in a single process**, **TypeScript 593 passed**
-(98 suites), `scripts/e2e_all_tools.py --fast` **50 checks, 0 failed**, and **37
-tools**. Note `scripts/check_all.py --fast` is *not* a no-Docker check despite the
+Re-measured 2026-10-11, after the adversarial gate pass: **Python 1158 passed /
+13 skipped** (`-m "not docker"`, one process, 53s), **TypeScript 626 passed** (103
+suites), `scripts/e2e_all_tools.py --fast` **66 checks, 0 failed** (the 58 of the
+Phase 7 pass plus 8 live gate checks), typecheck and `npm run build` clean, and
+**41 tools**. (After the Phase 7 (skills) pass: 1106 / 12, 626 TypeScript, 58
+checks. After the Phase 5 slice: 1013 / 11, 593 TypeScript, 50 checks, 37 tools.) Note `scripts/check_all.py --fast` is *not* a no-Docker check despite the
 name: it runs the whole suite and reports one failure from
 `tests/integration/test_docker_backend.py` when the daemon is down.
 
@@ -155,12 +279,36 @@ files — because `user_tools` imports the new tool base and registers beside
 `planning_tools`, so Phase 4 could not have been committed on its own. **Its commit
 message is the account of that work and is worth reading before this file.**
 
-**Three files are uncommitted**, left by the Phase 4 review recorded at the end of this
-file: `tests/conftest.py` (the `user_io` reset guard that fixed the 60s stall),
-`src/tonyagent/tools/base.py` (a docstring correction about `asks_user`), and this file.
-`git diff --shortstat` reads 3 files, ~100 insertions. They are a fix-up rather than a
-feature — **commit or amend them before starting anything else**, so the next diff is
-only the next pass.
+**The Phase 4 review's three files were committed** as `8b6e2d7` — the `user_io` reset
+fixture, the `describe()` `asks_user` correction, and this file.
+
+**Everything after `5abe725` is uncommitted — three phases' worth.** `git log -1` is
+`0926127`, a **documentation-only** commit ("Hand off Phase 5's first slice"), and the
+tree on top of it holds the rest: Phase 6 (the workflow fan-out), Phase 7 (skills), the
+adversarial gate pass, the `ToolContext` refactor and the nested-UI rendering. Counted:
+**48 entries — 33 modified, 15 new — at ~4,100 insertions / ~570 deletions.**
+`git ls-tree HEAD` contains `subagent_tools.py` and *nothing else* of it:
+`core/skills.py`, `tools/skill_tools.py`, `tools/context.py`, `tools/workspace.py` and
+`app/src/SkillPicker.tsx` are untracked, and the gate fixes in `network_tools.py` are
+unstaged. So **`HEAD` is Phase 5, slice one, and the working tree is the only copy of
+everything after it** — there is no stash.
+
+**Commit before starting anything else**, and prefer several commits to one: the areas
+are separable (workflow, skills, the gate pass, `ToolContext`, the nested UI) and each
+carries its own new tests. Note that the earlier versions of this section said "two
+passes, ~600 insertions" and "three passes" — both were written before Phase 6 and 7
+landed, so neither describes what is actually here. They are replaced by this.
+
+**Five untracked files are development scaffolding, not product code:**
+`app/nested-preview.html`, `app/skills-preview.html`, `app/src/nested-preview.tsx`,
+`app/src/skills-preview.tsx` and `scripts/capture_child_frames.py`. Nothing in the
+product or the build reads them — `vite.config`, `package.json` and both tsconfigs never
+mention them, and the preview harnesses say in their own headers that they are opened by
+hand from `npm run dev`. This repo already ignores `design-preview/` for exactly this
+reason, so either delete them or add them to `.gitignore`, because `git add -A` will
+otherwise commit them. **`app/src/SkillPicker.tsx` and `SkillPicker.test.tsx` are not in
+this group** — that is real product code, imported by `Composer.tsx` and typed by
+`App.tsx`.
 
 **The 590/501 figures below are from the 2026-10-03 run and were NOT re-measured
 this pass** — `pytest tests -q` needs Docker Desktop, which was not running here.
@@ -224,13 +372,13 @@ Tkinter GUI is gone from the source entirely; the six `Tkinter` mentions left in
 
 ```bash
 python -m compileall -q src            # syntax
-python -m pytest -m "not docker" -q    # 979 passed, 10 skipped, ~42s -- no Docker needed
+python -m pytest -m "not docker" -q    # 1158 passed, 13 skipped -- no Docker needed
 python -m pytest tests -q              # adds tests/integration; needs Docker Desktop
 python scripts/check_all.py --fast     # compileall + the FULL pytest run -- see the note below
-python scripts/e2e_all_tools.py --fast # 47 checks: every tool, incl. fail-closed refusals (no sandbox needed)   # still 47/47 after the 2026-10-11 pass
+python scripts/e2e_all_tools.py --fast # 66 checks: every tool, incl. fail-closed refusals (no sandbox needed)
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 
-cd app && npm test                     # 593 passed (protocol, reducer, markdown, components, stylesheet cascade)
+cd app && npm test                     # 626 passed (protocol, reducer, markdown, components, stylesheet cascade)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -329,7 +477,7 @@ convention — see §6.
 
 ### The tool system, as it stands
 
-**34 tools.** The invariants below are the ones that fail *silently* when broken, so
+**41 tools.** The invariants below are the ones that fail *silently* when broken, so
 they are worth reading before touching anything in `src/tonyagent/tools/`.
 
 * **A tool is declared once**, on its `Tool` subclass (`tools/base.py`, `describe()`).
@@ -355,11 +503,16 @@ they are worth reading before touching anything in `src/tonyagent/tools/`.
 * **Adding a tool needs no frontend work.** Rendering is generic over the payload;
   `test_tool_wire_format.py` and `test_tool_summary_line.py` cover the two contracts
   that matter.
+* **`list_skills` and `run_skill` are reads, and that is the design.** Skills are
+  Markdown files under `.tonyagent/skills/` and under the app-data root; a procedure
+  *describes* work that is then done with the tools the turn already has, so both verbs
+  sit in the read-only set and exist in Plan and Skills as well as Build. `core/skills.py`
+  owns the file format and the `/name` resolution. See "Phase 7 (skills)" below.
 
 ### What is left, in the order it is worth picking up
 
-Items 2 and 3 shipped this pass; **item 4 is the next phase and the largest remaining
-piece of work**, and its first-line hazard is already closed (see below).
+Items 2–4 are closed, the nested UI included; what remains of item 4 is **Phase 6
+(`workflow`)** — peer messaging and `subagent_fork` (see below).
 
 1. ~~**Commit the three uncommitted files**~~ — **done** as `8b6e2d7` (the `user_io`
    reset fixture, the `describe()` `asks_user` correction, and this file).
@@ -386,6 +539,14 @@ piece of work**, and its first-line hazard is already closed (see below).
    budget and mode, serial execution inside the parent's turn, tested failure
    paths), what was *not* built (peer messaging, `subagent_fork`), and where the
    seam actually landed instead of where this section guessed.
+   **Phase 5 is complete in its synchronous form.** The registry is dropped on a
+   conversation change (`_attach_session`), the child's frames were captured from a
+   real run and pinned by reducer tests, and the nested UI is built: a child's work
+   renders under the card of the call that spawned it. What remains open is the
+   live GUI check with a real provider (below, and at the end of this file).
+   **Phase 6 (`workflow`) then landed**: the re-entrant child loop, `send_message`,
+   `subagent_fork`, and the `ToolContext` that owns "what is this call part of".
+   See the Phase 6 section below for what is real and what remains.
 5. **`exit_plan_mode` is still not built**, and Phase 4 sharpened the reason: it needs
    an approval affordance that can *act on the mode*, and no tool can reach the mode.
    `present` can show a plan and collect a reply, but `set_mode` clears the
@@ -396,10 +557,13 @@ piece of work**, and its first-line hazard is already closed (see below).
    keeps no handle to poll. New RPC methods in `docker/sandbox/rpc_server.py` **and a
    container rebuild**, so it cannot be tested without Docker.
 
-Phase 6 (`workflow`) and Phase 7 (skills) follow Phase 5. **Phase 5's first slice is
-now something `workflow` can be built against**: a subagent exists, has a name, a
-budget, a state, and a final answer. What `workflow` adds is the re-entrant session
-loop — the thing that would make `send_message` (a child you may talk to again) and
+~~Phase 6 (`workflow`) and Phase 7 (skills) follow Phase 5.~~ **Both have landed**
+(see "Phase 6 (workflow)" and "Phase 7 (skills)" below); what is left of the roadmap
+is `exit_plan_mode` (item 5) and the sandbox-side background jobs (item 6), neither of
+which is blocked on a phase. **Phase 5's
+first slice is what `workflow` was built against**: a subagent exists, has a name, a
+budget, a state, and a final answer. What `workflow` added is the re-entrant session
+loop — the thing that made `send_message` (a child you may talk to again) and
 `subagent_fork` (a conversation you may copy) mean something, plus orchestration over
 several such children. The serial child built in `5abe725` is the floor, not the shape,
 of that phase: it answers once and finishes, deliberately.
@@ -435,25 +599,32 @@ session starts there instead of at the top).
   `install_question_bridge`, explicit, which is why it is the model to copy), and
   `jobs_registry` (a singleton, but one that owns live processes). A child session is
   the first thing that makes any of them wrong rather than merely untidy.
-  **`subagent_registry` is now a fourth**, and it has a hole the others do not:
-  `SubagentRegistry.restart()` exists but nothing calls it yet — switching
-  conversations leaves finished children listed in `list_agents` and would leave a
-  *running* child running. Wiring it to the same host path that resets `user_io`
-  (`headless/server.py`, where `install_question_bridge` is called) is small and
-  belongs in the next pass before `workflow` builds on the registry.
+  **`subagent_registry` is now a fourth, and it is wired.** `SubagentRegistry.restart()`
+  is called from `headless/server.py::_attach_session` — the same host path that
+  re-installs `user_io`'s bridge for a new session, which every session replacement
+  goes through (switch, new chat, startup restore). Switching conversations now
+  cancels a running child and drops the listing, pinned by
+  `test_restart_cancels_a_running_child_and_drops_the_listing` and two protocol tests
+  in `test_conversations_protocol.py`. `workflow` can build on the registry.
 * **Events need attribution before anything else.** `core/events.py` has one `EventBus`
   and events carry `turn_id`; the window's reducer pairs tool calls by `id` and appends
   to the message found by `turn_id` (`app/src/events.ts`). A child emitting the same
   event types would therefore *corrupt the parent transcript*, not merely look odd.
-  Decide the shape — namespaced `turn_id`, a parent field, or a separate stream — first.
-* **Five tools planned; three exist**: `subagent`, `list_agents`, `interrupt_agent`
-  (all in `tools/subagent_tools.py`, registered in the load-bearing import block;
-  `subagent` in the mutating set, the other two in the read-only set beside
-  `job_kill`). `subagent_fork` needs a serialisable conversation and **`send_message`
-  means nothing in a serial child** — the child answers once and finishes, so there
-  is nobody to send a message *to*. Both are Phase 6 (`workflow`) work, with the
-  re-entrant session loop that phase was always going to need; the synchronous
-  turn loop is what made this the honest Phase 5 shape.
+  **Decided, and the decision cost two window bugs to make.** The child keeps its own
+  `turn_id` (the namespaced shape), and the window treats any turn that is not its own
+  as foreign: the reducer tracks `activeTurnId` and ignores a foreign turn's creation,
+  terminal and error frames. That is what keeps the parent transcript the only one on
+  screen. It is also the hook where **nested UI** plugs in: rendering a child's work
+  under its `subagent` card needs the core to say *whose* child a frame is (a
+  parent/child field on the event), because foreign frames currently carry no link to
+  the tool call that spawned them.
+* **All five tools now exist**: `subagent`, `list_agents`, `interrupt_agent`,
+  `send_message` and `subagent_fork` (all in `tools/subagent_tools.py`, registered in
+  the load-bearing import block; `subagent`, `send_message` and `subagent_fork` in
+  the mutating set, the other two in the read-only set beside `job_kill`). Phase 5
+  built the first three; the two workflow verbs had to wait for the re-entrant loop,
+  because a child that answered once and finished had nobody to send a message *to*.
+  The synchronous turn loop is what made that the honest Phase 5 shape.
 * **Decided: budgets.** The child gets the parent's per-turn budget as its own
   ceiling (its own counter); the `subagent` call itself spends one of the
   *parent's* slots, so a fan-out is bounded by the budget the user set. A child
@@ -462,23 +633,366 @@ session starts there instead of at the top).
   and permission objects directly — there is no parameter a model could set to
   widen them. Registering the tool happened inside the existing block in
   `tools/__init__.py`; the import order there is still load-bearing.
-* **Open: the live window.** The unit test pins that child frames cannot corrupt
-  the parent transcript (own `turn_id`, own transcript; the parent reads only
-  `final_answer()`), but nobody has watched a real child run in the real window
-  yet. Whether the child's message frames render anywhere, duplicate, or vanish
-  in `MessageList` is known only to the code, not to a person. That check is the
-  first thing worth doing with a real provider bound.
-* **Open: nested UI (the "no frontend work" streak ends here when it is wanted).**
-  `MessageList.ToolRow` renders every tool identically; showing a child as
-  something other than a generic card means new `ToolCall` fields in
-  `app/src/events.ts`, a branch in `ToolRow`, and CSS. Fine to defer: the card
-  reads "subagent <name>: N/M tool calls" from `summary` today.
-* **The frontend changes here, and this is where the "no frontend work" streak ends.**
-  A child's work has to be visible. `MessageList.ToolRow` (`app/src/MessageList.tsx`)
-  renders every tool identically from `{id, name, status, detail, budget}`, so showing
-  nested activity means new `ToolCall` fields in `app/src/events.ts`, a branch in
-  `ToolRow`, and CSS. Note `MessageList.test.tsx` currently asserts *nothing* about
-  `ToolRow`'s markup, so those would be the first such tests.
+* **The live window question is answered — with a capture, not a human.** The unit test
+  pinned that child frames cannot corrupt the *core* transcript, but "whether the
+  child's message frames render anywhere, duplicate, or vanish in `MessageList`" was
+  unknown to a person. `scripts/capture_child_frames.py` runs a real parent turn that
+  calls `subagent` against a stub provider and prints every frame the window receives;
+  replayed through the reducer it showed the child rendering as an extra, unlabelled
+  assistant bubble and its `turn.finished` clearing `busy` mid-parent-turn. Both are
+  fixed, and the captured sequence is a test fixture in `events.test.ts`. The nested
+  view's *pixels* were checked separately in `app/nested-preview.html` (the real
+  `MessageList` against the real stylesheets). **What is still not watched is the live
+  GUI with a real provider bound** — a real child streaming into its card in the
+  running window.
+* **Done: nested UI.** A child's frames now carry `subagent`/`parent_call_id`
+  (the latter read from a `ContextVar` the orchestrator sets around execution),
+  and the reducer folds them into the spawning call's card: the child's tools,
+  its answer, and whether it is still running, rendered as one indented block
+  (`SubagentWork` in `app/src/MessageList.tsx`, `.subagent*` in
+  `app/src/styles/tool-calls.css`). The card's own status still reports the
+  parent's call — the child finishing does not finish it. See "Nested subagent
+  work" at the end.
+* **The "no frontend work" streak ended, as predicted.** `ToolCall` gained `child`
+  (`SubagentChild` in `app/src/events.ts`), `ToolRow` gained a branch, `tool-calls.css`
+  the block's rules, and `MessageList.test.tsx` its first `ToolRow` markup tests (four
+  of them). One subtlety worth keeping: `copyMessages` now deep-copies the child and
+  its tool list — a nested object written through by a shallow copy is the same state
+  corruption the deep copy exists to prevent.
+
+### Phase 6 (workflow): what landed, and what remains
+
+**Landed, with tests through the real entry points.**
+
+* **The re-entrant child loop.** `SubagentRegistry.spawn` still builds a child; what
+  changed is that a child's turn is entered *per turn* rather than once per child.
+  `subagent_tools._drive_child` is **the one place a child's turn starts**, for all
+  three verbs: `subagent` (a fresh child and its brief), `send_message` (an existing
+  child and the next thing to say), `subagent_fork` (a copied child and the brief the
+  copy exists for). Attribution, the serial task, the deadline and the three failure
+  shapes live in that one function — `test_workflow.py` asserts a follow-up fails
+  *exactly* the way a first turn does, which is the test that would catch the loop
+  being forked per verb.
+* **`send_message` and `subagent_fork`**, registered in
+  `tools/__init__.py`, in the mutating set beside `subagent` (each runs a real child
+  turn under the parent's mode and permission). `subagent_fork` refuses a source that
+  is still writing its conversation. Both are on the wire: the tool-count tripwire in
+  `test_tool_wire_format.py` / `test_user_questions.py` is **39** now.
+* **`tools/context.py` — one owner for "what is this call part of".**
+  `ToolContext{session, call_id, permission}`, a `ContextVar`, published by
+  `AgentSession._run_turn` (the session, for the turn) and
+  `ToolOrchestrator._execute_tool_async` (the call, and the permission), composing
+  by nesting. This replaced three separate back-channels: the module global in
+  `subagent_tools` holding the running session, the short-lived `ToolCall`
+  `ContextVar` (added and then folded in during this phase, so `tools/base.py` shows
+  no net diff against `HEAD`), and — new in this phase — the permission, which had
+  been two module booleans pushed into `shell_tools`. `folder_manager` deliberately stays put;
+  moving the folder means rewiring `file_tools`, `search_tools` and `shell_tools` at
+  once, which is its own pass.
+* **Ownership debt named by the audit, fixed.** (a) The function-local
+  `AgentSession` import is gone: `spawn` builds the child from `type(parent)`, so no
+  lazy import and no import-order coupling, and a subclass gets its own class back.
+  (b) The **parallel gating booleans** are gone: `shell_tools._ALLOWLIST_BYPASS` and
+  `_HOST_EXECUTION` (two booleans derived from one level, pushed into a tool module
+  the moment it changed) are replaced by `ToolContext.permission`,
+  published per call, read by `allowlist_bypassed()` / `host_execution()`. One
+  authority, and a parent and its child cannot share an answer any more.
+* **A real bug the new test found.** `SubagentRegistry.final_answer` scanned the
+  whole transcript, so a follow-up whose provider died answered with the *previous*
+  turn's text — `send_message` reporting stale work as the reply it had just asked
+  for. It now takes `since=` (the transcript length when this turn started) and reads
+  only what this turn wrote. Pinned by
+  `test_a_follow_up_failure_reads_like_a_first_turn_failure`, which fails on the old
+  body.
+* **The window needed no new routing, and that is now pinned.** The reducer folds
+  child frames into the card found by `parent_call_id`, never by tool name, so a
+  follow-up nests under the `send_message` card for free. `events.test.ts` gained a
+  test that would fail if that ever started keying off the `subagent` name.
+* **Fan-out: several children inside one turn.** No new verb was needed. The session
+  already runs a batch of independent tool calls concurrently
+  (`AgentSession._execute_batch`), so three `subagent` calls declared in one assistant
+  message are three concurrent children, and a batch mixing `subagent`,
+  `send_message` and `subagent_fork` works the same way. What landed is the **bound**,
+  in `_drive_child` — the same single owner that runs a child's turn:
+  `MAX_CONCURRENT_CHILDREN = 4` as a *queue* (a verb with no free slot waits rather
+  than being refused, so a model that asks for six children gets six answers and
+  never has to guess the limit), `MAX_CHILDREN_PER_TURN = 8`, and
+  `MAX_SUBAGENT_DEPTH = 1`. The deadline is unchanged and, importantly, now measures
+  the **turn rather than the queue wait**: the slot is taken inside the child's own
+  task, so a child that waited its turn still gets its full `CHILD_TURN_TIMEOUT_S`.
+  Per-child seriality survives as its own guard — one child, one turn at a time,
+  because a turn appends to that child's transcript. Attribution needed no change and
+  is proved under load: with four children streaming interleaved, each card keeps its
+  own text (a core test and a reducer test, both mutation-checked against a routing
+  bug).
+* **The budget question, decided.** *Does the parent's tool budget bound concurrent
+  spend?* Yes when it is set, and explicitly backstopped when it is not:
+
+  * **It usually does, mechanically.** Each of the three verbs *is* one of the
+    parent's tool calls, counted before it runs, so a parent with a budget of ten
+    cannot start more than ten children in a turn. This was already true and is
+    already tested by `test_tool_call_budget.py`.
+  * **It need not**, because `max_tool_calls = 0` means "no limit" — a real setting.
+    That is what `MAX_CHILDREN_PER_TURN` exists for: without it, one assistant
+    message could declare a thousand `subagent` calls and the queue would work
+    through them, four at a time, forever. The refusal names the limit and tells the
+    model the child still exists and can be used later with `send_message`.
+  * **It does not bound what the children spend, and should not.** A child's budget
+    is its own (inherited as a ceiling, counted separately) — the Phase 5 decision.
+    So a fan-out's cost is bounded by `MAX_CHILDREN_PER_TURN x the child's own
+    budget`, not by the parent's alone. That is stated in the constant's docstring
+    rather than left implicit.
+* **`MAX_SUBAGENT_DEPTH` is now the reason nesting is refused, not a side effect.**
+  The serial gate this phase removed was the *only* thing stopping a child from
+  spawning a child — a child running its own turn counted as "another subagent
+  running", so the refusal was real but stated as a concurrency fact. The rule is
+  now its own check with its own words and two tests (a unit one and a real-turn one
+  where the parent reads the refusal in its own tool result). The handoff had both
+  this claim and a contradictory "no depth limit" bullet; the serial gate's behaviour
+  is the one the code actually had, and the contradiction is resolved here.
+
+**What remains open in this phase.**
+
+* **The live GUI with a real provider is still unwatched.** Everything here is pinned
+  by tests and by replaying captured frames through the reducer, but no human has seen
+  a follow-up, a fork, or four children streaming at once in the running window. Same
+  standing item as Phase 5.
+* **`subagent_tools.py` is now 1056 lines and wants splitting.** It holds four
+  different things: the registry (who exists), the scheduler (how many run at once),
+  the child-turn loop (`_drive_child` and its failure shapes), and the five tool
+  classes. Every one of them is in the right *place* — the phase's point was that a
+  turn has exactly one owner — but they no longer belong in one *file*. The natural
+  cut is `subagents.py` (registry + scheduler + loop) with `subagent_tools.py`
+  keeping only the tools; the constants and `subagent_registry` are imported by name
+  from several test files and `headless/server.py`, so the move needs re-exports or a
+  sweep. Not done here because it is a pure move and this pass's budget went to the
+  behaviour.
+* **The bounds are module constants, not settings.** `MAX_CONCURRENT_CHILDREN`, `MAX_CHILDREN_PER_TURN` and `MAX_SUBAGENT_DEPTH` cannot be changed by the user; a window
+  that wants to offer "allow more subagents" has no dial to turn. Deliberate for now
+  — the numbers are conservative and a settings surface needs a UI decision — but it
+  is the obvious next step if the caps ever bite.
+* **No aggregate spend bound across children.** See the budget bullet: eight children
+  with a budget of ten each is up to eighty child tool calls under one parent turn. Nothing
+  caps that total; the per-turn child count is a proxy for it, not a measurement of it.
+* **`list_agents` reports per-turn usage, not lifetime usage.** Each turn resets the
+  child's counter (`_run_turn_body` does that for the parent too), so a child talked
+  to three times shows the calls of the last turn. Nobody has decided whether that is
+  the right number to show.
+* **One of the two adjacent findings is now closed, the other is not.** The
+  "no depth/count limit on subagents spawning subagents" half is closed by
+  `MAX_SUBAGENT_DEPTH` / `MAX_CHILDREN_PER_TURN` above. **`Orchestrator._execution_history`
+  still grows without a cap** (`get_history` / `clear_history` have no callers
+  anywhere), and it holds full tool arguments — the one item on this list that is now
+  purely a leak rather than a policy question.
+
+### Phase 7 (skills): what landed, and what remains
+
+**The capability behind the `skills` mode, and the `/` syntax the composer has been
+advertising since it had a placeholder.** Nothing was invented to get there: the two
+tools follow `planning_tools.py`'s shape (read-only verbs, `ToolCategory.UTILITY`,
+`folder_required = False`), the mode gate is the existing read-only set, the window
+gained no new event type, and the one piece of prompt assembly joins the plan inside
+`AgentSession._messages_with_system` -- for the reason that method already gives.
+
+* **A skill is one Markdown file: `<project>/.tonyagent/skills/<name>.md`, or
+  `<app data>/skills/<name>.md`.** Optional `---` front matter with `name:` and
+  `description:`; everything after it is the procedure. `core/skills.py` owns the
+  format. It is deliberately **not** YAML: the project has no YAML dependency, and a
+  parser that accepted nested structures would advertise a shape nothing reads. The
+  project's file beats the user's on a name collision, and the *shadowed* file is
+  reported rather than ignored -- a skill that exists and does not run is exactly the
+  silence this project keeps having to unpick.
+* **A file that cannot load is a problem with a reason, not a skip.** `parse_skill`
+  raises with the fix in the sentence: an unclosed `---` fence ("a skill with no header
+  needs no '---' line at all"), an unknown front-matter key, no body, a name that could
+  not be typed after a slash, or a body over `MAX_SKILL_CHARS` (24,000 -- a prompt
+  budget, so the refusal names the number). `list_skills` prints them, its card counts
+  them ("2 skills, 1 broken"), and the composer's RPC ships them.
+* **Two tools, registered in the load-bearing import block, both in the read-only
+  set** so they exist in every mode: `list_skills` (name, purpose, root, path, and the
+  broken files) and `run_skill` (the procedure, carrying `PERMISSION_NOTE` and, on a
+  bad name, the list of good ones -- "no such skill" alone would only produce another
+  guess). Neither requires a project folder: the user root works with no project open.
+  The wire tripwire is **41** now.
+* **`/name arguments` is resolved by the core, not by the model.** The decision was
+  made where the precedent already was: `_messages_with_system` appends the plan to the
+  prompt because it is "not something either party *said*", and a skill invocation is
+  the same class of thing -- so the procedure is appended there *and* `self.messages`
+  keeps the line the user typed. A model that never calls `run_skill` still follows
+  `/review`, which is the whole difference between a syntax and a suggestion; and the
+  saved conversation stays readable instead of growing a pasted document per
+  invocation. Resolution lives in `_run_turn_body` rather than in `send`, because
+  `send` is not the only way into a turn -- a child's turn appends its brief and calls
+  `_run_turn` too, and a `/name` in a brief means the same thing it means at the top.
+  The invocation is cleared in the turn's `finally`: it is an *invocation*, not a mode.
+* **A message that merely starts with a slash is prose.** `/usr/local/bin` and a typo
+  both pass through untouched -- hijacking a path would break pasting one, and refusing
+  it would put a refusal in front of someone asking for nothing. What tells a user the
+  name is wrong is the composer's own list while they type it. This is tested in both
+  directions, which is why `invocation_for` takes its folder as a **required**
+  argument: a default of `None` reads as "the current project" and means "the user root
+  only", a bug that looks exactly like a skill not existing.
+* **What a skill cannot do is the design.** Loading one is a read, so it is allowed in
+  Plan mode; the *steps* then run with the tools the mode already allows. The proof is
+  a real turn in Plan mode that loads a procedure saying "write the file", watches the
+  write come back `write is not available in Plan mode` from the orchestrator, and
+  checks the file does not exist. A skill is also never turned into a filesystem path:
+  the model's string is looked up in the discovered set, never joined to a directory.
+* **The composer's half is the picker.** `/` opens a menu of the real list, arrows move
+  the highlight, Tab or Enter writes `/name ` into the field, Escape closes it and
+  leaves the text alone, and Enter still *sends* whenever nothing matches -- the case
+  that matters, since a path in a composer is prose. It asks the core for the list when
+  it opens rather than at mount, so a skill saved in the editor a second ago is there,
+  and there is nothing to invalidate. `skills.list` is the RPC; the reply carries names
+  and paths and **no bodies**, because a listing answers "what have I got" and every
+  procedure would be the whole store read again on every keystroke.
+* **Proved through its real entry points.** `tests/unit/test_skills.py` (45 tests) covers
+  the format, the two roots and their shadowing, every refusal, the token rules, both
+  tools, the `skills.list` RPC, and three real turns with a scripted provider: a
+  `/review` message (the procedure in the prompt, the typed line in the transcript, the
+  block gone on the next turn), a turn that calls `list_skills` then `run_skill` and
+  whose two cards carry "1 skill" and "skill: review", and the Plan-mode refusal above.
+  Load-bearing by mutation: deleting the prompt append fails four tests, and treating an
+  unknown name as a skill fails the path test. `scripts/e2e_all_tools.py --fast` gained
+  four checks (58 now) against a real project folder, including the shadowing-free
+  "this file is broken" report. The TypeScript suite gained 18 (626 now).
+* **The pixels were measured rather than eyeballed, and that is a real caveat.**
+  `app/skills-preview.html` renders the real composer with the real stylesheets and
+  four states; in the running dev server the menu measured 6px above the field, inset
+  to the same 19px the field's text uses, `position: absolute`, `z-index: 6`, on the
+  panel glass, with ArrowDown moving the highlight and Escape closing it -- all read
+  out of the live DOM. **A screenshot could not be taken** (the preview webview did not
+  composite, and neither a reload nor a reopen helped), so no human has *looked* at
+  this menu. Same standing item as the nested subagent UI.
+
+**What remains open in this phase.**
+
+* **The `@` half of the placeholder is still a lie.** `@ for threads or files` was
+  advertised in the same sentence as `/ for skills` and nothing handles it; that is the
+  next thing a user will notice, and the same argument applies -- either wire it or take
+  it out of the placeholder.
+* **The picker only opens on a message that is nothing but the token.** It requires the
+  whole field to be `/name`, so `/` typed after a word does not offer anything. That is
+  deliberate (mid-sentence `/` is usually a path) but it is also why the menu cannot be
+  reached to *insert* a command into a sentence that already exists.
+* **Skills cannot say anything about themselves but their name and purpose.** No
+  argument hint (so the field never suggests what `/review` wants), no list of the tools
+  a procedure expects, and no way to mark one as needing a mode -- a skill whose steps
+  need writes is discovered as available in Plan mode and refused at the write, which is
+  honest but late.
+* **One file per skill, at the top level of the skills directory only.** No
+  `SKILL.md`-in-a-directory layout, no nesting, no `includes`. The flat file is
+  discoverable with `ls` and that was the deciding argument; nesting is a change to
+  `discover_skills` whenever somebody wants it.
+* **Nothing caches, on purpose.** Discovery is a directory listing and a few small
+  reads on every `list_skills`, every `run_skill` and every turn whose message begins
+  with a known `/name`. The alternative is a cache with an invalidation bug in it -- the
+  user edits a skill and the next turn uses the old one -- but it does mean a project
+  with a few hundred skills would be read once per turn.
+* **The menu is not mode-aware.** It lists what exists, not what this mode can carry
+  out, and it never says which skills come from the user root vs the project beyond the
+  `user` chip on a row.
+
+### The adversarial gate pass: the surface swept, three gate holes fixed, and the recorded leak closed
+
+**What was asked of it.** Every registered tool had its gates probed as a *class*
+rather than one at a time — mode and permission refusal, the destructive
+confirmation with nobody to ask, the sandbox refusal when nothing is attached,
+path confinement, the network guard, cancellation and cleanup — plus the two
+things that had never been probed adversarially at all: the skill store (paths,
+malformed files, oversize and non-regular files, and what a *hostile* body can
+make the model do) and the workflow fan-out (concurrency, the depth and per-turn
+bounds, cancellation, attribution).
+
+**What was measured clean**, each pinned in `tests/unit/test_tool_gate_surface.py`
+(new, 23 tests) and driven through `ToolOrchestrator.execute_tool_async` — the
+layer that actually decides, never the tool body:
+
+* the mode × permission matrix for all 41 tools on all 16 combinations: a
+  forbidden call is refused *and the body never runs* (a recorder stands in for
+  every tool's `execute`), the two axes intersect rather than override, and
+  Build + Full reaches every registered tool — no tool is in no mode;
+* all four destructive tools (`delete_file`, `edit`, `execute_command`,
+  `write`) refuse with no bridge, refuse on No, refuse when the answer never
+  comes, and leave no pending prompt behind — with a denied `delete_file`
+  measured on the file itself, not only through the recorder;
+* 12 path parameters across 12 tools refuse `../`, `sub/../../`, a
+  Windows-spelled escape and an absolute path outside, with a sentinel file
+  outside the project to prove nothing was read and a planted path to prove
+  nothing was written (and an approving bridge, so the confirmation gate is not
+  what passes it); `glob`'s escaping *pattern* has its own named test, since that
+  was the historical hole;
+* `execute_command` at High, approved by the user, with an allow-listed command,
+  is refused with the one `NO_RUNTIME` sentence — and the same command at Full
+  runs on the host, so the rung is measured as the difference; all 14
+  sandbox-required tools answer with that same sentence;
+* stopping a turn with six children in flight ends the turn, cancels every
+  child, leaves no `subagent:` task behind, and restores the concurrency permits
+  (asserted behaviorally: the *next* fan-out still peaks at exactly 4);
+* a child still *queued* for a slot is interruptible through `interrupt_agent`,
+  never calls the provider, and the child behind it still runs.
+
+**Four fixes, each with a test that fails on the previous code:**
+
+1. **The guard raised instead of refusing.** `urlparse` raises on `http://evi[l]/`
+   and `http://[::1/`, and the `ValueError` escaped both network tools' own error
+   handling — the model saw ``Tool execution failed: Invalid IPv6 URL``, a tool
+   *failure* with no address and no fix named, and inside the httpx request hook
+   the same raise would have surfaced on a redirect hop. `_internal_host_refusal`
+   now refuses a URL it cannot parse, in its own words.
+2. **The guard allowed three spellings of loopback and a metadata range.**
+   `0177.0.0.1`, `0x7f000001` and `127.0.0.1.` were allowed because the guard
+   allowed whatever the *resolver* declined to resolve, and this machine's
+   resolver declines all three (measured with a listening socket: they do not
+   connect here, which is luck, not a gate — on glibc `inet_aton` expands both
+   numeric spellings to 127.0.0.1). `100.64.0.0/10` was allowed too: RFC 6598
+   shared space, which contains Alibaba Cloud's metadata address
+   `100.100.100.200`, and which `ipaddress` calls neither private nor reserved.
+   Swapping the predicate for `not is_global` was rejected on the evidence:
+   NAT64's `64:ff9b::/96` is `is_global` *and* reserved, so that change would
+   have un-blocked it. The shapes are refused before resolution now and the /10
+   is refused by name; real names that merely look hex-ish (`cafe.beef`,
+   `dead.beef`) are pinned as *allowed* so the fix cannot over-block.
+3. **The skill size cap ran after the read.** A 4 MB `.md` beside the good ones
+   was read into memory in full — on every `/name` turn and every `list_skills` —
+   and only then refused. `load_skill_file` now `stat`s first (`MAX_SKILL_BYTES`,
+   4 bytes per character), names a non-regular file as such, and the test proves
+   the read never happens by making `Path.read_text` raise.
+4. **`_execution_history` grew without a bound** — the item this file already
+   listed as "purely a leak rather than a policy question". It holds every
+   executed call's **full arguments** (a `write`'s file contents included), has
+   no reader anywhere (`get_history`/`clear_history` have no callers), and a
+   fan-out made it easy to reach megabytes. It is a **200-entry ring** now
+   (`EXECUTION_HISTORY_LIMIT`), and the test asserts both the cap and that the
+   *recent* end is what survives — dropping the newest calls would be a cap that
+   answers the wrong question.
+
+**And one latent suite bug the pass uncovered:** a plan-mode test in
+`test_skills.py` leaves the process-wide `tool_orchestrator` in Plan
+(`AgentSession.set_mode` pushes it there — correct in the app, where one session
+owns the window) and ten subagent tests in later files failed with "subagent is
+not available in Plan mode". `test_modes_and_diffs.py` already had an autouse
+fixture for exactly this; `test_skills.py` has one now.
+
+**Hostile input to the skill store, pinned in `test_skills.py` (52 tests now):**
+oversize refused without a read, a *directory* named `notes.md` reported as not a
+regular file, invalid UTF-8 read with replacement characters instead of crashing
+discovery, a filename that cannot be typed reported by name, a broken project
+file not hiding a good user one under the same name, a skill named `run_skill`
+not shadowing the tool, and a body that impersonates a system message and closes
+the prompt block's own fence — which still gets its write refused by the mode's
+gate, because prompt text cannot grant anything.
+
+**What is *not* claimed.** Docker is down here: the non-fast e2e run — which
+starts the sandbox and exercises the browser and shell paths for real — did not
+run, and nothing here is evidence about a *contained* command. No real provider
+was used, so every model turn in these tests is scripted. Creating a file symlink
+needs a privilege this process does not hold, so the symlink confinement test
+reports itself **skipped** rather than passing. The “phantom child” behavior a
+refused fan-out leaves behind (a refused `subagent` is still a named, idle
+handle) is existing design — pinned in `test_subagents.py` as “the child exists
+and never ran … addressable and reusable” — so it was examined and deliberately
+left alone.
 
 ---
 
@@ -5453,3 +5967,332 @@ appeared. (`web_fetch` joined the set in the Phase 1 pass, when it was given
 
 Uncommitted from the review: `tests/conftest.py`, `src/tonyagent/tools/base.py` (a
 docstring only) and this file. See Status at the top.
+
+---
+
+## The registry's children, and the child's frames (2026-10-11)
+
+**Two items the last handoff left open, both closed, both checked the way the handoff
+asked for.** The first was one method call; the second was supposed to need a real
+provider, and did not.
+
+### The registry hole: one call site, and the reason it is that one
+
+`SubagentRegistry.restart()` had been written for exactly this and had no caller. The
+wiring is a single call in `headless/server.py::_attach_session`, which is the one host
+path every session replacement goes through — `conversations.switch`,
+`conversations.create`, and the startup restore — so a child can never outlive the
+conversation whose turn spawned it:
+
+* the outgoing chat's children stop being listed in the incoming chat's `list_agents`
+  (the registry is process-wide, so it would otherwise answer for a dead session);
+* a **running** child is cancelled with the switch. That half is the one that spends
+  money: a child still working for a conversation the window has left is a turn nobody
+  can read.
+
+The placement mirrors `install_question_bridge`, the handoff's own model for this shape:
+one host act at attach time, not a per-call-site cleanup.
+
+**A test that would have passed for the wrong reason, caught before it was written.**
+The protocol test spawns its child *after* constructing the `StdioServer`, not before:
+construction is itself an attach, so a child seeded first would have been cleared by the
+very wiring under test and the assertion would have held even if the switch had done
+nothing. The test comments say so, so the next reader does not "simplify" it back.
+
+Tests: `test_restart_cancels_a_running_child_and_drops_the_listing` (registry level, with
+a `wait_for` timeout so a regression fails in a second instead of sleeping 30s), plus
+`test_switching_conversations_forgets_the_previous_chats_children` and
+`test_switching_conversations_stops_a_child_that_is_still_running` (protocol level).
+
+### The live-window question, answered by capture
+
+The handoff's fear was specific: nobody had watched a real child's frames in the real
+window, so whether they "render anywhere, duplicate, or vanish in `MessageList`" was
+known only to the code. A real provider was the suggested check. **A real provider turned
+out not to be necessary — a faithful capture was, and it found more than the eye would
+have.** `scripts/capture_child_frames.py` runs one real parent turn whose stub provider
+calls `subagent` and then answers, with a real child session (the project's own audited
+stub-provider pattern), and prints every frame the window would receive, in wire order.
+Replaying that sequence through `applyEvent` is what actually happens in the window —
+minus the pixels.
+
+Two real bugs, both invisible to the Python-side test that pinned the child's events:
+
+1. **The child's answer rendered as an extra, unlabelled assistant bubble.** The reducer
+   created a placeholder for *any* turn id at `turn.started` (and `message.started`), so
+   the child's turn got a bubble of its own and its deltas streamed into it. Worse than
+   the handoff's phrase ("append to the child's message"): there was no child's message
+   in the window — the bubble *was* the child, rendered as the assistant, in the parent's
+   transcript. The child's conclusion already reaches the user through the `subagent`
+   card; the bubble duplicated it as prose the assistant apparently said.
+2. **The child's `turn.finished` cleared `busy` while the parent was still working.**
+   `busy` is what locks the composer and draws Stop. For the rest of the parent's turn
+   the window showed an idle composer that the core would refuse with "a turn is already
+   running" — a message the user could not have predicted from what was on screen. The
+   same gate also mattered for `turn.failed`: a child's provider failure would have
+   painted the parent's running turn failed, then the parent would have answered anyway.
+
+**The fix is a decision about whose turn a frame is.** `ChatState` now carries
+`activeTurnId` — the turn the window started and is rendering. `turn.started` while a
+turn is already active is a subagent's, and is ignored (no bubble, no `busy`, no
+`error`); `message.started` creates a placeholder only for the active turn;
+`turn.finished`/`turn.failed`/`error` from a foreign turn are ignored entirely. A **null**
+`activeTurnId` is never foreign: the Phase 4 contract that an ask cannot outlive its turn
+(a terminal event for a turn this window never saw start) still lands, which is why the
+gate is `turnId !== null && activeTurnId !== null && turnId !== activeTurnId` and not a
+straight equality.
+
+**The App clears the id wherever it replaces the transcript** — `showMessages`
+(conversation switch), delete-of-the-open-chat, and mode change. That is not tidiness: a
+switch mid-turn would otherwise leave the id pointing at a turn whose frames will never
+arrive (the old bus is unsubscribed), and the *next* turn's `turn.started` would look
+like a subagent's and be ignored — a transcript that silently stops rendering after a
+conversation switch. Those three sites are the only ones that replace `messages`.
+
+Three reducer tests replay the captured sequence (kept verbatim in `events.test.ts`,
+with the capture script named in the comment so it can be regenerated):
+the child's run produces exactly one assistant message (the parent's, whose subagent card
+carries `summary`), `busy` stays true through the child's whole turn and moves only when
+the *parent* finishes, and a child's `turn.failed` leaves no banner and the parent still
+finishes normally.
+
+### What is not verified, said plainly
+
+* **The live GUI with a real provider.** The frames are captured from a real run and the
+  reducer is pinned against them; no human has seen a real child in the running window.
+  The remaining risk is rendering rather than logic (`MessageList` shows the parent's
+  bubble with the subagent card; nothing in this pass touches its markup). With a real
+  provider bound, the check is: send a message that provokes a `subagent` call and watch
+  the card — no child bubble, no mid-turn composer unlock.
+* **Nested UI.** The child's work is still invisible beyond the card, and the reducer now
+  *deliberately* drops its frames. Making them visible under the card needs the core to
+  say whose child a frame is (a parent/child field on the event) — the current frames
+  carry a turn id but nothing that links them to the tool call that spawned them. That is
+  Phase 6-shaped work; the ignore path in `events.ts` is where it plugs in.
+
+### What this pass verified
+
+    python -m pytest -m "not docker" -q     # 1016 passed, 11 skipped, 42s, one process
+    cd app && npm test                      # 596 passed, 98 suites
+    cd app && npm run typecheck             # clean
+    cd app && npm run build                 # clean
+    python scripts/e2e_all_tools.py --fast  # 50 checks, 0 failed, all 37 tools
+
+Uncommitted: `src/tonyagent/headless/server.py`, `tests/unit/test_conversations_protocol.py`,
+`tests/unit/test_subagents.py`, `app/src/events.ts`, `app/src/App.tsx`,
+`app/src/events.test.ts`, `scripts/capture_child_frames.py` (new), and this file.
+
+---
+
+## Nested subagent work (2026-10-11)
+
+**What the handoff called "the streak ends here", built and looked at.** A child
+session now has its work rendered in the window under the card of the tool call that
+spawned it: the tools it ran, the answer it returned, and whether it is still working.
+Nothing of the child appears as the assistant's own message, and nothing of the child
+can move the parent's turn state.
+
+### The link: `parent_call_id`, and where it comes from
+
+A child's turn id was never enough to attribute its frames — it is the *child's* id,
+and the parent transcript has never seen it. So each frame now carries two more fields
+(`Event.subagent` / `parent_call_id` in `src/tonyagent/core/events.py`):
+
+* **the child's name**, set by `SubagentRegistry.spawn` before the child can emit
+  anything (`AgentSession.subagent_name`), and
+* **the id of the parent tool call**, which only the orchestrator knows. It is
+  recorded for the duration of each execution in a **`ContextVar`**
+  (`tools/base.py`, set/reset around `tool.execute` in `tools/orchestrator.py`), and
+  the `subagent` tool reads it at spawn time. A ContextVar is not decoration: the
+  independent calls in one assistant message run as concurrent tasks, and each task
+  has to see *its own* call — the same fact `test_the_executing_call_is_recorded_for_
+  its_own_task` pins with a two-call overlap. A tool driven directly (a test, a
+  script) sees `None` and the child carries no link, which is honest: there was no
+  card for it to belong to.
+
+Only a child's frames carry these keys; `Event.to_dict` adds them only when set, so
+every other frame on the wire is byte-for-byte what it was.
+
+### The reducer: routed before any turn logic
+
+`applyEvent` checks `parent_call_id` **first** and hands the frame to
+`applySubagentEvent`, which finds the card by call id and folds the frame in: the
+child's `message.delta`/`message.completed` into its answer, its
+`tool.started/tool.completed` into its own tool list, its `turn.started/-finished`
+into `running`. No child frame reaches the turn switch at all, so the whole class of
+bugs the active-turn guard was written for — a second bubble, `busy` cleared
+mid-turn, a false error banner — is now unreachable by construction, not merely
+guarded. The fallback guard stays for unattributed foreign turns (a child spawned
+outside a call), pinned in `a child that cannot say whose it is stays a foreign
+turn`.
+
+A frame whose card is not in the transcript (conversation switched away, or a
+restored transcript, which reloads messages without tool cards) is dropped, not
+bubbled.
+
+**A state-copy subtlety worth keeping.** `copyMessages` had to start deep-copying the
+child object and its tool list. The shallow copy was correct while a tool call was
+flat, and a nested object written through with it is exactly the corruption the
+deep copy exists to prevent — `the reducer does not mutate the state it was given`
+is the test that would have caught it late.
+
+### The rendering, and what it was checked against
+
+`SubagentWork` (`app/src/MessageList.tsx`) renders inside the card's flex unit: a
+header (child name, `working…`/`answered`), one row per child tool call, and the
+child's answer as Markdown. The left rule takes `--accent` while the child runs and
+`--border` when it is done; the card's own status and `detail` stay the *parent*
+call's (`subagent <name>: N/M tool calls`), so the child finishing never marks the
+call finished.
+
+Checked as pixels, because "show" deserves a look rather than an assertion:
+`app/nested-preview.html` + `app/src/nested-preview.tsx` mount the **real**
+`MessageList` against the **real** stylesheets with a realistic finished child (three
+tools, an answer, a Markdown code span). Rendered in the browser at 1100x900: the
+nested block appears under the card, computed styles confirm `--ok` on the child's
+tool marks and `--border` on the rule, and there are no console errors. Run
+`npm run dev` in `app/` and open `/nested-preview.html` to see it; the files are
+disposable and not part of the built bundle (`index.html` is the only Vite entry).
+
+### What this pass verified
+
+    python -m pytest -m "not docker" -q     # 1019 passed, 11 skipped, 42s, one process
+    cd app && npm test                      # 604 passed, 99 suites
+    cd app && npm run typecheck             # clean (includes the preview harness)
+    cd app && npm run build                 # clean
+    python scripts/e2e_all_tools.py --fast  # 50 checks, 0 failed
+    python scripts/audit_reduced_motion.py  # passes (no animation added)
+
+Tests added: two in `tests/unit/test_subagents.py` (a real child's frames carry the
+call id and name; a direct spawn carries no link), one in
+`tests/unit/test_tool_orchestrator_path.py` (per-task recording under a concurrent
+batch), four reducer tests in `app/src/events.test.ts` (nested work lands on the
+card, the running state, dropping without a card, the unattributed fallback) and
+four markup tests in `app/src/MessageList.test.tsx`.
+
+### What is deliberately not in it
+
+* **The child's reasoning is not shown.** `reasoning.*` from a child is ignored by
+  the routing (`default:` in `applySubagentEvent`). Folding a second thinking panel
+  into a card is a design question this pass did not need to answer.
+* **A reopened conversation shows no nested work.** `showMessages` rebuilds
+  transcripts from saved messages, which carry no tool cards at all — a pre-existing
+  limit of restoring, not of this view.
+* **One level deep.** Nested subagents are refused, so a child cannot spawn a
+  grandchild. **The mechanism changed** with the fan-out pass: it used to fall out of
+  the serial gate ("one subagent runs at a time"), which refused every spawn while a
+  child was running, and would have been lost when that gate was removed. It is now
+  `MAX_SUBAGENT_DEPTH = 1` in `subagent_tools`, enforced in `_drive_child` and said in
+  its own words — see the Phase 6 section above.
+* **The live GUI with a real provider is still unwatched.** The frames are captured,
+  the reducer pinned, and the component rendered against real styles — but no real
+  child has streamed into a card in the running window yet. With a real provider
+  bound, provoke a `subagent` call and watch the card fill in.
+
+Uncommitted: `src/tonyagent/core/events.py`, `src/tonyagent/core/session.py`,
+`src/tonyagent/tools/base.py`, `src/tonyagent/tools/orchestrator.py`,
+`src/tonyagent/tools/subagent_tools.py`, `tests/unit/test_subagents.py`,
+`tests/unit/test_tool_orchestrator_path.py`, `app/src/backend.ts`,
+`app/src/events.ts`, `app/src/events.test.ts`, `app/src/MessageList.tsx`,
+`app/src/MessageList.test.tsx`, `app/src/styles/tool-calls.css`,
+`app/nested-preview.html` (new), `app/src/nested-preview.tsx` (new), and this file.
+
+---
+
+## The confirmation gate, and the redirect the guard missed (2026-10-11)
+
+An audit pass went looking for tool-safety gaps rather than re-reading claims, and
+found three that the suite could not see because every test either installed a
+bridge or called the tool directly. All three are fixed, and each has a test that
+fails on the previous code — verified by reverting the file under test and watching
+it fail, not by assuming.
+
+### 1. The internal-address guard stopped at the first hop
+
+Measured: `web_fetch` and `http_request` both refused `http://127.0.0.1:8123/`, and
+both returned that address's body when it was reached through
+`https://httpbin.org/redirect-to?url=http%3A%2F%2F127.0.0.1%3A8123%2Fsecret`. The
+guard was asked once, about the URL the model typed; the client was then told
+`follow_redirects=True`, and the address actually read was never checked. A guard
+that anyone who can serve a 302 can walk around is not a guard.
+
+The fix is one httpx **request event hook** (`_refuse_internal_target`), which httpx
+calls for *every* request it makes — redirect hops included — and before the request
+goes out (`_send_handling_redirects` awaits the hooks ahead of each
+`_send_single_request`; verified in the installed 0.28.1). It is deliberately not a
+second copy of the rule: it calls the same `_internal_host_refusal`, so the
+pre-flight check and every hop give the same answer in the same words. Hand-rolling
+the redirect loop instead would have meant re-implementing method rewrites and
+cross-origin `Authorization` stripping — the hook keeps httpx's semantics and adds
+only the check.
+
+Two things worth keeping: the hook is **async** (the async redirect loop awaits it; a
+plain function fails with `object NoneType can't be used in 'await' expression`),
+and `_guarded_client` is the single constructor both tools use, so a call site
+cannot forget it.
+
+`tests/unit/test_network_guard_redirects.py` drives the real tools against the **real
+client** — same `follow_redirects`, same hook — with only the transport replaced, so
+a call site that drops the hook fails the test. It covers the refusal, the two tools'
+agreement on wording, a chain refused at the hop that turns internal, a relative
+`Location` still followed, and a redirect loop coming back as an error rather than a
+hang. Reverting `network_tools.py` to HEAD fails three of the five.
+
+### 2. The gate skipped when there was nobody to ask
+
+`_request_confirmation` returned `None` with no callback installed, and the caller
+reads `None` as *approved* — so `delete_file` ran with no prompt and no user, status
+`success`, file gone. The window always installs a bridge, which is exactly why it
+was invisible. It now returns a refusal in words the model can act on, and
+`tests/unit/test_confirmation_contract.py` pins it, with the approving-bridge case
+beside it so the refusal cannot be mistaken for a broken tool. Four existing call
+sites in `test_modes_and_diffs.py` and `test_tool_summary_line.py` had been relying
+on the skip to let a destructive tool run; they now send `Allow` explicitly, which is
+what they always meant.
+
+### 3. A stopped turn kept its dialog, and a cancelled prompt leaked
+
+Three faces of one lifecycle gap:
+
+* The cleanup after the confirmation wait was a statement, not a `finally`, so
+  cancelling the turn left the entry in `_pending_confirmations` for the life of the
+  process. Now it always leaves.
+* Nothing published `confirmation.resolved` when a prompt was abandoned — on a stop
+  *or* on the 60-second timeout — so the window's `pendingConfirm` stayed set. The
+  session now tracks the prompts it published and closes them at the end of the turn
+  (`_close_open_confirmations`, in `_run_turn_body`'s `finally`, which the child's own
+  turn also passes through), and the reducer clears `pendingConfirm` on
+  `turn.finished`/`turn.failed` as well: the core's frame is the mechanism, the
+  reducer's clear is the guarantee.
+* **Stop did not release the tool at all.** `cancel()` only set the flag, and nothing
+  polls it while a tool awaits a prompt, so a stopped turn sat out the full minute
+  (measured: turn still running 1.5s after Stop, dialog still up, no `resolved`).
+  `cancel()` now answers the open prompt *no*, which releases the wait immediately.
+  The timeout is now `CONFIRMATION_TIMEOUT_S`, a named constant like
+  `user_io.ASK_TIMEOUT_S`, so the wait's own path is testable instead of a 60-second
+  test.
+
+`tests/unit/test_confirmation_contract.py` measures all three (leak, timeout, stop) on
+the real session, and `events.test.ts` adds the reducer's half plus the negative that
+another turn's terminal frame does not close this turn's dialog. Reverting
+`orchestrator.py`/`session.py` to their pre-pass behaviour fails the corresponding
+tests — checked by running the old bodies, not by assuming.
+
+### Still open, unchanged from the previous section
+
+Phase 6 (`workflow`) and Phase 7 (skills) have both landed (see "Phase 6 (workflow)"
+and "Phase 7 (skills)" above); `exit_plan_mode` and sandbox-side background jobs are
+still not built, and the `@` half of the composer's placeholder is still a hint with
+nothing behind it (the `/` half is real now). Non-blocking gaps this pass saw but did
+not touch, now with evidence rather than a shrug:
+
+* `Orchestrator._execution_history` grows without a cap and `get_history` /
+  `clear_history` have no callers anywhere — dead state that holds full tool arguments.
+* ~~The subagent registry has no depth or count limit, and a child inherits Build mode,
+  so a child can spawn children (bounded only by the per-level budget and the 120s
+  timeout).~~ **Both halves are now closed**: `MAX_SUBAGENT_DEPTH = 1` stops the
+  nesting, and `MAX_CHILDREN_PER_TURN = 8` stops the count. (The "no depth limit" claim
+  was wrong even when it was written — the serial gate refused the spawn — but nothing
+  tested it, which is exactly how a rule gets lost. It has tests now.)
+* `README.md` and `PROJECT_SUMMARY.md` still say 32 tools, Tauri MSI builds and a live
+  Tkinter client.

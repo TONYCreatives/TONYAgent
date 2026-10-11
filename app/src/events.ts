@@ -41,6 +41,35 @@ export interface ToolCall {
    * model's spending.
    */
   budget?: string;
+  /**
+   * A subagent's own work, when this call asked for one.
+   *
+   * The child runs its own turn on the same bus, and every frame it emits
+   * says which parent call it belongs to (`parent_call_id` on the event). This
+   * is where those frames accumulate: nested under the card of the call that
+   * asked for *that turn*, which is the only place they are allowed to appear.
+   * Without it the child's frames were either a second assistant bubble in
+   * this transcript or -- after the guard in `turn.started` -- nothing at all.
+   *
+   * The card is found by call id, never by tool name, and that is load-bearing
+   * for the workflow verbs: `send_message` (Phase 6) gives a child it already
+   * spawned another turn, so that turn's frames carry the `send_message` call
+   * id and nest under *that* card rather than the `subagent` card that created
+   * the child.
+   */
+  child?: SubagentChild;
+}
+
+/** One child session's work, as the window was told it. */
+export interface SubagentChild {
+  /** The child's name, as `list_agents`/`interrupt_agent` address it. */
+  name: string;
+  /** Its answer: streamed while it works, authoritative on completion. */
+  text: string;
+  /** The tools the child itself ran, in the order it asked for them. */
+  tools: ToolCall[];
+  /** Whether the child's turn is still running. */
+  running: boolean;
 }
 
 export interface ChatMessage {
@@ -82,6 +111,16 @@ function nextId(prefix: string): string {
 export interface ChatState {
   messages: ChatMessage[];
   busy: boolean;
+  /**
+   * The turn this window started and is rendering, or null between turns.
+   *
+   * Turn ids are how the core correlates a turn's frames, and a subagent runs
+   * its own turn -- on its own id, inside the parent's turn -- over the same
+   * bus (Phase 5). This is what lets the reducer tell "the turn I am showing"
+   * from "a child's turn crossing the wire": a frame for any other turn gets
+   * no bubble and cannot end this turn. See the `turn.started` case.
+   */
+  activeTurnId: string | null;
   /** Set when the core reports turn.failed or an error event arrives. */
   error: string | null;
   /** Non-null while a confirmation.requested is awaiting a response. */
@@ -116,6 +155,7 @@ export interface ChatState {
 export const initialState: ChatState = {
   messages: [],
   busy: false,
+  activeTurnId: null,
   error: null,
   pendingConfirm: null,
   pendingAsk: null,
@@ -141,6 +181,106 @@ function currentAssistant(state: ChatState, turnId: string | null): ChatMessage 
     if (m.role === "assistant" && (turnId === null || m.id === turnId)) return m;
   }
   return undefined;
+}
+
+/**
+ * Whether a turn-scoped frame belongs to a turn this window is not rendering.
+ *
+ * A subagent's frames carry its own turn id, so they are not this turn's --
+ * and the difference matters most for the *terminal* events, which would
+ * otherwise end a turn that is still running.
+ *
+ * A null id is never foreign: `error` also arrives outside a turn, and
+ * terminal cleanup for a turn this window never saw start (Phase 4's
+ * "an ask cannot outlive its turn") must still land.
+ */
+function isForeignTurn(state: ChatState, turnId: string | null): boolean {
+  return turnId !== null && state.activeTurnId !== null && turnId !== state.activeTurnId;
+}
+
+/**
+ * Fold one of a subagent's frames into the card of the call that asked for it.
+ *
+ * A child is not a second assistant: its tool calls, its answer and its
+ * running state belong under the card of the call that asked for *that turn*,
+ * not in this transcript. The child's frames are the only ones carrying a
+ * `parent_call_id`, and routing happens before the turn switch, so no child
+ * frame can reach the turn lifecycle at all.
+ *
+ * **By id, never by name.** Which of the three spawning verbs made the call is
+ * irrelevant here, and must stay irrelevant: `send_message` gives an existing
+ * child another turn, whose frames carry that call's id, and a name check for
+ * `subagent` would strand them.
+ *
+ * A frame whose card is not in the transcript -- the conversation was switched
+ * away, or a restored transcript carries no tool cards -- returns the state
+ * unchanged. There is nowhere to show it, and inventing a bubble for it is the
+ * bug this replaces.
+ */
+function applySubagentEvent(state: ChatState, event: CoreEvent): ChatState {
+  const callId = event.parent_call_id as string;
+  const { type, payload } = event;
+
+  for (const message of state.messages) {
+    const call = message.tools.find((t) => t.id === callId);
+    if (!call) continue;
+
+    if (!call.child) {
+      call.child = { name: event.subagent ?? "", text: "", tools: [], running: false };
+    }
+    const child = call.child;
+    if (event.subagent) child.name = event.subagent;
+
+    switch (type) {
+      case "turn.started":
+        child.running = true;
+        break;
+      case "message.delta":
+        child.text += payloadString(payload, "text") ?? "";
+        break;
+      case "message.completed": {
+        // The authoritative final text, replacing the streamed one -- the same
+        // contract the parent's own message has.
+        const final = payloadString(payload, "text");
+        if (final !== undefined) child.text = final;
+        break;
+      }
+      case "tool.started":
+        child.tools = [
+          ...child.tools,
+          {
+            id: payloadString(payload, "id") ?? String(child.tools.length),
+            name: payloadString(payload, "name") ?? "tool",
+            status: "running",
+          },
+        ];
+        break;
+      case "tool.completed":
+      case "tool.failed": {
+        const id = payloadString(payload, "id");
+        const childCall =
+          child.tools.find((t) => t.id === id) ?? child.tools[child.tools.length - 1];
+        if (childCall) {
+          childCall.status = isFailure(payload.result) || type === "tool.failed" ? "failed" : "ok";
+          const detail = describeResult(payload.result);
+          if (detail) childCall.detail = detail;
+        }
+        break;
+      }
+      case "turn.finished":
+      case "turn.failed":
+        // The parent's card reports the outcome; this only stops the nested
+        // header from claiming the child is still working.
+        child.running = false;
+        break;
+      default:
+        // `reasoning.*`, `message.started`, anything unknown: nothing to show
+        // yet. The child's thinking is deliberately not folded into its answer.
+        break;
+    }
+    return state;
+  }
+  return state;
 }
 
 /** Mutating helper: replace a message in place, or append it. */
@@ -257,7 +397,19 @@ function isFailure(result: unknown): boolean {
  * aspirational.
  */
 function copyMessages(state: ChatState): ChatMessage[] {
-  return state.messages.map((m) => ({ ...m, tools: m.tools.map((t) => ({ ...t })) }));
+  return state.messages.map((m) => ({
+    ...m,
+    // The child object is copied too, and its tool list with it. The shallow
+    // copy this used to be was enough while a tool call was flat; a nested
+    // object would otherwise be written through into the caller's state, which
+    // is the exact corruption `copyMessages` exists to prevent.
+    tools: m.tools.map((t) => ({
+      ...t,
+      child: t.child
+        ? { ...t.child, tools: t.child.tools.map((c) => ({ ...c })) }
+        : undefined,
+    })),
+  }));
 }
 
 /**
@@ -291,22 +443,42 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
   };
   const { type, turn_id: turnId, payload } = event;
 
+  // A subagent's frames are routed to the card that spawned them before any
+  // turn logic runs, so a child can never move `busy`, raise an error banner
+  // or create a message -- the whole class of bugs the active-turn guard was
+  // written for.
+  if (event.parent_call_id) {
+    return applySubagentEvent(next, event);
+  }
+
   switch (type) {
     case "turn.started": {
+      // A turn that starts while one is already running is a subagent's, not
+      // this window's: a child runs its own turn on its own id inside the
+      // parent's turn, and its frames cross the same bus. Rendering it was
+      // worse than it sounds -- the child's whole answer appeared as an
+      // unlabeled assistant bubble, and the child's `turn.finished` cleared
+      // `busy` while the parent was still working, re-enabling a composer the
+      // core would refuse. Ignoring it is what keeps the parent's turn the
+      // only one on screen.
+      if (next.activeTurnId !== null) return state;
       next.busy = true;
       next.error = null;
+      next.activeTurnId = turnId ?? nextId("a");
       // Create the assistant placeholder eagerly, keyed by the turn id, so the
       // first delta has somewhere to land. `message.started` also carries the
       // turn id, so both paths converge on the same message.
-      upsert(next, blankMessage(turnId ?? nextId("a"), "assistant"));
+      upsert(next, blankMessage(next.activeTurnId, "assistant"));
       return next;
     }
 
     case "message.started": {
-      // The core emits this once per assistant message. If `turn.started` was
-      // missed (events replayed from a sequence, say) the placeholder is
-      // created here instead.
-      if (!currentAssistant(next, turnId) && turnId) {
+      // The core emits this once per assistant message, and only ever during
+      // the turn that is running -- the parent's. A child's `message.started`
+      // is a different turn: creating a placeholder for it here would put the
+      // child's answer in this transcript one event after `turn.started`
+      // declined to.
+      if (turnId && turnId === next.activeTurnId && !currentAssistant(next, turnId)) {
         upsert(next, blankMessage(turnId, "assistant"));
       }
       return next;
@@ -452,28 +624,52 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
     }
 
     case "turn.finished": {
+      // A child's turn ending is not this turn ending. The parent's run has
+      // more frames to come -- its tool result, its answer -- and they need
+      // the placeholder this turn owns to still be the one they land in.
+      if (isForeignTurn(next, turnId)) return state;
+      next.activeTurnId = null;
       next.busy = false;
-      // A cancelled turn is the one path that can end with an ask still
-      // outstanding -- the core settles it, but a turn the user stopped may
+      // A cancelled turn is the one path that can end with a dialog still
+      // outstanding -- the core settles both, but a turn the user stopped may
       // already be gone before the event lands. A dialog the turn can no
-      // longer answer is a dialog that can never be closed, so it goes here
-      // too rather than waiting for the core to say so.
+      // longer answer is a dialog that can never be closed, so they go here
+      // too rather than waiting for the core to say so. `pendingConfirm` is
+      // the same failure with a different button: a stopped turn whose
+      // destructive call was still awaiting approval used to leave Allow / Deny
+      // on screen over a turn that could no longer act on either.
       next.pendingAsk = null;
+      next.pendingConfirm = null;
       dropEmptyAssistantMessages(next);
       return next;
     }
 
     case "turn.failed": {
+      // A child's provider failure is a failed subagent, not a failed turn:
+      // the parent reads it in the tool result and carries on. Showing it as a
+      // banner mid-turn would report a failure the turn did not have.
+      if (isForeignTurn(next, turnId)) return state;
+      next.activeTurnId = null;
       next.busy = false;
       next.error =
         payloadString(payload, "message") ?? payloadString(payload, "error") ?? "The turn failed.";
+      // Same reason as `turn.finished`: a turn that failed while a prompt was
+      // up will never answer it.
+      next.pendingAsk = null;
+      next.pendingConfirm = null;
       dropEmptyAssistantMessages(next);
       return next;
     }
 
     case "error": {
+      if (isForeignTurn(next, turnId)) return state;
+      next.activeTurnId = null;
       next.busy = false;
       next.error = payloadString(payload, "message") ?? "Backend error.";
+      // Deliberately not clearing the dialogs here: `error` also arrives
+      // outside a turn (an unknown provider, say), and a stray frame must not
+      // close a prompt a live turn is still waiting on. The two terminal turn
+      // frames above are the ones that mean "this turn is over".
       dropEmptyAssistantMessages(next);
       return next;
     }

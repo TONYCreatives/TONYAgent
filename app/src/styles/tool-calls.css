@@ -1,8 +1,89 @@
-
 /* --- tool calls ---------------------------------------------------------- */
 .tools {
   margin-top: 8px;
   display: flex;
   flex-direction: column;
   gap: 3px;
+}
+
+/*
+ * One tool call and everything that belongs to it, stacked.
+ *
+ * The row itself is unchanged; the unit exists so the subagent's nested work
+ * can appear *under* the call that spawned it without reflowing the row -- the
+ * row is a flex line, and a nested block inside it would be laid out beside
+ * the name.
+ */
+.tool-unit {
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- a subagent's work, under the call that spawned it ------------------- */
+/*
+ * The child's tools and answer live here rather than in the transcript, so the
+ * subagent reads as work the call did -- not as a second assistant. The left
+ * rule is the whole visual claim: one indent, one thread from the call down.
+ * While the child runs it takes the accent colour, which is the same signal
+ * the running tool mark uses.
+ */
+.subagent {
+  margin: 2px 0 4px 18px;
+  padding: 4px 0 4px 10px;
+  border-left: 2px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-family: var(--sans);
+  font-size: var(--text-sm);
+  color: var(--fg-mute);
+}
+
+.subagent.is-running {
+  border-left-color: var(--accent);
+}
+
+.subagent-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.subagent-name {
+  color: var(--fg-dim);
+}
+
+.subagent-state {
+  font-size: var(--text-xs);
+  opacity: 0.8;
+}
+
+.subagent-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.subagent-tool {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--fg-mute);
+}
+
+.subagent-tool-running .tool-mark {
+  color: var(--accent);
+}
+
+.subagent-tool-ok .tool-mark {
+  color: var(--ok);
+}
+
+.subagent-tool-failed .tool-mark {
+  color: var(--danger);
+}
+
+.subagent-answer {
+  margin-top: 2px;
+  color: var(--fg-dim);
 }
