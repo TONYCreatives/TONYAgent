@@ -177,6 +177,7 @@ class StdioServer:
             "conversations.move": self._h_conversations_move,
             "files.tree": self._h_files_tree,
             "files.read": self._h_files_read,
+            "files.write": self._h_files_write,
         }
         # Tool confirmations must reach the frontend as events, not a
         # callback that only a queue processor would drain.
@@ -411,6 +412,22 @@ class StdioServer:
             # a generic failure: "this is a PDF" is a different problem from
             # "something went wrong" and only one of them has a next step.
             raise RpcError(str(exc)) from None
+        # What the user changed by hand in the viewer since the last message.
+        # Appended to the text rather than kept beside it, so the report is
+        # part of the conversation the model receives *and* part of what the
+        # transcript records -- a reloaded conversation shows exactly what
+        # the agent was told about the files, which is knowledge the user is
+        # entitled to audit.
+        edits = params.get("user_edits")
+        if edits is not None and not isinstance(edits, list):
+            raise RpcError("user_edits must be a list")
+        report = ""
+        if edits:
+            from tonyagent.files import format_edit_report
+
+            report = format_edit_report(edits)
+        if report:
+            text = f"{text}\n\n{report}" if text.strip() else report
         turn_id = self.session.send(text, attachments)
         if not turn_id:
             # Explain which precondition failed so the UI can say something
@@ -1207,26 +1224,53 @@ class StdioServer:
         return tree.to_dict()
 
     async def _h_files_read(self, params: dict) -> Any:
-        """One project file's text, for the code viewer tab.
+        """One project file, as whatever the viewer should show for it.
 
-        The reply carries the language the core resolved for the file, not
-        the path for the window to guess from: ``Dockerfile`` and
-        ``dockerfile.something`` are different questions, and only one
-        owner of the answer keeps the highlighting honest.
+        The reply is one of three shapes -- `text`, `image`, `binary` -- and
+        the *core* decides which, because it has the bytes: an image is an
+        image because it decodes, a `.zip` is a file the window can name but
+        not draw, and "that file is not there" is the only failure. See
+        `tonyagent.files.read_for_viewer`.
         """
-        from tonyagent.files import SourceError, read_source
+        from tonyagent.files import SourceError, read_for_viewer
 
         path = params.get("path", "")
         if not isinstance(path, str) or not path.strip():
             raise RpcError("missing path")
         try:
-            source = read_source(path)
+            return read_for_viewer(path).to_dict()
         except SourceError as exc:
-            # The message names the file and the reason ("not a file", "over
-            # the limit", "binary"), all derived from the path the caller
-            # sent -- safe to return verbatim.
+            # The message names the file and the reason, all derived from the
+            # path the caller sent -- safe to return verbatim.
             raise RpcError(str(exc)) from None
-        return source.to_dict()
+
+    async def _h_files_write(self, params: dict) -> Any:
+        """Save the window's text back to a project file.
+
+        **This is the user's write, not the agent's.** The confirmation gate
+        on the `write` tool exists to ask the user before the *agent*
+        touches their files; a person editing the file they are looking at
+        is the act the gate is protecting their right to perform. What this
+        owes them is the boundary (confined), the cap, an atomic replace so
+        a crash cannot truncate a source file, and the report of what
+        changed -- which is what the reply carries and what
+        `format_edit_report` later hands the model.
+
+        Only text, and only files that already exist: creating a file is the
+        agent's tool's business, where the user is asked first.
+        """
+        from tonyagent.files import SourceError, write_source
+
+        path = params.get("path", "")
+        content = params.get("content")
+        if not isinstance(path, str) or not path.strip():
+            raise RpcError("missing path")
+        if not isinstance(content, str):
+            raise RpcError("content must be a string")
+        try:
+            return write_source(path, content).to_dict()
+        except SourceError as exc:
+            raise RpcError(str(exc)) from None
 
     # -- models --------------------------------------------------------------
     async def _h_models_list(self, params: dict) -> Any:

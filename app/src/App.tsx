@@ -16,8 +16,9 @@ import {
   type SidebarPane,
 } from "./ConversationList.js";
 import { pickFolder } from "./dialog.js";
-import { CodeViewer, type SourceFile } from "./CodeViewer.js";
-import { changesFrom, nameOf, type CoreTreeEntry } from "./filetree.js";
+import { CodeViewer, type ViewerFile } from "./CodeViewer.js";
+import { diffLines, type LineRange } from "./diff.js";
+import { changesFrom, type CoreTreeEntry } from "./filetree.js";
 import { DEFAULT_PALETTE } from "./highlight.js";
 import { IconRail } from "./IconRail.js";
 import { Dashboard, type UsageSummary } from "./Dashboard.js";
@@ -80,16 +81,15 @@ import { useWindowControls } from "./useWindowControls.js";
 const USAGE_TAB = "usage-tab";
 
 /**
- * The id of the code viewer's tab.
+ * The two things the main area can be: the conversation, or the code.
  *
- * A sentinel for the same reason `USAGE_TAB` is one: it can never collide
- * with a conversation id, so the strip's callbacks tell the two kinds apart
- * by identity. One tab for the viewer rather than one per file, because the
- * window has one viewer: opening another file replaces what it shows, which
- * is what a single "preview" pane does and what keeps the strip from filling
- * with every file the user glanced at.
+ * A mode rather than a tab, and it replaced the viewer's tab when this
+ * arrived. Two ways to reach one surface is two states to keep in step --
+ * "which tab is in front" and "which mode am I in" can disagree, and the
+ * window then shows a file while the strip highlights a chat. The strip
+ * keeps one job (which conversation), the switch keeps the other.
  */
-const VIEWER_TAB = "code-viewer-tab";
+type MainMode = "agent" | "code";
 
 export function App({
   backend: injected,
@@ -285,21 +285,52 @@ export function App({
   const [treeLoading, setTreeLoading] = useState(false);
 
   /**
-   * The code viewer: which file, whether it is in front, and its text.
+   * The code viewer: which file, and what the core said about it.
    *
-   * One file at a time, and one tab for it (`VIEWER_TAB`). `active` is
-   * separate from `path` for the same reason `usageTab` has three states:
-   * choosing a chat has to be able to put the transcript back *without*
-   * throwing away what the viewer was showing, exactly as it leaves the
-   * dashboard tab open behind it.
+   * One file at a time. `viewerFile` is whatever `files.read` answered --
+   * text, an image, or a file with no preview -- so the pane's own shape is
+   * the core's answer rather than a decision taken here from the extension.
    */
   const [viewerPath, setViewerPath] = useState("");
-  const [viewerActive, setViewerActive] = useState(false);
-  const [viewerSource, setViewerSource] = useState<SourceFile | null>(null);
+  const [viewerFile, setViewerFile] = useState<ViewerFile | null>(null);
   const [viewerError, setViewerError] = useState<string | null>(null);
   const [viewerLoading, setViewerLoading] = useState(false);
+  const [viewerSaving, setViewerSaving] = useState(false);
+  /**
+   * Whether the open file may be typed into.
+   *
+   * The user's switch, and it starts **on** for every file the viewer opens:
+   * read-only is the safe direction to be wrong in, and a file that turned up
+   * editable because of a preference set days ago is a surprise nobody asked
+   * for. The turn lock overrides it either way -- see `CodeViewer`.
+   */
+  const [readOnly, setReadOnly] = useState(true);
+  /**
+   * Hand edits, per file, waiting to be told to the agent.
+   *
+   * Keyed by path so a file edited three times sends one entry with the
+   * *current* line ranges rather than three overlapping reports; the counts
+   * are the core's own (`files.write` computes them with the same line-diff
+   * the agent's tools use) and the ranges are `diffLines`'s, because only the
+   * window knows what the keystrokes did. Cleared when the message carrying
+   * them is sent: they describe what the agent has not seen yet.
+   */
+  const [pendingEdits, setPendingEdits] = useState<
+    Map<string, { added: number; removed: number; lines: LineRange[] }>
+  >(new Map());
+  /** Which half of the main area is in front. */
+  const [mainMode, setMainMode] = useState<MainMode>("agent");
   /** Guards a slow read from overwriting a file the user has moved on from. */
   const viewerPathRef = useRef("");
+  /**
+   * The dirty flag, readable from callbacks that must not close over it.
+   *
+   * `openFile` has stable identity on purpose -- it is handed to the tree,
+   * which re-renders on every keystroke of the filter -- so it cannot read the
+   * state variable without becoming a new function on every edit, and it must
+   * not read a stale one.
+   */
+  const viewerDirtyRef = useRef(false);
 
   /**
    * The syntax palette, which is a window preference and not project state.
@@ -540,6 +571,15 @@ export function App({
 
   const send = useCallback(async (text: string, attachments: PendingAttachment[] = []) => {
     const backend = backendRef.current!;
+    // What the user changed by hand since the last message, on its way to the
+    // agent. Cleared only after the send is accepted, so a refused message
+    // does not lose the report it was going to carry.
+    const edits = [...pendingEdits.entries()].map(([path, change]) => ({
+      path,
+      added: change.added,
+      removed: change.removed,
+      lines: change.lines,
+    }));
     // Optimistic: the user's message appears immediately rather than after a
     // round trip. The core never echoes user text back as an event. The
     // attachment names stand in for the message text when there is none,
@@ -547,7 +587,8 @@ export function App({
     // an empty bubble in the user's own transcript.
     setState((prev) => appendUserMessage(prev, text || summaryLine(attachments)));
     try {
-      await backend.send(text, toWire(attachments));
+      await backend.send(text, toWire(attachments), edits);
+      if (edits.length) setPendingEdits(new Map());
     } catch (error) {
       setState((prev) => ({
         ...prev,
@@ -555,7 +596,7 @@ export function App({
         error: error instanceof Error ? error.message : String(error),
       }));
     }
-  }, []);
+  }, [pendingEdits]);
 
   const cancel = useCallback(() => {
     void backendRef.current!.call("cancel").catch(() => {
@@ -607,49 +648,135 @@ export function App({
   }, []);
 
   /**
+   * Read one file into the viewer. The shared half of open and discard.
+   *
+   * Deliberately not "reset the read-only switch": discarding a buffer must
+   * not quietly unlock a file the user had made read-only, and opening a
+   * *new* file is the only thing that should start locked again.
+   */
+  const loadFile = useCallback(async (path: string) => {
+    viewerPathRef.current = path;
+    setViewerPath(path);
+    setViewerFile(null);
+    setViewerError(null);
+    setViewerLoading(true);
+    try {
+      const reply = (await backendRef.current!.call("files.read", { path })) as ViewerFile;
+      // A reply for a file the user has since closed or replaced would put
+      // the wrong bytes under the right path in the header.
+      if (viewerPathRef.current !== path) return;
+      setViewerFile(reply);
+    } catch (error: unknown) {
+      if (viewerPathRef.current !== path) return;
+      setViewerError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (viewerPathRef.current === path) setViewerLoading(false);
+    }
+  }, []);
+
+  /**
    * Open a file in the viewer.
    *
-   * The viewer is read-only in both directions: this reads the text and hands
-   * it to a component with no way to write it back. See `CodeViewer` for why
-   * there is no save path, and `tonyagent/files.py` for why there is no write
-   * method on the core's side either.
+   * A read, always: what comes back is text, a picture, or a file the window
+   * cannot draw, and the pane renders whichever it is. Opening a file also
+   * brings the code half of the window to the front, because a file the user
+   * cannot see is a file they did not open.
    *
-   * Opening a file also brings the transcript's tab *back* if the Usage tab
-   * was in front -- the viewer replaces the main area, and a chart behind it
-   * would be a state the user cannot see their way out of.
+   * **A dirty buffer refuses the switch.** There is one viewer and one
+   * buffer, so opening another file would discard what the user typed -- and
+   * the editor they are imitating would not do that either. The refusal is
+   * visible rather than silent: the dirty marker and its hint stay on screen,
+   * and nothing changes.
    */
   const openFile = useCallback(
     async (path: string) => {
-      viewerPathRef.current = path;
-      setViewerPath(path);
-      setViewerActive(true);
-      setViewerSource(null);
-      setViewerError(null);
-      setViewerLoading(true);
-      setUsageTab((open) => (open === "active" ? "open" : open));
-      try {
-        const reply = (await backendRef.current!.call("files.read", { path })) as SourceFile;
-        // A reply for a file the user has since closed or replaced would put
-        // the wrong text under the right path in the header.
-        if (viewerPathRef.current !== path) return;
-        setViewerSource(reply);
-      } catch (error: unknown) {
-        if (viewerPathRef.current !== path) return;
-        setViewerError(error instanceof Error ? error.message : String(error));
-      } finally {
-        if (viewerPathRef.current === path) setViewerLoading(false);
-      }
+      if (viewerDirtyRef.current && path !== viewerPathRef.current) return;
+      setMainMode("code");
+      // Read-only again for every newly opened file: the switch is about the
+      // file in front of you, not a global preference.
+      setReadOnly(true);
+      await loadFile(path);
     },
-    [],
+    [loadFile],
   );
 
-  /** Put the viewer away, keeping the tab strip's other tabs as they are. */
+  /**
+   * Save the viewer's buffer.
+   *
+   * The core writes it atomically and answers with what changed; the pane is
+   * then handed the text that is now on disk, which is what clears the dirty
+   * state. The change is recorded twice over: as a badge on the tree (so the
+   * file looks edited, the same way the agent's writes do) and as a pending
+   * report for the next message, which is how the agent finds out that the
+   * file it remembers is not the file that is there.
+   */
+  const saveFile = useCallback(
+    async (content: string) => {
+      const path = viewerPathRef.current;
+      if (!path || viewerFile?.kind !== "text") return;
+      const before = viewerFile.content;
+      if (content === before) return;
+      setViewerSaving(true);
+      try {
+        const saved = (await backendRef.current!.call("files.write", {
+          path,
+          content,
+        })) as {
+          path: string;
+          size: number;
+          total_lines: number;
+          added: number;
+          removed: number;
+          language: string;
+        };
+        if (viewerPathRef.current !== path) return;
+        // The diff is computed here rather than taken from the reply because
+        // the reply counts *lines* and the report needs *which* lines -- and
+        // the counts it does carry are the core's own, so the tree's badge
+        // and the agent's report cannot disagree about how much changed.
+        const diff = diffLines(before, content);
+        setPendingEdits((previous) => {
+          const next = new Map(previous);
+          next.set(path, { added: saved.added, removed: saved.removed, lines: diff.ranges });
+          return next;
+        });
+        setViewerFile({
+          kind: "text",
+          path,
+          content,
+          total_lines: saved.total_lines,
+          language: saved.language,
+          size: saved.size,
+        });
+        setViewerError(null);
+      } catch (error: unknown) {
+        setViewerError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setViewerSaving(false);
+      }
+    },
+    [viewerFile],
+  );
+
+  /**
+   * Throw the buffer away and go back to what is on disk.
+   *
+   * Re-reading is what discards it: the draft lives in the viewer and is
+   * keyed on the content it was loaded from, so handing back the same content
+   * clears it. Nothing is written.
+   */
+  const discardFile = useCallback(() => {
+    const path = viewerPathRef.current;
+    if (path) void loadFile(path);
+  }, [loadFile]);
+
+  /** Put the viewer away, keeping the tree's other state as it is. */
   const closeViewer = useCallback(() => {
     viewerPathRef.current = "";
-    setViewerActive(false);
     setViewerPath("");
-    setViewerSource(null);
+    setViewerFile(null);
     setViewerError(null);
+    viewerDirtyRef.current = false;
   }, []);
 
   /**
@@ -707,14 +834,9 @@ export function App({
       if (usageTab !== "closed") {
         strip.push({ id: USAGE_TAB, title: "Usage", renameable: false });
       }
-      // The viewer's tab is named for the file it is showing, so a glance at
-      // the strip says which file is open without switching to it.
-      if (viewerPath !== "") {
-        strip.push({ id: VIEWER_TAB, title: nameOf(viewerPath), renameable: false });
-      }
       return strip;
     },
-    [tabs, conversations, usageTab, viewerPath],
+    [tabs, conversations, usageTab],
   );
 
   /**
@@ -980,7 +1102,7 @@ export function App({
       // as a tab rather than disappearing -- and the same switch away from the
       // viewer, whose tab also stays open with its file.
       setUsageTab((open) => (open === "active" ? "open" : open));
-      setViewerActive(false);
+      setMainMode("agent");
       try {
         const result = (await backendRef.current!.call("conversations.switch", {
           id,
@@ -1113,7 +1235,7 @@ export function App({
       // chat cannot be typed into a window that is showing a chart. The tab
       // stays open behind it, the way a tab you switched away from does.
       setUsageTab((open) => (open === "active" ? "open" : open));
-      setViewerActive(false);
+      setMainMode("agent");
       setState((prev) => ({ ...prev, error: null, busy: true }));
       try {
         const result = (await backendRef.current!.call("conversations.create", {
@@ -1667,37 +1789,32 @@ export function App({
       <TopBar
         busy={state.busy}
         tabs={tabStrip}
-        active={
-          usageTab === "active" ? USAGE_TAB : viewerActive ? VIEWER_TAB : conversation
-        }
+        active={usageTab === "active" ? USAGE_TAB : conversation}
+        mode={mainMode}
+        canCode={project !== ""}
+        onModeChange={(next) => {
+          setMainMode(next);
+          // The code half is the file tree and the viewer together, so arriving
+          // there brings the tree forward: a viewer with no way to choose a file
+          // is a pane the user has to open the sidebar for themselves.
+          if (next === "code" && project !== "") setSidebarPane("files");
+        }}
         onSelect={(id) => {
           if (id === USAGE_TAB) {
             setUsageTab("active");
-            setViewerActive(false);
-            return;
-          }
-          if (id === VIEWER_TAB) {
-            setViewerActive(true);
-            // The dashboard goes behind it rather than closing, the same way
-            // it does when another chat is chosen.
-            setUsageTab((open) => (open === "active" ? "open" : open));
+            setMainMode("agent");
             return;
           }
           // Choosing a chat is a switch away from the dashboard, which stays
           // open behind it -- the same thing selecting another chat tab does.
           setUsageTab((open) => (open === "active" ? "open" : open));
-          // ...and away from the viewer, for the same reason: closing its tab
-          // would throw away the file it is holding.
-          setViewerActive(false);
+          // ...and back to the conversation, because a chat tab is the agent.
+          setMainMode("agent");
           void openConversation(id);
         }}
         onClose={(id) => {
           if (id === USAGE_TAB) {
             setUsageTab("closed");
-            return;
-          }
-          if (id === VIEWER_TAB) {
-            closeViewer();
             return;
           }
           void closeTab(id);
@@ -1852,29 +1969,60 @@ export function App({
           which is what selecting another tab does everywhere else in this
           window -- see `openConversation`, `createConversation` and `TopBar`.
         */}
-        {usageTab === "active" ? (
+        {mode === "code" ? (
+          /*
+            The code half: the viewer, and nothing else. The composer goes with
+            the transcript for the same reason the dashboard takes it -- a text
+            field under a file would offer a message for a conversation that is
+            not on screen -- and the tree is the sidebar's Files pane, which the
+            mode switch brings forward.
+
+            With no file open this is a signpost rather than a blank pane: the
+            project is there, the tree is one click away, and an empty surface
+            that explains nothing is the dead end this replaces.
+          */
+          viewerPath === "" ? (
+            <div className="code-empty">
+              <p>
+                {project === ""
+                  ? "Choose a project folder to browse its files."
+                  : "Pick a file in the sidebar to read it here."}
+              </p>
+              {project === "" ? (
+                <button type="button" className="btn" onClick={() => void chooseFolder()}>
+                  Choose folder...
+                </button>
+              ) : (
+                <button type="button" className="btn" onClick={() => setSidebarPane("files")}>
+                  Open the file tree
+                </button>
+              )}
+            </div>
+          ) : (
+            <CodeViewer
+              path={viewerPath}
+              file={viewerFile}
+              loading={viewerLoading}
+              error={viewerError}
+              readOnly={readOnly}
+              locked={state.busy}
+              onToggleReadOnly={(next) => setReadOnly(next)}
+              saving={viewerSaving}
+              onSave={(content) => void saveFile(content)}
+              onDirtyChange={(dirty) => {
+                viewerDirtyRef.current = dirty;
+              }}
+              onDiscard={discardFile}
+              palette={palette}
+              onPalette={setPalette}
+              onClose={closeViewer}
+            />
+          )
+        ) : usageTab === "active" ? (
           <Dashboard
             connected={connected}
             onClose={() => setUsageTab("open")}
             load={loadUsage}
-          />
-        ) : viewerActive ? (
-          /*
-            The viewer replaces the transcript and the composer together, for
-            the same reason the dashboard does: a text field under a file the
-            user is reading would offer a message for a conversation that is
-            not on screen. `locked` is the turn, so the read-only statement in
-            the header is the real state rather than a constant.
-          */
-          <CodeViewer
-            path={viewerPath}
-            source={viewerSource}
-            loading={viewerLoading}
-            error={viewerError}
-            locked={state.busy}
-            palette={palette}
-            onPalette={setPalette}
-            onClose={closeViewer}
           />
         ) : (
           <>
@@ -1901,8 +2049,7 @@ export function App({
               disabled={!connected}
               modes={modes}
               mode={mode}
-              skills={skills}
-              onSkillsNeeded={loadSkills}
+              skills={skills}              onSkillsNeeded={loadSkills}
               onModeChange={changeMode}
               onSend={send}
               onCancel={cancel}

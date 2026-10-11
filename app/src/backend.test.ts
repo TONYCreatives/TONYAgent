@@ -189,6 +189,44 @@ test("several events in one chunk are all delivered", async () => {
   assert.equal(events[2].type, "turn.finished");
 });
 
+test("a hand edit rides with the message that reports it", async () => {
+  // What the user changed in the viewer has to reach the core *with* the next
+  // message: the agent's picture of those files is stale until it is told, and
+  // a message sent without the report is an answer about code that is no
+  // longer there.
+  const { transport, backend } = makeBackend();
+  await backend.start();
+
+  const turn = backend.send(
+    "why is this failing?",
+    [],
+    [{ path: "app/src/App.tsx", added: 6, removed: 3, lines: [{ start: 42, end: 51 }] }],
+  );
+  transport.push('{"id":1,"result":{"turn_id":"t1"}}\n');
+  assert.equal(await turn, "t1");
+
+  const frame = JSON.parse(transport.written[0]);
+  assert.equal(frame.method, "send");
+  assert.equal(frame.params.text, "why is this failing?");
+  assert.deepEqual(frame.params.user_edits, [
+    { path: "app/src/App.tsx", added: 6, removed: 3, lines: [{ start: 42, end: 51 }] },
+  ]);
+});
+
+test("a message with nothing edited does not carry the field at all", async () => {
+  // The core treats an empty list and an absent field the same way, and an
+  // optional field that is always present is one every reader has to check.
+  const { transport, backend } = makeBackend();
+  await backend.start();
+
+  const turn = backend.send("plain");
+  transport.push('{"id":1,"result":{"turn_id":"t2"}}\n');
+  await turn;
+
+  const frame = JSON.parse(transport.written[0]);
+  assert.equal("user_edits" in frame.params, false);
+});
+
 test("the reply to send arrives before that turn's events", async () => {
   // The ordering guarantee the UI depends on: the reply frame is *written*
   // before the event frames, so a turn id is known before the first delta.

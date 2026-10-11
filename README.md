@@ -35,7 +35,8 @@ meant a second catalogue implementation returning "unknown" for most fields.
 - Real-time streaming chat with token-by-token display
 - Tool call visualization and confirmation dialogs
 - Responsive layout with collapsible sidebar
-- **Code viewer**: browse the project tree and read any file with syntax highlighting and selectable colour palettes (VSCode's Dark+, Light+ and Monokai). Read-only by design — while a turn is running it says so, and nothing in the viewer can write to your project; the agent's own `write` tool remains the only path, and it asks first
+- **Code viewer**: browse the project tree and open any file — source with syntax highlighting, images, Markdown rendered or as source, CSV/TSV as a grid. Three colour palettes (VSCode's Dark+, Light+ and Monokai). Read-only by default with a per-file toggle; **locked while a turn is running**, so a file cannot be typed into while the agent is writing it. When you do edit and save, the change is written atomically and the next message tells the agent which file and which lines changed, so its picture of your code is never stale
+- **Agent / Code switch** in the top bar, for moving between the conversation and the project without losing either
 
 ### ?���?Rich Tool Ecosystem (32 Tools)
 | Category | Tools |

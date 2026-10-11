@@ -26,6 +26,15 @@
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+  /*
+   * The gutter's width, in one place.
+   *
+   * Two rules have to agree about it -- `.code-gutter`, which draws the
+   * numbers, and `.code-input`, which is the transparent textarea laid over
+   * the highlighted rows. If they disagree by a pixel the caret sits in the
+   * wrong word, and nothing in a test can see it. So there is one number.
+   */
+  --code-gutter: 58px;
 }
 
 .code-header {
@@ -56,6 +65,49 @@
 .code-path-name {
   color: var(--fg);
   font-weight: 600;
+}
+
+/* An unsaved buffer, marked where the file's name is rather than only in the
+   footer: the marker has to be visible while the user is looking at the code
+   they typed, not at the status line. */
+.code-dirty {
+  margin-left: 6px;
+  color: var(--warn);
+  font-weight: 700;
+}
+
+/* Source / Preview / Table: the same sliding-pill language as the sidebar's
+   segmented control and the usage period picker, because it is the same kind
+   of choice. */
+.code-viewswitch {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--input);
+}
+
+.code-viewswitch button {
+  height: 20px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-mute);
+  font: inherit;
+  font-size: var(--text-2xs);
+  cursor: default;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.code-viewswitch button:hover:not(.is-active) {
+  color: var(--fg);
+}
+
+.code-viewswitch button.is-active {
+  background: var(--chip);
+  color: var(--fg);
 }
 
 .code-chip {
@@ -125,6 +177,23 @@
   color: var(--fg);
 }
 
+.code-close:disabled {
+  /* Closing would throw away an unsaved buffer; the control says so rather
+     than being clickable and losing the work. */
+  color: var(--fg-mute);
+  opacity: 0.4;
+  cursor: default;
+}
+
+.code-close:disabled:hover {
+  background: transparent;
+  color: var(--fg-mute);
+}
+
+.code-toggle {
+  flex: none;
+}
+
 /*
  * The scroll container, and the only element the palette paints directly.
  *
@@ -148,6 +217,26 @@
   outline-offset: -2px;
 }
 
+/*
+ * The scroll content, and the two layers that share it.
+ *
+ * `max-content` is what makes horizontal scrolling reach the end of the
+ * longest line: the canvas is as wide as its widest child, and the viewport
+ * scrolls over it. Both layers are that wide, so the caret and the character
+ * under it move together.
+ */
+.code-canvas {
+  position: relative;
+  width: max-content;
+  min-width: 100%;
+}
+
+.code-lines {
+  position: relative;
+  /* Under the textarea, which is transparent and on top of it. */
+  z-index: 1;
+}
+
 .code-line {
   display: flex;
   min-height: 20px;
@@ -155,7 +244,7 @@
 
 .code-gutter {
   flex: none;
-  width: 58px;
+  width: var(--code-gutter);
   padding-right: 14px;
   text-align: right;
   /* Numbers are read to find a line, not to be read: no selection, and no
@@ -167,6 +256,112 @@
   /* Not `pre-wrap`: see the scroll container above. */
   white-space: pre;
   padding-right: 18px;
+}
+
+/*
+ * The editing layer.
+ *
+ * A transparent textarea exactly over the highlighted rows: the browser's own
+ * caret, selection, undo stack and input methods, with this app's colours
+ * underneath. Every metric that decides where a character lands -- font, size,
+ * line height, tab size, the left inset -- is inherited or read from
+ * `--code-gutter`, because the moment one of them differs the caret and the
+ * glyph it sits on part company.
+ *
+ * `overflow: hidden` on purpose: the *container* scrolls, and a textarea that
+ * scrolled itself would drift out of step with the layer beneath it.
+ */
+.code-input {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0 18px 0 var(--code-gutter);
+  border: 0;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  /* The text is painted by the layer underneath; a transparent caret would
+     be invisible, so the viewer sets `caret-color` inline from the palette. */
+  color: transparent;
+  font: inherit;
+  line-height: inherit;
+  tab-size: inherit;
+  white-space: pre;
+}
+
+.code-input::selection {
+  background: var(--code-selection);
+}
+
+/* The focus ring, inset. Not suppressed: this is a control a keyboard user has
+   to be able to find, and the global rule draws it *outward* from an element
+   that fills the pane, where the scroll container would clip it. */
+.code-input:focus-visible {
+  outline-offset: -2px;
+}
+
+.code-image {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.code-preview {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 18px 20px;
+}
+
+.code-table-wrap {
+  padding: 12px 14px 18px;
+}
+
+.code-table {
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+}
+
+.code-table th,
+.code-table td {
+  padding: 4px 10px;
+  border: 1px solid var(--border-soft);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.code-table th {
+  background: var(--chrome);
+  color: var(--fg);
+}
+
+.code-table td {
+  color: var(--fg-dim);
+}
+
+/* The signpost shown with no file open: an empty pane that explains itself. */
+.code-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--fg-dim);
+  text-align: center;
+}
+
+.code-hint {
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
 }
 
 .code-notice {

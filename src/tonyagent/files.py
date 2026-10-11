@@ -1,4 +1,4 @@
-"""Reading project files for the window's code viewer.
+"""Reading project files for the window's code viewer, and saving them back.
 
 **Why this is a module and not two more tools.** The viewer is the *user*
 looking at code, not the model; but the files it may look at are the same
@@ -7,19 +7,28 @@ comes from `tonyagent.tools.workspace`, the one home, and the skip rules
 come from the same `_should_skip` the agent's grep uses. A second
 implementation of either rule is a second thing to disagree with the first.
 
-**Reads, never writes.** There is deliberately no write path here. The
-agent's `write` tool is confirmation-gated for a reason, and a UI write
-that skipped the same gate would be a second, quieter door into the project
--- the class of hole the last audit pass spent itself closing. Editing is a
-surface of its own, with that gate designed for it.
+**The write path is the user's, and that is the whole reason it is
+allowed.** The agent's `write` tool is confirmation-gated because the user
+has to approve what the *agent* does to their files. A person typing in the
+editor they are looking at is not that: the edit is the user's own act, the
+same keystrokes they would make in VSCode. What this module owes them
+instead is the rest of the discipline -- confined, size-capped, atomic
+(a temp file and a rename, so a crash mid-write cannot truncate a source
+file), mode-preserving, and *reported*: the save returns what changed, and
+`format_edit_report` is how those changes reach the model on the next
+message, so the agent is never reasoning about a file it last saw in a
+different state.
 
-The viewer is read-only *by nature*, and read-only *by policy* while a turn
-is running: the window enforces the second as a lock on the first, which is
-what keeps a long generation from being raced by a half-scrolled read.
+The viewer is still read-only *while a turn is running*, and that is
+enforced in the window rather than here: the core has no way to know that a
+save was typed rather than pasted, and the lock is a statement about the
+agent working, not about who is allowed to write.
 """
 
 from __future__ import annotations
 
+import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -32,6 +41,24 @@ from tonyagent.tools.workspace import confine, project_root
 #: would be a window that stops responding while it tokenises. The cap is
 #: returned with the refusal so the viewer can say what it did not show.
 MAX_SOURCE_BYTES = 1_048_576
+
+#: Largest image the viewer will preview, in bytes.
+#:
+#: Larger than the text cap because an image is *displayed* rather than
+#: parsed, and a photograph that is 4 MB says nothing about a decode budget
+#: the way a 4 MB source file does. The bytes that cross the pipe are then
+#: bounded again by the downscale below -- this is the bound on what is read
+#: off disk and handed to Pillow.
+MAX_IMAGE_BYTES = 32 * 1024 * 1024
+
+#: Longest edge of an image sent to the window.
+#:
+#: `tools.images.encode` owns the *model's* limit (1568, OpenAI's own number
+#: for the large edge) and takes a caller's own name for it, which is what
+#: this is: a picture shown in a resizable pane on a large monitor is worth
+#: more detail than one a model is reading, and less than the original --
+#: 2048 fits a 4K pane at roughly a quarter of the pixels.
+VIEWER_MAX_EDGE = 2048
 
 #: Entries one tree walk will report.
 #:
@@ -47,6 +74,31 @@ MAX_TREE_ENTRIES = 4000
 #: tonyagent/tools/` is three) while keeping `node_modules`-shaped trees
 #: from eating the budget on paths nobody opens.
 MAX_TREE_DEPTH = 6
+
+#: How many files one edit report will name, and how many line ranges per
+#: file. Both are caps on what the *model* is handed: a user who touched two
+#: hundred files in one sitting has not produced two hundred facts the next
+#: message needs, and a message nobody can read is worse than a summary.
+MAX_REPORTED_FILES = 20
+MAX_REPORTED_RANGES = 40
+
+#: Suffix -> MIME type, for the images the viewer can show.
+#:
+#: A table rather than `mimetypes.guess_type`, which answers from the
+#: machine's registry on Windows and can disagree with itself between two
+#: installs for the same file. This is the window's own list: what it will
+#: preview is what is here, and everything else is "no preview" rather than
+#: a guess that fails to decode.
+IMAGE_MIMES: dict[str, str] = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "gif": "image/gif",
+    "webp": "image/webp",
+    "bmp": "image/bmp",
+    "ico": "image/x-icon",
+    "avif": "image/avif",
+}
 
 
 #: Extension -> language id.
@@ -83,6 +135,8 @@ LANGUAGES: dict[str, str] = {
     "rb": "ruby", "rake": "ruby",
     "php": "php",
     "xml": "xml", "svg": "xml", "xaml": "xml", "csproj": "xml",
+    # Data tables, which the viewer offers as a grid as well as as text.
+    "csv": "csv", "tsv": "csv",
     "txt": "plain", "log": "plain",
 }
 
@@ -217,6 +271,7 @@ class SourceFile:
 
     def to_dict(self) -> dict:
         return {
+            "kind": "text",
             "path": self.path,
             "content": self.content,
             "total_lines": self.total_lines,
@@ -230,8 +285,163 @@ class SourceError(Exception):
     """A file the viewer cannot show, with the reason it cannot."""
 
 
+@dataclass
+class BinaryFile:
+    """Something the window can name but not draw.
+
+    A *successful* answer rather than an error, and that is a deliberate
+    split: "this is a binary" and "this file is not there" are different
+    things, and only the second is a failure. The pane shows the name, the
+    size and the reason, which is a better outcome for a `.zip` than a
+    banner apologising for one.
+    """
+
+    path: str
+    size: int
+    reason: str
+
+    def to_dict(self) -> dict:
+        return {
+            "kind": "binary",
+            "path": self.path,
+            "size": self.size,
+            "reason": self.reason,
+        }
+
+
+@dataclass
+class ImageFile:
+    """A picture, as a data URL the window can draw.
+
+    The bytes go *in the reply* rather than over a side channel: the webview
+    can load `data:` (its content policy allows exactly that, and nothing
+    else off-disk), and the core already owns reading project files under
+    the boundary. `display_width`/`display_height` are what the window is
+    given, which is the source size unless the long edge hit the cap.
+    """
+
+    path: str
+    mime: str
+    data: str
+    size: int
+    width: int
+    height: int
+    display_width: int
+    display_height: int
+
+    @property
+    def downscaled(self) -> bool:
+        return (self.display_width, self.display_height) != (self.width, self.height)
+
+    def to_dict(self) -> dict:
+        return {
+            "kind": "image",
+            "path": self.path,
+            "mime": self.mime,
+            "data": self.data,
+            "size": self.size,
+            "width": self.width,
+            "height": self.height,
+            "display_width": self.display_width,
+            "display_height": self.display_height,
+            "downscaled": self.downscaled,
+        }
+
+
+def _mime_for(path: Path) -> str | None:
+    """The viewer's MIME for an image, or None when it is not one it shows."""
+    suffix = path.suffix.lower().lstrip(".")
+    return IMAGE_MIMES.get(suffix)
+
+
+def read_image_file(path: str) -> ImageFile:
+    """Read an image for the viewer, downscaled to `VIEWER_MAX_EDGE`.
+
+    Pillow is imported here rather than at module scope, matching
+    `file_tools`: a machine with a broken Pillow should fail *this* read,
+    not the whole server's import.
+    """
+    target = confine(path)
+    if not target.is_file():
+        raise SourceError(f"Not a file: {path}")
+
+    try:
+        size = target.stat().st_size
+    except OSError as exc:
+        raise SourceError(f"Could not read {path}: {exc}") from exc
+    if size > MAX_IMAGE_BYTES:
+        raise SourceError(
+            f"{path} is {size / (1024 * 1024):.1f} MB, over the "
+            f"{MAX_IMAGE_BYTES // (1024 * 1024)} MB limit for an image preview."
+        )
+
+    from PIL import Image, UnidentifiedImageError
+
+    from tonyagent.tools.images import encode
+
+    try:
+        image = Image.open(target)
+        image.load()
+    except UnidentifiedImageError as exc:
+        raise SourceError(f"{path} is not an image that can be opened.") from exc
+    except OSError as exc:
+        raise SourceError(f"Could not read {path}: {exc}") from exc
+
+    part, width, height, display_width, display_height = encode(image, VIEWER_MAX_EDGE)
+    return ImageFile(
+        path=str(target.relative_to(project_root()).as_posix()),
+        mime=part["mime"],
+        data=part["data"],
+        size=size,
+        width=width,
+        height=height,
+        display_width=display_width,
+        display_height=display_height,
+    )
+
+
+def read_for_viewer(path: str) -> SourceFile | ImageFile | BinaryFile:
+    """Whatever the viewer should show for `path`.
+
+    One entry point, three answers, and the choice is made *here* rather
+    than by the window: the core knows the file's own bytes (an image is an
+    image because it decodes, not because of its name) and owns the caps.
+
+    An image is dispatched on its suffix rather than by trying to decode
+    every file, because decoding everything to find out would mean opening
+    a 900 MB video to learn it is not a picture. A file whose suffix says
+    image but whose bytes do not decode is then a `SourceError`, which is
+    the honest report of a mislabelled file.
+    """
+    target = confine(path)
+    if not target.exists():
+        raise SourceError(f"File not found: {path}")
+    if not target.is_file():
+        raise SourceError(f"Not a file: {path}")
+
+    if _mime_for(target) is not None:
+        return read_image_file(path)
+
+    try:
+        source = read_source(path)
+    except SourceError as exc:
+        # Every remaining refusal from the text path -- binary, not UTF-8,
+        # over the cap -- is a file the window can name but not draw, which
+        # is a view rather than a failure. The ones above are failures.
+        try:
+            size = target.stat().st_size
+        except OSError:
+            size = 0
+        return BinaryFile(
+            path=str(target.relative_to(project_root()).as_posix()),
+            size=size,
+            reason=str(exc),
+        )
+    return source
+
+
 def read_source(path: str) -> SourceFile:
-    """Read one project file for the viewer, or raise `SourceError`.
+    """Read one project file as text for the viewer, or raise `SourceError`.
 
     Three refusals, each with a sentence the window can show rather than a
     stack: outside the project (the boundary), not a file (a directory), and
@@ -290,3 +500,201 @@ def read_source(path: str) -> SourceFile:
         size=size,
         truncated=truncated,
     )
+
+
+@dataclass
+class SavedFile:
+    """What a save changed, as the window and the badge need it."""
+
+    path: str
+    size: int
+    total_lines: int
+    added: int
+    removed: int
+    language: str
+
+    def to_dict(self) -> dict:
+        return {
+            "path": self.path,
+            "size": self.size,
+            "total_lines": self.total_lines,
+            "added": self.added,
+            "removed": self.removed,
+            "language": self.language,
+        }
+
+
+def write_source(path: str, content: str) -> SavedFile:
+    """Save the user's text back to a project file.
+
+    **Atomic, and that is not a flourish.** The naive `write_text` truncates
+    the file first: a crash, a full disk or a killed process between the
+    truncate and the write leaves the user's source file empty, and this is
+    the one operation in the window that can destroy work. A temp file in
+    the same directory plus `os.replace` makes the switch a rename, so the
+    file on disk is either the old bytes or the new ones and never a
+    half-written third thing.
+
+    **The mode is carried over.** A temp file is created with the process's
+    default mode, so replacing a `#!/bin/sh` script with one would quietly
+    strip its executable bit. The original's mode is copied onto the temp
+    file before the swap.
+
+    Only existing files, and only text. This is the viewer's save, not a way
+    to create files where the core was never pointed; a new file is the
+    agent's `write` tool's business, where the user has already been asked.
+    """
+    try:
+        target = confine(path)
+    except ValueError as exc:
+        raise SourceError(str(exc)) from None
+    if not target.exists():
+        raise SourceError(f"File not found: {path}")
+    if not target.is_file():
+        raise SourceError(f"Not a file: {path}")
+    if not isinstance(content, str):
+        raise SourceError("The viewer only saves text.")
+
+    encoded = content.encode("utf-8")
+    if len(encoded) > MAX_SOURCE_BYTES:
+        raise SourceError(
+            f"That is {len(encoded) / (1024 * 1024):.1f} MB, over the "
+            f"{MAX_SOURCE_BYTES // (1024 * 1024)} MB limit for a save."
+        )
+
+    try:
+        before = target.read_bytes().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        # Not text as it stood, so there is no honest diff to compute. The
+        # save still goes ahead; the badge just reports no line change
+        # rather than a wrong one.
+        before = ""
+
+    temp_path = _write_temp(target, content)
+    from tonyagent.tools.file_tools import _line_delta
+
+    added, removed = _line_delta(before, content)
+    return SavedFile(
+        path=str(target.relative_to(project_root()).as_posix()),
+        size=len(encoded),
+        total_lines=content.count("\n") + 1,
+        added=added,
+        removed=removed,
+        language=language_for(path),
+    )
+
+
+def _write_temp(target: Path, content: str) -> Path:
+    """Write `content` beside `target` and rename it over the top, or raise.
+
+    The scratch file is named after the target and hidden (a leading dot),
+    because it lives inside the project for the moment it exists -- a failed
+    save must not leave a stray `.app.ts.xxxx.tonyagent-tmp` in the user's
+    tree, and the `except` below is what makes sure it does not.
+    """
+    handle = tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        newline="",
+        dir=str(target.parent),
+        prefix=f".{target.name}.",
+        suffix=".tonyagent-tmp",
+        delete=False,
+    )
+    temp_path = Path(handle.name)
+    try:
+        with handle:
+            handle.write(content)
+        try:
+            # The rename replaces the file, so its mode comes from the temp
+            # file unless it is copied across first.
+            os.chmod(temp_path, target.stat().st_mode)
+        except OSError:
+            pass
+        os.replace(temp_path, target)
+    except Exception:
+        try:
+            temp_path.unlink()
+        except OSError:
+            pass
+        raise
+    return temp_path
+
+
+def format_edit_report(edits: list[dict]) -> str:
+    """The block that tells the model what the user changed by hand.
+
+    **Why the agent has to be told at all.** Its context is whatever the
+    files said when it last read them. A user editing in the viewer between
+    two messages invalidates that silently, and the next answer is then
+    about a file that no longer exists in the form the agent remembers --
+    which fails as confident nonsense about code the user has already
+    fixed. So the edits ride with the next message, the one moment the agent
+    is guaranteed to look.
+
+    The block is prose rather than JSON because it lands in a conversation:
+    it is read by a model that reasons in sentences, and a schema would
+    spend tokens saying the same thing. The line numbers are the ones in the
+    file *after* the edit, which is the state the agent will find if it
+    looks -- reporting the old numbering would send it to the wrong line.
+
+    Bounded on both axes, and the bound is admitted in the text rather than
+    silently truncating: a report that claims to be complete when it is not
+    is worse than one that says where it stopped.
+    """
+    if not edits:
+        return ""
+
+    lines: list[str] = []
+    shown = [edit for edit in edits if isinstance(edit, dict) and edit.get("path")]
+    if not shown:
+        return ""
+    lines.append(
+        "[The user edited these files in the code viewer since your last "
+        "message. Read a file again before changing it: what you remember "
+        "may be stale.]"
+    )
+    for edit in shown[:MAX_REPORTED_FILES]:
+        path = str(edit["path"])
+        added = _int_or_zero(edit.get("added"))
+        removed = _int_or_zero(edit.get("removed"))
+        detail: list[str] = []
+        if added or removed:
+            detail.append(f"+{added} \u2212{removed}")
+        ranges = edit.get("lines") or []
+        if isinstance(ranges, list) and ranges:
+            rendered = []
+            for entry in ranges[:MAX_REPORTED_RANGES]:
+                if isinstance(entry, dict):
+                    start = _int_or_zero(entry.get("start"))
+                    end = _int_or_zero(entry.get("end")) or start
+                    rendered.append(f"{start}" if end <= start else f"{start}-{end}")
+                elif isinstance(entry, (int, float)) and not isinstance(entry, bool):
+                    rendered.append(str(int(entry)))
+            if rendered:
+                detail.append("lines " + ", ".join(rendered))
+                if len(ranges) > MAX_REPORTED_RANGES:
+                    detail.append(f"+{len(ranges) - MAX_REPORTED_RANGES} more")
+        lines.append(f"- {path}: " + ("; ".join(detail) if detail else "changed"))
+    if len(shown) > MAX_REPORTED_FILES:
+        lines.append(f"  ...and {len(shown) - MAX_REPORTED_FILES} more files")
+    return "\n".join(lines)
+
+
+def _int_or_zero(value: object) -> int:
+    """An integer, or 0 for anything that is not one.
+
+    Deliberately forgiving: this report is built from a JSON list that
+    *anything able to write to the pipe* can send, and a malformed entry
+    must cost a missing line number rather than the whole message.
+    """
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return 0
+    return 0

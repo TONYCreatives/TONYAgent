@@ -129,6 +129,18 @@ interface Props {
    * nothing about models -- the App builds the control and the bar places it.
    */
   modelSelector?: ReactNode;
+  /**
+   * Which half of the window is in front: the conversation or the code.
+   *
+   * Here rather than in the rail because it is the same kind of choice the tab
+   * strip is -- "what am I looking at" -- and it is the one control that
+   * *leaves* the transcript, so it belongs beside the tabs it competes with.
+   * The rail answers "what can I do"; a mode lives with the view.
+   */
+  mode?: "agent" | "code";
+  onModeChange?: (mode: "agent" | "code") => void;
+  /** True when a project is open, so the code half has something to show. */
+  canCode?: boolean;
 }
 
 export function TopBar({
@@ -141,6 +153,9 @@ export function TopBar({
   onRename,
   controls,
   modelSelector,
+  mode = "agent",
+  onModeChange,
+  canCode = true,
 }: Props) {
   /** The tab whose name is being typed, and what has been typed so far. */
   const [editing, setEditing] = useState<string | null>(null);
@@ -381,6 +396,33 @@ export function TopBar({
         </div>
       )}
       <div className={`topbar-spacer ${DRAG_REGION_CLASS}`} />
+      {/*
+        The mode switch. A segmented pair rather than one toggle, because both
+        states are nameable and a button labelled with the state you are *not*
+        in is a button people press the wrong way round. Disabled on the code
+        side with no folder open: a viewer with nothing to view is a dead end,
+        and the tooltip says which thing is missing.
+      */}
+      <div className="topbar-modes" role="group" aria-label="View">
+        <button
+          type="button"
+          className={`topbar-mode${mode === "agent" ? " is-active" : ""}`}
+          aria-pressed={mode === "agent"}
+          onClick={() => onModeChange?.("agent")}
+        >
+          Agent
+        </button>
+        <button
+          type="button"
+          className={`topbar-mode${mode === "code" ? " is-active" : ""}`}
+          aria-pressed={mode === "code"}
+          disabled={!canCode}
+          title={canCode ? "Read and edit this project's files" : "Choose a project folder first"}
+          onClick={() => onModeChange?.("code")}
+        >
+          Code
+        </button>
+      </div>
       {modelSelector}
       {controls && (
         <WindowControls

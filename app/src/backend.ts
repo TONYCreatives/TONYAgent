@@ -90,7 +90,19 @@ export interface CoreMethods {
   state: Record<string, never>;
   clear: Record<string, never>;
   cancel: Record<string, never>;
-  send: { text: string; attachments?: WireAttachment[] };
+  send: {
+    text: string;
+    attachments?: WireAttachment[];
+    /**
+     * What the user changed by hand in the viewer since the last message.
+     *
+     * `added`/`removed` are the core's own counts from the save; `lines` are
+     * 1-based ranges in the file *as it now stands*, computed by the window
+     * because only it knows what the keystrokes did. The core turns them into
+     * a block appended to the message the model receives.
+     */
+    user_edits?: Array<{ path: string; added: number; removed: number; lines: unknown[] }>;
+  };
   bind_provider: { name: string; model?: string; base_url?: string };
   /** Provider names come from the core's registry, never from a local copy. */
   "providers.list": Record<string, never>;
@@ -277,6 +289,17 @@ export interface CoreMethods {
    * editor claiming the file is empty would be a lie.
    */
   "files.read": { path: string };
+  /**
+   * Save the viewer's buffer.
+   *
+   * The user's own write, which is why it is not confirmation-gated: the gate
+   * on the agent's `write` tool asks the user before the *agent* touches their
+   * files, and a person typing in the editor in front of them is the act that
+   * gate exists to protect. The core still confines the path, caps the size,
+   * replaces the file atomically and reports what changed -- and what changed
+   * is what the next message tells the model.
+   */
+  "files.write": { path: string; content: string };
 }
 
 /**
@@ -468,9 +491,23 @@ export class CoreBackend {
    * the agent go and read a file with a tool, which is a second round trip and
    * a second place to fail; the bytes are already in the window, and the
    * endpoint accepts them as content parts.
+   *
+   * `userEdits` is what the user changed by hand in the viewer since the last
+   * message. It rides with the message because that is the one moment the
+   * agent is guaranteed to look: its picture of those files is stale until it
+   * is told, and an answer about a file the user has already fixed is
+   * confident nonsense.
    */
-  async send(text: string, attachments: WireAttachment[] = []): Promise<string> {
-    const result = (await this.call("send", { text, attachments })) as {
+  async send(
+    text: string,
+    attachments: WireAttachment[] = [],
+    userEdits: Array<{ path: string; added: number; removed: number; lines: unknown[] }> = [],
+  ): Promise<string> {
+    const result = (await this.call("send", {
+      text,
+      attachments,
+      ...(userEdits.length ? { user_edits: userEdits } : {}),
+    })) as {
       turn_id: string;
     };
     return result.turn_id;

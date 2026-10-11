@@ -33,6 +33,51 @@
 }
 
 /*
+ * The mode switch: Agent or Code.
+ *
+ * The same segmented-pill language as the sidebar's tabs and the usage
+ * period picker, because it is the same kind of choice -- one of two things
+ * in front -- and it sits on the bar beside the tabs it competes with, since
+ * leaving the conversation is the same question as which conversation.
+ */
+.topbar-modes {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--input);
+}
+
+.topbar-mode {
+  height: 22px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-mute);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: default;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.topbar-mode:hover:not(.is-active):not(:disabled) {
+  color: var(--fg);
+}
+
+.topbar-mode.is-active {
+  background: var(--chip);
+  color: var(--fg);
+}
+
+.topbar-mode:disabled {
+  /* No folder open, so the code half has nothing to show. Dimmed rather than
+     hidden: the control exists, and its tooltip says what is missing. */
+  opacity: 0.4;
+}
+
+/*
  * The app's mark, in the window's top-left corner.
  *
  * It takes exactly `--rail-w`, the column the rail occupies below it, so the

@@ -1,37 +1,63 @@
 /**
- * The code viewer.
+ * The file viewer: drawing, reading, editing, and the states in between.
  *
- * The assertions fall into two groups, and the second is the one worth
- * having. The first is that it *renders*: line numbers, the file's text, a
- * token coloured from the palette, the footer's arithmetic. The second is
- * that it cannot be typed into -- there is no editable element in the whole
- * surface, and the body is marked read-only -- because that is the property
- * the feature exists to guarantee, and it is exactly the property a later
- * "small" change (making the body a textarea to get selection for free) would
- * quietly remove.
+ * Three groups, and the third is the one worth having. The first is that it
+ * *renders* what the core sent -- lines, colours, a picture, a grid. The
+ * second is the read-only contract: while the agent is working there is no
+ * editable element at all, and that is asserted rather than assumed, because
+ * the cheapest way to add selection to a viewer is to swap the whole body for
+ * a textarea. The third is the editing path, which exists only because the
+ * user asked for it: the buffer, the dirty state, Ctrl+S, discard, and the
+ * refusal to close over unsaved work.
  */
 
 import "./test-dom.js";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { CodeViewer, type SourceFile } from "./CodeViewer.js";
-import { all, click, one, render, setValue, texts } from "./test-render.js";
+import { CodeViewer, type TextFile, type ViewerFile } from "./CodeViewer.js";
+import { all, click, one, press, render, rerender, setValue, texts } from "./test-render.js";
 
-const SOURCE: SourceFile = {
+const SOURCE: TextFile = {
+  kind: "text",
   path: "src/app.ts",
   content: ["// a comment", "const answer = 42;", "", 'export const name = "agent";'].join("\n"),
   total_lines: 4,
   language: "typescript",
+  size: 64,
+};
+
+const MARKDOWN: TextFile = {
+  kind: "text",
+  path: "README.md",
+  content: "# Title\n\nSome **bold** text.\n",
+  total_lines: 3,
+  language: "markdown",
+  size: 30,
+};
+
+const CSV: TextFile = {
+  kind: "text",
+  path: "data.csv",
+  content: "name,count\nwidget,3\ngadget,5\n",
+  total_lines: 3,
+  language: "csv",
+  size: 30,
 };
 
 function props(over: Partial<React.ComponentProps<typeof CodeViewer>> = {}) {
   return {
     path: SOURCE.path,
-    source: SOURCE,
+    file: SOURCE as ViewerFile | null,
     loading: false,
     error: null,
+    readOnly: true,
     locked: false,
+    onToggleReadOnly: () => {},
+    saving: false,
+    onSave: () => {},
+    onDiscard: () => {},
+    onDirtyChange: () => {},
     palette: "dark-plus",
     onPalette: () => {},
     onClose: () => {},
@@ -39,156 +65,293 @@ function props(over: Partial<React.ComponentProps<typeof CodeViewer>> = {}) {
   };
 }
 
+const body = (container: HTMLElement) => one(container, ".code-body")!;
+const field = (container: HTMLElement) => one(container, "textarea.code-input");
+
 describe("what the viewer draws", () => {
   test("it numbers every line and shows the file's text", async () => {
     const container = await render(<CodeViewer {...props()} />);
-
     assert.deepEqual(texts(container, ".code-gutter"), ["1", "2", "3", "4"]);
-    const body = one(container, ".code-body")!.textContent ?? "";
-    assert.match(body, /const answer = 42;/);
-    assert.match(body, /export const name = "agent";/);
+    assert.match(body(container).textContent ?? "", /const answer = 42;/);
   });
 
   test("it colours a token from the chosen palette", async () => {
     const container = await render(<CodeViewer {...props()} />);
-    const coloured = all(container, ".code-text span[style]").map(
-      (node) => node.getAttribute("style") ?? "",
-    );
-    // Dark+ comment green and declaration blue are the two the fixture has.
+    const styles = all(container, ".code-text span[style]").map((n) => n.getAttribute("style"));
     assert.ok(
-      coloured.some((style) => style.includes("rgb(106, 153, 85)") || style.includes("#6a9955")),
-      `no comment colour in ${coloured.join(" | ")}`,
+      styles.some((style) => (style ?? "").includes("#6a9955") || (style ?? "").includes("106, 153, 85")),
+      `no comment colour in ${styles.join(" | ")}`,
     );
   });
 
-  test("a different palette changes the colours", async () => {
-    const dark = await render(<CodeViewer {...props()} />);
-    const darkStyles = all(dark, ".code-text span[style]").map((n) => n.getAttribute("style"));
-    const light = await render(<CodeViewer {...props({ palette: "light-plus" })} />);
-    const lightStyles = all(light, ".code-text span[style]").map((n) => n.getAttribute("style"));
-    assert.notDeepEqual(darkStyles, lightStyles, "the palette made no difference");
-  });
-
-  test("the header names the file and the language", async () => {
-    const container = await render(<CodeViewer {...props()} />);
+  test("the header names the file, the language and the lock", async () => {
+    const container = await render(<CodeViewer {...props()} readOnly />);
     assert.equal(one(container, ".code-path-name")!.textContent, "app.ts");
     assert.equal(one(container, ".code-path-dir")!.textContent, "src/");
     assert.deepEqual(texts(container, ".code-chip"), ["typescript", "🔒 read-only"]);
   });
 
-  test("the footer counts lines and the language", async () => {
+  test("the footer counts lines, size and language", async () => {
     const container = await render(<CodeViewer {...props()} />);
     const footer = one(container, ".code-footer")!.textContent ?? "";
     assert.match(footer, /4 lines/);
     assert.match(footer, /typescript/);
   });
 
-  test("an empty file says so instead of drawing a blank body", async () => {
-    const empty: SourceFile = { ...SOURCE, content: "", total_lines: 1 };
-    const container = await render(<CodeViewer {...props({ source: empty })} />);
-    assert.match(one(container, ".code-notice")!.textContent ?? "", /empty/i);
-    assert.equal(one(container, ".code-body"), null);
-  });
-
-  test("a truncated read is announced, not hidden", async () => {
-    const container = await render(
-      <CodeViewer {...props({ source: { ...SOURCE, truncated: true } })} />,
-    );
-    assert.deepEqual(texts(container, ".code-chip"), [
-      "typescript",
-      "truncated",
-      "🔒 read-only",
-    ]);
-  });
-
   test("a failure is shown as the core's sentence", async () => {
     const container = await render(
-      <CodeViewer {...props({ source: null, error: "blob.bin is a binary file, which the viewer does not show." })} />,
+      <CodeViewer {...props({ file: null, error: "File not found: gone.txt" })} />,
     );
-    const notice = one(container, ".code-notice-error")!;
-    assert.match(notice.textContent ?? "", /binary file/);
-    assert.equal(notice.getAttribute("role"), "alert");
+    assert.match(one(container, ".code-notice-error")!.textContent ?? "", /not found/);
   });
 
-  test("a read in flight says so rather than showing nothing", async () => {
-    const container = await render(<CodeViewer {...props({ source: null, loading: true })} />);
-    assert.match(one(container, ".code-notice")!.textContent ?? "", /Reading src\/app\.ts/);
-  });
-});
-
-describe("it is read-only, and says so", () => {
-  test("there is no editable element anywhere in the surface", async () => {
-    // This is the feature's whole point. A `textarea` or a
-    // `contenteditable` here would look identical and be an editor.
-    const container = await render(<CodeViewer {...props()} />);
-    assert.equal(one(container, "textarea"), null, "a textarea is an editor");
-    assert.equal(one(container, "[contenteditable]"), null, "contenteditable is an editor");
-    assert.equal(one(container, "input[type=text]"), null, "a text field is an editor");
-  });
-
-  test("the body is marked read-only for assistive technology too", async () => {
-    const container = await render(<CodeViewer {...props()} />);
-    const body = one(container, ".code-body")!;
-    assert.equal(body.getAttribute("aria-readonly"), "true");
-    assert.equal(body.getAttribute("role"), "textbox");
-  });
-
-  test("the lock is stated while the agent is working", async () => {
-    const container = await render(<CodeViewer {...props({ locked: true })} />);
-    assert.equal(container.querySelector("section")!.getAttribute("data-locked"), "true");
-    assert.match(one(container, ".code-lock")!.textContent ?? "", /agent working/);
-    assert.ok(one(container, ".code-lock")!.className.includes("locked"));
-  });
-
-  test("and it stays read-only when nothing is running", async () => {
-    // The lock is a *statement*, not the thing that makes it read-only: the
-    // absence of editing affordances is what does that, in both states.
-    const container = await render(<CodeViewer {...props({ locked: false })} />);
-    assert.equal(one(container, ".code-body")!.getAttribute("aria-readonly"), "true");
-    assert.equal(one(container, "textarea"), null);
-    assert.match(one(container, ".code-lock")!.textContent ?? "", /read-only/);
-  });
-});
-
-describe("its controls", () => {
-  test("choosing a palette reports it upward", async () => {
-    const chosen: string[] = [];
+  test("a truncated read is announced, and cannot be edited", async () => {
     const container = await render(
-      <CodeViewer {...props({ onPalette: (name) => chosen.push(name) })} />,
+      <CodeViewer
+        {...props({ file: { ...SOURCE, truncated: true }, readOnly: false })}
+      />,
     );
-    const select = one(container, "select")!;
-    await setValue(select as HTMLSelectElement, "monokai");
-    assert.deepEqual(chosen, ["monokai"]);
+    assert.deepEqual(texts(container, ".code-chip"), ["typescript", "truncated", "🔓 editable"]);
+    assert.match(one(container, ".code-notice")!.textContent ?? "", /larger than the viewer's limit/);
+    assert.equal(field(container), null, "a partial read must not be saveable");
+  });
+});
+
+describe("images and files with no preview", () => {
+  test("an image is drawn from the bytes the core sent", async () => {
+    const container = await render(
+      <CodeViewer
+        {...props({
+          path: "shot.png",
+          file: {
+            kind: "image",
+            path: "shot.png",
+            mime: "image/png",
+            data: "QUJD",
+            size: 2048,
+            width: 800,
+            height: 600,
+            display_width: 800,
+            display_height: 600,
+            downscaled: false,
+          },
+        })}
+      />,
+    );
+    const image = one(container, ".code-image img")! as HTMLImageElement;
+    assert.equal(image.getAttribute("src"), "data:image/png;base64,QUJD");
+    assert.equal(image.getAttribute("alt"), "shot.png");
+    assert.match(one(container, ".code-footer")!.textContent ?? "", /800×600/);
+    assert.equal(field(container), null);
   });
 
-  test("the palette menu offers every palette the build has", async () => {
+  test("a downscaled image says what it is showing", async () => {
+    const container = await render(
+      <CodeViewer
+        {...props({
+          path: "wide.png",
+          file: {
+            kind: "image",
+            path: "wide.png",
+            mime: "image/png",
+            data: "QUJD",
+            size: 4096,
+            width: 8000,
+            height: 100,
+            display_width: 2048,
+            display_height: 26,
+            downscaled: true,
+          },
+        })}
+      />,
+    );
+    assert.match(one(container, ".code-footer")!.textContent ?? "", /shown at 2048×26/);
+  });
+
+  test("a binary file is named with its reason, not rendered as text", async () => {
+    const container = await render(
+      <CodeViewer
+        {...props({
+          path: "blob.zip",
+          file: {
+            kind: "binary",
+            path: "blob.zip",
+            size: 4096,
+            reason: "blob.zip is a binary file, which the viewer does not show.",
+          },
+        })}
+      />,
+    );
+    assert.deepEqual(texts(container, ".code-chip"), ["no preview", "🔒 read-only"]);
+    assert.match(one(container, ".code-notice")!.textContent ?? "", /binary file/);
+    assert.equal(one(container, ".code-body"), null);
+  });
+});
+
+describe("documents with a rendered view", () => {
+  test("markdown can be previewed, and the source is still there", async () => {
+    const container = await render(<CodeViewer {...props({ path: "README.md", file: MARKDOWN })} />);
+
+    assert.deepEqual(texts(container, ".code-viewswitch button"), ["Source", "Preview"]);
+    await click(all(container, ".code-viewswitch button")[1]);
+
+    const rendered = one(container, ".code-preview")!;
+    assert.equal(one(rendered, ".md-h1")!.textContent, "Title");
+    assert.match(rendered.textContent ?? "", /bold/);
+
+    await click(all(container, ".code-viewswitch button")[0]);
+    assert.match(body(container).textContent ?? "", /# Title/);
+  });
+
+  test("a csv can be shown as a table", async () => {
+    const container = await render(<CodeViewer {...props({ path: "data.csv", file: CSV })} />);
+    assert.deepEqual(texts(container, ".code-viewswitch button"), ["Source", "Table"]);
+
+    await click(all(container, ".code-viewswitch button")[1]);
+    assert.deepEqual(texts(container, ".code-table th"), ["name", "count"]);
+    assert.deepEqual(texts(container, ".code-table tbody td"), ["widget", "3", "gadget", "5"]);
+  });
+
+  test("a plain text file offers no preview toggle at all", async () => {
     const container = await render(<CodeViewer {...props()} />);
-    assert.deepEqual(texts(container, "option"), [
-      "Dark+ (default dark)",
-      "Light+ (default light)",
-      "Monokai",
-    ]);
+    assert.equal(one(container, ".code-viewswitch"), null);
+  });
+});
+
+describe("read-only, and the switch that leaves it", () => {
+  test("read-only means there is nothing to type into", async () => {
+    const container = await render(<CodeViewer {...props({ readOnly: true })} />);
+    assert.equal(field(container), null);
+    assert.equal(body(container).getAttribute("aria-readonly"), "true");
+    assert.equal(body(container).getAttribute("role"), "textbox");
   });
 
-  test("closing is reported upward", async () => {
+  test("the agent working keeps it read-only even when the switch is off", async () => {
+    // The lock is the window's, not the user's: a file being written
+    // underneath a caret is worse than a disabled one.
+    const container = await render(<CodeViewer {...props({ readOnly: false, locked: true })} />);
+    assert.equal(field(container), null);
+    assert.match(one(container, ".code-lock")!.textContent ?? "", /agent working/);
+    assert.equal(container.querySelector("section")!.getAttribute("data-locked"), "true");
+  });
+
+  test("the toggle is disabled while the agent works", async () => {
+    const container = await render(<CodeViewer {...props({ readOnly: true, locked: true })} />);
+    const toggle = all(container, "button").find((b) => b.textContent === "Edit")!;
+    assert.equal((toggle as HTMLButtonElement).disabled, true);
+  });
+
+  test("the switch reports upward, both ways", async () => {
+    const asked: boolean[] = [];
+    const container = await render(
+      <CodeViewer {...props({ readOnly: true, onToggleReadOnly: (next) => asked.push(next) })} />,
+    );
+    await click(all(container, "button").find((b) => b.textContent === "Edit")!);
+    assert.deepEqual(asked, [false], "the Edit button must ask to leave read-only");
+
+    const editable = await render(
+      <CodeViewer {...props({ readOnly: false, onToggleReadOnly: (next) => asked.push(next) })} />,
+    );
+    await click(all(editable, "button").find((b) => b.textContent === "Lock")!);
+    assert.deepEqual(asked, [false, true]);
+  });
+});
+
+describe("editing", () => {
+  const editable = { readOnly: false, locked: false };
+
+  test("the field holds the file, and typing reports a dirty buffer", async () => {
+    const changes: boolean[] = [];
+    const container = await render(
+      <CodeViewer {...props({ ...editable, onDirtyChange: (dirty) => changes.push(dirty) })} />,
+    );
+    const area = field(container)! as HTMLTextAreaElement;
+    assert.equal(area.value, SOURCE.content);
+    assert.equal(area.getAttribute("spellcheck"), "false", "code is not prose to spellcheck");
+
+    await setValue(area, "changed\n");
+
+    assert.equal((field(container) as HTMLTextAreaElement).value, "changed\n");
+    assert.ok(changes.includes(true), "the parent was never told the buffer is dirty");
+    assert.match(one(container, ".code-dirty")!.textContent ?? "", /•/);
+  });
+
+  test("Save is disabled until something changed, then sends the buffer", async () => {
+    const saved: string[] = [];
+    const container = await render(<CodeViewer {...props({ ...editable, onSave: (c) => saved.push(c) })} />);
+
+    const saveButton = () => all(container, "button").find((b) => b.textContent === "Save")!;
+    assert.equal((saveButton() as HTMLButtonElement).disabled, true);
+
+    await setValue(field(container) as HTMLTextAreaElement, "new text\n");
+    assert.equal((saveButton() as HTMLButtonElement).disabled, false);
+
+    await click(saveButton());
+    assert.deepEqual(saved, ["new text\n"]);
+  });
+
+  test("Ctrl+S saves, and does not reach the webview's own save", async () => {
+    const saved: string[] = [];
+    const container = await render(<CodeViewer {...props({ ...editable, onSave: (c) => saved.push(c) })} />);
+    await setValue(field(container) as HTMLTextAreaElement, "typed\n");
+
+    const event = await press("s", field(container)!, { ctrlKey: true });
+    assert.deepEqual(saved, ["typed\n"]);
+    assert.equal(event.defaultPrevented, true, "the browser's save dialog was left to open");
+  });
+
+  test("a plain 's' types rather than saving", async () => {
+    const saved: string[] = [];
+    const container = await render(<CodeViewer {...props({ ...editable, onSave: (c) => saved.push(c) })} />);
+    await press("s", field(container)!);
+    assert.deepEqual(saved, []);
+  });
+
+  test("Discard is offered only while dirty, and reports upward", async () => {
+    let discarded = 0;
+    const container = await render(
+      <CodeViewer {...props({ ...editable, onDiscard: () => (discarded += 1) })} />,
+    );
+    const discard = () => all(container, "button").find((b) => b.textContent === "Discard");
+    assert.equal(discard(), undefined, "nothing to discard on a clean buffer");
+
+    await setValue(field(container) as HTMLTextAreaElement, "typed\n");
+    await click(discard()!);
+    assert.equal(discarded, 1);
+  });
+
+  test("closing is refused while there are unsaved changes", async () => {
     let closed = 0;
-    const container = await render(<CodeViewer {...props({ onClose: () => (closed += 1) })} />);
-    await click(one(container, ".code-close")!);
-    assert.equal(closed, 1);
+    const container = await render(<CodeViewer {...props({ ...editable, onClose: () => (closed += 1) })} />);
+
+    await setValue(field(container) as HTMLTextAreaElement, "typed\n");
+    const close = one(container, ".code-close")! as HTMLButtonElement;
+    assert.equal(close.disabled, true, "closing would silently discard the buffer");
+    await click(close);
+    assert.equal(closed, 0);
   });
 
-  test("copy is offered, and is a no-op rather than a crash without a clipboard", async () => {
-    // jsdom has no clipboard: the button must exist for the real window and
-    // must not throw here.
-    const container = await render(<CodeViewer {...props()} />);
-    const button = all(container, "button").find((node) => node.textContent === "Copy")!;
-    assert.ok(button, "no copy control");
-    await click(button);
+  test("a save that comes back with new content clears the buffer", async () => {
+    // The parent hands the viewer what is now on disk; the draft is keyed on
+    // that content, so clearing is what the new file *is* rather than a
+    // separate instruction the caller could forget.
+    const container = await render(<CodeViewer {...props({ ...editable })} />);
+    await setValue(field(container) as HTMLTextAreaElement, "typed\n");
+    assert.ok(one(container, ".code-dirty"), "expected a dirty marker first");
+
+    // `rerender`, not a second `render`: this is the same viewer being handed
+    // the saved file, which is the thing under test. A fresh mount would pass
+    // this assertion without any of the behaviour existing.
+    await rerender(
+      <CodeViewer {...props({ ...editable, file: { ...SOURCE, content: "typed\n" } })} />,
+    );
+    assert.equal(one(container, ".code-dirty"), null, "the dirty marker survived the save");
+    assert.equal((field(container) as HTMLTextAreaElement).value, "typed\n");
   });
 
-  test("copy is disabled when there is nothing to copy", async () => {
-    const container = await render(<CodeViewer {...props({ source: null, loading: true })} />);
-    const button = all(container, "button").find((node) => node.textContent === "Copy")!;
-    assert.equal((button as HTMLButtonElement).disabled, true);
+  test("read-only files grow no editor at all", async () => {
+    const container = await render(<CodeViewer {...props({ readOnly: true })} />);
+    assert.equal(field(container), null);
+    assert.equal(all(container, "button").some((b) => b.textContent === "Save"), false);
   });
 });

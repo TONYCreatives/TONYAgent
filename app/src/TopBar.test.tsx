@@ -62,6 +62,9 @@ async function bar(options: {
   busy?: boolean;
   tabs?: Tab[];
   active?: string;
+  mode?: "agent" | "code";
+  canCode?: boolean;
+  onModeChange?: (mode: "agent" | "code") => void;
 } = {}): Promise<{ container: HTMLElement; calls: Calls }> {
   const calls: Calls = {
     minimized: 0,
@@ -83,6 +86,9 @@ async function bar(options: {
       onClose={(id) => calls.closedTabs.push(id)}
       onNewTab={() => (calls.newTabs += 1)}
       onRename={(id, title) => calls.renamed.push([id, title])}
+      mode={options.mode ?? "agent"}
+      canCode={options.canCode ?? true}
+      onModeChange={options.onModeChange}
       controls={
         withCaption
           ? {
@@ -100,6 +106,62 @@ async function bar(options: {
 }
 
 const buttons = (container: HTMLElement) => all(container, ".win-btn");
+
+// --- the mode switch -------------------------------------------------------
+describe("the Agent / Code switch", () => {
+  const modes = (container: HTMLElement) => texts(container, ".topbar-mode");
+  const activeMode = (container: HTMLElement) =>
+    one(container, ".topbar-mode.is-active")!.textContent;
+
+  test("it names both halves of the window", async () => {
+    // A single toggle labelled with the state you are *not* in is a control
+    // people press the wrong way round, so both states are named.
+    const { container } = await bar();
+    assert.deepEqual(modes(container), ["Agent", "Code"]);
+    assert.equal(activeMode(container), "Agent");
+    assert.equal(
+      one(container, ".topbar-modes")!.getAttribute("aria-label"),
+      "View",
+      "a group of two buttons needs a name",
+    );
+  });
+
+  test("it says which half is in front, both ways", async () => {
+    const agent = await bar({ mode: "agent" });
+    assert.equal(activeMode(agent.container), "Agent");
+    const code = await bar({ mode: "code" });
+    assert.equal(activeMode(code.container), "Code");
+  });
+
+  test("pressing a half asks for it", async () => {
+    const asked: string[] = [];
+    const { container } = await bar({ onModeChange: (next) => asked.push(next) });
+    const codeButton = all(container, ".topbar-mode").find((b) => b.textContent === "Code")!;
+
+    await click(codeButton);
+
+    assert.deepEqual(asked, ["code"]);
+    assert.equal(codeButton.getAttribute("aria-pressed"), "false", "the parent owns the state");
+  });
+
+  test("the code half is dimmed with no project, and says why", async () => {
+    const asked: string[] = [];
+    const { container } = await bar({ canCode: false, onModeChange: (m) => asked.push(m) });
+    const codeButton = all(container, ".topbar-mode").find((b) => b.textContent === "Code")!;
+
+    assert.equal((codeButton as HTMLButtonElement).disabled, true);
+    assert.match(codeButton.getAttribute("title") ?? "", /project folder/);
+    await click(codeButton);
+    assert.deepEqual(asked, [], "a disabled half must not be enterable");
+  });
+
+  test("the switch is not a drag handle", async () => {
+    // The bar is the window's move handle, and a control that carried the class
+    // would move the window instead of changing the view.
+    const { container } = await bar();
+    assert.equal(one(container, ".topbar-modes")!.classList.contains("app-drag-region"), false);
+  });
+});
 
 // --- the drag region -------------------------------------------------------
 describe("the title bar as a drag region", () => {
