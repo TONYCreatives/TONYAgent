@@ -355,6 +355,28 @@ def test_execute_command_refuses_to_run_on_the_local_runtime(tmp_path: Path, mon
         asyncio.run(manager.stop())
 
 
+def test_no_tool_claims_confirmation_without_destructive():
+    """A ``requires_confirmation`` flag that the gate will never fire on is inert.
+
+    ``_needs_confirmation`` holds the prompt behind ``destructive and
+    requires_confirmation``, so a tool declaring ``requires_confirmation = True``
+    while ``destructive = False`` describes a question that is never asked. Six
+    of them did exactly that, and the flags were dropped from those
+    declarations rather than the gate widened -- see the comment on the
+    ``browser_click``/``browser_type`` pair in ``browser_tools.py`` for why the
+    gate is not the thing to change.
+
+    This is the pin that keeps a seventh from joining them, and it is the
+    registry-reading form NEXT_SESSION recorded precisely because counting
+    them from memory missed one.
+    """
+    inert = {
+        name for name, tool in _registered_tools().items()
+        if tool.requires_confirmation and not tool.destructive
+    }
+    assert not inert, f"requires_confirmation that can never fire: {sorted(inert)}"
+
+
 def test_execute_js_refuses_to_run_on_the_local_runtime(tmp_path: Path, monkeypatch):
     import asyncio
 

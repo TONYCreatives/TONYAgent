@@ -134,7 +134,14 @@ class HttpRequestTool(Tool):
         "additionalProperties": False,
     }
     destructive = False
-    requires_confirmation = True
+    # ``requires_confirmation`` was declared True once and was inert: the
+    # orchestrator's gate is ``destructive and requires_confirmation``, so a
+    # non-destructive tool is never asked about. The flag was a claim nothing
+    # enforced, which is worse than no flag. Dropped rather than the gate
+    # widened -- the gate as it stands is what keeps the one prompt a turn
+    # meaningful. See ``tests/unit/test_local_sandbox.py::
+    # test_no_tool_claims_confirmation_without_destructive``, which pins the
+    # invariant so a seventh tool cannot join this mistake.
     # Needs no project folder: nothing here reads or writes the workspace. Was
     # previously special-cased by name in the orchestrator.
     folder_required = False
@@ -235,7 +242,8 @@ class WebFetchTool(Tool):
         "additionalProperties": False,
     }
     destructive = False
-    requires_confirmation = True
+    # Inert ``requires_confirmation`` dropped, for the same reason and with the
+    # same pin as `http_request` above.
     folder_required = False
 
     async def execute(self, url: str, timeout: int = 30) -> ToolResult:

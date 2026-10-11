@@ -39,6 +39,50 @@ def _running_backend():
 def _isolated_backend():
     """The runtime for a tool that must not run uncontained."""
     return isolated_backend()
+# The confirm-prompt flag on this module.
+#
+# ``browser_navigate``, ``browser_click``, ``browser_type`` and ``execute_js``
+# all declared ``requires_confirmation = True`` once, and all four were inert:
+# the orchestrator's gate at ``orchestrator.py::_needs_confirmation`` is
+# ``destructive and requires_confirmation``, and none of them is destructive,
+# so the question was never asked and never could be. That is the same class of
+# lie as a schema whose flag is a claim nothing enforces, so the flag is dropped
+# rather than the gate widened.
+#
+# Why not make the gate fire on them instead -- the question NEXT_SESSION
+# recorded as needing a decision first -- because the honest consequence,
+# once worked through, is worse than the inconsistency:
+#
+# * ``execute_js`` is arbitrary model-authored code, which looks like the case
+#   for a prompt. But it is in the read-only tool set -- reachable in Plan mode
+#   and at Low -- and the whole design of those modes is that nothing stops the
+#   turn: Plan's read-only sweep runs unattended. Sending every ``execute_js``
+#   to the destructive prompt would make Plan stop mid-read, and ``skips_confirmation``
+#   on Full would then be the only thing letting Plan finish, which has the
+#   permission ladder contradicting itself to fix a prompt the ladder never
+#   asked for.
+#
+# * ``browser_click`` before every click is worse still. A page interaction is
+#   one click of several -- snapshot, click, type, scroll, click -- and a prompt
+#   between each is a browser the user has to baby-sit. The old affordance for
+#   easing that, session-middle "always allow tool till turn done", is not what
+#   the confirmation-wait code implements either: it currently maps to
+#   task-set *and prompt-step pause* (``_wait_till_get_reply``), so a browser
+#   session under it is not even a promise the click runs.
+#
+# * The destructive prompt is for things that cannot be undone: a `write` over
+#   a file, a `delete_file`, a command whose effects do not stay in the
+#   container. None of these four is that. Their real gates are the ones they
+#   already carry: ``sandbox_required`` and, for ``execute_js``,
+#   ``isolation_required`` -- which is exactly the gate that keeps arbitrary
+#   code off the host, and which the destructive prompt never was.
+#
+# ``test_no_tool_claims_confirmation_without_destructive`` in
+# ``tests/unit/test_local_sandbox.py`` pins the invariant registry-wide, counted
+# against the registry rather than from memory -- which is how the earlier count
+# of five missed ``execute_js``. If a seventh tool ever wants a real prompt, the
+# decision it needs is what makes it destructive, not a louder flag.
+
 @register_tool
 class BrowserNavigateTool(Tool):
     """Open a URL in the headless browser.
@@ -52,7 +96,6 @@ class BrowserNavigateTool(Tool):
     category = ToolCategory.BROWSER
     parameters = {"type": "object", "properties": {"url": {"type": "string", "description": "URL to navigate to"}}, "required": ["url"], "additionalProperties": False}
     destructive = False
-    requires_confirmation = True
     sandbox_required = True
 
     async def execute(self, url: str):
@@ -81,7 +124,6 @@ class BrowserClickTool(Tool):
     category = ToolCategory.BROWSER
     parameters = {"type": "object", "properties": {"selector": {"type": "string", "description": "CSS selector of element to click"}}, "required": ["selector"], "additionalProperties": False}
     destructive = False
-    requires_confirmation = True
     sandbox_required = True
 
     async def execute(self, selector: str):
@@ -111,7 +153,6 @@ class BrowserTypeTool(Tool):
     category = ToolCategory.BROWSER
     parameters = {"type": "object", "properties": {"selector": {"type": "string", "description": "CSS selector of element"}, "text": {"type": "string", "description": "Text to type"}}, "required": ["selector", "text"], "additionalProperties": False}
     destructive = False
-    requires_confirmation = True
     sandbox_required = True
 
     async def execute(self, selector: str, text: str):
@@ -564,7 +605,6 @@ class ExecuteJsTool(Tool):
     category = ToolCategory.SHELL
     parameters = {"type": "object", "properties": {"script": {"type": "string", "description": "JavaScript code to execute"}, "timeout": {"type": "integer", "description": "Timeout in seconds", "default": 10}}, "required": ["script"], "additionalProperties": False}
     destructive = False
-    requires_confirmation = True
     sandbox_required = True
     # Arbitrary code, so the local runtime is not enough: this one keeps
     # needing a backend that contains it.
