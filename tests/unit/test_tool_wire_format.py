@@ -118,7 +118,10 @@ def test_every_tool_reaches_the_wire_intact():
     `interrupt_agent` joining the read-only set, where `job_kill` already
     sits), **37 -> 39 for the Phase 6 workflow verbs**: `send_message`
     and `subagent_fork` join `subagent` in the mutating set, because each
-    runs a real child turn under the parent's mode and permission. The number
+    runs a real child turn under the parent's mode and permission, and
+    **39 -> 41 for the Phase 7 skill tools**: `list_skills` and `run_skill`
+    are reads -- loading a procedure changes nothing and grants nothing -- so
+    both join the read-only set and work in every mode, Plan included. The number
     is a tripwire rather than the
     assertion: the set comparison above it is what proves the wiring, and this is
     here so that adding a tool to Build is something you read in a diff instead of
@@ -127,7 +130,7 @@ def test_every_tool_reaches_the_wire_intact():
     allowed = set(get_mode("build").allowed_tools)
     payload = _wire_payload(sorted(allowed & set(TOOL_NAMES)))
     assert set(payload) == allowed & set(TOOL_NAMES)
-    assert len(payload) == 39, f"expected all 39 tools, got {len(payload)}"
+    assert len(payload) == 41, f"expected all 41 tools, got {len(payload)}"
     for name, fn in payload.items():
         assert fn["description"].strip(), f"{name}: empty description on the wire"
         assert isinstance(fn["parameters"]["properties"], dict)

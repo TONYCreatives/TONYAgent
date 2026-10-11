@@ -31,6 +31,7 @@ import { Overlay } from "./Overlay.js";
 import { QuestionDialog } from "./QuestionDialog.js";
 import { SearchPanel, type SearchMatch } from "./SearchPanel.js";
 import type { PermissionList, ReasoningInfo } from "./SettingsMenus.js";
+import type { SkillInfo } from "./SkillPicker.js";
 import { SettingsPanel, type KeyEntry, type ProviderInfo } from "./SettingsPanel.js";
 import { StatusBar } from "./StatusBar.js";
 import { TopBar, type Tab } from "./TopBar.js";
@@ -146,6 +147,16 @@ export function App({
   const [tabs, setTabs] = useState<string[]>([]);
   const [modes, setModes] = useState<ModeInfo[]>([]);
   const [mode, setMode] = useState("build");
+  /**
+   * What the `/` menu offers. Read when the menu opens, not at mount.
+   *
+   * Deliberately not fetched alongside the modes above: the mode list is fixed
+   * while the process runs, and this one changes whenever the user saves a file
+   * in their editor -- so a copy taken at launch would be wrong exactly when
+   * someone is looking at it. It is also the reason there is no refresh button
+   * anywhere for this: the refresh is the act of opening the menu.
+   */
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
   /**
    * How much the agent may do, and the ladder it sits on.
    *
@@ -753,6 +764,12 @@ export function App({
       messages: restored,
       error: null,
       busy: false,
+      // The transcript being replaced is the only one this window renders, so
+      // any turn it was in the middle of is no longer its own. Leaving the id
+      // set here would make the next turn's `turn.started` look like a
+      // subagent's and be ignored -- a transcript that silently stops after a
+      // conversation switch.
+      activeTurnId: null,
     }));
   }, []);
 
@@ -894,6 +911,33 @@ export function App({
     [],
   );
 
+  /**
+   * Re-read the skill list for the `/` menu.
+   *
+   * Stable (`[]` deps) on purpose: the composer calls it from an effect keyed
+   * on the menu opening, and a callback whose identity changed every render
+   * would make that effect run on every render -- one RPC per keystroke.
+   *
+   * A failure leaves the list as it was rather than clearing it. The menu is a
+   * convenience over a syntax that works without it, so a failed refresh must
+   * not turn a working `/review` into "no skills yet"; the reason lands in the
+   * banner, where every other failed call lands.
+   */
+  const loadSkills = useCallback(() => {
+    void backendRef
+      .current!.call("skills.list")
+      .then((reply) => {
+        const listed = reply as { skills?: SkillInfo[] };
+        setSkills(listed.skills ?? []);
+      })
+      .catch((error: unknown) => {
+        setState((prev) => ({
+          ...prev,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      });
+  }, []);
+
   const createConversation = useCallback(
     async (project = "") => {
       // Any act that opens a conversation brings the transcript back, so a new
@@ -994,7 +1038,12 @@ export function App({
         setTabs((prev) => prev.filter((tab) => tab !== id));
         if (id === conversation) {
           setConversation("");
-          setState((prev) => ({ ...prev, messages: [], error: null }));
+          setState((prev) => ({
+            ...prev,
+            messages: [],
+            error: null,
+            activeTurnId: null,
+          }));
           await createConversation(project);
         } else {
           await refreshConversations();
@@ -1374,7 +1423,14 @@ export function App({
         if (applied.mode && applied.mode !== name) setMode(applied.mode);
         // The core clears the conversation on a mode change, so the view has
         // to follow or the transcript would show turns the core has dropped.
-        setState((prev) => ({ ...prev, messages: [], error: null }));
+        // The turn id goes with the transcript for the same reason as in
+        // `showMessages`: the next turn belongs to the new, empty one.
+        setState((prev) => ({
+          ...prev,
+          messages: [],
+          error: null,
+          activeTurnId: null,
+        }));
       })
       .catch((error: unknown) => {
         setState((prev) => ({
@@ -1636,6 +1692,8 @@ export function App({
               disabled={!connected}
               modes={modes}
               mode={mode}
+              skills={skills}
+              onSkillsNeeded={loadSkills}
               onModeChange={changeMode}
               onSend={send}
               onCancel={cancel}

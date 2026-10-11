@@ -31,6 +31,7 @@ from tonyagent.tools import (
     planning_tools,
     user_tools,
     subagent_tools,
+    skill_tools,
 )
 
 from tonyagent.tools.schemas import (

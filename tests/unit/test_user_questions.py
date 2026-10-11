@@ -453,9 +453,10 @@ def test_the_tool_count_is_a_tripwire():
     assertions prove the wiring, and this makes the count something that is
     noticed rather than discovered. 34 -> 37 for the Phase 5 subagent tools,
     37 -> 39 for the Phase 6 workflow verbs `send_message` and
-    `subagent_fork`.
+    `subagent_fork`, and 39 -> 41 for the Phase 7 pair `list_skills` and
+    `run_skill` (read-only, so they are in every mode's set).
     """
-    assert len(tool_registry.list_names()) == 39
+    assert len(tool_registry.list_names()) == 41
 
 
 async def test_the_session_publishes_an_ask_and_settles_it_on_the_answer():

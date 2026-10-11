@@ -35,6 +35,7 @@ from tonyagent.core.attachments import strip_images
 from tonyagent.core.attachments import validate as validate_attachments
 from tonyagent.core.events import Event, EventBus, EventType
 from tonyagent.core.session import AgentSession
+from tonyagent.core.skills import discover_current_skills
 from tonyagent.core.task_state import SessionState
 
 #: Bump when the request/response shape changes incompatibly.
@@ -152,6 +153,7 @@ class StdioServer:
             "search": self._h_search,
             "mode.set": self._h_mode_set,
             "mode.list": self._h_mode_list,
+            "skills.list": self._h_skills_list,
             "reasoning.list": self._h_reasoning_list,
             "reasoning.set": self._h_reasoning_set,
             "sandbox.start": self._h_sandbox_start,
@@ -187,20 +189,33 @@ class StdioServer:
         """Point the server at a session and wire the callbacks it needs.
 
         Switching conversations means a different ``AgentSession`` object, and
-        the two things a session owns -- the confirmation bridge and the event
-        subscription -- live on the object, not on the server. Forgetting either
-        is quiet and severe: the new session would answer every request and emit
-        no events at all, so the window would show a permanently blank
-        transcript and no error anywhere.
+        the things a session owns -- the confirmation bridge, the question
+        bridge and the event subscription -- live on the object, not on the
+        server. Forgetting any is quiet and severe: the new session would answer
+        every request and emit no events at all, so the window would show a
+        permanently blank transcript and no error anywhere.
 
         The old subscription is released first. A frontend appends each
         ``message.delta`` to the text it is already showing, so a session
         wired twice does not look like a duplicate frame on the wire -- it looks
         like every answer typed twice, and the longer the session runs the more
         times over.
+
+        **The outgoing conversation's subagents leave with it.** The registry is
+        process-wide -- one window, one place for ``list_agents`` to look -- but
+        a child is spawned for the session whose turn is running, and only that
+        session's turn can read its answer back. Left standing, the outgoing
+        chat's children would be listed in the incoming chat's ``list_agents``,
+        and a still-running one would keep working for a conversation the window
+        has left. Dropping them is the same host act as wiring the new session
+        below, and it happens here rather than at the call sites so every path
+        that replaces a session -- switch, new chat, startup restore -- gets it.
         """
         if self._unsubscribe is not None:
             self._unsubscribe()
+        from tonyagent.tools.subagent_tools import subagent_registry
+
+        subagent_registry.restart()
         self.session = session
         session.install_confirmation_bridge()
         session.install_question_bridge()
@@ -1280,6 +1295,26 @@ class StdioServer:
             "label": mode.label,
             "description": mode.description,
             "writes": mode.writes,
+        }
+
+    def _h_skills_list(self, params: dict) -> Any:
+        """The skills a message may open with ``/name``.
+
+        Read fresh on every call and from the same store ``list_skills`` and
+        ``run_skill`` use, for two reasons that are really one: the user adds
+        and edits these files while the window is open, and a menu that offered
+        a name the agent would refuse to load is a menu that lies. No caching
+        anywhere, so there is nothing to invalidate.
+
+        ``problems`` travels with the list rather than being logged. A file the
+        user wrote that did not load is the one thing this listing must not be
+        quiet about -- and the picker is where they are looking when they
+        wonder why their skill is missing.
+        """
+        found = discover_current_skills()
+        return {
+            "skills": [skill.to_dict() for skill in found.skills],
+            "problems": [problem.to_dict() for problem in found.problems],
         }
 
     def _h_mode_list(self, params: dict) -> Any:

@@ -1,4 +1,4 @@
-import { useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 
 import {
   MAX_ATTACHMENTS,
@@ -8,6 +8,13 @@ import {
   rejectionReason,
   type PendingAttachment,
 } from "./attachments.js";
+import {
+  SkillPicker,
+  filterSkills,
+  skillOptionId,
+  slashToken,
+  type SkillInfo,
+} from "./SkillPicker.js";
 import { ToolBudgetControl } from "./ToolBudgetControl.js";
 
 /** One entry in the `mode.list` reply. */
@@ -52,6 +59,22 @@ interface Props {
    * focused.
    */
   inputRef?: RefObject<HTMLTextAreaElement | null>;
+  /**
+   * The skills the core knows about, for the `/` menu.
+   *
+   * Optional, and empty by default, so a test that mounts the composer to
+   * drive its send button does not have to stand up a skill store to do it.
+   */
+  skills?: SkillInfo[];
+  /**
+   * Ask the window to refresh that list, called when the menu opens.
+   *
+   * The menu asks rather than being pushed to: refresh-on-open is always
+   * current -- the user may have added the file seconds ago, in their own
+   * editor -- and a list fetched at mount would be stale exactly when it is
+   * needed, with no way for the user to tell which names are real.
+   */
+  onSkillsNeeded?: () => void;
 }
 
 export function Composer({
@@ -68,6 +91,8 @@ export function Composer({
   onBudgetClose,
   onBudgetChange,
   inputRef,
+  skills = [],
+  onSkillsNeeded,
 }: Props) {
   const [text, setText] = useState("");
   // The files read so far. Held here rather than in the window because they
@@ -77,6 +102,12 @@ export function Composer({
   // composer field the user is looking at, and it clears when they try again.
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Which row of the `/` menu is highlighted, and whether Esc dismissed it.
+  // Both reset whenever the field changes (see `onChange` below), so the menu
+  // always opens on the first row rather than on whatever was highlighted the
+  // last time it was up.
+  const [skillIndex, setSkillIndex] = useState(0);
+  const [skillsDismissed, setSkillsDismissed] = useState(false);
 
   // Drive the pill highlight from what the core reports, not from local
   // state. A local `setMode` would paint "Plan" the instant it was clicked
@@ -84,6 +115,41 @@ export function Composer({
   // lie this project keeps having to unpick.
   const active = modes.find((m) => m.name === mode);
   const readOnly = active !== undefined && !active.writes;
+
+  /**
+   * The `/name` being typed, or null. See `slashToken` for the three rules.
+   *
+   * The menu is closed while a turn is running or before the backend has
+   * connected, because in both states the composer cannot send anything -- a
+   * menu offering a name to press when pressing would do nothing is a control
+   * that lies about being available.
+   */
+  const slashQuery = busy || disabled ? null : slashToken(text);
+  const matches = slashQuery === null ? [] : filterSkills(skills, slashQuery);
+  const menuOpen = slashQuery !== null && !skillsDismissed;
+  // Clamped at render rather than corrected in an effect: filtering happens
+  // here, so the number of rows can shrink between two renders, and a stored
+  // index that outlived its row would leave Enter with nothing to pick while
+  // the menu drew a highlight on no row at all.
+  const activeIndex = matches.length === 0 ? 0 : Math.min(skillIndex, matches.length - 1);
+
+  useEffect(() => {
+    if (menuOpen) onSkillsNeeded?.();
+  }, [menuOpen, onSkillsNeeded]);
+
+  /**
+   * Open a skill by name.
+   *
+   * A *selection*, not a send: it writes the command into the field and leaves
+   * the caret after it, because the arguments are the user's to add and a menu
+   * that submitted on Enter would take the choice away from them a keystroke
+   * before they made it.
+   */
+  const pickSkill = (skill: SkillInfo) => {
+    setText(`/${skill.name} `);
+    setSkillIndex(0);
+    setSkillsDismissed(true);
+  };
 
   const submit = () => {
     const trimmed = text.trim();
@@ -187,13 +253,60 @@ export function Composer({
         <textarea
           ref={inputRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setSkillIndex(0);
+            setSkillsDismissed(false);
+          }}
           onPaste={onPaste}
+          /*
+           * The menu is not a second focusable surface: the caret stays in the
+           * field and the highlighted row is announced from here, which is the
+           * pattern a text field with a list under it has to use -- moving
+           * focus into the list would make the user tab out of their own
+           * message to get back to typing it.
+           */
+          aria-controls={menuOpen ? "skills-menu" : undefined}
+          aria-activedescendant={
+            menuOpen && matches.length > 0 ? skillOptionId(activeIndex) : undefined
+          }
           className={readOnly ? "is-readonly" : undefined}
           // Enter sends, Shift+Enter inserts a newline. Matches the Tkinter UI's
           // Ctrl+Enter modifier, minus the modifier, since a web text field
           // already treats Enter as "submit" in the user's mental model.
           onKeyDown={(e) => {
+            /*
+             * The menu takes the keys it needs, and only the keys it needs.
+             *
+             * Enter picks the highlighted row only when there *is* one: with
+             * no match it falls through and sends the message, because a user
+             * who typed `/usr/local` into a composer is writing a path, not
+             * asking for a skill, and swallowing their Enter would be the
+             * composer refusing to send.
+             */
+            if (menuOpen && matches.length > 0) {
+              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                e.preventDefault();
+                const step = e.key === "ArrowDown" ? 1 : -1;
+                setSkillIndex(
+                  (prev) =>
+                    ((prev + step) % matches.length + matches.length) % matches.length,
+                );
+                return;
+              }
+              if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+                e.preventDefault();
+                pickSkill(matches[activeIndex]);
+                return;
+              }
+            }
+            if (menuOpen && e.key === "Escape") {
+              // Dismissed, not cleared: the text the user typed stays exactly
+              // where it is, so Esc can only ever close the menu.
+              e.preventDefault();
+              setSkillsDismissed(true);
+              return;
+            }
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               submit();
@@ -203,6 +316,23 @@ export function Composer({
           disabled={disabled}
           rows={2}
         />
+
+        {/*
+          The `/` menu, above the field where a menu that opens upward belongs.
+          It carries no animation on purpose: the audit requires every animation
+          to be cancelled under reduced motion, and a list that appears as the
+          next keystroke arrives must not lag behind it.
+        */}
+        {menuOpen && (
+          <SkillPicker
+            query={slashQuery ?? ""}
+            matches={matches}
+            total={skills.length}
+            index={activeIndex}
+            onPick={pickSkill}
+            onHover={setSkillIndex}
+          />
+        )}
 
         {/*
           What is about to go. Without this the only sign an attachment exists

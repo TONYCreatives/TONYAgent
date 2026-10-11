@@ -17,6 +17,11 @@
   margin: 0 auto;
   display: flex;
   flex-direction: column;
+  /* The `/` menu hangs off this box (see `.skills-menu`), so it opens on the
+     field's own edge and moves with it when an attachment strip or a wrapped
+     line changes the composer's height -- positioning it against the window
+     would put it somewhere else the moment the composer grew. */
+  position: relative;
   border: 1px solid var(--glass-edge);
   border-radius: var(--radius-lg);
   /* Glass, and the one surface that is a *field* rather than a panel -- see the
@@ -342,6 +347,101 @@
 .composer-inner textarea.is-readonly {
   border-color: var(--border);
   background: color-mix(in srgb, var(--input) 70%, var(--bg));
+}
+
+/* --- the `/` skill menu ---------------------------------------------------- */
+/*
+ * Opens *upward* from the field's top edge, at the text column's inset.
+ *
+ * Upward because the composer is the last thing in the window: a list that
+ * opened downward would be a list drawn off the bottom of the screen. Inset
+ * because a menu that reached the field's border would look like a second
+ * panel rather than something the field is producing.
+ *
+ * It carries no `animation`. The reduced-motion audit requires every animation
+ * to be cancelled under `prefers-reduced-motion`, and it is the wrong tool
+ * here anyway: this menu appears one keystroke after the one that opened it,
+ * and anything with a duration would lag behind the typing.
+ */
+.skills-menu {
+  position: absolute;
+  left: calc(var(--column-inset) - 1px);
+  right: calc(var(--column-inset) - 1px);
+  bottom: calc(100% + 6px);
+  z-index: 6;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 232px;
+  overflow-y: auto;
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-md);
+  /* The panel glass, not the field's: this is a surface floating *over* the
+     window, so it takes the fill the other panels take. */
+  background: var(--glass-panel-strong);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow: var(--shadow-2);
+}
+
+/*
+ * One row. The transition is here rather than on `.is-active` because a state
+ * cannot animate a property nothing on its element interpolates -- the audit in
+ * `layout.test.ts` asserts that for the whole stylesheet, and the highlight
+ * moving under the arrow keys is the state change this row has.
+ */
+.skills-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background var(--motion-fast) ease;
+}
+
+.skills-item.is-active {
+  background: var(--hover);
+}
+
+.skills-name {
+  flex: none;
+  color: var(--fg);
+  font-weight: 500;
+}
+
+/*
+ * The purpose line, and the reason the row is one line: a long description is
+ * cut rather than wrapped, so six rows stay six rows. The full text is the
+ * row's `title`, which is where a user who wants all of it looks.
+ */
+.skills-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-mute);
+}
+
+/* Which root it came from, shown only when it is not this project's own. */
+.skills-source {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+}
+
+/* Where "you have none" and "nothing matches" are said. Not a row: nothing
+   here can be picked, so it takes no highlight and no pointer. */
+.skills-empty {
+  padding: 6px 10px;
+  color: var(--fg-mute);
+  font-size: var(--text-sm);
 }
 
 /*
