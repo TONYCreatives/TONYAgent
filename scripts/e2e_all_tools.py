@@ -130,8 +130,10 @@ async def main() -> int:
     # -- 1b. the tools added with the tool-system pass ------------------------
     from tonyagent.tools.job_tools import JobKillTool, JobListTool, JobOutputTool
     from tonyagent.tools.jobs import jobs_registry
+    from tonyagent.core.modes import get_permission
+    from tonyagent.tools.context import use_context
     from tonyagent.tools.network_tools import WebFetchTool
-    from tonyagent.tools.shell_tools import ExecuteCommandTool, set_host_execution
+    from tonyagent.tools.shell_tools import ExecuteCommandTool
 
     from PIL import Image
 
@@ -160,43 +162,48 @@ async def main() -> int:
     # Background jobs live on the host, so they are exercised with host execution
     # on. The sandbox cannot hold one at all, and that refusal is asserted in the
     # sandbox section below rather than here.
-    set_host_execution(True)
-    try:
-        # A quick job first, for the output path.
-        r = await ExecuteCommandTool().execute(
-            "python -c \"print('from a job')\"", background=True
-        )
-        record("execute_command(background)", r)
-        assert r.status is ToolResultStatus.SUCCESS, r.error
-        quick = jobs_registry.all()[0]
+    #
+    # Published the way a real call gets it -- in the tool context, which is what
+    # the orchestrator writes around each `execute_tool_async` and what this
+    # script's direct `Tool().execute()` calls have to stand in for.
+    with use_context(permission=get_permission("full")):
+        try:
+            # A quick job first, for the output path.
+            r = await ExecuteCommandTool().execute(
+                "python -c \"print('from a job')\"", background=True
+            )
+            record("execute_command(background)", r)
+            assert r.status is ToolResultStatus.SUCCESS, r.error
+            quick = jobs_registry.all()[0]
 
-        r = await JobOutputTool().execute(quick.id, wait=True, timeout_ms=15000)
-        record("job_output", r)
-        assert r.status is ToolResultStatus.SUCCESS and "from a job" in r.output
+            r = await JobOutputTool().execute(quick.id, wait=True, timeout_ms=15000)
+            record("job_output", r)
+            assert r.status is ToolResultStatus.SUCCESS and "from a job" in r.output
 
-        r = await JobOutputTool().execute(quick.id)
-        assert "no new output" in r.output, "job_output returned the same text twice"
+            r = await JobOutputTool().execute(quick.id)
+            assert "no new output" in r.output, (
+                "job_output returned the same text twice"
+            )
 
-        # Then one that is *still running*, so the kill below is a real kill and
-        # not a report that there was nothing left to stop.
-        r = await ExecuteCommandTool().execute(
-            "python -c \"import time; time.sleep(60)\"", background=True
-        )
-        assert r.status is ToolResultStatus.SUCCESS, r.error
-        long_job = jobs_registry.all()[-1]
+            # Then one that is *still running*, so the kill below is a real kill
+            # and not a report that there was nothing left to stop.
+            r = await ExecuteCommandTool().execute(
+                "python -c \"import time; time.sleep(60)\"", background=True
+            )
+            assert r.status is ToolResultStatus.SUCCESS, r.error
+            long_job = jobs_registry.all()[-1]
 
-        r = await JobListTool().execute()
-        record("job_list", r)
-        assert r.status is ToolResultStatus.SUCCESS and long_job.id in r.output
-        assert "running" in r.output
+            r = await JobListTool().execute()
+            record("job_list", r)
+            assert r.status is ToolResultStatus.SUCCESS and long_job.id in r.output
+            assert "running" in r.output
 
-        r = await JobKillTool().execute(long_job.id)
-        record("job_kill", r)
-        assert "Stopped" in r.output, r.output
-        assert not long_job.running, "the job survived job_kill"
-    finally:
-        set_host_execution(False)
-        jobs_registry.shutdown()
+            r = await JobKillTool().execute(long_job.id)
+            record("job_kill", r)
+            assert "Stopped" in r.output, r.output
+            assert not long_job.running, "the job survived job_kill"
+        finally:
+            jobs_registry.shutdown()
 
     # -- 1c. the planning tools ----------------------------------------------
     from tonyagent.core.task_state import SessionState, set_current_state
@@ -252,6 +259,172 @@ async def main() -> int:
     assert r.status is ToolResultStatus.SUCCESS and "blocked" in r.output
 
     set_current_state(SessionState())
+
+    # -- 1d. the skills (Phase 7) ---------------------------------------------
+    #
+    # Both tools read the disk, so they are exercised against a real project
+    # folder rather than a mock: `folder_manager._current_folder` is the folder
+    # this script has been working in all along. What the assertions are
+    # careful about is the *user* root, which is the real one on this machine --
+    # so nothing here claims a total count of skills, only that this project's
+    # own file is found and that a file which cannot load is reported rather
+    # than silently skipped.
+    from tonyagent.core.skills import invocation_for
+    from tonyagent.tools.skill_tools import ListSkillsTool, RunSkillTool
+
+    skill_dir = tmp / ".tonyagent" / "skills"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "review.md").write_text(
+        "---\nname: review\ndescription: Review a change for correctness.\n---\n\n"
+        "1. Read the diff.\n2. Say what is wrong, with the file and line.\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "broken.md").write_text("---\nname: broken\n---\n", encoding="utf-8")
+    (skill_dir / "notes.txt").write_text("not a skill\n", encoding="utf-8")
+
+    r = await ListSkillsTool().execute()
+    record("list_skills", r)
+    assert r.status is ToolResultStatus.SUCCESS, r.error
+    assert "review [project] -- Review a change for correctness." in r.output
+    assert "broken.md" in r.output and "no procedure" in r.output, r.output
+    assert "notes.txt" not in r.output, "a non-Markdown file was read as a skill"
+
+    r = await RunSkillTool().execute("review", "the parser")
+    record("run_skill", r)
+    assert r.status is ToolResultStatus.SUCCESS, r.error
+    assert "Procedure:" in r.output and "2. Say what is wrong" in r.output
+    assert "grants nothing" in r.output, "a skill that does not say what it is not"
+    assert r.summary == "skill: review"
+
+    await expect_error(
+        "run_skill(unknown)", RunSkillTool().execute("nope"), "no skill named"
+    )
+
+    # The `/name` syntax, through the resolver the session uses: the message a
+    # user types becomes the procedure the model is told to follow, and a path
+    # that merely starts with a slash stays prose.
+    invocation = invocation_for("/review the parser", folder=tmp)
+    assert invocation is not None and invocation.skill.name == "review"
+    assert invocation.arguments == "the parser"
+    assert "Read the diff." in invocation.prompt_block()
+    assert invocation_for("/usr/local/bin", folder=tmp) is None
+    assert invocation_for("review the parser", folder=tmp) is None
+    RESULTS.append(("/name syntax", "PASS", "resolved /review, left /usr/local/bin alone"))
+    print(f"  {'PASS':14} {'/name syntax':22} [ok       ] resolved /review, left a path alone")
+
+    # -- 1e. the gates, through the orchestrator -------------------------------
+    #
+    # Everything above calls tool bodies directly, because this script stands in
+    # for the user. These checks are the opposite: they drive the layer that
+    # decides whether a body may run at all, so they are the only place in this
+    # file where the refusal is the *subject* rather than a side effect. Every
+    # one is here because a pass over the tool surface either measured it as a
+    # hole (the no-bridge confirmation, the octal and metadata addresses, glob's
+    # pattern) or because it is the shape a gate takes when it is really a
+    # suggestion to the model.
+    from tonyagent.core.modes import get_mode, get_permission
+    from tonyagent.tools.orchestrator import ToolCall, ToolOrchestrator
+
+    def _approve(orchestrator: ToolOrchestrator) -> None:
+        """Answer every prompt with Allow, as the window's dialog does."""
+        orchestrator.set_confirmation_callback(
+            lambda request: asyncio.get_running_loop().call_soon(
+                orchestrator.respond_to_confirmation, request.tool_call.id, True
+            )
+        )
+
+    # Plan refuses the write, in the mode's own words. No skill involved: this is
+    # the gate a skill cannot pass either.
+    plan = ToolOrchestrator()
+    plan.set_mode(get_mode("plan"))
+    await expect_error(
+        "plan refuses write",
+        plan.execute_tool_async(
+            ToolCall(id="g1", name="write", arguments={"path": "gate.txt", "content": "x"})
+        ),
+        "not available in Plan mode",
+    )
+    assert not (tmp / "gate.txt").exists(), "Plan mode wrote a file"
+
+    # A destructive tool with nobody to ask is refused rather than run -- the
+    # fail-open hole, measured on `delete_file` when it was found.
+    unasked = ToolOrchestrator()
+    unasked.set_mode(get_mode("build"))
+    unasked.set_permission(get_permission("high"))
+    (tmp / "kept.txt").write_text("keep me\n", encoding="utf-8")
+    await expect_error(
+        "no bridge refuses delete",
+        unasked.execute_tool_async(
+            ToolCall(id="g2", name="delete_file", arguments={"path": "kept.txt"})
+        ),
+        "was not run",
+    )
+    assert (tmp / "kept.txt").exists(), "a destructive tool ran with no way to ask"
+
+    # The workspace boundary through the orchestrator, with the user saying yes:
+    # an approved call is not a way out of the project folder.
+    approved = ToolOrchestrator()
+    approved.set_mode(get_mode("build"))
+    approved.set_permission(get_permission("high"))
+    _approve(approved)
+    await expect_error(
+        "glob refuses escape",
+        approved.execute_tool_async(
+            ToolCall(id="g3", name="glob", arguments={"pattern": "../*.txt", "path": "."})
+        ),
+        "outside",
+    )
+    await expect_error(
+        "write refuses escape",
+        approved.execute_tool_async(
+            ToolCall(
+                id="g4", name="write",
+                arguments={"path": "../planted.txt", "content": "x"},
+            )
+        ),
+        "escape",
+    )
+    assert not (tmp.parent / "planted.txt").exists(), "a write escaped the project"
+
+    # The network guard, on the spellings a resolver must not be trusted to
+    # refuse: the plain loopback address, an octal one, and a cloud metadata
+    # service in the RFC 6598 range that `ipaddress` calls neither private nor
+    # reserved.
+    await expect_error(
+        "web_fetch refuses loopback",
+        approved.execute_tool_async(
+            ToolCall(id="g5", name="web_fetch", arguments={"url": "http://127.0.0.1:8123/"})
+        ),
+        "internal address",
+    )
+    await expect_error(
+        "http_request refuses octal",
+        approved.execute_tool_async(
+            ToolCall(id="g6", name="http_request", arguments={"url": "http://0177.0.0.1/"})
+        ),
+        "internal address",
+    )
+    await expect_error(
+        "web_fetch refuses metadata",
+        approved.execute_tool_async(
+            ToolCall(id="g7", name="web_fetch", arguments={"url": "http://100.100.100.200/"})
+        ),
+        "internal address",
+    )
+
+    # The denylist at the rung where it is the only gate left: Full lifts the
+    # allow-list and the sandbox, and must not lift this.
+    full_gate = ToolOrchestrator()
+    full_gate.set_mode(get_mode("build"))
+    full_gate.set_permission(get_permission("full"))
+    _approve(full_gate)
+    await expect_error(
+        "denylist survives Full",
+        full_gate.execute_tool_async(
+            ToolCall(id="g8", name="execute_command", arguments={"command": "rm -rf /"})
+        ),
+        "denylist",
+    )
 
     # -- 1b. the tools that reach the user ------------------------------------
     # Neither needs the sandbox, and one of them is the only tool whose happy
@@ -338,8 +511,10 @@ async def main() -> int:
     # name is wrong. The success path is covered with a stub provider in
     # tests/unit/test_subagents.py, which is where a child's run belongs.
     from tonyagent.tools.subagent_tools import (
+        ForkSubagentTool,
         InterruptAgentTool,
         ListAgentsTool,
+        SendMessageTool,
         SubagentTool,
         subagent_registry,
     )
@@ -360,6 +535,32 @@ async def main() -> int:
             "interrupt_agent(unknown)",
             InterruptAgentTool().execute(name="ghost"),
             "no subagent named",
+        )
+
+        # The two Phase 6 workflow verbs. Same fail-closed shape: outside a turn
+        # there is no parent session to continue, or to spawn a copy from.
+        await expect_error(
+            "send_message(no turn)",
+            SendMessageTool().execute(name="any", message="keep going"),
+            "no turn is running",
+        )
+        await expect_error(
+            "subagent_fork(no turn)",
+            ForkSubagentTool().execute(name="any", task="try another way"),
+            "no turn is running",
+        )
+        # The blank-argument refusals are checked *before* the turn, so they
+        # answer even here: a model that forgets the message must be told what it
+        # forgot rather than told there is no turn.
+        await expect_error(
+            "send_message(blank)",
+            SendMessageTool().execute(name="any", message="   "),
+            "needs both the subagent's name and the message",
+        )
+        await expect_error(
+            "subagent_fork(no task)",
+            ForkSubagentTool().execute(name="any", task="   "),
+            "needs a task for the copy",
         )
     finally:
         subagent_registry.restart()
