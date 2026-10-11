@@ -125,6 +125,69 @@ def normalize_for_denylist(command: str) -> str:
     return text.strip()
 
 
+#: Windows' command suffixes, which the shell resolves transparently: the
+#: user's PATHEXT turns ``npm.cmd`` into ``npm``. The allow-list is about the
+#: *program*, so both spellings are the same match -- and only those two.
+_EXECUTABLE_SUFFIXES = (".exe", ".bat", ".cmd", ".com", ".ps1")
+
+#: Ceiling on a model-chosen timeout, in seconds.
+#:
+#: The timeout is model-authored input like any other argument, and an
+#: unbounded one is a turn that never comes back: ``timeout=86400`` holds the
+#: call -- and with it a batch, since a prompt-making call is serial -- for a
+#: day. 300 aligns with the sandbox container's own ``sandbox.timeout`` so the
+#: host and container paths refuse on the same clock, and it is still ten
+#: times the 30s default. A call can only be clamped downward.
+MAX_TIMEOUT_S = 300
+
+
+def _allowlist_names(base_cmd: str) -> set[str]:
+    """The names this command's first word may match on the allow-list.
+
+    ``python.exe`` on Windows and ``python`` everywhere else are the same
+    program -- the shell resolves the extension for you -- so the comparison
+    accepts the bare name and the suffixed one, and nothing else. The prefix
+    match this replaces (``base_cmd.startswith(pattern)``) admitted
+    ``pythonx evil``, ``pipx`` and every other near-miss; a match that is not
+    exact is how an allow-list silently becomes a substring check.
+    """
+    names = {base_cmd}
+    for suffix in _EXECUTABLE_SUFFIXES:
+        if base_cmd.endswith(suffix):
+            names.add(base_cmd[: -len(suffix)])
+    return names
+
+
+def bounded_timeout(timeout: Any) -> int:
+    """A model-supplied timeout, clamped to ``[1, MAX_TIMEOUT_S]``.
+
+    A value that is not a number reads as the ceiling rather than the floor:
+    a call that asked for a timeout it did not understand still gets one that
+    ends. A value below one gets one, for the same reason.
+    """
+    try:
+        wanted = int(timeout)
+    except (TypeError, ValueError):
+        return MAX_TIMEOUT_S
+    return max(1, min(wanted, MAX_TIMEOUT_S))
+
+
+def denylist_reason(command: str) -> str | None:
+    """The denylist pattern this command matches, or ``None`` if none does.
+
+    **Extracted from ``_is_command_allowed`` so the rule has a second
+    enforcement point.** ``execute_js`` runs arbitrary code on the host too --
+    at the Full rung, where the isolation gate is passed without a container
+    -- and giving it its own copy of this loop is how two tools end up
+    disagreeing about ``rm -rf /``. One function, both callers.
+    """
+    normalized = normalize_for_denylist(command)
+    for deny_pattern in settings.tools.command_denylist:
+        if re.search(deny_pattern, normalized):
+            return deny_pattern
+    return None
+
+
 def _is_command_allowed(command: str, bypass_allowlist: bool = False) -> tuple[bool, str]:
     """Check if command is allowed by allowlist/denylist.
 
@@ -145,11 +208,11 @@ def _is_command_allowed(command: str, bypass_allowlist: bool = False) -> tuple[b
 
     base_cmd = Path(parts[0]).name.lower()
 
-    # Check denylist first, unconditionally.
-    normalized = normalize_for_denylist(command)
-    for deny_pattern in settings.tools.command_denylist:
-        if re.search(deny_pattern, normalized):
-            return False, f"Command matches denylist pattern: {deny_pattern}"
+    # Check denylist first, unconditionally. Shared with `execute_js` -- see
+    # `denylist_reason` below for why there is one loop and not two.
+    deny_pattern = denylist_reason(command)
+    if deny_pattern:
+        return False, f"Command matches denylist pattern: {deny_pattern}"
 
     if bypass_allowlist:
         logger.warning(
@@ -157,10 +220,12 @@ def _is_command_allowed(command: str, bypass_allowlist: bool = False) -> tuple[b
         )
         return True, "OK"
 
-    # Check allowlist
+    # Check allowlist. Exact match, not a prefix -- see `_allowlist_names` for
+    # what the prefix form admitted.
     allowed = False
+    candidates = _allowlist_names(base_cmd)
     for allow_pattern in settings.tools.command_allowlist:
-        if base_cmd == allow_pattern.lower() or base_cmd.startswith(allow_pattern.lower()):
+        if allow_pattern.lower() in candidates:
             allowed = True
             break
 
@@ -303,6 +368,9 @@ async def _execute_local(command: str, cwd: str, timeout: int, why: str) -> Tool
     """
     logger.warning(f"Executing on HOST (no sandbox, via {why}): {command}")
     target_cwd = _resolve_path(cwd)
+    # Clamped here rather than by the caller: one gate serves both the
+    # foreground and background paths, and a model-supplied timeout is input.
+    timeout = bounded_timeout(timeout)
 
     process = await asyncio.create_subprocess_shell(
         command,
@@ -377,7 +445,7 @@ class ExecuteCommandTool(Tool):
         "properties": {
             "command": {"type": "string", "description": "Command to execute"},
             "cwd": {"type": "string", "description": "Working directory (relative to project root)", "default": "."},
-            "timeout": {"type": "integer", "description": "Timeout in seconds", "default": 30},
+            "timeout": {"type": "integer", "description": f"Timeout in seconds (capped at {MAX_TIMEOUT_S})", "default": 30},
             "background": {
                 "type": "boolean",
                 "description": (
@@ -399,9 +467,8 @@ class ExecuteCommandTool(Tool):
 
     async def execute(self, command: str, cwd: str = ".", timeout: int = 30,
                       background: bool = False) -> ToolResult:
-        # Validate command. The level comes from the module flag rather than
-        # from an orchestrator instance -- see `_ALLOWLIST_BYPASS` for why there
-        # is exactly one of those.
+        # Validate command. The level arrives per call, in the tool context --
+        # see `allowlist_bypassed` and the ToolContext note in `tools/context.py`.
         allowed, reason = _is_command_allowed(
             command, bypass_allowlist=allowlist_bypassed()
         )
@@ -430,7 +497,7 @@ class ExecuteCommandTool(Tool):
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
         try:
             result = await target.backend.execute_command(
-                command, cwd=sandbox_cwd, timeout=timeout
+                command, cwd=sandbox_cwd, timeout=bounded_timeout(timeout)
             )
         except Exception as e:
             return ToolResult(status=ToolResultStatus.ERROR, error=f"Sandbox execution failed: {e}")

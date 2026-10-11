@@ -428,11 +428,13 @@ class DeleteFileTool(Tool):
             except OSError:
                 pass
 
-            try:
-                import send2trash
-                send2trash.send2trash(str(target))
-            except ImportError:
-                target.unlink()
+            # No `unlink()` fallback on a missing `send2trash`: that fallback
+            # turned the tool's contract -- "moves to the recycle bin" -- into
+            # a permanent deletion the transcript still described as a
+            # recoverable one. A missing dependency is an error the model (and
+            # the user, reading the card) can see and act on.
+            import send2trash
+            send2trash.send2trash(str(target))
 
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,

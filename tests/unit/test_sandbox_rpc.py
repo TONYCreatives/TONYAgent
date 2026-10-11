@@ -180,6 +180,88 @@ def test_tmpfs_floor_is_enforced(tmp_path):
     assert "size=16m" in " ".join(args)
 
 
+def test_container_runs_as_the_project_owner_not_root(tmp_path, monkeypatch):
+    """Root inside the container leaves root-owned files in the project.
+
+    The workspace is bind-mounted read-write, so the container's uid decides
+    who owns what the agent writes **on the host** -- and a file owned by
+    root that the user cannot edit is worse than one owned wrong. On a POSIX
+    host the right answer is the folder's own owner and it is detected; the
+    explicit setting wins everywhere.
+    """
+    import os
+
+    monkeypatch.setattr(os, "name", "posix")
+    info = tmp_path.stat()
+    detected = f"{info.st_uid}:{info.st_gid}"
+
+    args = _args(tmp_path)
+    assert args[args.index("--user") + 1] == detected
+
+    explicit = _args(tmp_path, container_user="1000:1000")
+    assert explicit[explicit.index("--user") + 1] == "1000:1000"
+
+
+def test_container_user_is_declined_where_uids_mean_nothing(tmp_path, monkeypatch):
+    """Docker Desktop on Windows cannot map host uids into the VM.
+
+    There everything in the Linux VM is root regardless of what is asked
+    for, so the detection declines and the image default stands rather than
+    the flag inventing a uid that does nothing.
+    """
+    import os
+
+    monkeypatch.setattr(os, "name", "nt")
+    assert "--user" not in _args(tmp_path)
+
+
+def test_loading_the_rpc_server_does_not_add_the_workspace_to_sys_path(tmp_path):
+    """The local runtime runs the RPC server inside the agent's own process.
+
+    The module used to prepend the workspace to ``sys.path``, which on the
+    host is an import-hijack primitive: a project file named like a standard
+    or third-party module is later imported *by the agent*, running with the
+    user's privileges. The line is gone; this is what keeps it gone.
+    """
+    import asyncio
+    import sys
+
+    from tonyagent.sandbox.base import SandboxConfig
+    from tonyagent.sandbox.local_backend import LocalBackend
+
+    # A file that would execute on import if the workspace were importable.
+    (tmp_path / "zzz_tonyagent_hijack_probe.py").write_text(
+        "raise RuntimeError('the workspace is importable from the agent process')"
+    )
+
+    before = list(sys.path)
+    backend = LocalBackend(SandboxConfig(project_path=str(tmp_path)))
+    assert asyncio.run(backend.start()) is True
+    try:
+        assert list(sys.path) == before, "the workspace reached sys.path"
+        with pytest.raises(ModuleNotFoundError):
+            import zzz_tonyagent_hijack_probe  # noqa: F401
+    finally:
+        asyncio.run(backend.stop())
+
+
+def test_the_loader_refuses_a_module_that_touches_sys_path(tmp_path, monkeypatch):
+    """Fail closed, not fail quietly: a module that edits the path is refused.
+
+    The check is what makes the previous test's property hold against future
+    edits -- reintroducing the insert now fails the runtime's startup with a
+    readable error instead of re-arming the hijack.
+    """
+    rogue = tmp_path / "rogue_rpc.py"
+    rogue.write_text("import sys; sys.path.insert(0, '/rogue')\n")
+    monkeypatch.setenv("TONYAGENT_RPC_SERVER", str(rogue))
+
+    from tonyagent.sandbox.local_backend import _load_rpc_server
+
+    with pytest.raises(RuntimeError, match="sys.path"):
+        _load_rpc_server()
+
+
 def test_settings_defaults_are_restrictive():
     """Guard the user-facing defaults, not just the dataclass."""
     from tonyagent.config.settings import SandboxSettings

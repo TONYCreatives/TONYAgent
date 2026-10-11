@@ -18,8 +18,20 @@ from typing import Any
 # Linux path is what made the Docker dependency unavoidable.
 WORKSPACE = Path(os.environ.get("TONYAGENT_WORKSPACE", "/workspace")).resolve()
 
-# Add workspace to path
-sys.path.insert(0, str(WORKSPACE))
+# The workspace used to be prepended to this process's ``sys.path``. In the
+# container that was pointless; on the host -- where this module is imported
+# into the *agent's own process*, not a container subprocess -- it was an
+# import-hijack primitive: any lazily imported name (``json.py`` at the root
+# of a checked-out repo, a planted ``playwright.py`` for the browser tools'
+# own import) shadows the real module and runs in the agent's process, with
+# the user's full privileges. Scripts that need the project on their path can
+# put it there themselves -- ``python script.py`` and ``python -m`` already
+# add the script's directory, and ``exec_command`` runs in a fresh shell
+# whose ``cwd`` is the workspace.
+#
+# Do not reintroduce this. The test in tests/unit/test_sandbox_rpc.py that
+# imports this module through the local backend and asserts the workspace is
+# absent from ``sys.path`` is what keeps it out.
 
 
 async def exec_command(command: str, cwd: str = "", timeout: int = 30) -> dict:

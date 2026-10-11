@@ -394,3 +394,75 @@ def test_execute_js_refuses_to_run_on_the_local_runtime(tmp_path: Path, monkeypa
         assert "isolated" in (result.error or "").lower()
     finally:
         asyncio.run(manager.stop())
+
+
+async def test_execute_js_keeps_the_denylist_on_the_host(tmp_path: Path, monkeypatch):
+    """At Full the host is the runtime -- so the one filter stays.
+
+    Without this, the only model-authored-code tool that never prompts was
+    also the only one with no filter at all: ``execute_command`` still faces
+    the denylist at Full, and handing ``execute_js`` the same machine asked
+    for the same answer. It is the cheap inner ring, not a parser -- ordinary
+    JavaScript never matches it.
+    """
+    from tonyagent.core.modes import PERMISSIONS
+    from tonyagent.sandbox import get_shared_sandbox_manager
+    from tonyagent.sandbox.local_backend import LocalBackend
+    from tonyagent.tools.browser_tools import ExecuteJsTool
+    from tonyagent.tools.context import use_context
+
+    manager = get_shared_sandbox_manager()
+    local = LocalBackend(SandboxConfig(project_path=str(tmp_path)))
+    assert await local.start() is True
+    monkeypatch.setattr(manager, "_local", local, raising=False)
+    try:
+        with use_context(permission=PERMISSIONS["full"]):
+            destructive = await ExecuteJsTool().execute(
+                "require('child_process').execSync('rm -rf /')"
+            )
+            assert destructive.status.value == "error"
+            assert "denylist" in (destructive.error or "").lower()
+
+            # The control: the pattern must not fire on arithmetic. A string
+            # that *spells* a destructive command is denied, deliberately --
+            # the same trade the denylist makes on command strings
+            # (``echo "rm -rf /"`` is refused too), because normalisation
+            # removes quotes and there is no parser underneath.
+            result = await ExecuteJsTool().execute("1+1")
+            assert "denylist" not in (result.error or "").lower(), (
+                "ordinary JavaScript was denied as destructive"
+            )
+    finally:
+        await manager.stop()
+
+
+async def test_execute_js_is_not_denylisted_inside_a_container(tmp_path: Path, monkeypatch):
+    """The scoping decision, pinned: the denylist is the *host* ring.
+
+    Inside an isolating backend the container is the wall -- the same trade
+    ``execute_command`` makes, where the pattern list is a courtesy rather
+    than the boundary -- and a pattern that blocked JavaScript containing an
+    ``rm -rf`` string would push real work around the filter for no gain.
+    """
+    from tonyagent.core.modes import PERMISSIONS
+    from tonyagent.sandbox import get_shared_sandbox_manager
+    from tonyagent.sandbox.base import SandboxConfig, SandboxStatus
+    from tonyagent.tools.browser_tools import ExecuteJsTool
+    from tonyagent.tools.context import use_context
+
+    class IsolatingBackend:
+        provides_isolation = True
+        status = SandboxStatus.RUNNING
+        config = SandboxConfig()
+
+        async def execute_js(self, script: str, timeout: int = 10):
+            return type("R", (), {"success": True, "data": "ran", "error": None})()
+
+    manager = get_shared_sandbox_manager()
+    monkeypatch.setattr(manager, "_backend", IsolatingBackend())
+    try:
+        with use_context(permission=PERMISSIONS["full"]):
+            result = await ExecuteJsTool().execute("require('fs').rmSync('/x', {recursive:true})")
+        assert result.status.value == "success", result.error
+    finally:
+        monkeypatch.setattr(manager, "_backend", None)

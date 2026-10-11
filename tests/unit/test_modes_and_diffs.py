@@ -1065,6 +1065,90 @@ def test_quoting_and_wrapping_do_not_change_what_a_command_is():
     assert normalize_for_denylist("powershell -enc QUJD").startswith("powershell")
 
 
+# --- the allow-list: an exact match, not a prefix ------------------------------
+#
+# The match used to be ``base_cmd == pattern or base_cmd.startswith(pattern)``.
+# The prefix half admitted every near-miss of every entry: with "python" on
+# the list, ``pythonx`` ran; with "pip", ``pipx`` ran. An allow-list is a
+# list of programs, and a program name is not a substring check. The
+# Windows extensions stay accepted because the shell resolves those itself:
+# ``npm.cmd install`` is ``npm install`` to the shell that runs it.
+
+
+def _allowlist_with(monkeypatch, entries):
+    from tonyagent.config.settings import settings
+
+    monkeypatch.setattr(settings.tools, "command_allowlist", list(entries))
+
+
+def test_the_allowlist_matches_exact_names(monkeypatch):
+    from tonyagent.tools.shell_tools import _is_command_allowed
+
+    _allowlist_with(monkeypatch, ["python"])
+
+    allowed, _ = _is_command_allowed("python -m pytest", bypass_allowlist=False)
+    assert allowed, "an exact entry must still run"
+
+    # The same program spelled the way Windows spells it: the shell resolves
+    # the extension, so the allow-list must not pretend it is another program.
+    allowed, _ = _is_command_allowed("python.exe -m pytest", bypass_allowlist=False)
+    assert allowed, "python.exe is python"
+
+    for near_miss in ("pythonx -m pytest", "python3 -m pytest", "python.config"):
+        allowed, reason = _is_command_allowed(near_miss, bypass_allowlist=False)
+        assert not allowed, f"{near_miss!r} is not python"
+        assert "not in allowlist" in reason, reason
+
+
+def test_the_allowlist_does_not_admit_a_prefix_of_an_entry(monkeypatch):
+    """The other direction: a longer entry must not admit a shorter prefix."""
+    from tonyagent.tools.shell_tools import _is_command_allowed
+
+    _allowlist_with(monkeypatch, ["playwright"])
+
+    assert not _is_command_allowed("play --version", bypass_allowlist=False)[0]
+    assert not _is_command_allowed("playw --version", bypass_allowlist=False)[0]
+    assert _is_command_allowed("playwright --version", bypass_allowlist=False)[0]
+
+
+# --- the shared denylist, and the ceiling on a model's own timeout ------------
+
+
+def test_the_denylist_reason_is_shared_with_execute_js():
+    """``execute_js`` runs code on the host too, so it reads the same list.
+
+    The point of the extraction is that there is one loop: a pattern added to
+    ``command_denylist`` covers both tools or neither, and no second copy can
+    drift from the first.
+    """
+    from tonyagent.tools.shell_tools import denylist_reason
+
+    assert denylist_reason("rm -rf /") is not None
+    assert denylist_reason("shutdown now") is not None
+    assert denylist_reason("ls -la") is None
+    assert denylist_reason("node -e 'console.log(1+1)'") is None
+
+
+@pytest.mark.parametrize(
+    "asked, expected",
+    [
+        (30, 30),
+        (1, 1),
+        (0, 1),           # a limit of zero is not a small timeout
+        (-5, 1),
+        (86400, 300),     # a day is a turn that never comes back
+        (None, 300),      # not a number reads as the ceiling, not the floor
+        ("abc", 300),
+        (10**9, 300),
+    ],
+)
+def test_a_timeout_is_clamped(asked, expected):
+    from tonyagent.tools.shell_tools import MAX_TIMEOUT_S, bounded_timeout
+
+    assert MAX_TIMEOUT_S == 300
+    assert bounded_timeout(asked) == expected
+
+
 async def test_switching_conversation_keeps_the_permission_level(tmp_path):
     """The bar and the gate must not disagree.
 

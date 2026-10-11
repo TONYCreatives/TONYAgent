@@ -65,6 +65,19 @@ class SandboxSettings(BaseModel):
     file tools, so this is usually safe to turn on; set False if the agent must
     write files from inside the container."""
 
+    container_user: str = ""
+    """Run the container as this ``uid:gid`` instead of the image's default.
+
+    The image defaults to root, and the workspace is bind-mounted read-write
+    -- so every file the agent writes "from inside" lands root-owned on the
+    host, where the user's own tools then cannot edit or delete it, and a
+    process that escapes the code-execution gates has a root-owned foothold
+    in the project folder. The right value is the *host* account that owns
+    the project folder: on POSIX hosts that is detected automatically when
+    this is empty (the docker backend reads the folder's owner), while Docker
+    Desktop on Windows cannot map uids at all -- there everything inside the
+    VM is root regardless, so leaving this empty is correct on Windows."""
+
 
 
 class ToolsSettings(BaseModel):
@@ -142,13 +155,17 @@ class ToolsSettings(BaseModel):
     """
 
     allow_internal_http: bool = False
-    """Allow http_request to reach loopback/private/link-local addresses.
+    """Allow the network *and browser* tools to reach loopback/private/link-local
+    addresses.
 
     Default False. This is an SSRF guard and is deliberately INDEPENDENT of
     sandbox.enable_network - that setting controls the container's egress, not
     what the host can be asked to fetch. Reaching 169.254.169.254 (cloud
-    instance metadata) can hand out cloud credentials, so it stays blocked
-    unless you opt in. Set TONYAGENT_TOOLS__ALLOW_INTERNAL_HTTP=true to enable.
+    instance metadata) can hand out cloud credentials, and a browser pointed
+    at 127.0.0.1 can read the user's own services, so it stays blocked unless
+    you opt in. Set TONYAGENT_TOOLS__ALLOW_INTERNAL_HTTP=true to enable --
+    which is the setting behind "open my dev server on localhost:3000", and it
+    covers ``http_request``, ``web_fetch`` and ``browser_navigate`` alike.
     """
 
 

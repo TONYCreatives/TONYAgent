@@ -16,6 +16,7 @@ from tonyagent.tools.base import (
     output_excerpt,
     register_tool,
 )
+from tonyagent.tools.shell_tools import MAX_TIMEOUT_S, bounded_timeout
 from tonyagent.config.settings import settings
 
 
@@ -240,7 +241,7 @@ class HttpRequestTool(Tool):
             "method": {"type": "string", "enum": ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"], "default": "GET"},
             "headers": {"type": "object", "description": "HTTP headers", "additionalProperties": {"type": "string"}},
             "body": {"type": "string", "description": "Request body"},
-            "timeout": {"type": "integer", "description": "Timeout in seconds", "default": 30},
+            "timeout": {"type": "integer", "description": f"Timeout in seconds (capped at {MAX_TIMEOUT_S})", "default": 30},
         },
         "required": ["url"],
         "additionalProperties": False,
@@ -275,9 +276,12 @@ class HttpRequestTool(Tool):
         refusal = _internal_host_refusal(url)
         if refusal:
             return ToolResult(status=ToolResultStatus.ERROR, error=refusal)
-        
+
+        # A model-chosen timeout is input, so it is clamped like any other:
+        # `timeout=86400` would hold this turn for a day.
+        budget = bounded_timeout(timeout)
         try:
-            async with _guarded_client(timeout) as client:
+            async with _guarded_client(budget) as client:
                 response = await client.request(
                     method=method,
                     url=url,
@@ -316,7 +320,7 @@ class HttpRequestTool(Tool):
         except BlockedTarget as exc:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(exc))
         except httpx.TimeoutException:
-            return ToolResult(status=ToolResultStatus.ERROR, error=f"Request timed out after {timeout}s")
+            return ToolResult(status=ToolResultStatus.ERROR, error=f"Request timed out after {budget}s")
         except Exception as e:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
 
@@ -350,7 +354,7 @@ class WebFetchTool(Tool):
         "type": "object",
         "properties": {
             "url": {"type": "string", "description": "URL to fetch"},
-            "timeout": {"type": "integer", "description": "Timeout in seconds", "default": 30},
+            "timeout": {"type": "integer", "description": f"Timeout in seconds (capped at {MAX_TIMEOUT_S})", "default": 30},
         },
         "required": ["url"],
         "additionalProperties": False,
@@ -371,8 +375,9 @@ class WebFetchTool(Tool):
         if refusal:
             return ToolResult(status=ToolResultStatus.ERROR, error=refusal)
 
+        budget = bounded_timeout(timeout)
         try:
-            async with _guarded_client(timeout) as client:
+            async with _guarded_client(budget) as client:
                 response = await client.get(url)
         except BlockedTarget as exc:
             # A redirect this guard refused, or the URL itself. Same wording
@@ -381,7 +386,7 @@ class WebFetchTool(Tool):
         except httpx.TimeoutException:
             return ToolResult(
                 status=ToolResultStatus.ERROR,
-                error=f"Request timed out after {timeout}s",
+                error=f"Request timed out after {budget}s",
             )
         except Exception as e:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))

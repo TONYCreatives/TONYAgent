@@ -137,6 +137,9 @@ class DockerSandboxBackend(SandboxBackend):
         * ``--tmpfs``             - bounded, memory-backed scratch space, so a
           runaway write cannot fill the host disk
         * ``--network none``      - no egress unless explicitly enabled
+        * ``--network none``      - no egress unless explicitly enabled
+        * ``--user``             - the project's owner, not root, so files
+          written inside are writable by the user outside (POSIX hosts)
         * ``ro`` bind             - optional read-only project mount
         """
         cfg = self.config
@@ -160,6 +163,17 @@ class DockerSandboxBackend(SandboxBackend):
         if cfg.no_new_privileges:
             args += ["--security-opt", "no-new-privileges"]
 
+        # Who the container runs as. Unset, it is the image's default -- root
+        # -- and with the workspace mounted read-write that is how a file the
+        # agent writes lands root-owned on the host, uneditable by the user
+        # who owns the project. On POSIX hosts the project folder's own owner
+        # is the right answer and is detected automatically; Windows/Docker
+        # Desktop cannot map uids, so the detection declines there and the
+        # explicit setting wins in either case.
+        container_user = cfg.container_user or self._detect_container_user(project_path)
+        if container_user:
+            args += ["--user", str(container_user)]
+
         if cfg.ulimit_nofile and cfg.ulimit_nofile > 0:
             args += ["--ulimit", f"nofile={int(cfg.ulimit_nofile)}:{int(cfg.ulimit_nofile)}"]
         if cfg.ulimit_nproc and cfg.ulimit_nproc > 0:
@@ -180,6 +194,22 @@ class DockerSandboxBackend(SandboxBackend):
             "python", "/home/sandbox/rpc_server.py",
         ]
         return args
+
+    @staticmethod
+    def _detect_container_user(project_path: Path) -> str:
+        """The host account that owns the project, as a container ``uid:gid``.
+
+        Only a POSIX host can own a folder by uid; Docker Desktop's file
+        sharing presents every mount as root inside the Linux VM regardless,
+        so on Windows this stays empty and the image default applies.
+        """
+        if os.name != "posix":
+            return ""
+        try:
+            info = project_path.stat()
+        except OSError:
+            return ""
+        return f"{info.st_uid}:{info.st_gid}"
 
     async def _ensure_image(self) -> None:
         import docker

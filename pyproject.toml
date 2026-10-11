@@ -29,6 +29,13 @@ dependencies = [
     # `take_screenshot` imported it on the strength of that. Declared, so a
     # clean install cannot ship a tool that dies on import.
     "Pillow>=10.0.0",
+    # What `delete_file`'s promise costs: a deletion the user can undo from
+    # the recycle bin. The tool used to carry an `unlink()` fallback for a
+    # missing install, which quietly turned the contract inside out on a
+    # clean environment -- the transcript said recoverable while the file was
+    # gone. Declared here so that cannot happen: a missing dependency is now
+    # an error the model and the user can see.
+    "send2trash>=1.8.0",
     # The window. This is the shell that used to be a Rust crate: `tonyagent.window`
     # opens a native window around the built frontend, starts the core as a child
     # process and carries messages between them. On Windows it brings pythonnet,

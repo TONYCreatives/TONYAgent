@@ -79,6 +79,14 @@ def _load_rpc_server() -> ModuleType:
 
     Loaded by path rather than by import because it lives outside the package:
     it is a script the container runs, not a library the core imports.
+
+    **The import path is checked after the load.** This module runs *inside
+    the agent's process* on the local runtime, so anything it did to
+    ``sys.path`` is an import-hijack primitive for the whole agent -- a
+    project file named ``json.py`` would shadow the stdlib for every later
+    import. It used to prepend the workspace there; that line is gone, and
+    this check is what makes its reintroduction fail the runtime startup
+    instead of quietly handing the agent's process to the project.
     """
     path = find_rpc_server()
     spec = importlib.util.spec_from_file_location("tonyagent_rpc_server", path)
@@ -88,7 +96,14 @@ def _load_rpc_server() -> ModuleType:
     # Registered before exec so a module that recurses (or that a traceback
     # formats) resolves by name instead of raising KeyError.
     sys.modules[spec.name] = module
+    before = list(sys.path)
     spec.loader.exec_module(module)
+    added = [entry for entry in sys.path if entry not in before]
+    if added:
+        raise RuntimeError(
+            f"{path} modified sys.path ({added}); on the local runtime that "
+            "runs inside the agent's own process, so it is refused."
+        )
     return module
 
 

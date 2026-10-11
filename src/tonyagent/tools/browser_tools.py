@@ -5,14 +5,55 @@ from __future__ import annotations
 from typing import Any
 
 from tonyagent.tools.base import Tool, ToolResult, ToolResultStatus, ToolCategory, register_tool
+from tonyagent.tools.network_tools import _internal_host_refusal
 from tonyagent.tools.runtime_access import (
     check_runtime,
     isolated_backend,
     running_backend,
 )
+from tonyagent.tools.shell_tools import MAX_TIMEOUT_S, bounded_timeout, denylist_reason
 from tonyagent.sandbox import get_shared_sandbox_manager
 from tonyagent.sandbox.base import SandboxStatus
 from tonyagent.tools.workspace import confine, project_root
+
+
+#: What the browser tools may be pointed at.
+#:
+#: ``browser_navigate`` hands the model's URL straight to ``page.goto``, which
+#: will open ``file:///...`` (any file on the machine the browser runs on --
+#: with no Docker that is the user's own disk, outside the project folder the
+#: every other file tool works inside) and will just as happily request
+#: ``http://169.254.169.254/`` or ``http://127.0.0.1:PORT`` (the user's own
+#: services, read back through ``browser_get_text``). The network tools have
+#: carried an internal-address guard since an adversarial pass measured those
+#: URLs being fetched; the browser tools had none, which left every address
+#: that guard closes with a second door open beside it.
+#:
+#: The rule is the network tools' rule, *imported* rather than restated: one
+#: answer to "is this address internal", in the words both already use, so
+#: the same URL cannot be refused by one tool and loaded by another. The
+#: documented deviation is ``tools.allow_internal_http`` -- which is what
+#: "open my dev server on localhost:3000" needs, and which now reads as the
+#: one setting that covers every network-shaped tool.
+_ALLOWED_SCHEMES = ("http://", "https://")
+
+
+def _navigate_refusal(url: str) -> str | None:
+    """Why this URL must not be loaded, or ``None`` if it may be.
+
+    Two checks, and the order matters: a non-http scheme is refused on its
+    own terms (it is not an address question at all), and an http one goes
+    through the shared internal-address guard, which resolves the host and
+    refuses loopback/private/link-local space unless
+    ``tools.allow_internal_http`` says otherwise.
+    """
+    if not str(url or "").startswith(_ALLOWED_SCHEMES):
+        return (
+            f"Blocked navigation: {url!r} is not an http:// or https:// URL. "
+            "The browser tools load web pages; a file on this computer is "
+            "read with the file tools, which work inside the project folder."
+        )
+    return _internal_host_refusal(url)
 
 
 def get_sandbox_manager():
@@ -77,6 +118,13 @@ def _isolated_backend():
 #   ``isolation_required`` -- which is exactly the gate that keeps arbitrary
 #   code off the host, and which the destructive prompt never was.
 #
+# **Since this note was written, the host half of that gate grew a second
+# check.** When the Full rung hands ``execute_js`` the local runtime, the
+# command denylist now applies to the script (see ``ExecuteJsTool.execute``):
+# "the user asked for no prompts" is not the same decision as "let
+# model-authored code erase the disk with nothing said about it", and the
+# denylist is the cheap inner ring every other host-executing verb keeps.
+#
 # ``test_no_tool_claims_confirmation_without_destructive`` in
 # ``tests/unit/test_local_sandbox.py`` pins the invariant registry-wide, counted
 # against the registry rather than from memory -- which is how the earlier count
@@ -99,6 +147,13 @@ class BrowserNavigateTool(Tool):
     sandbox_required = True
 
     async def execute(self, url: str):
+        # The guard runs before the runtime is even consulted: a URL the
+        # browser must not load is a refusal, not a sandbox-state question,
+        # and asking the sandbox first would let a broken runtime be the
+        # reason a file:// URL was declined.
+        refusal = _navigate_refusal(url)
+        if refusal:
+            return ToolResult(status=ToolResultStatus.ERROR, error=refusal)
         error = _check_sandbox(needs_network=True)
         if error: return ToolResult(status=ToolResultStatus.ERROR, error=error)
         try:
@@ -597,7 +652,7 @@ class ExecuteJsTool(Tool):
     name = "execute_js"
     description = "Execute JavaScript in Node.js context in the sandbox."
     category = ToolCategory.SHELL
-    parameters = {"type": "object", "properties": {"script": {"type": "string", "description": "JavaScript code to execute"}, "timeout": {"type": "integer", "description": "Timeout in seconds", "default": 10}}, "required": ["script"], "additionalProperties": False}
+    parameters = {"type": "object", "properties": {"script": {"type": "string", "description": "JavaScript code to execute"}, "timeout": {"type": "integer", "description": f"Timeout in seconds (capped at {MAX_TIMEOUT_S})", "default": 10}}, "required": ["script"], "additionalProperties": False}
     destructive = False
     sandbox_required = True
     # Arbitrary code, so the local runtime is not enough: this one keeps
@@ -609,7 +664,30 @@ class ExecuteJsTool(Tool):
         if error: return ToolResult(status=ToolResultStatus.ERROR, error=error)
         try:
             backend = _isolated_backend()
-            result = await backend.execute_js(script, timeout)
+        except Exception as e:
+            return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
+        # The one circumstance in which this tool is not contained by a
+        # container is the Full rung, which hands it the local runtime -- and
+        # it is also the rung that never prompts. So the host path keeps
+        # exactly one filter: the denylist `execute_command` keeps everywhere.
+        # A script of ordinary JavaScript ("1+1") never matches it; a script
+        # spelling ``rm -rf /`` or ``format C:`` does, the same way it would
+        # in a command string. It is the cheap inner ring, not a parser --
+        # which is why it is scoped to the host path and not the container,
+        # where the container is the wall.
+        if not getattr(backend, "provides_isolation", False):
+            deny_pattern = denylist_reason(script)
+            if deny_pattern:
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    error=(
+                        f"Script matches denylist pattern {deny_pattern!r}, and "
+                        "execute_js runs on this computer at the Full "
+                        "permission level. Run it yourself if you want it."
+                    ),
+                )
+        try:
+            result = await backend.execute_js(script, bounded_timeout(timeout))
             if result.success:
                 return ToolResult(status=ToolResultStatus.SUCCESS, output=str(result.data), artifacts=[{"type": "execute_js", "result": result.data}])
             else:

@@ -39,6 +39,9 @@ class SandboxConfig:
     ulimit_nofile: int = 1024
     ulimit_nproc: int = 256
     workspace_read_only: bool = False
+    #: See ``SandboxSettings.container_user``. Empty is the image default
+    #: (root); on POSIX hosts the docker backend fills in the project owner.
+    container_user: str = ""
 
 
 @dataclass

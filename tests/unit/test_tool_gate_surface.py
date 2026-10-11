@@ -533,6 +533,12 @@ async def test_every_sandbox_required_tool_refuses_with_one_sentence(project, no
             # Otherwise the allow-list refuses first and the runtime is never
             # consulted; the command has to be one the allow-list knows.
             arguments["command"] = f'"{sys.executable}" --version'
+        if name == "browser_navigate":
+            # The same shape of exception, one tool down: the navigate guard
+            # answers before the runtime is consulted for a URL that is not
+            # a web page, and this sweep is about the runtime refusal. A real
+            # URL is the argument that reaches the gate being swept.
+            arguments["url"] = "https://example.com/"
         result = await orch.execute_tool_async(
             ToolCall(id=name, name=name, arguments=arguments)
         )
