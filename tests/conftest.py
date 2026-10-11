@@ -27,3 +27,38 @@ def _isolate_config_path(tmp_path_factory):
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(migration, "get_config_path", lambda: path)
         yield path
+
+
+@pytest.fixture(autouse=True)
+def _drop_the_user_hooks():
+    """Unlisten for questions between tests.
+
+    ``AgentSession`` publishes its question and presentation callbacks into
+    ``core.user_io`` when it is built, and that module is process-global on
+    purpose: one window, one session, one place for a question to arrive. The cost
+    is that *constructing a session* is a side effect which outlives the test that
+    did it. Once any earlier test has built one, every later ask finds a listener,
+    waits out the whole ``ASK_TIMEOUT_S``, and the two tools that ask the user cost
+    a minute each.
+
+    **That is not a slow test, it is an order-dependent one**, and the difference
+    matters for anyone reading a timing number. Measured:
+
+        test_tool_orchestrator_path.py alone ..................   1.9s
+        the same file after one that builds a session ......... 122.2s
+
+    In the full suite the ordering puts session-building files first, so three
+    tests stall for 60s each (240s of a 281s run), and a runner with an outer
+    timeout kills the process at roughly the two-minute mark -- which is what
+    "dies without a traceback at about 64%" was, and why running the suite in
+    halves appeared to fix it.
+
+    The same guard as ``_isolate_config_path`` above, for the same reason: a test
+    that drives the real handler is an accidental *writer* there and an accidental
+    *listener* here.
+    """
+    from tonyagent.core import user_io
+
+    user_io.reset()
+    yield
+    user_io.reset()

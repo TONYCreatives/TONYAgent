@@ -194,10 +194,20 @@ class Tool(ABC):
         nesting is applied exactly once, on the way out, by
         ``ToolSchema.to_openai_format``.
 
-        Every flag is emitted even when it is ``False``, so the descriptor has a
-        fixed shape. The hand-written schemas this replaces omitted the false
-        ones, which meant "absent" and "false" were indistinguishable to a reader
-        and a new tool could silently leave one out.
+        Every flag in *this* descriptor is emitted even when it is ``False``, so the
+        shape is fixed and a new tool cannot silently leave one out. The
+        hand-written schemas this replaces omitted the false ones, which made
+        "absent" and "false" indistinguishable to a reader and let a new tool drop
+        one without anything noticing.
+
+        **``asks_user`` is deliberately not one of them**, so read the line above as
+        "every flag in this dict" rather than "every flag on the class". It is the
+        orchestrator's *scheduling* information -- will this stop the turn for a
+        person -- rather than part of the contract the model and ``tools.get`` are
+        shown, and ``test_user_questions.py`` pins its absence. Nothing is missing
+        by leaving it out: every reader of it reads the registry. (This note exists
+        because the earlier wording, "every flag is emitted", invited exactly the
+        opposite change.)
         """
         return {
             "name": self.name,

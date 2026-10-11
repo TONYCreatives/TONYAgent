@@ -1,7 +1,13 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-10-11, after Phase 4 of the tool port — see
+**Last updated:** 2026-10-11, after the Phase 4 review — see "The `user_io` leak, and
+what it cost" at the end, and read **"What is left, in the order it is worth picking
+up"** in §0 *first*. **Phase 4 is committed as `d4e66b9`; three fix-up files are not**
+(§0 says which). The 60s-per-ask stall that made a single pytest process appear to die
+at 64% is diagnosed and fixed, and the suite is 966 passed in 41s again. **34 tools**;
+next is **Phase 5 (subagents)**.
+**Was:** 2026-10-11, after Phase 4 of the tool port — see
 "`ask_user_question` and `present`" at the end, and read "The tool system, as it
 stands" in §0 first. The agent can now reach the *user* mid-turn: one tool asks
 a question and waits for an answer, one shows something and waits for it to be
@@ -86,9 +92,10 @@ data: preview had ever rendered.
 "가운데 폴더 버튼" just above section 2. The empty-chat panel now names the
 project folder in the middle and offers one Change... button; leaving it
 alone keeps the folder you had.
-**Test totals:** Python unit **919 passed / 10 skipped** (`-m "not docker"`),
-TypeScript **578 passed** (98 suites), and `scripts/e2e_all_tools.py --fast` **42
-checks, 0 failed**. `tests/unit/test_build_scripts.py` was rewritten for the
+**Test totals:** Python unit **966 passed / 10 skipped** (`-m "not docker"`, 41s in one
+process), TypeScript **593 passed** (98 suites), and `scripts/e2e_all_tools.py --fast`
+**47 checks, 0 failed** across all 34 tools. `tests/unit/test_build_scripts.py` was
+rewritten for the
 one-stage build, and the flake it was documented as having turned out to be a
 millisecond-wide margin in its own fixture -- see the end of this file.
 PowerShell against a synthetic tree and nothing in this pass touches it.
@@ -106,22 +113,29 @@ animated overlay panel (see "The fourth UI pass" near the end)
 **Status:** Core is UI-independent and fully tested. The shell is **pywebview**
 (`python -m tonyagent.window`), which starts the core as a child process and talks to
 it over the JSONL protocol; `app/` is the React page it renders. The Tauri crate and
-the Tkinter UI are both **gone from the source** — their directories are deleted in
-this working tree, not merely unused.
-Re-measured 2026-10-11: **Python unit 919 passed / 10 skipped** (`-m "not docker"`),
-**TypeScript 578 passed** (98 suites), `scripts/e2e_all_tools.py --fast` **42 checks,
-0 failed**, and **32 tools**.
+the Tkinter UI are both **gone from the source**.
+Re-measured 2026-10-11, after the Phase 4 review: **Python unit 966 passed / 10
+skipped** (`-m "not docker"`) **in 41s in a single process**, **TypeScript 593 passed**
+(98 suites), `scripts/e2e_all_tools.py --fast` **47 checks, 0 failed**, and **34
+tools**. Note `scripts/check_all.py --fast` is *not* a no-Docker check despite the
+name: it runs the whole suite and reports one failure from
+`tests/integration/test_docker_backend.py` when the daemon is down.
 
-**Read this before you read the diff.** The working tree is far ahead of the last
-commit, and **most of that is not from any one pass**. `git log -1` is `a2e0421`; on
-top of it sit the whole Tauri → pywebview migration, the removal of the Tkinter UI
+**Everything through Phase 4 is committed, as `d4e66b9`** — "Let the agent ask you a
+question, and wait for the answer". That one commit is deliberately large: it absorbed
+the whole Tauri → pywebview migration, the removal of the Tkinter UI
 (`src/tonyagent/ui/` and `src/tonyagent/__main__.py` are deleted), the usage ledger,
-named API keys, the window host — and then the tool-system and planning passes
-recorded at the end of this file. `git status --short` lists 180 entries, and
-`git diff --shortstat` reports 140 files changed with roughly 12,900 insertions and
-19,700 deletions (at the time of writing — re-run it), so do not read it as
-one change: run `git log -1 --stat` first, and treat the sections below as the account
-of what each pass did. **Nothing in the last two passes is committed.**
+named API keys, the window host, the tool-system pass and the planning pass — 222
+files — because `user_tools` imports the new tool base and registers beside
+`planning_tools`, so Phase 4 could not have been committed on its own. **Its commit
+message is the account of that work and is worth reading before this file.**
+
+**Three files are uncommitted**, left by the Phase 4 review recorded at the end of this
+file: `tests/conftest.py` (the `user_io` reset guard that fixed the 60s stall),
+`src/tonyagent/tools/base.py` (a docstring correction about `asks_user`), and this file.
+`git diff --shortstat` reads 3 files, ~100 insertions. They are a fix-up rather than a
+feature — **commit or amend them before starting anything else**, so the next diff is
+only the next pass.
 
 **The 590/501 figures below are from the 2026-10-03 run and were NOT re-measured
 this pass** — `pytest tests -q` needs Docker Desktop, which was not running here.
@@ -185,13 +199,13 @@ Tkinter GUI is gone from the source entirely; the six `Tkinter` mentions left in
 
 ```bash
 python -m compileall -q src            # syntax
-python -m pytest -m "not docker" -q    # 919 passed, 10 skipped -- no Docker needed
+python -m pytest -m "not docker" -q    # 966 passed, 10 skipped, ~41s -- no Docker needed
 python -m pytest tests -q              # adds tests/integration; needs Docker Desktop
 python scripts/check_all.py --fast     # compileall + the FULL pytest run -- see the note below
-python scripts/e2e_all_tools.py --fast # 42 checks: every tool, incl. fail-closed refusals (no sandbox needed)
+python scripts/e2e_all_tools.py --fast # 47 checks: every tool, incl. fail-closed refusals (no sandbox needed)
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 
-cd app && npm test                     # 578 passed (protocol, reducer, markdown, components, stylesheet cascade)
+cd app && npm test                     # 593 passed (protocol, reducer, markdown, components, stylesheet cascade)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
 
@@ -317,27 +331,93 @@ they are worth reading before touching anything in `src/tonyagent/tools/`.
   `test_tool_wire_format.py` and `test_tool_summary_line.py` cover the two contracts
   that matter.
 
-**Open items, roughly in the order they are worth picking up:**
+### What is left, in the order it is worth picking up
 
-1. **Five tools declare `requires_confirmation = True` with `destructive = False`,**
-   and the prompt gate is `destructive and requires_confirmation` — so `http_request`,
-   `browser_navigate`, `browser_click`, `browser_type` and `execute_js` can **never
-   prompt**. Either intended (confirmation reserved for destructive things) or inert
-   by accident; either way, fixing it starts five tools prompting.
-2. **Background jobs are host-only.** `execute_command(background=true)` is refused
-   inside the sandbox, because the container is driven by a one-shot `exec_command`
-   RPC that keeps no handle to poll. Making it work means new RPC methods inside the
-   Docker image (`docker/sandbox/rpc_server.py`) and a container rebuild.
+Items 1–3, 5 and 6 are small and each closes something already recorded as a known gap.
+**Item 4 is the next phase and the largest remaining piece of work.**
+
+1. **Commit or amend the three uncommitted files** (listed under Status above).
+   Nothing else should start until the tree is clean again, or the next diff contains
+   somebody else's fix-up.
+2. **The six tools that can never prompt.** `requires_confirmation = True` with
+   `destructive = False` on `http_request`, `web_fetch`, `browser_navigate`,
+   `browser_click`, `browser_type`, `execute_js`. The gate is
+   `destructive and requires_confirmation`, so **none of them ever asks** (count them
+   against the registry, not against memory — an earlier version of this list said
+   five and missed `execute_js`). **This needs a decision before it needs code:**
+   moving the gate to `requires_confirmation` alone would start `browser_click`
+   prompting before *every click*, which is worse than the inconsistency. The likely
+   answer is that those six drop the inert flag so the declaration stops lying, and the
+   gate stays as it is.
 3. **`validate_args` does not recurse into array `items`**, so an
-   `additionalProperties: False` inside an item is advertised and unenforced.
-4. **`exit_plan_mode` is not built** — it needs an approval affordance that is not the
-   destructive-tool dialog, and `set_mode` clears the conversation, so approving a
-   plan would delete the plan. The full reasoning is at the end of this file.
-5. **The remaining phases** from the original port plan: **5** (subagents —
-   where a `ToolContext` to replace the
-   `folder_manager` / `tool_orchestrator` globals is meant to be built), **6**
-   (`workflow`), **7** (skills). Phase 4 (`ask_user_question`, `present`) is
-   done — see the last section.
+   `additionalProperties: False` inside an item — `todo_write`'s items advertise one —
+   is a claim nothing enforces. The same class of lie as the top-level keys, which *are*
+   enforced.
+4. **Phase 5: subagents.** See below. The only item here that is not small and
+   closed-form.
+5. **`exit_plan_mode` is still not built**, and Phase 4 sharpened the reason: it needs
+   an approval affordance that can *act on the mode*, and no tool can reach the mode.
+   `present` can show a plan and collect a reply, but `set_mode` clears the
+   conversation, so approving a plan through it would delete the plan being approved.
+   Full reasoning at the end of this file.
+6. **Background jobs are host-only.** `execute_command(background=true)` is refused in
+   the sandbox because the container is driven by a one-shot `exec_command` RPC that
+   keeps no handle to poll. New RPC methods in `docker/sandbox/rpc_server.py` **and a
+   container rebuild**, so it cannot be tested without Docker.
+
+Phase 6 (`workflow`) and Phase 7 (skills) follow Phase 5. `workflow` is orchestration
+over subagents, so there is nothing to build it against yet.
+
+### Phase 5 (subagents): what it will need, and where the seams are
+
+**The design is not settled.** What follows is the shape the existing code forces, so
+the next session starts from the constraints instead of rediscovering them.
+
+* **`ToolContext` comes first, and it is not optional this time.** It was deferred out
+  of Phase 0 on the agreement that it be built when a real consumer forced its shape;
+  a child session is that consumer. The globals to replace are
+  `folder_manager.current_folder` (reached directly by `file_tools`, `shell_tools`,
+  `search_tools`), and `shell_tools._ALLOWLIST_BYPASS` / `_HOST_EXECUTION` — which
+  `ToolOrchestrator.set_permission` *pushes into that module* precisely because a tool
+  cannot read the permission level. `jobs_registry` is the same kind of global and is
+  the precedent to either follow or fix.
+* **A child is an `AgentSession`, and the parent must not see its messages.**
+  `AgentSession` owns `messages`, `_cancel`, `_tool_calls_used`, `max_tool_calls` and
+  `state`. That last one is the sharpest hazard in the phase: `AgentSession.__init__`
+  calls `set_current_state(self.state)`, which repoints the process-global
+  `task_state`, so **a child session constructed naively would silently take over the
+  parent's plan**. Worth a failing test before any tool is written.
+  **The fix is already modelled**: `install_question_bridge()` is an *explicit* method
+  that `headless/server.py` calls, rather than something `__init__` does — the same
+  lesson the `user_io` leak taught (see the end of this file). Do it that way for
+  `task_state` too, in the same pass.
+* **Watch for the same shape elsewhere.** Three process-globals are now installed as a
+  side effect of *building* something — `task_state` (above), `user_io` (by
+  `install_question_bridge`, explicit, which is why it is the model to copy), and
+  `jobs_registry` (a singleton, but one that owns live processes). A child session is
+  the first thing that makes any of them wrong rather than merely untidy.
+* **Events need attribution before anything else.** `core/events.py` has one `EventBus`
+  and events carry `turn_id`; the window's reducer pairs tool calls by `id` and appends
+  to the message found by `turn_id` (`app/src/events.ts`). A child emitting the same
+  event types would therefore *corrupt the parent transcript*, not merely look odd.
+  Decide the shape — namespaced `turn_id`, a parent field, or a separate stream — first.
+* **Five tools**: `subagent`, `subagent_fork`, `send_message`, `list_agents`,
+  `interrupt_agent`. `subagent_fork` means nothing without a serialisable conversation;
+  `send_message` and `interrupt_agent` need the registry that `list_agents` reads.
+* **Budget.** The parent's `max_tool_calls` bounds the parent. A child's calls must not
+  silently spend it, and a child that cannot be bounded is an unbounded cost. Decide
+  whether a child gets its own budget, and make sure the `subagent` call itself counts
+  against the parent's.
+* **Permission must not escalate.** A child inherits the parent's mode and permission
+  and may only narrow. Whatever tool module is added must be imported inside the
+  existing block in `tools/__init__.py` — the import order there is load-bearing (see
+  §0's invariants).
+* **The frontend changes here, and this is where the "no frontend work" streak ends.**
+  A child's work has to be visible. `MessageList.ToolRow` (`app/src/MessageList.tsx`)
+  renders every tool identically from `{id, name, status, detail, budget}`, so showing
+  nested activity means new `ToolCall` fields in `app/src/events.ts`, a branch in
+  `ToolRow`, and CSS. Note `MessageList.test.tsx` currently asserts *nothing* about
+  `ToolRow`'s markup, so those would be the first such tests.
 
 ---
 
@@ -4914,12 +4994,14 @@ background command starts *no* process.
 
 ### What this found and did not fix
 
-**Five tools declare `requires_confirmation = True` with `destructive = False`** --
-`http_request`, `browser_navigate`, `browser_click`, `browser_type`, `execute_js`. The
-prompt gate is `destructive and requires_confirmation`, so **none of them can ever
-prompt**. That may be intended (confirmation reserved for destructive things) or the
-flags may be inert by accident. Changing it would start five tools prompting, so it
-was left alone and recorded here.
+**Six tools declare `requires_confirmation = True` with `destructive = False`** --
+`http_request`, `web_fetch`, `browser_navigate`, `browser_click`, `browser_type`,
+`execute_js`. The prompt gate is `destructive and requires_confirmation`, so **none of
+them can ever prompt**. That may be intended (confirmation reserved for destructive
+things) or the flags may be inert by accident. Changing it would start six tools
+prompting, so it was left alone and recorded here. This said *five* when written and
+counted the registry rather than the list, which is how `execute_js` was missed;
+`web_fetch` joined when it was given `http_request`'s flags.
 
 `tests/unit/test_tool_orchestrator_path.py` also carried dead `("edit_file",
 "old_string")` overrides -- keys that never matched the old `old_text`/`new_text`
@@ -4936,7 +5018,7 @@ imported `ReadFileTool`, which no longer exists, and named the old tools in a do
 places. Nothing in the test suite covers `scripts/`, so nothing failed -- which is the
 finding, not the fix.
 
-Nothing in this pass is committed.
+Committed afterwards, in `d4e66b9` — it was not committed when this was written.
 
 ---
 
@@ -5040,7 +5122,7 @@ Python unit **919 passed / 10 skipped**, TypeScript **578 passed** (98 suites), 
 `scripts/e2e_all_tools.py --fast` **42 checks, 0 failed** -- now covering all 32 tools,
 including the four planning tools and their refusals.
 
-Nothing in this pass is committed.
+Committed afterwards, in `d4e66b9` — it was not committed when this was written.
 
 ---
 
@@ -5177,13 +5259,38 @@ the transcript, and the turn reaches a real answer instead of stopping at the
 tool. A stalled turn is harder to ask for than a tool, so the ask is awaited on
 the event bus while the turn runs as its own task.
 
-Two things about how those numbers were produced. **One pytest process cannot
-finish this suite on this machine.** It dies without a traceback after roughly
-two minutes, at about 64% -- not at a file that fails alone, since every file in
-the suite passes on its own and the suite passes in halves (437 passed and 529
-passed / 10 skipped, summing to the total above). The split is the workaround, not
-a pass condition. **And the file's event-loop waits are bounded in seconds, not
-in yields.** `_until` counted 200 `asyncio.sleep(0)` round trips, which ran out on
+Two things about how those numbers were produced. **One pytest process could not
+finish this suite on this machine, and that turned out to be a diagnosable bug rather
+than a property of the machine.** It died without a traceback after roughly two
+minutes at about 64%, and every file passed on its own — which is the signature of an
+outer timeout killing a run that had *stalled*, not of a crash.
+
+The stall: `AgentSession` publishes its question and presentation callbacks into the
+process-global `core.user_io`, and only `test_user_questions.py` reset them. So after
+the first test that built a session, every later ask found a listener, waited out the
+whole 60s `ASK_TIMEOUT_S`, and the two tools that ask the user cost a minute each.
+Measured:
+
+    test_tool_orchestrator_path.py alone .....................   1.9s
+    the same file after one that builds a session ........... 122.2s
+
+Three tests stalled for 60s each — 240s of a 281s run — which is what pushed the run
+past a two-minute cap. `tests/conftest.py` now resets `user_io` around every test, the
+same guard `_isolate_config_path` applies for the same reason: a test that drives the
+real handler is an accidental *writer* there and an accidental *listener* here. The
+suite is **966 passed / 10 skipped in 41s in a single process**, order-independent,
+and **the two halves are no longer needed.**
+
+Worth keeping from this, because it is easy to get wrong in the other direction: the
+bridge is installed *explicitly*, by `AgentSession.install_question_bridge()`, which
+only `headless/server.py` (`_attach_session`) calls. A bare session, a scripted import
+or any core not driven through `StdioServer` therefore has no listener and
+`ask_user_question` refuses at once — the contract `UserUnavailable` documents is met.
+The stall was purely a *test* leak: the first test to build a `StdioServer` installed
+the listener process-globally and nothing took it back down. A review of this pass
+briefly recorded it as a product bug; it is not one.
+
+**And the file's event-loop waits are bounded in seconds, not in yields.** `_until` counted 200 `asyncio.sleep(0)` round trips, which ran out on
 a busy machine and failed as *the ask never happened* -- the one failure mode
 `test_user_questions.py` exists to detect honestly, reported about the wrong
 thing. It now bounds on wall clock; the same one-loop pattern in
@@ -5191,8 +5298,12 @@ thing. It now bounds on wall clock; the same one-loop pattern in
 
 **Not done here.**
 
-- The five tools that can never prompt (`http_request`, `web_fetch` and three
-  browser tools) are unchanged, and `ask_user_question` is *not* the fix for them.
+- **Six** tools can never prompt (`http_request`, `web_fetch`, `browser_navigate`,
+  `browser_click`, `browser_type` and `execute_js`): the prompt gate is
+  `destructive and requires_confirmation` and all six set only the second. This list
+  said *five* until it was counted against the registry, and the one it left out was
+  `execute_js` — so a fix driven by that list would have left an inert tool behind.
+  Unchanged here, and `ask_user_question` is *not* the fix for them.
 - `exit_plan_mode` is still not built, and this pass makes the reason sharper:
   `present` can show a plan and collect a reply, but it cannot change the mode,
   and `set_mode` clears the conversation -- so approving a plan through it would
@@ -5205,4 +5316,79 @@ thing. It now bounds on wall clock; the same one-loop pattern in
   so `ask_user_question` refuses at once there. The window's core has it;
   a client driving the core directly must install it.
 
-Nothing in this pass is committed.
+**This pass is committed, as `d4e66b9`** — together with everything that had been
+sitting uncommitted, which is why that commit is 222 files. The only uncommitted work
+is the three-file fix-up from the review that follows.
+
+---
+
+## The `user_io` leak, and what it cost (2026-10-11)
+
+**A review of Phase 4, and one fix.** Phase 4 itself is sound — see the section above —
+and this records what the review found, including two things it got wrong.
+
+### The suite was seven times slower, and the commit's own note misread why
+
+The Phase 4 commit records that a single pytest process "dies without a traceback after
+roughly two minutes, at about 64%", worked around by running the suite in two halves.
+That is a **symptom, not a machine property**, and it is fixed.
+
+`AgentSession.install_question_bridge()` publishes the question and presentation
+callbacks into the process-global `core.user_io`, and `headless/server.py` calls it from
+`_attach_session`. That is deliberate — one window, one session, one place for a question
+to arrive — but only `test_user_questions.py` reset it. So the first test in a run that
+built a `StdioServer` left a listener installed, and every later test that asked a
+question waited out the whole 60s `ASK_TIMEOUT_S`. Measured:
+
+    test_tool_orchestrator_path.py alone .....................   1.9s
+    the same file after one that builds a StdioServer ........ 122.2s
+
+Three tests stalled 60s each — 240s of a 281s run — which is what pushed the run past a
+two-minute cap: killed with no traceback at roughly 64%, with every file passing on its
+own. **The halves were a workaround for a timeout, not for a crash**, and they are no
+longer needed.
+
+`tests/conftest.py` now resets `user_io` around every test, the same guard
+`_isolate_config_path` applies and for the same reason: a test that drives the real
+handler is an accidental *writer* there and an accidental *listener* here. The suite is
+**966 passed / 10 skipped in 41s, in one process, order-independent**.
+`test_no_successful_dict_output_is_left_without_a_summary` — a Phase 1 test that drives
+every tool through the orchestrator — was one of the three stalled tests, and the guard
+fixed it without touching it.
+
+### Two things the review got wrong, and what caught them
+
+Both are recorded so the next reader does not repeat them.
+
+* **`asks_user` in `describe()`.** It looked like an oversight that the new flag was the
+  only one missing from the descriptor, so it was added — which failed
+  `test_user_questions.py::test_the_new_flag_is_not_advertised_to_the_model`. The
+  omission is deliberate: `asks_user` is the orchestrator's *scheduling* information, not
+  part of the contract the model and `tools.get` are shown. The change was reverted, and
+  the `describe()` docstring amended instead, because its wording — "every flag is
+  emitted" — is what invited the wrong change. **The test caught a real mistake.**
+* **`user_io`'s contract is met, not broken.** The review first recorded that
+  `UserUnavailable`'s promise (a windowless core refuses instantly) was unmet, because
+  constructing a session *appeared* to install the listener.
+  `install_question_bridge` is an explicit call made only by `StdioServer`, so a bare
+  session has no listener and refuses at once, exactly as documented. The correction
+  matters: it was very nearly written into this file as a product bug, and the next
+  session would have gone hunting for it.
+
+### One count that was wrong
+
+The list of tools that can never prompt said **five** — `http_request`, `web_fetch` and
+three browser tools. Counted against the registry it is **six**: the sixth is
+`execute_js`, which no list would have found from memory. Since that list is guidance for
+future work, the error would have left one inert tool behind. Corrected in both places it
+appeared. (`web_fetch` joined the set in the Phase 1 pass, when it was given
+`http_request`'s flags.)
+
+### What the review verified
+
+    python -m pytest -m "not docker" -q     # 966 passed, 10 skipped, 41s, one process
+    cd app && npm test                      # 593 passed, 98 suites
+    python scripts/e2e_all_tools.py --fast  # 47 checks, 0 failed, all 34 tools
+
+Uncommitted from the review: `tests/conftest.py`, `src/tonyagent/tools/base.py` (a
+docstring only) and this file. See Status at the top.
