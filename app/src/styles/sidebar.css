@@ -100,6 +100,13 @@
   color: var(--fg);
 }
 
+/* A file row opens the viewer; a directory row only folds. The pointer says
+   which, because the two rows look identical and do different things. The
+   colour change on hover is `.tree-row:hover`'s, transition and all. */
+.tree-row-file {
+  cursor: pointer;
+}
+
 .tree-caret {
   flex: none;
   width: 12px;

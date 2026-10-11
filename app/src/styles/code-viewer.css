@@ -1,0 +1,190 @@
+/*
+ * --- the code viewer ------------------------------------------------------
+ *
+ * A view of `.main`, like the usage dashboard and for the same reason: it is
+ * not a panel over the transcript, it *is* what the column is showing. So it
+ * takes the column, scrolls as one thing, and the composer goes with the
+ * transcript underneath it -- see `App.tsx`.
+ *
+ * The colours here are structural: chrome, edges, chips. The *code* is not
+ * coloured by this file at all, because the palette owns it -- the body's
+ * background and foreground and every token's colour arrive inline from
+ * `highlight.ts`, so a theme change is a change to one table rather than to
+ * a stylesheet and a table that have to agree. VSCode's Dark+ is #1e1e1e,
+ * and this window's field is #1a1a1a: close enough to look deliberate, far
+ * enough that the code area has to be painted from the palette rather than
+ * inherited, or the theme would half-apply.
+ *
+ * The row height is the one number that is not free. `CODE_ROW_HEIGHT` in
+ * `CodeViewer.tsx` is 20px and the virtualiser divides by it to decide which
+ * lines to render; a change here without that change there would paint the
+ * wrong window of lines. `line-height` is therefore set, not inherited.
+ */
+.code-viewer {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+.code-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  height: 38px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--chrome);
+}
+
+/* The path is chrome rather than code: this window spends `--mono` on code
+   alone, and a path is a label about a file, not the file. */
+.code-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+
+.code-path-dir {
+  color: var(--fg-mute);
+}
+
+.code-path-name {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.code-chip {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--chip);
+  color: var(--fg-dim);
+  font-size: var(--text-2xs);
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.code-chip-warn {
+  background: var(--warn);
+  color: var(--danger-fg);
+}
+
+.code-lock {
+  color: var(--fg-mute);
+}
+
+/*
+ * The lock, while a turn is running.
+ *
+ * `--warn` rather than `--danger`: the file is being written by the agent,
+ * which is the app working, and an alarm colour over a thing that is going
+ * correctly trains people to ignore the colour. What it has to say is "this
+ * is read-only *and* something is happening", and amber says that.
+ */
+.code-lock.locked {
+  background: var(--warn);
+  color: var(--danger-fg);
+}
+
+.code-spacer {
+  flex: 1;
+}
+
+.code-theme select {
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--input);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-xs);
+}
+
+.code-close {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--fg-mute);
+  font-size: var(--text-lg);
+  line-height: 1;
+  cursor: default;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.code-close:hover {
+  background: var(--input);
+  color: var(--fg);
+}
+
+/*
+ * The scroll container, and the only element the palette paints directly.
+ *
+ * `overflow: auto` on both axes: code is read at its own width, and a
+ * wrapped line of Python is a line whose indentation no longer means
+ * anything. `tab-size` is set because a tab in a source file is four
+ * columns wide in every editor this window is imitating, and the browser's
+ * default of eight turns a nested file into a staircase.
+ */
+.code-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: var(--text-base);
+  line-height: 20px; /* keep in step with CODE_ROW_HEIGHT in CodeViewer.tsx */
+  tab-size: 4;
+}
+
+.code-body:focus-visible {
+  outline-offset: -2px;
+}
+
+.code-line {
+  display: flex;
+  min-height: 20px;
+}
+
+.code-gutter {
+  flex: none;
+  width: 58px;
+  padding-right: 14px;
+  text-align: right;
+  /* Numbers are read to find a line, not to be read: no selection, and no
+     copying a column of them into a paste. */
+  user-select: none;
+}
+
+.code-text {
+  /* Not `pre-wrap`: see the scroll container above. */
+  white-space: pre;
+  padding-right: 18px;
+}
+
+.code-notice {
+  flex: 1;
+  padding: 18px;
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+}
+
+.code-notice-error {
+  color: var(--danger);
+}
+
+.code-footer {
+  flex: none;
+  padding: 4px 12px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--chrome);
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+}

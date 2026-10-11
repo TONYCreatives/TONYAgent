@@ -252,6 +252,31 @@ export interface CoreMethods {
   /** Answer a question, or add a note to a presentation. Empty is an answer. */
   "user.respond": { id: string; answer: string };
   "trust.set": { project: string; trusted: boolean };
+  /**
+   * The project tree, for the file explorer.
+   *
+   * Walked by the *core*, not by the window, and for the same reason `search`
+   * delegates to the agent's grep: the skip rules (`.git`, `node_modules`,
+   * the caches) and the project boundary are the agent's, and a second walk
+   * here would be a second set of rules to disagree with the first. What the
+   * core would not read, the tree does not list.
+   *
+   * Bounded on both axes and honest about it: `truncated` comes back true
+   * when the walk hit its entry or depth limit, so the pane can say where it
+   * stopped instead of presenting a partial tree as the whole project.
+   */
+  "files.tree": { path?: string; max_entries?: number; max_depth?: number };
+  /**
+   * One project file's text, for the viewer.
+   *
+   * The reply carries `language`, resolved by the core from the file's name
+   * rather than guessed here: `Dockerfile` and `dockerfile.something` are
+   * different questions, and one owner of the answer keeps the highlighting
+   * honest. A file the viewer cannot show -- binary, too large, outside the
+   * project -- comes back as an *error* with a sentence, because an empty
+   * editor claiming the file is empty would be a lie.
+   */
+  "files.read": { path: string };
 }
 
 /**

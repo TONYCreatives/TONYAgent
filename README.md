@@ -35,6 +35,7 @@ meant a second catalogue implementation returning "unknown" for most fields.
 - Real-time streaming chat with token-by-token display
 - Tool call visualization and confirmation dialogs
 - Responsive layout with collapsible sidebar
+- **Code viewer**: browse the project tree and read any file with syntax highlighting and selectable colour palettes (VSCode's Dark+, Light+ and Monokai). Read-only by design — while a turn is running it says so, and nothing in the viewer can write to your project; the agent's own `write` tool remains the only path, and it asks first
 
 ### ?���?Rich Tool Ecosystem (32 Tools)
 | Category | Tools |

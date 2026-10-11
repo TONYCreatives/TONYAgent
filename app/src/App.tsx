@@ -16,7 +16,9 @@ import {
   type SidebarPane,
 } from "./ConversationList.js";
 import { pickFolder } from "./dialog.js";
-import type { TreeEntry } from "./FileSidebar.js";
+import { CodeViewer, type SourceFile } from "./CodeViewer.js";
+import { changesFrom, nameOf, type CoreTreeEntry } from "./filetree.js";
+import { DEFAULT_PALETTE } from "./highlight.js";
 import { IconRail } from "./IconRail.js";
 import { Dashboard, type UsageSummary } from "./Dashboard.js";
 import { MessageList } from "./MessageList.js";
@@ -76,6 +78,18 @@ import { useWindowControls } from "./useWindowControls.js";
  * conversation list on every click.
  */
 const USAGE_TAB = "usage-tab";
+
+/**
+ * The id of the code viewer's tab.
+ *
+ * A sentinel for the same reason `USAGE_TAB` is one: it can never collide
+ * with a conversation id, so the strip's callbacks tell the two kinds apart
+ * by identity. One tab for the viewer rather than one per file, because the
+ * window has one viewer: opening another file replaces what it shows, which
+ * is what a single "preview" pane does and what keeps the strip from filling
+ * with every file the user glanced at.
+ */
+const VIEWER_TAB = "code-viewer-tab";
 
 export function App({
   backend: injected,
@@ -257,6 +271,58 @@ export function App({
   const [fileFilter, setFileFilter] = useState("");
 
   /**
+   * The project tree, as the core's walk reports it.
+   *
+   * Flat rows in, tree out: `buildTree` adds the depth, the collapse and the
+   * filter, so this is only ever the core's own answer to "what is in this
+   * folder". It is re-read when a folder is bound and again when a turn ends,
+   * because the agent's writes are what change it -- a tree that still showed
+   * a file the agent had just deleted would be the pane lying about the
+   * project.
+   */
+  const [treeEntries, setTreeEntries] = useState<CoreTreeEntry[]>([]);
+  const [treeTruncated, setTreeTruncated] = useState(false);
+  const [treeLoading, setTreeLoading] = useState(false);
+
+  /**
+   * The code viewer: which file, whether it is in front, and its text.
+   *
+   * One file at a time, and one tab for it (`VIEWER_TAB`). `active` is
+   * separate from `path` for the same reason `usageTab` has three states:
+   * choosing a chat has to be able to put the transcript back *without*
+   * throwing away what the viewer was showing, exactly as it leaves the
+   * dashboard tab open behind it.
+   */
+  const [viewerPath, setViewerPath] = useState("");
+  const [viewerActive, setViewerActive] = useState(false);
+  const [viewerSource, setViewerSource] = useState<SourceFile | null>(null);
+  const [viewerError, setViewerError] = useState<string | null>(null);
+  const [viewerLoading, setViewerLoading] = useState(false);
+  /** Guards a slow read from overwriting a file the user has moved on from. */
+  const viewerPathRef = useRef("");
+
+  /**
+   * The syntax palette, which is a window preference and not project state.
+   *
+   * Persisted for the same reason the rail's state is: a colour scheme that
+   * resets on every launch reads as broken rather than as a default.
+   */
+  const [palette, setPalette] = useState<string>(() => {
+    try {
+      return localStorage.getItem("tonyagent.code-palette") ?? DEFAULT_PALETTE;
+    } catch {
+      return DEFAULT_PALETTE;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("tonyagent.code-palette", palette);
+    } catch {
+      // Private mode or storage disabled: the preference just does not stick.
+    }
+  }, [palette]);
+
+  /**
    * Bring one of the sidebar's panes forward.
    *
    * Two state changes that have to happen together: the pane, and the sidebar
@@ -270,7 +336,7 @@ export function App({
   }, []);
 
   /**
-   * Files changed this session, from the core's own `file_change` artifacts.
+   * What the agent changed this session, per file.
    *
    * Two things this deliberately does not do. It does not walk the
    * filesystem -- the core owns what changed, and a second source of truth
@@ -282,23 +348,20 @@ export function App({
    * The counts are summed, not overwritten, so a file edited three times
    * shows the session total rather than only the last edit -- which is what
    * makes the badge a summary of the session instead of a snapshot of it.
+   *
+   * These are *badges on the tree*, not the tree: the rows come from the
+   * core's walk (`files.tree`), so a file nobody has touched yet is still
+   * reachable. This is the overlay of what happened to them.
    */
-  const treeEntries = useMemo<TreeEntry[]>(() => {
-    const byName = new Map<string, TreeEntry>();
+  const fileChanges = useMemo(() => {
+    const artifacts: Array<{ path?: string; added?: number; removed?: number }> = [];
     for (const message of state.messages) {
       for (const tool of message.tools) {
         if (!tool.path) continue;
-        const existing = byName.get(tool.path);
-        byName.set(tool.path, {
-          name: tool.path,
-          kind: "file",
-          depth: 0,
-          added: (existing?.added ?? 0) + (tool.added ?? 0),
-          removed: (existing?.removed ?? 0) + (tool.removed ?? 0),
-        });
+        artifacts.push({ path: tool.path, added: tool.added, removed: tool.removed });
       }
     }
-    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+    return changesFrom(artifacts);
   }, [state.messages]);
 
   // One backend per window. Held in a ref rather than state: it is not
@@ -517,6 +580,97 @@ export function App({
   }, []);
 
   /**
+   * Read the project tree from the core.
+   *
+   * A failure is an empty tree rather than a banner. The two reasons it can
+   * fail -- no folder bound yet, or a folder that has since vanished -- are
+   * both normal states the pane's own empty message describes better than an
+   * error strip over an empty sidebar would.
+   */
+  const loadTree = useCallback(async () => {
+    const backend = backendRef.current;
+    if (!backend) return;
+    setTreeLoading(true);
+    try {
+      const reply = (await backend.call("files.tree", {})) as {
+        entries?: CoreTreeEntry[];
+        truncated?: boolean;
+      };
+      setTreeEntries(reply.entries ?? []);
+      setTreeTruncated(Boolean(reply.truncated));
+    } catch {
+      setTreeEntries([]);
+      setTreeTruncated(false);
+    } finally {
+      setTreeLoading(false);
+    }
+  }, []);
+
+  /**
+   * Open a file in the viewer.
+   *
+   * The viewer is read-only in both directions: this reads the text and hands
+   * it to a component with no way to write it back. See `CodeViewer` for why
+   * there is no save path, and `tonyagent/files.py` for why there is no write
+   * method on the core's side either.
+   *
+   * Opening a file also brings the transcript's tab *back* if the Usage tab
+   * was in front -- the viewer replaces the main area, and a chart behind it
+   * would be a state the user cannot see their way out of.
+   */
+  const openFile = useCallback(
+    async (path: string) => {
+      viewerPathRef.current = path;
+      setViewerPath(path);
+      setViewerActive(true);
+      setViewerSource(null);
+      setViewerError(null);
+      setViewerLoading(true);
+      setUsageTab((open) => (open === "active" ? "open" : open));
+      try {
+        const reply = (await backendRef.current!.call("files.read", { path })) as SourceFile;
+        // A reply for a file the user has since closed or replaced would put
+        // the wrong text under the right path in the header.
+        if (viewerPathRef.current !== path) return;
+        setViewerSource(reply);
+      } catch (error: unknown) {
+        if (viewerPathRef.current !== path) return;
+        setViewerError(error instanceof Error ? error.message : String(error));
+      } finally {
+        if (viewerPathRef.current === path) setViewerLoading(false);
+      }
+    },
+    [],
+  );
+
+  /** Put the viewer away, keeping the tab strip's other tabs as they are. */
+  const closeViewer = useCallback(() => {
+    viewerPathRef.current = "";
+    setViewerActive(false);
+    setViewerPath("");
+    setViewerSource(null);
+    setViewerError(null);
+  }, []);
+
+  /**
+   * Read the tree once per folder, and again whenever a turn ends.
+   *
+   * The ref rather than the state is what keeps this from looping: a folder
+   * that legitimately has no files would otherwise re-trigger the read on
+   * every render for ever, because "no entries" is exactly what it just set.
+   */
+  const treeFolderRef = useRef("");
+  const wasBusyRef = useRef(false);
+  useEffect(() => {
+    const finished = wasBusyRef.current && !state.busy;
+    wasBusyRef.current = state.busy;
+    if (!connected || project === "") return;
+    if (treeFolderRef.current === project && !finished) return;
+    treeFolderRef.current = project;
+    void loadTree();
+  }, [connected, project, state.busy, loadTree]);
+
+  /**
    * The name of the open conversation, for the top bar.
    *
    * Read out of the list rather than held separately, because the list is
@@ -553,9 +707,14 @@ export function App({
       if (usageTab !== "closed") {
         strip.push({ id: USAGE_TAB, title: "Usage", renameable: false });
       }
+      // The viewer's tab is named for the file it is showing, so a glance at
+      // the strip says which file is open without switching to it.
+      if (viewerPath !== "") {
+        strip.push({ id: VIEWER_TAB, title: nameOf(viewerPath), renameable: false });
+      }
       return strip;
     },
-    [tabs, conversations, usageTab],
+    [tabs, conversations, usageTab, viewerPath],
   );
 
   /**
@@ -818,8 +977,10 @@ export function App({
       setState((prev) => ({ ...prev, error: null, busy: true }));
       closePanelToComposer();
       // Selecting a chat is a switch away from the dashboard, which stays open
-      // as a tab rather than disappearing.
+      // as a tab rather than disappearing -- and the same switch away from the
+      // viewer, whose tab also stays open with its file.
       setUsageTab((open) => (open === "active" ? "open" : open));
+      setViewerActive(false);
       try {
         const result = (await backendRef.current!.call("conversations.switch", {
           id,
@@ -878,6 +1039,14 @@ export function App({
       }
       const settled = result.project ?? path;
       setProject(settled);
+      // A new folder is a new tree, and whatever the viewer was showing came
+      // from a folder that is no longer open -- the paths would resolve
+      // against the new root and quietly name a different file. Put both
+      // away; the tree is re-read by the effect below.
+      setTreeEntries([]);
+      setTreeTruncated(false);
+      treeFolderRef.current = "";
+      closeViewer();
       // A runtime is not the same as containment. Without Docker the tools
       // still work, but only the two that execute code are unavailable, and
       // saying so is more useful than a green tick that implies otherwise.
@@ -891,7 +1060,7 @@ export function App({
       setSettingsError(error instanceof Error ? error.message : String(error));
       return "";
     }
-  }, []);
+  }, [closeViewer]);
 
   /**
    * Start a conversation, filed under `project`.
@@ -944,6 +1113,7 @@ export function App({
       // chat cannot be typed into a window that is showing a chart. The tab
       // stays open behind it, the way a tab you switched away from does.
       setUsageTab((open) => (open === "active" ? "open" : open));
+      setViewerActive(false);
       setState((prev) => ({ ...prev, error: null, busy: true }));
       try {
         const result = (await backendRef.current!.call("conversations.create", {
@@ -1497,20 +1667,37 @@ export function App({
       <TopBar
         busy={state.busy}
         tabs={tabStrip}
-        active={usageTab === "active" ? USAGE_TAB : conversation}
+        active={
+          usageTab === "active" ? USAGE_TAB : viewerActive ? VIEWER_TAB : conversation
+        }
         onSelect={(id) => {
           if (id === USAGE_TAB) {
             setUsageTab("active");
+            setViewerActive(false);
+            return;
+          }
+          if (id === VIEWER_TAB) {
+            setViewerActive(true);
+            // The dashboard goes behind it rather than closing, the same way
+            // it does when another chat is chosen.
+            setUsageTab((open) => (open === "active" ? "open" : open));
             return;
           }
           // Choosing a chat is a switch away from the dashboard, which stays
           // open behind it -- the same thing selecting another chat tab does.
           setUsageTab((open) => (open === "active" ? "open" : open));
+          // ...and away from the viewer, for the same reason: closing its tab
+          // would throw away the file it is holding.
+          setViewerActive(false);
           void openConversation(id);
         }}
         onClose={(id) => {
           if (id === USAGE_TAB) {
             setUsageTab("closed");
+            return;
+          }
+          if (id === VIEWER_TAB) {
+            closeViewer();
             return;
           }
           void closeTab(id);
@@ -1593,9 +1780,13 @@ export function App({
           pane={sidebarPane}
           onPaneChange={setSidebarPane}
           files={treeEntries}
+          fileChanges={fileChanges}
           fileFilter={fileFilter}
           onFileFilterChange={setFileFilter}
           onChooseFolder={() => void chooseFolder()}
+          onOpenFile={(path) => void openFile(path)}
+          treeTruncated={treeTruncated}
+          treeLoading={treeLoading}
           hasProject={project !== ""}
           // The other two panes. Built here rather than by the sidebar, because
           // the App owns every handler they need -- and passed as elements so
@@ -1666,6 +1857,24 @@ export function App({
             connected={connected}
             onClose={() => setUsageTab("open")}
             load={loadUsage}
+          />
+        ) : viewerActive ? (
+          /*
+            The viewer replaces the transcript and the composer together, for
+            the same reason the dashboard does: a text field under a file the
+            user is reading would offer a message for a conversation that is
+            not on screen. `locked` is the turn, so the read-only statement in
+            the header is the real state rather than a constant.
+          */
+          <CodeViewer
+            path={viewerPath}
+            source={viewerSource}
+            loading={viewerLoading}
+            error={viewerError}
+            locked={state.busy}
+            palette={palette}
+            onPalette={setPalette}
+            onClose={closeViewer}
           />
         ) : (
           <>

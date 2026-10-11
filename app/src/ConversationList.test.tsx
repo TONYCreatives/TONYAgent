@@ -146,9 +146,11 @@ async function renderList(
       pane="chats"
       onPaneChange={() => {}}
       files={[]}
+      fileChanges={new Map()}
       fileFilter=""
       onFileFilterChange={() => {}}
       onChooseFolder={() => {}}
+      onOpenFile={() => {}}
       hasProject={false}
       {...calls}
     />,
@@ -252,9 +254,11 @@ describe("the panel reports which way it is moving", () => {
         pane="chats"
         onPaneChange={() => {}}
         files={[]}
+        fileChanges={new Map()}
         fileFilter=""
         onFileFilterChange={() => {}}
         onChooseFolder={() => {}}
+        onOpenFile={() => {}}
         hasProject={false}
         {...calls}
       />,
@@ -285,9 +289,11 @@ describe("the scrim behind the panel", () => {
         pane="chats"
         onPaneChange={() => {}}
         files={[]}
+        fileChanges={new Map()}
         fileFilter=""
         onFileFilterChange={() => {}}
         onChooseFolder={() => {}}
+        onOpenFile={() => {}}
         hasProject={false}
         {...calls}
       />,

@@ -175,6 +175,8 @@ class StdioServer:
             "conversations.rename": self._h_conversations_rename,
             "conversations.duplicate": self._h_conversations_duplicate,
             "conversations.move": self._h_conversations_move,
+            "files.tree": self._h_files_tree,
+            "files.read": self._h_files_read,
         }
         # Tool confirmations must reach the frontend as events, not a
         # callback that only a queue processor would drain.
@@ -1180,6 +1182,51 @@ class StdioServer:
                 matches = artifact.get("data") or []
                 break
         return {"matches": matches, "output": result.output}
+
+    # -- files ----------------------------------------------------------------
+    async def _h_files_tree(self, params: dict) -> Any:
+        """The project tree, for the window's file explorer.
+
+        Delegates to ``tonyagent.files`` for the same reason ``search``
+        delegates to ``GrepTool``: the skip rules and the project boundary
+        are the agent's, and a second walk in the server would be a second
+        set of rules about what counts as inside the project.
+
+        Reads, always. There is no write path here by design -- the agent's
+        ``write`` is confirmation-gated, and a UI write that skipped the
+        same gate would be a quieter door into the project. See the module
+        docstring in ``tonyagent/files.py``.
+        """
+        from tonyagent.files import project_tree
+
+        tree = project_tree(
+            path=str(params.get("path", ".")),
+            max_entries=int(params.get("max_entries", 4000)),
+            max_depth=int(params.get("max_depth", 6)),
+        )
+        return tree.to_dict()
+
+    async def _h_files_read(self, params: dict) -> Any:
+        """One project file's text, for the code viewer tab.
+
+        The reply carries the language the core resolved for the file, not
+        the path for the window to guess from: ``Dockerfile`` and
+        ``dockerfile.something`` are different questions, and only one
+        owner of the answer keeps the highlighting honest.
+        """
+        from tonyagent.files import SourceError, read_source
+
+        path = params.get("path", "")
+        if not isinstance(path, str) or not path.strip():
+            raise RpcError("missing path")
+        try:
+            source = read_source(path)
+        except SourceError as exc:
+            # The message names the file and the reason ("not a file", "over
+            # the limit", "binary"), all derived from the path the caller
+            # sent -- safe to return verbatim.
+            raise RpcError(str(exc)) from None
+        return source.to_dict()
 
     # -- models --------------------------------------------------------------
     async def _h_models_list(self, params: dict) -> Any:

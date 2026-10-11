@@ -41,7 +41,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount.js";
 import { useDismiss } from "./useDismiss.js";
-import { FilesPane, type TreeEntry } from "./FileSidebar.js";
+import { FilesPane } from "./FileSidebar.js";
+import type { CoreTreeEntry, FileChange } from "./filetree.js";
 import { Gear } from "./Gear.js";
 
 export interface ConversationSummary {
@@ -158,10 +159,17 @@ interface Props {
   pane: SidebarPane;
   onPaneChange: (pane: SidebarPane) => void;
   /** The Files pane's tree, filter and folder picker -- see `FilesPane`. */
-  files: TreeEntry[];
+  files: CoreTreeEntry[];
+  /** Per-file change badges, from the agent's own artifacts. */
+  fileChanges: Map<string, FileChange>;
   fileFilter: string;
   onFileFilterChange: (value: string) => void;
   onChooseFolder: () => void;
+  /** Open a file from the tree in the code viewer. */
+  onOpenFile: (path: string) => void;
+  /** The walk hit its own bound, and how the read is going. */
+  treeTruncated?: boolean;
+  treeLoading?: boolean;
   hasProject: boolean;
   /**
    * The Settings and Search panes, handed in rather than built here.
@@ -233,9 +241,13 @@ export function ConversationList({
   pane,
   onPaneChange,
   files,
+  fileChanges,
   fileFilter,
   onFileFilterChange,
   onChooseFolder,
+  onOpenFile,
+  treeTruncated,
+  treeLoading,
   hasProject,
   settingsPane,
   searchPane,
@@ -741,9 +753,13 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
       {pane === "files" && (
         <FilesPane
           entries={files}
+          changes={fileChanges}
           filter={fileFilter}
           onFilterChange={onFileFilterChange}
           onChooseFolder={onChooseFolder}
+          onOpenFile={onOpenFile}
+          truncated={treeTruncated}
+          loading={treeLoading}
           hasProject={hasProject}
         />
       )}
