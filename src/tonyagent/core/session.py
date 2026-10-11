@@ -584,6 +584,23 @@ class AgentSession:
         )
 
     async def _run_turn(self, turn_id: str) -> None:
+        # A turn-scoped parent pointer for the subagent tools: while THIS
+        # session's turn runs, its tool calls spawn children of it. A child's
+        # own turn (started from inside the parent's tool call) pushes onto
+        # this and pops back to the parent's session on unwind — a plain
+        # set/forget pair would leak the child's pointer across the parent's
+        # remaining turn, which is exactly the shape the user_io leak warned
+        # about: a process-global written as a side effect of *running*
+        # something.
+        from tonyagent.tools.subagent_tools import forget_parent, record_parent
+
+        record_parent(self)
+        try:
+            await self._run_turn_body(turn_id)
+        finally:
+            forget_parent()
+
+    async def _run_turn_body(self, turn_id: str) -> None:
         try:
             self.emit(EventType.TURN_STARTED, {"model": self.model}, turn_id=turn_id)
             self._round_orders = []

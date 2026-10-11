@@ -80,6 +80,16 @@ _READ_ONLY_TOOLS = frozenset({
     # way, so Mission cannot be stalled by a dialog nobody is reading.
     "ask_user_question",
     "present",
+    # The subagent registry's read and control verbs. Looking at who exists
+    # observes agent-internal state — the same class as job_list/job_output;
+    # interrupting one stops the agent's own work rather than anything in the
+    # workspace, and a model that spawned a doomed child must be able to stop
+    # paying for it in every mode, for the same reason job_kill sits here at
+    # Plan rather than above it. `subagent` itself is NOT here: it runs
+    # model-authored work under the child's own budget, and the mutating set
+    # below is where that belongs.
+    "list_agents",
+    "interrupt_agent",
     "glob",
     "grep",
     "sandbox_read_file",
@@ -107,6 +117,12 @@ _MUTATING_TOOLS = _READ_ONLY_TOOLS | {
     "edit",
     "delete_file",
     "execute_command",
+    # Spawning a child session is a change to the machine's doing — its tool
+    # calls really run, under a budget — so it sits with the other verbs that
+    # cause work rather than with the ones that merely look. The child cannot
+    # widen its parent's permission (subagent_tools.spawn inherits exactly
+    # the parent's), so this grants no escalation.
+    "subagent",
     # The network tools. Mutating-mode rather than read-only because fetching a
     # URL is a side effect the user did not necessarily ask for, and because
     # egress is off in the sandbox by default -- so a model reaching for one in

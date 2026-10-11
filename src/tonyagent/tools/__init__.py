@@ -30,6 +30,7 @@ from tonyagent.tools import (
     job_tools,
     planning_tools,
     user_tools,
+    subagent_tools,
 )
 
 from tonyagent.tools.schemas import (

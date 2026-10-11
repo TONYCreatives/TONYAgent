@@ -328,6 +328,42 @@ async def main() -> int:
         "needs content",
     )
 
+    # -- 1b. subagents (Phase 5) ---------------------------------------------
+    #
+    # The tools are turn-scoped: ``subagent`` runs real model work, so what a
+    # no-provider, no-turn script can drive is the fail-closed set. The two
+    # refusals a model must be able to read are "no turn is running" (the tool
+    # is a turn-scoped call, not a standalone one) and the registry's unknown
+    # name, which is the error either of the other two verbs produces when the
+    # name is wrong. The success path is covered with a stub provider in
+    # tests/unit/test_subagents.py, which is where a child's run belongs.
+    from tonyagent.tools.subagent_tools import (
+        InterruptAgentTool,
+        ListAgentsTool,
+        SubagentTool,
+        subagent_registry,
+    )
+
+    subagent_registry.restart()
+    try:
+        await expect_error(
+            "subagent(no turn)",
+            SubagentTool().execute(task="summarise the project"),
+            "no turn is running",
+        )
+
+        r = await ListAgentsTool().execute()
+        record("list_agents", r)
+        assert r.status is ToolResultStatus.SUCCESS and "No subagents" in r.output
+
+        await expect_error(
+            "interrupt_agent(unknown)",
+            InterruptAgentTool().execute(name="ghost"),
+            "no subagent named",
+        )
+    finally:
+        subagent_registry.restart()
+
     # -- 2. sandbox_required tools -------------------------------------------
     from tonyagent.tools.shell_tools import ExecuteCommandTool
     from tonyagent.tools.sandbox_file_tools import SandboxListFilesTool, SandboxReadFileTool

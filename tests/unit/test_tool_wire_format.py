@@ -112,8 +112,11 @@ def test_every_tool_reaches_the_wire_intact():
 
     **22 -> 23 for `take_screenshot`**, **23 -> 25 for `read_image` and
     `web_fetch`**, **25 -> 28 for `job_list`, `job_output` and `job_kill`**,
-    **28 -> 32 for the planning tools**, and **32 -> 34 for
-    `ask_user_question` and `present`**. The number is a tripwire rather than the
+    **28 -> 32 for the planning tools**, **32 -> 34 for
+    `ask_user_question` and `present`**, and **34 -> 37 for the Phase 5
+    subagent tools** (`subagent` in the mutating set; `list_agents` and
+    `interrupt_agent` joining the read-only set, where `job_kill` already
+    sits). The number is a tripwire rather than the
     assertion: the set comparison above it is what proves the wiring, and this is
     here so that adding a tool to Build is something you read in a diff instead of
     something you find out about from a model calling a tool nobody expected.
@@ -121,7 +124,7 @@ def test_every_tool_reaches_the_wire_intact():
     allowed = set(get_mode("build").allowed_tools)
     payload = _wire_payload(sorted(allowed & set(TOOL_NAMES)))
     assert set(payload) == allowed & set(TOOL_NAMES)
-    assert len(payload) == 34, f"expected all 34 tools, got {len(payload)}"
+    assert len(payload) == 37, f"expected all 37 tools, got {len(payload)}"
     for name, fn in payload.items():
         assert fn["description"].strip(), f"{name}: empty description on the wire"
         assert isinstance(fn["parameters"]["properties"], dict)

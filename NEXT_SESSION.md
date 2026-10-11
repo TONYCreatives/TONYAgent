@@ -1,16 +1,29 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-10-11, after the post-Phase-4 small items and the first Phase 5
-groundwork — read **"What is left, in the order it is worth picking up"** in §0 *first*.
-Four items shipped this pass, one commit each: the Phase 4 review fix-ups are
-**committed** (`8b6e2d7`), the six inert confirmation flags are gone (`66f99ff`),
-`validate_args` now validates array items (`67942d9`), and the sharpest Phase 5
-hazard — a child session stealing the parent's `task_state` at construction — is
-closed with the failing test NEXT_SESSION asked for, written first (`2da7e4d`).
-Re-measured: **979 passed / 10 skipped** (`-m "not docker"`, 42s in one process),
-e2e **47 checks, 0 failed**. **34 tools**; next is **Phase 5 (subagents)**, whose
-first bullet below is now "started" rather than "unknown".
+**Last updated:** 2026-10-11, after **Phase 5's first slice (the `subagent` tool)**.
+**37 tools**. Subagents exist: `subagent` delegates self-contained leaf work to a
+real child `AgentSession` inside the parent's turn (serial, one at a time), and
+`list_agents`/`interrupt_agent` observe and stop them. The child inherits its
+parent's mode/permission/budget and shares the provider object; it runs its own
+turn on its own turn-id — which is what keeps its frames out of the parent's
+transcript — and its `set_state` is *not* used (a plain assignment), because that
+path publishes to the process-global the parent's prompt reads. Runtime error
+paths the user asked to be audited are unit-tested: child timeout (cancelled and
+said), provider failure inside the child (a readable error, not a crash), and
+`interrupt_agent` reaching a live child (the call answers `ERROR` in words, not a
+raised `CancelledError` — the shield's inner-vs-outer cancel discrimination is
+the subtle bit, commented at the site). Every refusal is an `ERROR` ToolResult in
+model-actionable language. Read **"Phase 5 (subagents)" below for where the
+design actually landed versus what was written here before** — the synchronous
+core of this phase is done; peer-messaging and `subagent_fork` remain Phase 6
+work, and the schema/advice layer (frontend visibility in `ToolRow`) is untouched.
+Re-measured: **Python 1013 passed / 11 skipped** (`-m "not docker"`, 42s), e2e
+**50 checks, 0 failed** (three new subagent refusals included).
+**Was:** 2026-10-11, after the post-Phase-4 small items and Phase 5 groundwork —
+fix-ups committed (`8b6e2d7`), the six inert confirmation flags gone (`66f99ff`),
+array-item validation (`67942d9`), construction no longer repoints the global
+`task_state` (`2da7e4d`). **34 tools.**
 **Was:** 2026-10-11, after the Phase 4 review — see "The `user_io` leak, and
 what it cost" at the end. Phase 4 is committed as `d4e66b9`; three fix-up files
 were uncommitted (now committed, see "Last updated"). The 60s-per-ask stall that
@@ -101,10 +114,12 @@ data: preview had ever rendered.
 "가운데 폴더 버튼" just above section 2. The empty-chat panel now names the
 project folder in the middle and offers one Change... button; leaving it
 alone keeps the folder you had.
-**Test totals:** Python unit **979 passed / 10 skipped** (`-m "not docker"`, 42s in one
-process), TypeScript **593 passed** (98 suites), and `scripts/e2e_all_tools.py --fast`
-**47 checks, 0 failed** across all 34 tools (re-run 2026-10-11 after the inert-flag and
-item-validation pass, unchanged). `tests/unit/test_build_scripts.py` was
+**Test totals:** Python unit **1013 passed / 11 skipped** (`-m "not docker"`, 42s in one
+process), TypeScript **593 passed** (98 suites, unchanged — no frontend files changed in
+the subagent pass; the per-tool card renders generically), and
+`scripts/e2e_all_tools.py --fast` **50 checks, 0 failed** across all 37 tools (the three
+new ones are the fail-closed set: no-turn refusal, empty listing, unknown-name refusal).
+`tests/unit/test_build_scripts.py` was
 rewritten for the
 one-stage build, and the flake it was documented as having turned out to be a
 millisecond-wide margin in its own fixture -- see the end of this file.
@@ -124,9 +139,9 @@ animated overlay panel (see "The fourth UI pass" near the end)
 (`python -m tonyagent.window`), which starts the core as a child process and talks to
 it over the JSONL protocol; `app/` is the React page it renders. The Tauri crate and
 the Tkinter UI are both **gone from the source**.
-Re-measured 2026-10-11, after this session's pass: **Python unit 979 passed / 10
+Re-measured 2026-10-11, after the Phase 5 slice: **Python unit 1013 passed / 11
 skipped** (`-m "not docker"`) **in 42s in a single process**, **TypeScript 593 passed**
-(98 suites), `scripts/e2e_all_tools.py --fast` **47 checks, 0 failed**, and **34
+(98 suites), `scripts/e2e_all_tools.py --fast` **50 checks, 0 failed**, and **37
 tools**. Note `scripts/check_all.py --fast` is *not* a no-Docker check despite the
 name: it runs the whole suite and reports one failure from
 `tests/integration/test_docker_backend.py` when the daemon is down.
@@ -365,13 +380,12 @@ piece of work**, and its first-line hazard is already closed (see below).
    `ask_user_question`) are flat, and wider recursion waits until a schema
    advertises it. The real `todo_write` invented-field case is pinned against the
    real registry.
-4. **Phase 5: subagents.** See below. The only remaining item that is not small and
-   closed-form. **Groundwork landed as `2da7e4d`**: the first-line hazard marked
-   below is closed — `AgentSession.__init__` no longer calls
-   `set_current_state(self.state)`, publishing is `set_state`'s one job (explicit,
-   host-called, on the `install_question_bridge` model), and
-   `tests/unit/test_subagent_isolation.py` pins it, having been written and
-   confirmed failing against the old behaviour first.
+4. **Phase 5: subagents.** **First slice landed** — the `subagent` tool, the
+   registry behind it, and the two control tools. See "Phase 5 (subagents)"
+   below for the design as it now stands: what is real (a child session, its own
+   budget and mode, serial execution inside the parent's turn, tested failure
+   paths), what was *not* built (peer messaging, `subagent_fork`), and where the
+   seam actually landed instead of where this section guessed.
 5. **`exit_plan_mode` is still not built**, and Phase 4 sharpened the reason: it needs
    an approval affordance that can *act on the mode*, and no tool can reach the mode.
    `present` can show a plan and collect a reply, but `set_mode` clears the
@@ -400,16 +414,15 @@ the next session starts from the constraints instead of rediscovering them.
   the precedent to either follow or fix.
 * **A child is an `AgentSession`, and the parent must not see its messages.**
   `AgentSession` owns `messages`, `_cancel`, `_tool_calls_used`, `max_tool_calls` and
-  `state`. That last one was the sharpest hazard in the phase:
-  ~~`AgentSession.__init__` calls `set_current_state(self.state)`~~ — **fixed as
-  `2da7e4d`**: construction no longer publishes, `set_state` is the explicit adopt
-  path (which is exactly what `server.py` already calls), and
-  `tests/unit/test_subagent_isolation.py` pins "construction does not repoint the
-  global" plus "`set_state` still does". The ~~failing-test-first~~ step this section
-  asked for happened, so the next session starts from a closed line item.
-  **The fix followed the model given**: `install_question_bridge()` is *explicit*
-  — publishing to a process-global is a host act, not a consequence of building
-  something.
+  `state`. Two publishes were the hijack and **both are closed**: construction's
+  `set_current_state` (`2da7e4d`), *and — found while building the tool —*
+  `spawn`'s own `set_state` call, which is the same global publish one layer up:
+  the child keeps its state by plain assignment instead (`tools/subagent_tools.py`,
+  commented at the site). The child's frames reach the window over the shared bus
+  but carry the child's own `turn_id`, so the reducer appends them to the child's
+  message, not the parent's — pinned in `test_child_events_say_they_are_the_childs`.
+  The parent never reads the child transcript directly: only `final_answer()`,
+  which returns the child's last assistant text, lives in the tool result.
 * **Watch for the same shape elsewhere.** Three process-globals are now installed as a
   side effect of *building* something — `task_state` (above), `user_io` (by
   `install_question_bridge`, explicit, which is why it is the model to copy), and
@@ -420,9 +433,14 @@ the next session starts from the constraints instead of rediscovering them.
   to the message found by `turn_id` (`app/src/events.ts`). A child emitting the same
   event types would therefore *corrupt the parent transcript*, not merely look odd.
   Decide the shape — namespaced `turn_id`, a parent field, or a separate stream — first.
-* **Five tools**: `subagent`, `subagent_fork`, `send_message`, `list_agents`,
-  `interrupt_agent`. `subagent_fork` means nothing without a serialisable conversation;
-  `send_message` and `interrupt_agent` need the registry that `list_agents` reads.
+* **Five tools planned; three exist**: `subagent`, `list_agents`, `interrupt_agent`
+  (all in `tools/subagent_tools.py`, registered in the load-bearing import block;
+  `subagent` in the mutating set, the other two in the read-only set beside
+  `job_kill`). `subagent_fork` needs a serialisable conversation and **`send_message`
+  means nothing in a serial child** — the child answers once and finishes, so there
+  is nobody to send a message *to*. Both are Phase 6 (`workflow`) work, with the
+  re-entrant session loop that phase was always going to need; the synchronous
+  turn loop is what made this the honest Phase 5 shape.
 * **Budget.** The parent's `max_tool_calls` bounds the parent. A child's calls must not
   silently spend it, and a child that cannot be bounded is an unbounded cost. Decide
   whether a child gets its own budget, and make sure the `subagent` call itself counts
