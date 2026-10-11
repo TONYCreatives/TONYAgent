@@ -278,6 +278,17 @@ class Tool(ABC):
         Type and enum only. Range is deliberately not checked: the schemas do not
         express it, so enforcing a bound here would mean inventing one the model
         was never shown and could not have known.
+
+        **Array items are validated, one level deep.** Each element of an array
+        argument is checked against the schema's ``items`` -- type, enum, and
+        ``additionalProperties: False`` at the item level -- for the same reason
+        the top level is: ``todo_write`` advertises ``{text, status}`` items with
+        ``additionalProperties: False``, and a claim nothing enforces is worse
+        than no claim. This is deliberately shallow: nested arrays inside items
+        are beyond what any current schema declares (the two ``items`` users,
+        ``todo_write`` and ``ask_user_question``, are flat), and a wider
+        recursion is -- like the rest of this method -- only worth building when
+        something advertises it.
         """
         for req in self.required:
             if req not in args:
@@ -323,7 +334,75 @@ class Tool(ABC):
                 return False, (
                     f"Parameter {name!r} must be one of {rendered}, got {value!r}"
                 )
+            if expected == "array":
+                item_error = self._validate_array_items(name, value, declared)
+                if item_error:
+                    return False, item_error
         return True, None
+
+    def _validate_array_items(
+        self, parameter: str, items: list, declared: dict
+    ) -> str | None:
+        """Check each element of one array argument against its ``items`` schema.
+
+        Returns the error sentence, or ``None``. The element checks are the same
+        three kinds the top level makes -- type, enum, extra keys -- applied one
+        level down. Unknown or absent type names in ``items`` are declined on,
+        matching the top level's refusal to guess.
+        """
+        item_schema = declared.get("items") or {}
+        allowed = _JSON_TYPES.get(item_schema.get("type") or "")
+        properties = item_schema.get("properties") or {}
+        strict_items = item_schema.get("additionalProperties", False) is False
+        for index, element in enumerate(items, start=1):
+            where = f"Parameter {parameter!r} item {index}"
+            if allowed is not None and not isinstance(element, allowed):
+                return (
+                    f"{where} must be {item_schema.get('type')}, "
+                    f"got {type(element).__name__}"
+                )
+            choices = item_schema.get("enum")
+            if choices and element not in choices:
+                rendered = ", ".join(repr(choice) for choice in choices)
+                return f"{where} must be one of {rendered}, got {element!r}"
+            if isinstance(element, dict) and properties:
+                unknown = sorted(set(element) - set(properties))
+                if strict_items and unknown:
+                    known = ", ".join(sorted(properties)) or "none"
+                    return (
+                        f"{where} has unknown field(s): {', '.join(unknown)}. "
+                        f"An item accepts: {known}."
+                    )
+                missing = sorted(
+                    key for key in (item_schema.get("required") or [])
+                    if key not in element
+                )
+                if missing:
+                    return f"{where} is missing required field(s): {', '.join(missing)}"
+                for field, value in element.items():
+                    field_declared = properties.get(field) or {}
+                    field_expected = field_declared.get("type")
+                    field_allowed = _JSON_TYPES.get(field_expected or "")
+                    if field_allowed is None:
+                        continue
+                    if field_expected in ("integer", "number") and isinstance(value, bool):
+                        return (
+                            f"{where} field {field!r} must be {field_expected}, "
+                            f"got a boolean"
+                        )
+                    if not isinstance(value, field_allowed):
+                        return (
+                            f"{where} field {field!r} must be {field_expected}, "
+                            f"got {type(value).__name__}"
+                        )
+                    field_choices = field_declared.get("enum")
+                    if field_choices and value not in field_choices:
+                        rendered = ", ".join(repr(c) for c in field_choices)
+                        return (
+                            f"{where} field {field!r} must be one of "
+                            f"{rendered}, got {value!r}"
+                        )
+        return None
 
 
 class ToolRegistry:

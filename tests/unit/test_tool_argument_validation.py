@@ -177,6 +177,155 @@ def test_a_property_with_no_declared_type_is_not_guessed_at():
     assert ok, error
 
 
+# --- array items, one level deep ---------------------------------------------
+
+
+def test_array_items_of_the_declared_type_pass():
+    ok, error = _validate(
+        {"tags": ["a", "b"]},
+        {"type": "object", "properties": {"tags": {"type": "array", "items": {"type": "string"}}}},
+    )
+    assert ok, error
+
+
+def test_an_array_item_of_the_wrong_type_is_refused_and_numbered():
+    ok, error = _validate(
+        {"tags": ["a", 3]},
+        {"type": "object", "properties": {"tags": {"type": "array", "items": {"type": "string"}}}},
+    )
+    assert not ok
+    assert "tags" in (error or "") and "item 2" in (error or ""), error
+
+
+def test_an_array_item_enumeration_is_enforced():
+    ok, error = _validate(
+        {"tags": ["fast", "sideways"]},
+        {"type": "object", "properties": {"tags": {"type": "array", "items": {"type": "string", "enum": ["fast", "slow"]}}}},
+    )
+    assert not ok
+    assert "fast" in (error or "") and "slow" in (error or ""), error
+
+
+def test_an_item_field_outside_the_declared_object_is_refused():
+    """``additionalProperties: False`` inside an item is now a fact.
+
+    This is the lie NEXT_SESSION recorded: ``todo_write`` advertises
+    ``{text, status}`` items that reject extra keys, and nothing checked.
+    """
+    schema = {
+        "type": "object",
+        "properties": {
+            "tags": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"text": {"type": "string"}},
+                    "required": ["text"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+    }
+    ok, error = _validate({"tags": [{"text": "x", "junk": 1}]}, schema)
+    assert not ok
+    assert "junk" in (error or ""), error
+
+
+def test_an_item_missing_a_required_field_is_refused():
+    schema = {
+        "type": "object",
+        "properties": {
+            "tags": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"text": {"type": "string"}},
+                    "required": ["text"],
+                },
+            }
+        },
+    }
+    ok, error = _validate({"tags": [{"junk": 1}]}, schema)
+    assert not ok
+    assert "text" in (error or "") and "item 1" in (error or ""), error
+
+
+def test_an_item_field_of_the_wrong_type_is_refused():
+    schema = {
+        "type": "object",
+        "properties": {
+            "tags": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"text": {"type": "string"}},
+                    "required": ["text"],
+                },
+            }
+        },
+    }
+    ok, error = _validate({"tags": [{"text": 7}]}, schema)
+    assert not ok
+    assert "text" in (error or "") and "string" in (error or ""), error
+
+
+def test_an_item_enum_field_outside_the_choices_is_refused():
+    schema = {
+        "type": "object",
+        "properties": {
+            "tags": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string"},
+                        "status": {"type": "string", "enum": ["pending", "done"]},
+                    },
+                    "additionalProperties": False,
+                },
+            }
+        },
+    }
+    ok, error = _validate(
+        {"tags": [{"text": "x", "status": "sideways"}]}, schema
+    )
+    assert not ok
+    assert "pending" in (error or ""), error
+
+
+def test_an_array_without_an_items_schema_still_takes_anything():
+    """An ``items``-less array is exactly what it advertised: any elements."""
+    ok, error = _validate(
+        {"tags": [1, "two", {"three": 3}]},
+        {"type": "object", "properties": {"tags": {"type": "array"}}},
+    )
+    assert ok, error
+
+
+def test_the_real_todo_write_schema_refuses_an_invented_item_field():
+    """The concrete case NEXT_SESSION recorded, against the real registry."""
+    import tonyagent.tools  # noqa: F401  (populates the registry)
+    from tonyagent.tools.base import tool_registry
+
+    tool = tool_registry.get("todo_write")
+    ok, error = tool.validate_args(
+        {"todos": [{"text": "step", "status": "pending", "invented": True}]}
+    )
+    assert not ok
+    assert "invented" in (error or ""), error
+
+
+def test_the_real_todo_write_schema_accepts_its_own_advertised_items():
+    import tonyagent.tools  # noqa: F401  (populates the registry)
+    from tonyagent.tools.base import tool_registry
+
+    tool = tool_registry.get("todo_write")
+    ok, error = tool.validate_args(
+        {"todos": [{"text": "step", "status": "pending"}]}
+    )
+    assert ok, error
+
+
 # --- passed through unchanged -----------------------------------------------
 
 
