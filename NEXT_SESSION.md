@@ -1,12 +1,21 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-10-11, after the Phase 4 review — see "The `user_io` leak, and
-what it cost" at the end, and read **"What is left, in the order it is worth picking
-up"** in §0 *first*. **Phase 4 is committed as `d4e66b9`; three fix-up files are not**
-(§0 says which). The 60s-per-ask stall that made a single pytest process appear to die
-at 64% is diagnosed and fixed, and the suite is 966 passed in 41s again. **34 tools**;
-next is **Phase 5 (subagents)**.
+**Last updated:** 2026-10-11, after the post-Phase-4 small items and the first Phase 5
+groundwork — read **"What is left, in the order it is worth picking up"** in §0 *first*.
+Four items shipped this pass, one commit each: the Phase 4 review fix-ups are
+**committed** (`8b6e2d7`), the six inert confirmation flags are gone (`66f99ff`),
+`validate_args` now validates array items (`67942d9`), and the sharpest Phase 5
+hazard — a child session stealing the parent's `task_state` at construction — is
+closed with the failing test NEXT_SESSION asked for, written first (`2da7e4d`).
+Re-measured: **979 passed / 10 skipped** (`-m "not docker"`, 42s in one process),
+e2e **47 checks, 0 failed**. **34 tools**; next is **Phase 5 (subagents)**, whose
+first bullet below is now "started" rather than "unknown".
+**Was:** 2026-10-11, after the Phase 4 review — see "The `user_io` leak, and
+what it cost" at the end. Phase 4 is committed as `d4e66b9`; three fix-up files
+were uncommitted (now committed, see "Last updated"). The 60s-per-ask stall that
+made a single pytest process appear to die at 64% is diagnosed and fixed, and
+the suite was 966 passed in 41s. **34 tools**.
 **Was:** 2026-10-11, after Phase 4 of the tool port — see
 "`ask_user_question` and `present`" at the end, and read "The tool system, as it
 stands" in §0 first. The agent can now reach the *user* mid-turn: one tool asks
@@ -92,9 +101,10 @@ data: preview had ever rendered.
 "가운데 폴더 버튼" just above section 2. The empty-chat panel now names the
 project folder in the middle and offers one Change... button; leaving it
 alone keeps the folder you had.
-**Test totals:** Python unit **966 passed / 10 skipped** (`-m "not docker"`, 41s in one
+**Test totals:** Python unit **979 passed / 10 skipped** (`-m "not docker"`, 42s in one
 process), TypeScript **593 passed** (98 suites), and `scripts/e2e_all_tools.py --fast`
-**47 checks, 0 failed** across all 34 tools. `tests/unit/test_build_scripts.py` was
+**47 checks, 0 failed** across all 34 tools (re-run 2026-10-11 after the inert-flag and
+item-validation pass, unchanged). `tests/unit/test_build_scripts.py` was
 rewritten for the
 one-stage build, and the flake it was documented as having turned out to be a
 millisecond-wide margin in its own fixture -- see the end of this file.
@@ -114,8 +124,8 @@ animated overlay panel (see "The fourth UI pass" near the end)
 (`python -m tonyagent.window`), which starts the core as a child process and talks to
 it over the JSONL protocol; `app/` is the React page it renders. The Tauri crate and
 the Tkinter UI are both **gone from the source**.
-Re-measured 2026-10-11, after the Phase 4 review: **Python unit 966 passed / 10
-skipped** (`-m "not docker"`) **in 41s in a single process**, **TypeScript 593 passed**
+Re-measured 2026-10-11, after this session's pass: **Python unit 979 passed / 10
+skipped** (`-m "not docker"`) **in 42s in a single process**, **TypeScript 593 passed**
 (98 suites), `scripts/e2e_all_tools.py --fast` **47 checks, 0 failed**, and **34
 tools**. Note `scripts/check_all.py --fast` is *not* a no-Docker check despite the
 name: it runs the whole suite and reports one failure from
@@ -199,10 +209,10 @@ Tkinter GUI is gone from the source entirely; the six `Tkinter` mentions left in
 
 ```bash
 python -m compileall -q src            # syntax
-python -m pytest -m "not docker" -q    # 966 passed, 10 skipped, ~41s -- no Docker needed
+python -m pytest -m "not docker" -q    # 979 passed, 10 skipped, ~42s -- no Docker needed
 python -m pytest tests -q              # adds tests/integration; needs Docker Desktop
 python scripts/check_all.py --fast     # compileall + the FULL pytest run -- see the note below
-python scripts/e2e_all_tools.py --fast # 47 checks: every tool, incl. fail-closed refusals (no sandbox needed)
+python scripts/e2e_all_tools.py --fast # 47 checks: every tool, incl. fail-closed refusals (no sandbox needed)   # still 47/47 after the 2026-10-11 pass
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
 
 cd app && npm test                     # 593 passed (protocol, reducer, markdown, components, stylesheet cascade)
@@ -333,28 +343,35 @@ they are worth reading before touching anything in `src/tonyagent/tools/`.
 
 ### What is left, in the order it is worth picking up
 
-Items 1–3, 5 and 6 are small and each closes something already recorded as a known gap.
-**Item 4 is the next phase and the largest remaining piece of work.**
+Items 2 and 3 shipped this pass; **item 4 is the next phase and the largest remaining
+piece of work**, and its first-line hazard is already closed (see below).
 
-1. **Commit or amend the three uncommitted files** (listed under Status above).
-   Nothing else should start until the tree is clean again, or the next diff contains
-   somebody else's fix-up.
-2. **The six tools that can never prompt.** `requires_confirmation = True` with
-   `destructive = False` on `http_request`, `web_fetch`, `browser_navigate`,
-   `browser_click`, `browser_type`, `execute_js`. The gate is
-   `destructive and requires_confirmation`, so **none of them ever asks** (count them
-   against the registry, not against memory — an earlier version of this list said
-   five and missed `execute_js`). **This needs a decision before it needs code:**
-   moving the gate to `requires_confirmation` alone would start `browser_click`
-   prompting before *every click*, which is worse than the inconsistency. The likely
-   answer is that those six drop the inert flag so the declaration stops lying, and the
-   gate stays as it is.
-3. **`validate_args` does not recurse into array `items`**, so an
-   `additionalProperties: False` inside an item — `todo_write`'s items advertise one —
-   is a claim nothing enforces. The same class of lie as the top-level keys, which *are*
-   enforced.
-4. **Phase 5: subagents.** See below. The only item here that is not small and
-   closed-form.
+1. ~~**Commit the three uncommitted files**~~ — **done** as `8b6e2d7` (the `user_io`
+   reset fixture, the `describe()` `asks_user` correction, and this file).
+2. ~~**The six tools that can never prompt**~~ — **done** as `66f99ff`. The decision
+   went the way the list guessed: the six dropped the inert flag and the gate is
+   unchanged. The reasoning is written into the comment block above the browser
+   tools in `browser_tools.py` (why not widen the gate instead: `execute_js` is in
+   the read-only set reachable from Plan, and Plan's whole design is a sweep that
+   runs unattended; a prompt before every `browser_click` is a browser the user has
+   to baby-sit; these tools' real gates are `sandbox_required` and
+   `isolation_required`, which the destructive prompt never was).
+   `test_no_tool_claims_confirmation_without_destructive` in `test_local_sandbox.py`
+   pins the invariant registry-wide.
+3. ~~**`validate_args` does not recurse into array `items`**~~ — **done** as
+   `67942d9`. Array items are now checked one level deep: declared type, enum,
+   unknown fields and required fields, numbered by index so a model can find its
+   typo. Deliberately shallow — the two `items` users (`todo_write`,
+   `ask_user_question`) are flat, and wider recursion waits until a schema
+   advertises it. The real `todo_write` invented-field case is pinned against the
+   real registry.
+4. **Phase 5: subagents.** See below. The only remaining item that is not small and
+   closed-form. **Groundwork landed as `2da7e4d`**: the first-line hazard marked
+   below is closed — `AgentSession.__init__` no longer calls
+   `set_current_state(self.state)`, publishing is `set_state`'s one job (explicit,
+   host-called, on the `install_question_bridge` model), and
+   `tests/unit/test_subagent_isolation.py` pins it, having been written and
+   confirmed failing against the old behaviour first.
 5. **`exit_plan_mode` is still not built**, and Phase 4 sharpened the reason: it needs
    an approval affordance that can *act on the mode*, and no tool can reach the mode.
    `present` can show a plan and collect a reply, but `set_mode` clears the
@@ -383,14 +400,16 @@ the next session starts from the constraints instead of rediscovering them.
   the precedent to either follow or fix.
 * **A child is an `AgentSession`, and the parent must not see its messages.**
   `AgentSession` owns `messages`, `_cancel`, `_tool_calls_used`, `max_tool_calls` and
-  `state`. That last one is the sharpest hazard in the phase: `AgentSession.__init__`
-  calls `set_current_state(self.state)`, which repoints the process-global
-  `task_state`, so **a child session constructed naively would silently take over the
-  parent's plan**. Worth a failing test before any tool is written.
-  **The fix is already modelled**: `install_question_bridge()` is an *explicit* method
-  that `headless/server.py` calls, rather than something `__init__` does — the same
-  lesson the `user_io` leak taught (see the end of this file). Do it that way for
-  `task_state` too, in the same pass.
+  `state`. That last one was the sharpest hazard in the phase:
+  ~~`AgentSession.__init__` calls `set_current_state(self.state)`~~ — **fixed as
+  `2da7e4d`**: construction no longer publishes, `set_state` is the explicit adopt
+  path (which is exactly what `server.py` already calls), and
+  `tests/unit/test_subagent_isolation.py` pins "construction does not repoint the
+  global" plus "`set_state` still does". The ~~failing-test-first~~ step this section
+  asked for happened, so the next session starts from a closed line item.
+  **The fix followed the model given**: `install_question_bridge()` is *explicit*
+  — publishing to a process-global is a host act, not a consequence of building
+  something.
 * **Watch for the same shape elsewhere.** Three process-globals are now installed as a
   side effect of *building* something — `task_state` (above), `user_io` (by
   `install_question_bridge`, explicit, which is why it is the model to copy), and
