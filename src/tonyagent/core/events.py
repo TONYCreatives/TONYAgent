@@ -76,20 +76,36 @@ class Event:
     payload: dict[str, Any] = field(default_factory=dict)
     #: Correlates events belonging to one user-initiated turn.
     turn_id: Optional[str] = None
+    #: The subagent this frame came from, and the id of the parent tool call
+    #: that spawned it. Empty on every other frame.
+    #:
+    #: The turn id alone cannot link a child's frames to the call that made it:
+    #: it is the *child's* id, and the parent's transcript has never seen it.
+    #: This is that link, and it is what lets a window render a child's work
+    #: under the card of the call that started it instead of either dropping
+    #: the frames or (worse) drawing the child as the assistant's own answer.
+    subagent: str = ""
+    parent_call_id: str = ""
     sequence: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         """Wire shape for one event.
 
         ``type`` is the discriminator a frontend switches on; ``seq`` lets a
-        late-joining or reconnecting UI detect what it missed.
+        late-joining or reconnecting UI detect what it missed. Only a child's
+        frames carry the attribution keys -- every other event keeps the exact
+        shape an older window reads.
         """
-        return {
+        data: dict[str, Any] = {
             "type": self.type.value,
             "seq": self.sequence,
             "turn_id": self.turn_id,
             "payload": self.payload,
         }
+        if self.subagent or self.parent_call_id:
+            data["subagent"] = self.subagent
+            data["parent_call_id"] = self.parent_call_id
+        return data
 
 
 Subscriber = Callable[[Event], Any]
@@ -129,17 +145,25 @@ class EventBus:
         type: EventType,
         payload: Optional[dict[str, Any]] = None,
         turn_id: Optional[str] = None,
+        *,
+        subagent: str = "",
+        parent_call_id: str = "",
     ) -> Event:
         """Publish an event. Never raises because a subscriber failed.
 
         A broken subscriber must not be able to abort a generation turn: the
         old queue-based path logged and continued, and so does this.
+
+        ``subagent``/``parent_call_id`` travel together and are set only by a
+        child session's own ``emit`` -- see :attr:`Event.subagent`.
         """
         self._sequence += 1
         event = Event(
             type=type,
             payload=payload or {},
             turn_id=turn_id,
+            subagent=subagent,
+            parent_call_id=parent_call_id,
             sequence=self._sequence,
         )
         self._history.append(event)

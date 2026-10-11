@@ -90,6 +90,14 @@ _READ_ONLY_TOOLS = frozenset({
     # below is where that belongs.
     "list_agents",
     "interrupt_agent",
+    # The skill tools. Loading a saved procedure is a read, so both belong here
+    # and are reachable from every rung -- Plan and Skills most of all, since
+    # reading what a procedure says is exactly what those two modes are for. A
+    # skill cannot widen anything by being loaded: its steps are performed
+    # afterwards with the tools the turn already has, so a procedure that says
+    # "write the file" is still refused in Plan mode at the write.
+    "list_skills",
+    "run_skill",
     "glob",
     "grep",
     "sandbox_read_file",
@@ -123,6 +131,12 @@ _MUTATING_TOOLS = _READ_ONLY_TOOLS | {
     # widen its parent's permission (subagent_tools.spawn inherits exactly
     # the parent's), so this grants no escalation.
     "subagent",
+    # The workflow verbs, beside it and for the same reason: `send_message`
+    # continues an existing child and `subagent_fork` starts a copy of one, and
+    # each runs a child's turn for real -- under the child's own budget, and
+    # under this session's mode and permission, which neither can widen.
+    "send_message",
+    "subagent_fork",
     # The network tools. Mutating-mode rather than read-only because fetching a
     # URL is a side effect the user did not necessarily ask for, and because
     # egress is off in the sandbox by default -- so a model reaching for one in
@@ -349,12 +363,18 @@ _MISSION = Mode(
 _SKILLS = Mode(
     name="skills",
     label="Skills",
-    description="Explain and plan. No side effects at all.",
+    description="Explain and plan, with this project's skills loadable. No side effects at all.",
     system_prompt=(
         "You are in SKILLS mode. The user wants to understand something, not "
         "to change anything. Explain clearly and concretely, using this "
         "project as the example where it helps. You cannot write files or run "
-        "commands. Show the code you would write, do not write it."
+        "commands. Show the code you would write, do not write it. This is "
+        "also the mode for saved skills: `list_skills` shows the ones this "
+        "project and this user have, `run_skill` loads one, and a user message "
+        "that begins with `/name` is the user asking for that skill. Loading "
+        "one changes nothing and grants nothing -- follow its procedure with "
+        "the tools you do have, and when a step needs a tool this mode refuses, "
+        "say which step and what it would need rather than working around it."
     ),
     allowed_tools=_READ_ONLY_TOOLS,
     writes=False,

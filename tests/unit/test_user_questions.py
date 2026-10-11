@@ -451,9 +451,11 @@ def test_the_tool_count_is_a_tripwire():
 
     The same shape as the tripwire in `test_tool_wire_format.py`: the set
     assertions prove the wiring, and this makes the count something that is
-    noticed rather than discovered. 34 -> 37 for the Phase 5 subagent tools.
+    noticed rather than discovered. 34 -> 37 for the Phase 5 subagent tools,
+    37 -> 39 for the Phase 6 workflow verbs `send_message` and
+    `subagent_fork`.
     """
-    assert len(tool_registry.list_names()) == 37
+    assert len(tool_registry.list_names()) == 39
 
 
 async def test_the_session_publishes_an_ask_and_settles_it_on_the_answer():

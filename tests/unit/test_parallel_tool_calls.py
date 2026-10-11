@@ -236,12 +236,21 @@ async def test_a_failing_call_cancels_its_siblings(probe):
     assert p.in_flight == 0, "a call was still running when the turn ended"
 
 
-async def test_a_cancelled_batch_does_not_answer_the_calls_it_stopped(probe):
-    """A cancelled sibling contributes no tool message.
+async def test_a_cancelled_batch_still_answers_every_call_it_was_given(probe):
+    """A cancelled sibling is answered, and the answer claims nothing.
 
-    The result would be a claim about work that did not finish. The turn is
-    already failing at that point, so the wire is not left half-answered by a
-    *successful* turn -- the retry re-declares every call.
+    **This used to assert the opposite, and the change is the point.** The rule
+    it was written from -- "do not write a result for work that did not finish" --
+    is right about *results* and wrong about messages: the assistant message
+    already declared both calls in its ``tool_calls`` array, and an
+    OpenAI-compatible endpoint rejects a history where a declared call has no
+    answering tool message. So the alternative to answering was never silence,
+    it was a 400 on the user's next message with the cause one request out of
+    sight -- the same argument the budget refusals are built on.
+
+    What the message says is therefore "not run ... before it produced a
+    result", which is true of a call that was cancelled and of one whose result
+    was discarded with the batch, and claims nothing about either.
     """
     probe(delays={"slow": 5.0, "boom": 0.0}, raises={"boom"})
     session = _session([[_call("slow", "c1"), _call("boom", "c2")], []])
@@ -251,4 +260,12 @@ async def test_a_cancelled_batch_does_not_answer_the_calls_it_stopped(probe):
     await session.run_turn("go")
 
     assert [e.type for e in seen if e.type is EventType.TURN_FAILED], "turn did not fail"
-    assert _tool_messages(session) == [], "a tool message was written for a cancelled call"
+    messages = _tool_messages(session)
+    assert [m.tool_call_id for m in messages] == ["c1", "c2"], (
+        "every call the assistant declared must be answered"
+    )
+    for message in messages:
+        payload = json.loads(message.content)
+        assert payload["status"] == "error"
+        assert "Not run" in payload["error"]
+        assert payload["output"] is None, "a stopped call must not claim an output"

@@ -40,8 +40,11 @@ from tonyagent.providers import (
 )
 from tonyagent.providers.base import MessageRole
 from tonyagent.core import user_io
+from tonyagent.core.skills import SkillInvocation, invocation_for
+from tonyagent.folder.manager import folder_manager
 from tonyagent.core.task_state import SessionState, set_current_state
 from tonyagent.tools import ALL_SCHEMAS, ToolCall, ToolResult, tool_orchestrator
+from tonyagent.tools.context import use_context
 
 #: Said when a model used its whole token allowance thinking and wrote nothing.
 #: The tokens are billed either way, so the user needs to know the difference
@@ -121,9 +124,26 @@ class AgentSession:
         #: defaults to", which is also what a model with no effort dial gets.
         self.reasoning_effort: str = ""
         self.messages: list[ChatMessage] = []
+        #: Set by ``SubagentRegistry.spawn`` when this session is a child: its
+        #: name, and the id of the parent tool call that spawned it. Every
+        #: frame the child emits then says so, which is what lets the window
+        #: render the child's work under that call's card instead of ignoring
+        #: it as a foreign turn. Empty for every ordinary session.
+        self.subagent_name: str = ""
+        self.subagent_call_id: str = ""
+        #: How many spawns below the session the user is talking to this one is:
+        #: 0 for an ordinary session, 1 for a child, 2 for a child of a child.
+        #: Set by ``SubagentRegistry.spawn`` and read as the nesting bound.
+        self.subagent_depth: int = 0
         self.provider: Any = None
         self._cancel: Optional[asyncio.Event] = None
         self._busy = False
+        #: Confirmation prompts this session has put on screen and not yet seen
+        #: answered, by tool-call id. The session owns this because the dialog is
+        #: *its* event: the orchestrator publishes nothing when a prompt is
+        #: abandoned, so the turn's end is the only place that can take down a
+        #: prompt whose turn is gone. See `_close_open_confirmations`.
+        self._open_confirmations: set[str] = set()
         #: What the provider said about this model's thinking, resolved once.
         #: ``_UNRESOLVED`` rather than None because "not looked up yet" and
         #: "looked up, does not reason" lead to the same request but only one
@@ -144,6 +164,28 @@ class AgentSession:
         #: in one message has spent five and the number on the card is the
         #: number of things that were actually run.
         self._tool_calls_used: int = 0
+        #: Child turns started in the turn in flight. Reset with the counters
+        #: above, and read by `subagent_tools` as the cap on fan-out: the
+        #: per-turn tool budget bounds how many children a turn may *ask for*,
+        #: but it can be set to "no limit" (`0`), and this is the backstop that
+        #: stops that setting from meaning "spawn without bound". It lives here
+        #: rather than in the registry because "per turn" is session state, and
+        #: this is the one place a turn's counters are reset -- a child has its
+        #: own counter, on its own turn, for free.
+        self._children_started: int = 0
+        #: The tool calls this session has in flight, one task each.
+        #:
+        #: Held so that `cancel()` can stop a call that is already running -- a
+        #: flag is only polled between rounds, and a tool that awaits can run for
+        #: a minute. Registered in `_start_tool_call` and dropped by a
+        #: done-callback, so the set is empty whenever nothing is running.
+        self._tool_tasks: set[asyncio.Task] = set()
+        #: The skill this turn was asked for with `/name`, resolved once at the
+        #: start of the turn. Per turn rather than per conversation because it
+        #: is an *invocation* -- the user typed `/review` on this message -- and
+        #: a session that kept it would keep following a procedure nobody asked
+        #: for again. Cleared in the turn's `finally`, beside `_busy`.
+        self._active_skill: SkillInvocation | None = None
         #: The per-turn tool budget, read once at construction so a mid-turn
         #: settings change cannot make the counter and the label disagree.
         self.max_tool_calls: int = _default_max_tool_calls()
@@ -208,13 +250,45 @@ class AgentSession:
         payload: Optional[dict[str, Any]] = None,
         turn_id: Optional[str] = None,
     ) -> Event:
-        return self.bus.emit(type, payload, turn_id=turn_id)
+        """Publish one frame of this session's work.
+
+        A child session's frames carry its own turn id *and* the parent call
+        that owns it (see :attr:`subagent_name`); an ordinary session's carry
+        neither attribution field, so the wire stays exactly as it was.
+        """
+        return self.bus.emit(
+            type,
+            payload,
+            turn_id=turn_id,
+            subagent=self.subagent_name,
+            parent_call_id=self.subagent_call_id,
+        )
 
     # -- public API ----------------------------------------------------------
     def cancel(self) -> None:
-        """Stop the running turn. Safe to call when nothing is running."""
+        """Stop the running turn. Safe to call when nothing is running.
+
+        Three things have to stop, and each was a bug once:
+
+        * **The turn's own loop**, via the flag `_check_cancelled` polls after
+          every round.
+        * **A prompt the turn raised.** A confirmation prompt counts as part of
+          the turn: Stop answers it no, which releases the waiting tool
+          immediately and takes the dialog down with it. Without that, Stop left
+          a destructive call's Allow/Deny on screen and the tool ran to its
+          60-second timeout before the turn could end.
+        * **A tool call already running**, via the task it was started in. The
+          flag cannot reach one -- nothing polls it while a tool awaits -- so a
+          stopped turn kept working for as long as that call took: measured, a
+          turn that had spawned a child lived 2.7s past Stop while the child
+          finished its turn, and its tokens were billed. A stopped turn that
+          keeps working is not stopped, which is the same sentence the
+          confirmation fix above was written from.
+        """
         if self._cancel is not None:
             self._cancel.set()
+        self._close_open_confirmations()
+        self._cancel_running_tools()
 
     def clear(self) -> None:
         """Drop the conversation history, and the plan that went with it.
@@ -379,6 +453,7 @@ class AgentSession:
     def _on_confirmation_requested(self, request: Any) -> None:
         tool_call = request.tool_call
         tool = request.tool
+        self._open_confirmations.add(tool_call.id)
         self.emit(EventType.CONFIRMATION_REQUESTED, {
             "id": tool_call.id,
             "name": tool_call.name,
@@ -390,10 +465,27 @@ class AgentSession:
     def respond_to_confirmation(self, tool_call_id: str, confirmed: bool) -> None:
         """Answer a pending confirmation request."""
         tool_orchestrator.respond_to_confirmation(tool_call_id, confirmed)
+        self._open_confirmations.discard(tool_call_id)
         self.emit(
             EventType.CONFIRMATION_RESOLVED,
             {"id": tool_call_id, "confirmed": bool(confirmed)},
         )
+
+    def _close_open_confirmations(self) -> None:
+        """Answer every prompt this turn has outstanding with "no".
+
+        Called from the end of the turn and from `cancel`, because a prompt
+        cannot outlive the turn that raised it: the tool waiting for approval
+        has nothing else to release it, and a dialog over a turn that has ended
+        is a dialog neither button can mean anything on. Going through
+        `respond_to_confirmation` rather than emitting directly is the whole
+        point -- it is what also releases the orchestrator's wait, so a stopped
+        turn does not leave the tool sitting out its 60-second timeout.
+
+        A no-op when nothing is open, which is the normal case.
+        """
+        for call_id in sorted(self._open_confirmations):
+            self.respond_to_confirmation(call_id, False)
 
     # -- questions / presentations -------------------------------------------
     def install_question_bridge(self) -> None:
@@ -584,27 +676,29 @@ class AgentSession:
         )
 
     async def _run_turn(self, turn_id: str) -> None:
-        # A turn-scoped parent pointer for the subagent tools: while THIS
-        # session's turn runs, its tool calls spawn children of it. A child's
-        # own turn (started from inside the parent's tool call) pushes onto
-        # this and pops back to the parent's session on unwind — a plain
-        # set/forget pair would leak the child's pointer across the parent's
-        # remaining turn, which is exactly the shape the user_io leak warned
-        # about: a process-global written as a side effect of *running*
-        # something.
-        from tonyagent.tools.subagent_tools import forget_parent, record_parent
-
-        record_parent(self)
-        try:
+        # This session is *the* session for the duration of its turn: published
+        # into the tool context, which is how a tool learns whose turn reached
+        # it. A child's own turn (started from inside the parent's tool call)
+        # nests inside the parent's context and restores it on unwind, so the
+        # parent's remaining calls still see the parent.
+        #
+        # A ContextVar rather than the module global this replaced: a global
+        # written as a side effect of *running* something is exactly the shape
+        # the `user_io` leak warned about, and two sessions can be running at
+        # once here (a parent and its child) in a way they never could before
+        # this phase.
+        with use_context(session=self):
             await self._run_turn_body(turn_id)
-        finally:
-            forget_parent()
 
     async def _run_turn_body(self, turn_id: str) -> None:
         try:
+            # Resolved before the first request, so the prompt and the turn
+            # agree about what this turn is. See `_skill_for_this_turn`.
+            self._active_skill = self._skill_for_this_turn()
             self.emit(EventType.TURN_STARTED, {"model": self.model}, turn_id=turn_id)
             self._round_orders = []
             self._tool_calls_used = 0
+            self._children_started = 0
             for _round in range(self.MAX_TOOL_ROUNDS):
                 tool_calls = await self._stream_assistant(turn_id)
                 if not tool_calls:
@@ -654,7 +748,51 @@ class AgentSession:
                 EventType.TURN_FAILED, {"message": str(exc)}, turn_id=turn_id
             )
         finally:
+            # Whatever ended the turn -- an answer, a stop, a provider error, a
+            # task cancelled from outside -- a prompt it raised cannot outlive
+            # it. The child's own turn comes through here too, which is why this
+            # is the body and not `run_turn`.
+            self._close_open_confirmations()
+            # Nothing a turn started outlives it: a call left running by a
+            # failure or a stop would be answered to nobody, and would still be
+            # spending the user's money.
+            self._cancel_running_tools()
+            # A skill is invoked for one turn. Left set, the next turn would
+            # still be following a procedure nobody asked for again -- and it
+            # would look like the model refusing to let go of it.
+            self._active_skill = None
             self._busy = False
+
+    def _skill_for_this_turn(self) -> SkillInvocation | None:
+        """The skill this turn's message asks for, if it asks for one that exists.
+
+        Read from the last message rather than from ``send``, because ``send`` is
+        not the only way into a turn: ``run_turn`` (scripts and tests) and a
+        child's own turn (``subagent_tools._child_turn``) each append their user
+        message and then call ``_run_turn``. Every one of them appends first, so
+        the last message *is* this turn's -- and a `/name` in a child's brief
+        means the same thing it means at the top level, which is the answer that
+        needs no special case.
+
+        The *current* folder is passed explicitly. `invocation_for` takes one
+        required rather than defaulting, because a default would have to mean
+        "the user root only" and would read as "the project" -- the bug being a
+        skill that exists and is never found.
+
+        An unknown name is not a skill invocation at all: see
+        ``core.skills.invocation_for`` for why a message is never hijacked just
+        for starting with a slash.
+        """
+        if not self.messages:
+            return None
+        last = self.messages[-1]
+        if last.role != MessageRole.USER:
+            return None
+        # An attachment message carries content parts rather than text, and a
+        # list of parts is not something a slash command can be read out of.
+        if not isinstance(last.content, str):
+            return None
+        return invocation_for(last.content, folder_manager.current_folder)
 
     def _check_cancelled(self) -> None:
         if self._cancel is not None and self._cancel.is_set():
@@ -739,11 +877,19 @@ class AgentSession:
         something either party *said* -- and in the history the model would read its
         own plan back as a claim it had made, while `clear()` and the history tests
         would have to account for a turn nobody took.
+
+        The skill this turn was asked for with `/name` is appended for the same
+        reason: the user typed `/review`, and that is what the transcript keeps --
+        the procedure itself is background for one turn, not a document either
+        party said, and a transcript that grew a pasted procedure per invocation
+        would make the file on disk unreadable in a week.
         """
         prompt = self._mode.system_prompt
         plan = self.state.render()
         if plan:
             prompt = f"{prompt}\n\n{plan}"
+        if self._active_skill is not None:
+            prompt = f"{prompt}\n\n{self._active_skill.prompt_block()}"
         return [ChatMessage(role="system", content=prompt), *self.messages]
 
     async def _iter_chunks(self, tools: list[ToolSchema]):
@@ -990,7 +1136,23 @@ class AgentSession:
                     turn_id=turn_id,
                 )
 
-            results = await self._execute_batch(planned)
+            try:
+                results = await self._execute_batch(planned)
+            except BaseException:
+                # **The pairing rule holds on this path too**, and it is the same
+                # rule the budget refusals below exist for: the assistant message
+                # above already declared these calls, and an OpenAI-compatible
+                # endpoint rejects a history where a declared call has no
+                # answering tool message -- a 400 attached to the *next* message,
+                # with the cause one request out of sight.
+                #
+                # It matters most on the stop path, which is the common one: a
+                # Stop used to leave the calls unfinished but *answered*, because
+                # the turn waited for them. Cancelling the call is what makes Stop
+                # immediate (see `_cancel_running_tools`), and it is also what
+                # would leave the history half-answered without this.
+                self._answer_unfinished_calls(planned, turn_id)
+                raise
 
             for (call, budget), result in zip(planned, results):
                 payload = result.to_dict()
@@ -1042,29 +1204,89 @@ class AgentSession:
         as sequential as it has always been, and only the case that needs nobody
         gets faster.
 
-        One call is run in line rather than through a task. A gather of one is
-        all cost and no concurrency.
+        Calls run one at a time in the prompting case and in a batch of one, and
+        each is still started as its own task even when nothing overlaps --
+        a task is the handle `cancel()` needs, and a single call is the shape a
+        stopped turn most often has.
         """
-        if len(planned) == 1 or any(
-            tool_orchestrator.will_prompt(call.name, call.arguments)
-            for call, _ in planned
-        ):
-            return [await self._execute_one(call) for call, _ in planned]
-
-        tasks = [asyncio.create_task(self._execute_one(call)) for call, _ in planned]
         try:
-            return list(await asyncio.gather(*tasks))
-        except BaseException:
-            # Nothing may be left running behind a failure. A turn the user
-            # stopped that keeps executing tools is not stopped, and a gather
-            # abandoned because one call raised would leave the rest running
-            # with nobody reading their results. The tasks are cancelled *and
-            # awaited*, so their exceptions are collected rather than surfacing
-            # later as "never retrieved".
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
+            if len(planned) == 1 or any(
+                tool_orchestrator.will_prompt(call.name, call.arguments)
+                for call, _ in planned
+            ):
+                # One at a time -- and each still inside its own task, because a
+                # task is the handle Stop needs. A call run in line cannot be
+                # cancelled, and a single call is the common case: one
+                # `execute_command` is exactly the turn a user stops.
+                return [await self._run_tool_call(call) for call, _ in planned]
+
+            tasks = [self._start_tool_call(call) for call, _ in planned]
+            try:
+                return list(await asyncio.gather(*tasks))
+            except BaseException:
+                # Nothing may be left running behind a failure: a gather
+                # abandoned because one call raised would leave the rest running
+                # with nobody reading their results. The tasks are cancelled
+                # *and awaited*, so their exceptions are collected rather than
+                # surfacing later as "never retrieved".
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
+        except asyncio.CancelledError:
+            # The calls were cancelled by `cancel()`, which is the session's own
+            # "this turn was stopped" -- the exception `_check_cancelled` raises,
+            # and the one `_run_turn_body` turns into a cancelled turn's frame.
+            #
+            # Translating it matters: `CancelledError` is a `BaseException`, so
+            # nothing in `_run_turn_body` catches it, and a turn that ended with
+            # no terminal frame would leave the window showing "busy" forever. A
+            # cancellation that is *not* ours -- the turn's own task cancelled
+            # from outside, at shutdown -- is left alone to propagate, because
+            # that caller is awaiting it.
+            if self._cancel is not None and self._cancel.is_set():
+                raise SessionCancelled()
             raise
+
+    def _start_tool_call(self, call: ToolCall) -> asyncio.Task:
+        """One tool call in its own task, registered so `cancel()` can reach it.
+
+        Registration is what makes Stop work on a call that is already running.
+        The flag `cancel()` sets is only *polled* -- before a call, and between
+        rounds -- so a turn stopped while a tool ran on kept running to that
+        tool's own end: measured, a turn that had spawned a child stayed alive
+        for the child's whole turn after Stop (2.7s of a 3s child), and a turn
+        waiting on a command would have waited out its timeout.
+        """
+        task = asyncio.create_task(self._execute_one(call))
+        self._tool_tasks.add(task)
+        task.add_done_callback(self._tool_tasks.discard)
+        return task
+
+    async def _run_tool_call(self, call: ToolCall) -> ToolResult:
+        """One call, awaited in order -- the sequential half of a batch.
+
+        Its own task even though nothing overlaps here, for the reason above: a
+        batch of one is the common case, and it is the case the user stops.
+        """
+        return await self._start_tool_call(call)
+
+    def _cancel_running_tools(self) -> None:
+        """Cancel the tool calls this session has in flight, if any.
+
+        Called by `cancel()` (the user's Stop) and at the end of every turn, so
+        nothing a turn started can outlive it. A cancelled call is not answered
+        on the wire -- there is no result to report about work that did not
+        finish -- and the turn waiting on it ends as a cancelled turn.
+
+        A child stopped this way is stopped *by* this: cancelling the parent's
+        call raises `CancelledError` inside `_drive_child`, whose own branch
+        interrupts the child before re-raising. That branch was written for this
+        path and had no caller until now.
+        """
+        for task in list(self._tool_tasks):
+            task.cancel()
+
 
     async def _execute_one(self, call: ToolCall) -> ToolResult:
         """One tool call, on the entry point a coroutine has to use.
@@ -1113,6 +1335,56 @@ class AgentSession:
             "limit": self.max_tool_calls,
             "label": self._tool_budget_label(),
         }
+
+    def _answer_unfinished_calls(
+        self, planned: list[tuple[ToolCall, dict[str, Any]]], turn_id: str
+    ) -> None:
+        """Answer every call in a batch that ended without results.
+
+        Called when the batch raised -- a stopped turn, or a failing call that
+        took its siblings with it. Each planned call gets one tool message saying
+        it produced no result, which is what keeps the assistant message above it
+        valid: a declared ``tool_calls`` entry with nothing answering it is
+        rejected outright by OpenAI-compatible endpoints, so the alternative to
+        this message is not "silence", it is a 400 on the user's next message.
+
+        The wording is careful in both directions. It says *not run* rather than
+        "failed" (nothing was attempted at the end of it), and it says "before it
+        produced a result" rather than "before it started", because a concurrent
+        batch stopped midway can contain a call that did run and whose result was
+        discarded with the batch.
+        """
+        for call, budget in planned:
+            reason = (
+                "Not run: the turn was stopped before this call produced a "
+                "result. Nothing else happened because of it."
+            )
+            payload = {
+                "status": "error",
+                "output": None,
+                "summary": None,
+                "error": reason,
+                "artifacts": [],
+                "duration_ms": 0.0,
+                "tool_call_budget": budget,
+            }
+            self.emit(
+                EventType.TOOL_COMPLETED,
+                {
+                    "id": call.id,
+                    "name": call.name,
+                    "result": payload,
+                    "tool_call_budget": budget,
+                },
+                turn_id=turn_id,
+            )
+            self.messages.append(
+                ChatMessage(
+                    role="tool",
+                    content=json.dumps(payload),
+                    tool_call_id=call.id,
+                )
+            )
 
     def _append_refused_tool_message(self, call_id: str, name: str,
                                      turn_id: str) -> None:
