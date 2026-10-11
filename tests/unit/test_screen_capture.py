@@ -25,9 +25,10 @@ from PIL import Image
 from tonyagent.core.attachments import strip_images
 from tonyagent.core.session import AgentSession
 from tonyagent.providers.base import ChatMessage
+from tonyagent.core.modes import PERMISSIONS
 from tonyagent.tools import screen_tools
 from tonyagent.tools.base import ToolResultStatus
-from tonyagent.tools.shell_tools import set_host_execution
+from tonyagent.tools.context import use_context
 
 #: 1440x810 rather than a real 1920x1080 desktop. 16:9, and -- the reason it
 #: matters -- smaller than `MAX_EDGE`, so "what the tool returns" and "what the
@@ -52,9 +53,10 @@ def fake_screen(monkeypatch):
         return Image.new("RGB", (w, h), (20, 20, 20))
 
     monkeypatch.setattr(screen_tools, "_grab", grab)
-    set_host_execution(True)
-    yield
-    set_host_execution(False)
+    # Full for the duration of the test, published the way the orchestrator
+    # publishes it around a real call -- `take_screenshot` lives only at Full.
+    with use_context(permission=PERMISSIONS["full"]):
+        yield
 
 
 def call(**kwargs):
@@ -72,8 +74,8 @@ class TestPermission:
     def test_below_full_it_refuses_and_returns_no_pixels(self):
         # The refusal has to name the rung, or the model retries a tool that
         # cannot work and burns the turn's budget finding out.
-        set_host_execution(False)
-        result = call()
+        with use_context(permission=PERMISSIONS["high"]):
+            result = call()
         assert result.status is ToolResultStatus.ERROR
         assert "Full" in result.error
         assert result.images == []

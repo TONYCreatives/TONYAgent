@@ -12,7 +12,7 @@ from tonyagent.tools.runtime_access import (
 )
 from tonyagent.sandbox import get_shared_sandbox_manager
 from tonyagent.sandbox.base import SandboxStatus
-from tonyagent.folder.manager import folder_manager
+from tonyagent.tools.workspace import confine, project_root
 
 
 def get_sandbox_manager():
@@ -562,19 +562,13 @@ class BrowserScreenshotTool(Tool):
             # Map host-relative path to /workspace; empty -> server default.
             sandbox_path = ""
             if path:
-                project_root = folder_manager.current_folder
-                if project_root is None:
-                    return ToolResult(
-                        status=ToolResultStatus.ERROR, error="No project folder selected"
-                    )
-                target = (project_root / path).resolve()
+                # The boundary's check, not a fifth copy of it (see
+                # `tonyagent.tools.workspace`): only the host -> container
+                # mapping belongs here.
                 try:
-                    rel = target.relative_to(project_root.resolve()).as_posix()
-                except ValueError:
-                    return ToolResult(
-                        status=ToolResultStatus.ERROR,
-                        error=f"Path '{path}' attempts to escape project folder",
-                    )
+                    rel = confine(path).relative_to(project_root()).as_posix()
+                except ValueError as exc:
+                    return ToolResult(status=ToolResultStatus.ERROR, error=str(exc))
                 sandbox_path = f"/workspace/{rel}" if rel != "." else "/workspace"
             result = await backend.browser_screenshot(sandbox_path)
             if result.success:

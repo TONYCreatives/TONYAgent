@@ -18,79 +18,52 @@ from tonyagent.tools.base import (
     output_excerpt,
     register_tool,
 )
+from tonyagent.tools.context import current
 from tonyagent.tools.jobs import jobs_registry
-from tonyagent.folder.manager import folder_manager
+from tonyagent.tools.workspace import confine, project_root
 from tonyagent.config.settings import settings
 from loguru import logger
 
 
-def _resolve_path(path: str) -> Path:
-    project_root = folder_manager.current_folder
-    if not project_root:
-        raise ValueError("No project folder selected")
-    
-    target = (project_root / path).resolve()
-    try:
-        target.relative_to(project_root.resolve())
-    except ValueError:
-        raise ValueError(f"Path '{path}' attempts to escape project folder")
-    return target
+#: The workspace boundary, from its one home -- see
+#: `tonyagent.tools.workspace` for why this is one implementation and not four.
+_resolve_path = confine
 
 
-#: Whether the user has chosen a level that runs commands off the allow-list.
+#: The two questions a command tool has to answer before it runs anything.
 #:
-#: **A module flag rather than a parameter threaded through, deliberately.**
-#: The first attempt read the level off `tool_orchestrator`, the module-level
-#: singleton -- and a test that constructs its own `ToolOrchestrator` then got
-#: two different answers from two authorities: the orchestrator's confirmation
-#: logic saw `full` and skipped asking, while `ExecuteCommandTool` saw the
-#: singleton's default and refused the command anyway. Two readers of "what may
-#: this session run" is the bug, not the fix.
+#: **Why they are asked of the tool context now, and not of two module flags.**
+#: These were `_ALLOWLIST_BYPASS` and `_HOST_EXECUTION`, two booleans derived
+#: from one permission level and pushed into this module by
+#: `ToolOrchestrator.set_permission` the moment the level changed. That fixed an
+#: earlier bug -- reading the level off the `tool_orchestrator` singleton meant
+#: the orchestrator's confirmation logic and `ExecuteCommandTool` could disagree
+#: about the same session -- but it traded one ownership mistake for another:
+#: the answer belonged to no call in particular, and a parent and its child (two
+#: sessions whose turns now interleave, see `tools/context.py`) shared it.
 #:
-#: The permission level is session state, so one process-wide flag set by the
-#: single place that owns the level is the honest shape. Written only by
-#: `ToolOrchestrator.set_permission`.
-_ALLOWLIST_BYPASS = False
-
-
-def set_allowlist_bypass(bypassed: bool) -> None:
-    """Record whether commands off the allow-list may run. See `_ALLOWLIST_BYPASS`."""
-    global _ALLOWLIST_BYPASS
-    _ALLOWLIST_BYPASS = bool(bypassed)
+#: Now the level itself arrives in `ToolContext.permission`, published by the
+#: orchestrator around each execution, and these two readers derive their answer
+#: from it. One authority, one call at a time. Nothing published (a direct tool
+#: call in a test or a script) reads as "no bypass, no host", which is the safe
+#: direction.
 
 
 def allowlist_bypassed() -> bool:
-    return _ALLOWLIST_BYPASS
-
-
-#: Whether the chosen permission level runs commands on the host.
-#:
-#: A second instance of the argument `_ALLOWLIST_BYPASS` makes, and for the same
-#: reason. `ExecuteCommandTool` is the only thing that can decide whether a
-#: command may run on the host, and it is not the thing that holds the
-#: permission level -- so the level is published to it, once, by the one place
-#: that owns the level. Reading it off the orchestrator singleton instead is
-#: what produced two authorities disagreeing about the same session once
-#: already.
-#:
-#: **What this flag does and does not authorise.** It is set by exactly one
-#: permission rung (`full`), it is the reason `ExecuteCommandTool`'s isolation
-#: gate can be passed without a container, and it is *not* a general escape
-#: hatch: `tools.fallback_to_local` remains a separate, independent opt-in, and
-#: a session at High with this False is refused exactly as before.
-#:
-#: Written only by `ToolOrchestrator.set_permission`.
-_HOST_EXECUTION = False
-
-
-def set_host_execution(enabled: bool) -> None:
-    """Record whether commands may run on the host. See `_HOST_EXECUTION`."""
-    global _HOST_EXECUTION
-    _HOST_EXECUTION = bool(enabled)
+    """Whether this call's level runs commands off the allow-list."""
+    return bool(getattr(current().permission, "bypasses_command_allowlist", False))
 
 
 def host_execution() -> bool:
-    return _HOST_EXECUTION
+    """Whether this call's level runs commands on the host.
+
+    **What this authorises and what it does not.** It is true at exactly one
+    permission rung (`full`), it is the reason `ExecuteCommandTool`'s isolation
+    gate can be passed without a container, and it is *not* a general escape
+    hatch: `tools.fallback_to_local` remains a separate, independent opt-in, and
+    a session at High is refused exactly as before.
+    """
+    return bool(getattr(current().permission, "runs_on_host", False))
 
 
 #: Leading words that only wrap another command. Stripped before the denylist
@@ -198,15 +171,14 @@ def _is_command_allowed(command: str, bypass_allowlist: bool = False) -> tuple[b
 
 
 def _resolve_sandbox_cwd(cwd: str) -> str:
-    """Map a host-relative cwd to its /workspace path inside the container."""
-    project_root = folder_manager.current_folder
-    if not project_root:
-        raise ValueError("No project folder selected")
-    target = (project_root / cwd).resolve()
-    try:
-        rel = target.relative_to(project_root.resolve()).as_posix()
-    except ValueError:
-        raise ValueError(f"Path '{cwd}' attempts to escape project folder")
+    """Map a host-relative cwd to its /workspace path inside the container.
+
+    The confinement is `confine`'s, not a fourth copy of it: the *mapping* to
+    ``/workspace`` is this function's own job, and the check on the way in is
+    the boundary's.
+    """
+    target = confine(cwd)
+    rel = target.relative_to(project_root()).as_posix()
     if rel == ".":
         return "/workspace"
     return f"/workspace/{rel}"

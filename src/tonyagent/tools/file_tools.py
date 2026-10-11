@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from tonyagent.tools.base import Tool, ToolResult, ToolResultStatus, ToolCategory, register_tool
-from tonyagent.folder.manager import folder_manager
+from tonyagent.tools.workspace import confine
 from tonyagent.tools.images import EDGE_NOTE, MAX_SOURCE_BYTES, encode
 
 
@@ -44,20 +44,10 @@ def _change_artifact(path: str, added: int, removed: int) -> dict:
     }
 
 
-def _resolve_path(path: str) -> Path:
-    """Resolve path relative to project folder with safety checks."""
-    project_root = folder_manager.current_folder
-    if not project_root:
-        raise ValueError("No project folder selected")
-
-    target = (project_root / path).resolve()
-
-    try:
-        target.relative_to(project_root.resolve())
-    except ValueError:
-        raise ValueError(f"Path '{path}' attempts to escape project folder")
-
-    return target
+#: The workspace boundary, from its one home. Kept under this name because it
+#: is a module-level helper of this module's tools, not a second implementation
+#: -- see `tonyagent.tools.workspace` for why there is only one.
+_resolve_path = confine
 
 
 @register_tool

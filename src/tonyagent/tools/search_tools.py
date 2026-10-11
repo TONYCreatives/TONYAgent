@@ -8,20 +8,32 @@ from pathlib import Path
 from typing import Any
 
 from tonyagent.tools.base import Tool, ToolResult, ToolResultStatus, ToolCategory, register_tool
-from tonyagent.folder.manager import folder_manager
+from tonyagent.tools.workspace import relative
+from tonyagent.tools.workspace import confine as _resolve_path
 
 
-def _resolve_path(path: str) -> Path:
-    project_root = folder_manager.current_folder
-    if not project_root:
-        raise ValueError("No project folder selected")
-    
-    target = (project_root / path).resolve()
-    try:
-        target.relative_to(project_root.resolve())
-    except ValueError:
-        raise ValueError(f"Path '{path}' attempts to escape project folder")
-    return target
+def _escapes_the_project(pattern: str) -> bool:
+    """Whether a glob *pattern* walks out of the project folder.
+
+    A pattern is not a path, but it is composed of path segments and it is
+    handed to a filesystem walk, so it can climb: ``../*/*.txt`` leaves the
+    project in its first two characters. Two things are refused -- a pattern
+    that is absolute (``Path.rglob`` rejects one with ``NotImplementedError``
+    anyway, which used to surface as "Tool execution failed"), and any ``..``
+    segment, split on both separators so the Windows spelling is caught too.
+
+    Deliberately not a general pattern validator: ``**/*.py``, ``a..b/*.txt``
+    and a leading ``./`` are all fine, and the only property that matters here
+    is whether the walk can leave the folder.
+    """
+    # A leading separator counts as absolute here as well as
+    # `Path.is_absolute()`: on Windows the latter is False for `/abs/*` (no
+    # drive letter), and the walk's own rejection of it is a
+    # `NotImplementedError` paraphrased as "Tool execution failed" -- no use to
+    # a model that has to change the pattern.
+    if pattern.startswith(("/", "\\")) or Path(pattern).is_absolute():
+        return True
+    return ".." in re.split(r"[\\/]", pattern)
 
 
 def _should_skip(path: Path) -> bool:
@@ -140,11 +152,15 @@ class GrepTool(Tool):
             files_skipped = 0
             truncated = False
 
-            for file_path in target.rglob("*"):
-                if _should_skip(file_path):
+            for candidate in target.rglob("*"):
+                # Confined before it is read, not merely before it is reported:
+                # a walk that reaches out of the project through a symlink has
+                # no business having its contents searched either.
+                if _should_skip(candidate) or relative(candidate) is None:
                     continue
-                if not file_path.is_file() or not match_file(file_path):
+                if not candidate.is_file() or not match_file(candidate):
                     continue
+                file_path = candidate
                 if max_bytes:
                     try:
                         if file_path.stat().st_size > max_bytes:
@@ -156,7 +172,7 @@ class GrepTool(Tool):
                 files_searched += 1
                 for line_no, text in _iter_matches(file_path, regex, limit - len(results)):
                     entry = {
-                        "file": str(file_path.relative_to(folder_manager.current_folder)),
+                        "file": relative(file_path),
                         "line": line_no,
                         "content": text.strip(),
                     }
@@ -200,6 +216,12 @@ class GlobTool(Tool):
 
     name = "glob"
     description = "Find files matching a glob pattern within the project."
+    # The *pattern* is confined as well as the path, and that is not belt and
+    # braces -- it is a hole this pass found live. `path` was confined while
+    # `pattern` was handed straight to `rglob`, so `../*/*.txt` listed files
+    # from the parent directory and reported them as siblings of the project
+    # (the display path came from a *lexical* `relative_to`, which happily
+    # returns `..\elsewhere\secret.txt`). See `_escapes_the_project`.
     category = ToolCategory.SEARCH
     parameters = {
         "type": "object",
@@ -222,6 +244,16 @@ class GlobTool(Tool):
             target = _resolve_path(path)
             if not target.exists():
                 return ToolResult(status=ToolResultStatus.ERROR, error=f"Path not found: {path}")
+            if _escapes_the_project(pattern):
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    error=(
+                        f"Pattern '{pattern}' reaches outside the project folder, "
+                        "which is the boundary every file tool works inside. "
+                        "Search for something in the project, or ask the user for "
+                        "the file you need."
+                    ),
+                )
 
             limit = max(1, int(max_results))
             matches = []
@@ -229,10 +261,13 @@ class GlobTool(Tool):
             for file_path in target.rglob(pattern):
                 if _should_skip(file_path):
                     continue
-                try:
-                    matches.append(str(file_path.relative_to(folder_manager.current_folder)))
-                except ValueError:
+                # Resolved, not merely relativised: `rglob` can reach a file
+                # through a symlink that leaves the project, and a lexical
+                # `relative_to` would report that path instead of refusing it.
+                shown = relative(file_path)
+                if shown is None:
                     continue
+                matches.append(shown)
                 if len(matches) >= limit:
                     truncated = True
                     break

@@ -35,22 +35,11 @@ from tonyagent.tools.base import ToolResultStatus
 MUTATING = {"write", "edit", "delete_file", "execute_command"}
 
 
-@pytest.fixture(autouse=True)
-def reset_allowlist_bypass():
-    """Put the process-wide Full flag back after every test in this file.
-
-    The flag is process-wide on purpose (see `_ALLOWLIST_BYPASS`), which makes
-    leaking it a real hazard: a test that selects Full would otherwise hand its
-    widened authority to whatever test happened to run next, and the failure
-    would land somewhere unrelated.
-    """
-    from tonyagent.tools import shell_tools
-
-    shell_tools.set_allowlist_bypass(False)
-    try:
-        yield
-    finally:
-        shell_tools.set_allowlist_bypass(False)
+# The autouse "put the process-wide Full flag back" fixture is gone, and its
+# absence is the point: the permission level is no longer a module global that a
+# test could leak into the next one. It is published in the tool context around
+# each call (`tools/context.py`), so a test that selects Full hands its widened
+# authority to nobody -- which is what the fixture was papering over.
 
 
 @pytest.fixture
@@ -300,12 +289,16 @@ def test_the_same_call_succeeds_once_the_mode_allows_it(project):
     from tonyagent.tools import ToolCall, tool_orchestrator
 
     tool_orchestrator.set_mode(None)  # the unrestricted default
-    result = asyncio.run(
-        tool_orchestrator.execute_tool_async(
-            ToolCall(id="t3", name="write",
-                     arguments={"path": "yes.txt", "content": "ok"})
+    _approve(tool_orchestrator)  # the user pressing Allow; the gate refuses otherwise
+    try:
+        result = asyncio.run(
+            tool_orchestrator.execute_tool_async(
+                ToolCall(id="t3", name="write",
+                         arguments={"path": "yes.txt", "content": "ok"})
+            )
         )
-    )
+    finally:
+        tool_orchestrator.set_confirmation_callback(None)
     assert result.status.value == "success"
     assert (project / "yes.txt").read_text(encoding="utf-8") == "ok"
 
@@ -505,6 +498,7 @@ def test_a_written_file_is_not_echoed_into_the_log(project):
     secret = "sk-ant-should-never-appear-in-the-log-strip"
     lines: list[str] = []
     tool_orchestrator.set_log_callback(lambda message, level: lines.append(message))
+    _approve(tool_orchestrator)
     try:
         asyncio.run(
             tool_orchestrator.execute_tool_async(
@@ -514,6 +508,7 @@ def test_a_written_file_is_not_echoed_into_the_log(project):
         )
     finally:
         tool_orchestrator.set_log_callback(None)
+        tool_orchestrator.set_confirmation_callback(None)
 
     joined = "\n".join(lines)
     assert secret not in joined
@@ -532,6 +527,7 @@ def test_short_arguments_are_still_shown_in_full(project):
 
     lines: list[str] = []
     tool_orchestrator.set_log_callback(lambda message, level: lines.append(message))
+    _approve(tool_orchestrator)
     try:
         asyncio.run(
             tool_orchestrator.execute_tool_async(
@@ -541,6 +537,7 @@ def test_short_arguments_are_still_shown_in_full(project):
         )
     finally:
         tool_orchestrator.set_log_callback(None)
+        tool_orchestrator.set_confirmation_callback(None)
 
     joined = "\n".join(lines)
     assert "path='short.py'" in joined
@@ -557,6 +554,21 @@ async def _answer(orch, request) -> None:
     """Approve a confirmation a few ticks later, as the real bridge does."""
     await asyncio.sleep(0)
     orch.respond_to_confirmation(request.tool_call.id, True)
+
+
+def _approve(orch) -> None:
+    """Send ``Allow`` for whatever this orchestrator asks about.
+
+    Needed wherever a test drives a **destructive** tool through the
+    orchestrator and wants it to actually run. That gate fails closed: with no
+    callback installed the call is refused rather than run unasked, so "the
+    tool ran" is now a thing a test has to ask for -- which is the point of the
+    gate, and why these call sites say yes explicitly instead of relying on
+    there being nobody to ask.
+    """
+    orch.set_confirmation_callback(
+        lambda request: asyncio.get_running_loop().create_task(_answer(orch, request))
+    )
 
 
 def test_the_four_levels_are_ordered_low_to_full():
@@ -650,91 +662,92 @@ async def test_a_command_runs_on_the_host_at_full_and_is_refused_at_high(
     being accepted, and nothing here writes to disk or touches anything outside
     `tmp_path`.
     """
-    from tonyagent.tools.orchestrator import ToolOrchestrator
-    from tonyagent.tools.shell_tools import (
-        ExecuteCommandTool,
-        set_allowlist_bypass,
-        set_host_execution,
-    )
+    from tonyagent.tools.context import use_context
+    from tonyagent.tools.shell_tools import ExecuteCommandTool
 
     monkeypatch.setattr(folder_manager, "_current_folder", tmp_path)
-    # The flag is module state, so it is restored explicitly rather than left to
-    # test ordering. A leaked True here would make every later isolation test in
-    # the suite pass for the wrong reason.
-    monkeypatch.setattr(
-        "tonyagent.tools.shell_tools._HOST_EXECUTION", False, raising=False
-    )
-    set_host_execution(False)
-    set_allowlist_bypass(False)
 
     # An allow-listed interpreter, so the allow-list gate passes and the
     # isolation gate is what is under test. `PRINT_CMD` rather than a literal so
     # the marker and the assertion that checks for it cannot drift apart.
     PRINT_CMD = "python -c \"print('{}')\"".format
+    tool = ExecuteCommandTool()
 
-    try:
-        tool = ExecuteCommandTool()
-
-        # High: no container is running in a unit test, so the isolation gate
-        # must refuse. This is the pre-existing behaviour, asserted so that the
-        # change below cannot have quietly removed it.
-        set_host_execution(False)
+    # High: no container is running in a unit test, so the isolation gate must
+    # refuse. This is the pre-existing behaviour, asserted so that the change
+    # below cannot have quietly removed it. The level arrives in the tool
+    # context, exactly as the orchestrator publishes it around a real call.
+    with use_context(permission=_permission("high")):
         refused = await tool.execute(PRINT_CMD("high-was-refused"))
-        assert refused.status is ToolResultStatus.ERROR, (
-            "High ran a command with no sandbox behind it"
-        )
-        assert "isolated sandbox" in (refused.error or "").lower() or (
-            "not running" in (refused.error or "").lower()
-        ), f"High was refused for the wrong reason: {refused.error!r}"
+    assert refused.status is ToolResultStatus.ERROR, (
+        "High ran a command with no sandbox behind it"
+    )
+    assert "isolated sandbox" in (refused.error or "").lower() or (
+        "not running" in (refused.error or "").lower()
+    ), f"High was refused for the wrong reason: {refused.error!r}"
 
-        # Full: the same command, the same folder, now permitted to run here.
-        set_host_execution(True)
+    # Full: the same command, the same folder, now permitted to run here.
+    with use_context(permission=_permission("full")):
         ran = await tool.execute(PRINT_CMD("full-ran-on-the-host"))
-        assert ran.status is ToolResultStatus.SUCCESS, (
-            f"Full did not run a command on the host: {ran.error!r}"
-        )
-        assert "full-ran-on-the-host" in str(ran.output), (
-            f"Full reported success without the output proving it ran: {ran.output!r}"
-        )
+    assert ran.status is ToolResultStatus.SUCCESS, (
+        f"Full did not run a command on the host: {ran.error!r}"
+    )
+    assert "full-ran-on-the-host" in str(ran.output), (
+        f"Full reported success without the output proving it ran: {ran.output!r}"
+    )
 
-        # And switching away takes the permission back. A level that grants host
-        # access and does not withdraw it on the way out is not a setting, it is
-        # a latch.
-        set_host_execution(False)
+    # And leaving the block takes the permission back. A level that grants host
+    # access and does not withdraw it on the way out is not a setting, it is a
+    # latch -- and the withdrawal is now structural (the scope ends) rather than
+    # a second write that a crash between the two could skip.
+    with use_context(permission=_permission("high")):
         refused_again = await tool.execute(PRINT_CMD("high-again"))
-        assert refused_again.status is ToolResultStatus.ERROR, (
-            "leaving Full did not withdraw host execution"
-        )
-    finally:
-        set_host_execution(False)
-        set_allowlist_bypass(False)
+    assert refused_again.status is ToolResultStatus.ERROR, (
+        "leaving Full did not withdraw host execution"
+    )
 
 
-async def test_the_orchestrator_publishes_and_withdraws_host_execution():
-    """The flag is set by the level that owns it, so switching takes it back.
+async def test_the_orchestrator_publishes_the_permission_around_each_call(monkeypatch):
+    """The level reaches the *call* that must enforce it, and only that call.
 
-    Deliberately goes through `ToolOrchestrator.set_permission` rather than
-    calling the setter directly: the question this answers is whether a user who
-    picks Full and then changes their mind gets their machine back, and only the
-    orchestrator knows a level changed.
+    Deliberately goes through `ToolOrchestrator.execute_tool_async` rather than
+    setting anything directly: the question is whether a user who picks Full and
+    then changes their mind gets their machine back, and only the orchestrator
+    knows a level changed.
+
+    The probe is the real `list_agents` singleton with only its `execute`
+    replaced, so the mode/permission intersection the orchestrator applies is
+    the production one and the test is measuring the publish, not a bypass of
+    the gates. It reads `host_execution()` from inside the call, which is where
+    a tool that must decide "may I touch this machine" actually reads it.
     """
-    from tonyagent.tools.orchestrator import ToolOrchestrator
+    from tonyagent.tools.base import ToolResult, ToolResultStatus, tool_registry
+    from tonyagent.tools.orchestrator import ToolCall, ToolOrchestrator
     from tonyagent.tools.shell_tools import host_execution
 
-    try:
-        orch = ToolOrchestrator()
-        orch.set_permission(_permission("high"))
-        assert host_execution() is False, "High published host execution"
+    seen: list[bool] = []
+    probe = tool_registry.get("list_agents")
+    assert probe is not None, "list_agents must exist to carry the probe"
 
-        orch.set_permission(_permission("full"))
-        assert host_execution() is True, "Full did not publish host execution"
+    async def record(**kwargs):
+        seen.append(host_execution())
+        return ToolResult(status=ToolResultStatus.SUCCESS, output="ok")
 
-        orch.set_permission(_permission("medium"))
-        assert host_execution() is False, (
-            "dropping from Full to Medium left host execution enabled"
+    monkeypatch.setattr(probe, "execute", record)
+
+    orch = ToolOrchestrator()
+    for index, level in enumerate(("high", "full", "medium"), start=1):
+        orch.set_permission(_permission(level))
+        result = await orch.execute_tool_async(
+            ToolCall(id=str(index), name="list_agents", arguments={})
         )
-    finally:
-        orch.set_permission(None)
+        assert result.status is ToolResultStatus.SUCCESS, result.error
+
+    assert seen == [False, True, False], (
+        f"the calls saw host execution {seen}; only the Full call should have"
+    )
+    # And outside any call the answer is the safe default, not the last level.
+    assert host_execution() is False
 
 
 def test_the_wire_reports_host_execution_as_a_flag():
@@ -897,6 +910,11 @@ async def test_high_still_refuses_a_command_off_the_allowlist(tmp_path, monkeypa
     orch = ToolOrchestrator()
     orch.set_trusted(str(tmp_path), True)
     orch.set_permission(_permission("high"))
+    # The user says yes, so the refusal under test is the command allow-list's
+    # and not the confirmation gate's.
+    orch.set_confirmation_callback(
+        lambda request: asyncio.get_running_loop().create_task(_answer(orch, request))
+    )
 
     call = ToolCall(
         id="c2",

@@ -9,7 +9,14 @@ from typing import Any, Callable, Optional
 
 from loguru import logger
 
-from tonyagent.tools.base import Tool, ToolRegistry, ToolResult, ToolResultStatus, tool_registry
+from tonyagent.tools.base import (
+    Tool,
+    ToolRegistry,
+    ToolResult,
+    ToolResultStatus,
+    tool_registry,
+)
+from tonyagent.tools.context import use_context
 from tonyagent.folder.manager import folder_manager
 from tonyagent.utils.threading import schedule_on_ui
 
@@ -64,6 +71,29 @@ class ConfirmationRequest:
     tool: Tool
     future: asyncio.Future | None = None
     timestamp: float = field(default_factory=time.time)
+
+
+#: How long a destructive call waits for an answer before it is refused.
+#:
+#: A module constant rather than a literal, for the same reason
+#: ``user_io.ASK_TIMEOUT_S`` and ``subagent_tools.CHILD_TURN_TIMEOUT_S`` are:
+#: one knob, and a test can shorten it instead of sitting out a real minute to
+#: check that the wait ends the way it says it does.
+CONFIRMATION_TIMEOUT_S = 60.0
+
+
+#: How many executed calls the orchestrator remembers.
+#:
+#: ``_execution_history`` grew without a bound and holds each call's **full
+#: arguments** -- which for ``write`` is the contents of the file, and for a
+#: batch is every file in it. Nothing reads it today (``get_history`` and
+#: ``clear_history`` have no callers anywhere), which is exactly why the bound
+#: belongs here rather than in a reader: the leak was the default state, and a
+#: long conversation with a fan-out could hold megabytes of workspace contents
+#: in memory for a history nobody asks for. A ring rather than no history,
+#: because the next caller that wants "what did the last N calls do" should be
+#: able to have it.
+EXECUTION_HISTORY_LIMIT = 200
 
 
 class ToolOrchestrator:
@@ -136,21 +166,15 @@ class ToolOrchestrator:
         them. A level enforced only by filtering the schema would be a
         suggestion to the model.
 
-        Also publishes the allow-list decision to `shell_tools`, because
-        `ExecuteCommandTool` needs it and must not consult an orchestrator
-        instance -- there would then be two readers of one setting. See
-        `_ALLOWLIST_BYPASS` there for what went wrong the first time.
+        The level is **stored, not broadcast**. The tools that need it (the
+        command allow-list decision, the isolation gate) read it from the tool
+        context, which `_execute_tool_async` publishes around each call. It
+        used to be pushed into `shell_tools` as two module booleans the moment
+        it was set, which meant (a) the answer belonged to no call in
+        particular and (b) two sessions running at once shared one answer. One
+        object, published per call, is the shape that cannot do either.
         """
         self._permission = permission
-        from tonyagent.tools.shell_tools import set_allowlist_bypass, set_host_execution
-
-        set_allowlist_bypass(self.allows_any_command())
-        # Published for the same reason and to the same place: the isolation
-        # gate lives in `shell_tools` and `runtime_access`, neither of which
-        # holds the permission level. Setting it here means switching away from
-        # Full takes the permission back with it, which is the whole safety
-        # property of a mode that grants host access.
-        set_host_execution(bool(getattr(permission, "runs_on_host", False)))
 
     def _confirmation_is_skipped(self, name: str, arguments: dict) -> bool:
         """Whether the user has already said not to be asked about this call.
@@ -302,11 +326,24 @@ class ToolOrchestrator:
         
         self._log(f"Executing {tool_call.name}({_summarise_args(tool_call.arguments)})", "info")
         
-        try:
-            result = await tool.execute(**tool_call.arguments)
-        except Exception as e:
-            logger.exception(f"Tool {tool_call.name} raised exception")
-            result = ToolResult(status=ToolResultStatus.ERROR, error=f"Tool execution failed: {e}")
+        # The call is published for the duration of the tool's execution, so a
+        # tool that *starts something* can say which call started it -- a
+        # child's frames carry this id, and that is what lets the window draw
+        # the child's work under its card. Published here rather than in each
+        # caller: this is the one async entry point every execution goes
+        # through, and the context manager's ``finally`` is what keeps a raised
+        # tool from leaving the id set for whatever runs next in this task.
+        # Nested inside the session's own context (see `tools/context.py`), so
+        # the tool sees its call, the session that call belongs to, and the
+        # permission it runs under.
+        with use_context(call_id=tool_call.id, permission=self._permission):
+            try:
+                result = await tool.execute(**tool_call.arguments)
+            except Exception as e:
+                logger.exception(f"Tool {tool_call.name} raised exception")
+                result = ToolResult(
+                    status=ToolResultStatus.ERROR, error=f"Tool execution failed: {e}"
+                )
         
         duration_ms = (time.time() - start_time) * 1000
         result.duration_ms = duration_ms
@@ -319,27 +356,58 @@ class ToolOrchestrator:
             "result": result.to_dict(),
             "duration_ms": duration_ms,
         })
+        # Bounded; see EXECUTION_HISTORY_LIMIT. The slice is a new list each
+        # time past the cap, which is the cost of not making this a deque whose
+        # public shape (`get_history` returns a list) would have to change with
+        # it.
+        if len(self._execution_history) > EXECUTION_HISTORY_LIMIT:
+            del self._execution_history[:-EXECUTION_HISTORY_LIMIT]
         
         return result
 
     async def _request_confirmation(self, tool_call: ToolCall, tool: Tool) -> ToolResult | None:
-        if self._confirmation_callback:
-            confirmation = ConfirmationRequest(tool_call, tool)
-            confirmation.future = asyncio.get_running_loop().create_future()
-            
-            self._pending_confirmations[tool_call.id] = confirmation
-            
+        """Ask the user about a destructive call, or refuse it. Never run it unasked.
+
+        **Fail closed when there is nobody to ask.** This used to fall through to
+        execution when no callback was installed, and returning ``None`` reads to
+        the caller as "approved" -- so a destructive tool ran with no prompt at
+        all. The window always installs a bridge, which is why it was invisible,
+        but the gate must not depend on some other layer having been wired first:
+        the whole point of a destructive-tool prompt is that no code path skips
+        it. The refusal is an ERROR the model can act on, like every other
+        refusal here.
+        """
+        if self._confirmation_callback is None:
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                error=(
+                    f"{tool_call.name} was not run: this session has no way to ask "
+                    "you to approve a destructive tool, so it is refused rather "
+                    "than run unasked. Ask the user to run it themselves."
+                ),
+            )
+
+        confirmation = ConfirmationRequest(tool_call, tool)
+        confirmation.future = asyncio.get_running_loop().create_future()
+
+        self._pending_confirmations[tool_call.id] = confirmation
+        try:
             schedule_on_ui(self._confirmation_callback, confirmation)
-            
             try:
-                confirmed = await asyncio.wait_for(confirmation.future, timeout=60.0)
+                confirmed = await asyncio.wait_for(
+                    confirmation.future, timeout=CONFIRMATION_TIMEOUT_S
+                )
             except asyncio.TimeoutError:
                 confirmed = False
-            
-            del self._pending_confirmations[tool_call.id]
-            
-            if not confirmed:
-                return ToolResult(status=ToolResultStatus.CANCELLED, error="User cancelled")
+        finally:
+            # Always, including when the turn is stopped while the dialog is up.
+            # This was a plain statement after the wait, so cancelling the turn
+            # left the entry in the dict for the life of the process -- a prompt
+            # nothing can answer, counted against every later responder.
+            self._pending_confirmations.pop(tool_call.id, None)
+
+        if not confirmed:
+            return ToolResult(status=ToolResultStatus.CANCELLED, error="User cancelled")
         return None
 
     def respond_to_confirmation(self, tool_call_id: str, confirmed: bool) -> None:

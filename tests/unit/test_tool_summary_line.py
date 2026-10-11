@@ -19,8 +19,10 @@ from pathlib import Path
 import pytest
 
 import tonyagent.tools  # noqa: F401  -- importing registers every tool
+from tonyagent.core.modes import get_permission
 from tonyagent.folder import folder_manager
 from tonyagent.tools import shell_tools, tool_registry
+from tonyagent.tools.context import use_context
 from tonyagent.tools.base import EXCERPT_CHARS, ToolResult, ToolResultStatus, output_excerpt
 
 
@@ -37,10 +39,15 @@ def py(code: str) -> str:
 
 @pytest.fixture
 def host(monkeypatch, tmp_path):
-    """Host execution and a project folder, so a command can actually run."""
-    monkeypatch.setattr(shell_tools, "_HOST_EXECUTION", True)
+    """Host execution and a project folder, so a command can actually run.
+
+    The level is published in the tool context for the duration of the test, the
+    way the orchestrator publishes it around a real call -- these tests drive
+    ``Tool().execute()`` directly and so have to stand in for that.
+    """
     monkeypatch.setattr(folder_manager, "_current_folder", tmp_path)
-    return tmp_path
+    with use_context(permission=get_permission("full")):
+        yield tmp_path
 
 
 # --- the excerpt helper ------------------------------------------------------
@@ -210,6 +217,19 @@ async def test_no_successful_dict_output_is_left_without_a_summary(host):
 
     orchestrator = ToolOrchestrator()
     orchestrator.set_mode(get_mode("build"))
+
+    # The destructive tools in this sweep have to be allowed through on purpose.
+    # Nothing answers a confirmation by default, and the gate now refuses rather
+    # than runs, so without this `write`/`edit` would drop out of the sweep as
+    # "cannot run here" -- and the invariant would hold over a smaller set than
+    # it names.
+    async def approve(request):
+        await asyncio.sleep(0)
+        orchestrator.respond_to_confirmation(request.tool_call.id, True)
+
+    orchestrator.set_confirmation_callback(
+        lambda request: asyncio.get_running_loop().create_task(approve(request))
+    )
 
     blank: list[str] = []
     for tool_obj in tool_registry.get_all():

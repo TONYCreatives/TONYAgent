@@ -22,11 +22,14 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
+from contextlib import contextmanager
 
 import pytest
 
 import tonyagent.tools  # noqa: F401  -- importing registers every tool
+from tonyagent.core.modes import get_permission
 from tonyagent.folder import folder_manager
+from tonyagent.tools.context import use_context
 from tonyagent.sandbox import get_shared_sandbox_manager
 from tonyagent.sandbox.base import SandboxConfig, SandboxStatus
 from tonyagent.tools import tool_registry
@@ -60,12 +63,26 @@ def clean_registry():
     jobs_registry.reset()
 
 
+@contextmanager
+def at(level: str):
+    """Run direct tool calls under a permission level, as the orchestrator does.
+
+    These tests call ``Tool().execute()`` themselves, so there is no
+    orchestrator to publish the level around the call -- which is the *only*
+    way a tool learns whether it may touch the host or leave the allow-list. This
+    stands in for it, with the real level object so a test cannot drift from the
+    core's data.
+    """
+    with use_context(permission=get_permission(level)):
+        yield
+
+
 @pytest.fixture
 def host(monkeypatch, tmp_path):
     """Host execution, and a project folder to run in."""
-    monkeypatch.setattr(shell_tools, "_HOST_EXECUTION", True)
     monkeypatch.setattr(folder_manager, "_current_folder", tmp_path)
-    return tmp_path
+    with at("full"):
+        yield tmp_path
 
 
 def wait_for(job, timeout: float = 20.0):
@@ -431,14 +448,16 @@ async def test_background_is_refused_in_the_sandbox(host, monkeypatch):
     started: a job that leaks a process the registry does not know about is worse
     than one that never ran.
     """
-    monkeypatch.setattr(shell_tools, "_HOST_EXECUTION", False)
     monkeypatch.setattr(shell_tools.settings.tools, "fallback_to_local", False)
     manager = get_shared_sandbox_manager()
     manager._backend = FakeIsolatingBackend()
     try:
-        result = await tool("execute_command").execute(
-            "python --version", background=True
-        )
+        # High, not the fixture's Full: the isolation gate has to refuse on its
+        # own before anything is started.
+        with at("high"):
+            result = await tool("execute_command").execute(
+                "python --version", background=True
+            )
     finally:
         manager._backend = None
 
@@ -454,11 +473,15 @@ async def test_background_works_through_the_fallback_setting(host, monkeypatch):
     A different decision from the permission rung, and it has to work here for the
     same reason it works for a foreground command.
     """
-    monkeypatch.setattr(shell_tools, "_HOST_EXECUTION", False)
     monkeypatch.setattr(shell_tools.settings.tools, "fallback_to_local", True)
     get_shared_sandbox_manager()._backend = None
 
-    result = await tool("execute_command").execute(py("print('fallback')"), background=True)
+    # High again: the fallback *setting* is the thing under test, so the
+    # permission rung must not be doing the work.
+    with at("high"):
+        result = await tool("execute_command").execute(
+            py("print('fallback')"), background=True
+        )
 
     assert result.status is ToolResultStatus.SUCCESS, result.error
     assert len(jobs_registry.all()) == 1
@@ -471,11 +494,11 @@ async def test_a_denied_command_is_denied_in_the_background_too(host, monkeypatc
     the job path is inside `execute_command` rather than a second shell tool.
     """
     monkeypatch.setattr(shell_tools.settings.tools, "fallback_to_local", False)
-    monkeypatch.setattr(shell_tools, "_ALLOWLIST_BYPASS", False)
 
-    result = await tool("execute_command").execute(
-        "curl http://example.com", background=True
-    )
+    with at("high"):
+        result = await tool("execute_command").execute(
+            "curl http://example.com", background=True
+        )
 
     assert result.status is ToolResultStatus.ERROR
     assert "not allowed" in result.error.lower()
