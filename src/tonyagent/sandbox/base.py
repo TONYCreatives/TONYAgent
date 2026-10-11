@@ -42,6 +42,9 @@ class SandboxConfig:
     #: See ``SandboxSettings.container_user``. Empty is the image default
     #: (root); on POSIX hosts the docker backend fills in the project owner.
     container_user: str = ""
+    #: Named WSL distro for the WSL backend; empty means the default distro
+    #: from ``wsl -l -v`` (skipping Docker Desktop's).
+    wsl_distro: str = ""
 
 
 @dataclass
@@ -269,6 +272,9 @@ class SandboxManager:
         if config.type == "docker":
             from tonyagent.sandbox.docker_backend import DockerSandboxBackend
             self._backend = DockerSandboxBackend(config)
+        elif config.type == "wsl":
+            from tonyagent.sandbox.wsl_backend import WslSandboxBackend
+            self._backend = WslSandboxBackend(config, distro=config.wsl_distro)
         elif config.type == "windows":
             from tonyagent.sandbox.wsb_backend import WsbSandboxBackend
             self._backend = WsbSandboxBackend(config)
@@ -364,17 +370,42 @@ class SandboxManager:
     async def _detect_backend() -> str:
         """Pick an isolating backend, or say plainly that there is not one.
 
-        The DISM probe for the Windows optional feature needs an elevated
-        shell: without one it returns error 740, so a normal user can never
-        get "windows" here even on a machine that has it. The old code let that
-        fall through to "docker" silently, which is how a Windows Sandbox
-        backend that cannot work ended up looking like a live alternative.
+        The order is the preference, and it is not arbitrary:
+
+        1. **docker** -- the strongest containment available (cgroup limits,
+           nothing mounted but the workspace), chosen when a daemon actually
+           answers.
+        2. **wsl** -- the Docker-free answer: a real kernel boundary from a
+           WSL2 distro, which every modern Windows install has and nothing
+           has to start. Probed for ``wsl.exe`` *and* a user distro, because
+           a probe that accepted Docker Desktop's helper distro would "find
+           an environment" that cannot start a shell.
+        3. **windows** -- Windows Sandbox, when it is installed and enabled.
+           The DISM probe for the optional feature needs an elevated shell:
+           without one it returns error 740, so a normal user can never get
+           "windows" here even on a machine that has it.
+
+        "local" is still a working answer when there is no containing
+        backend: the browser and read-only file tools run on it, and only
+        the two code-execution tools are refused. Failing here instead would
+        take all 22 away.
         """
         try:
             import docker
             client = docker.from_env()
             client.ping()
             return "docker"
+        except Exception:
+            pass
+
+        try:
+            from tonyagent.sandbox.wsl_backend import (
+                detect_wsl_distro,
+                wsl_available,
+            )
+
+            if wsl_available() and detect_wsl_distro():
+                return "wsl"
         except Exception:
             pass
 

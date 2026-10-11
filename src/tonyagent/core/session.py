@@ -353,6 +353,7 @@ class AgentSession:
             ulimit_nproc=settings.sandbox.ulimit_nproc,
             workspace_read_only=settings.sandbox.workspace_read_only,
             container_user=settings.sandbox.container_user,
+            wsl_distro=settings.sandbox.wsl_distro,
         )
         try:
             ok = await get_shared_sandbox_manager().start(config)

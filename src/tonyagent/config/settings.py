@@ -32,7 +32,7 @@ class SandboxSettings(BaseModel):
     sandbox.enable_network" message rather than silently failing.
     """
 
-    type: Literal["auto", "docker", "windows"] = "auto"
+    type: Literal["auto", "docker", "wsl", "windows", "local"] = "auto"
     docker_image: str = "tonyagent/sandbox:latest"
     memory_limit: str = "2g"
     cpu_limit: str = "2.0"
@@ -78,6 +78,16 @@ class SandboxSettings(BaseModel):
     Desktop on Windows cannot map uids at all -- there everything inside the
     VM is root regardless, so leaving this empty is correct on Windows."""
 
+    wsl_distro: str = ""
+    """Which WSL distro the ``wsl`` backend runs the sandbox in.
+
+    Empty picks the default distro from ``wsl -l -v``, skipping Docker
+    Desktop's helper. Set it when the default is not the one that should
+    hold the sandbox (``wsl_distro = "Ubuntu-24.04"``). The WSL backend is
+    the Docker-free path: the same sandbox server, run inside the distro's
+    network and PID namespaces, with the workspace live on the /mnt drive
+    mount instead of a bind mount."""
+
 
 
 class ToolsSettings(BaseModel):
@@ -86,9 +96,15 @@ class ToolsSettings(BaseModel):
     command_allowlist: list[str] = Field(
         default_factory=lambda: [
             "python",
+            # The Unix-standard spellings, which are the names a WSL
+            # distro actually answers to: when the sandbox runs the
+            # command in Linux, `python` is a different binary from
+            # `python3` and the allow-list is about exact programs.
+            "python3",
             "node",
             "npm",
             "pip",
+            "pip3",
             "git",
             "pytest",
             "playwright",

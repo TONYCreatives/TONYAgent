@@ -236,11 +236,13 @@ def _is_command_allowed(command: str, bypass_allowlist: bool = False) -> tuple[b
 
 
 def _resolve_sandbox_cwd(cwd: str) -> str:
-    """Map a host-relative cwd to its /workspace path inside the container.
+    """Map a host-relative cwd to the sandbox's path for the same folder.
 
-    The confinement is `confine`'s, not a fourth copy of it: the *mapping* to
-    ``/workspace`` is this function's own job, and the check on the way in is
-    the boundary's.
+    ``/workspace`` is the *contract* spelling every isolating backend
+    agrees on, not a location: the Docker backend mounts it, and a backend
+    with no such mount (WSL) translates it. The confinement is `confine`'s,
+    not a fourth copy of it: the *mapping* is this function's own job, and
+    the check on the way in is the boundary's.
     """
     target = confine(cwd)
     rel = target.relative_to(project_root()).as_posix()

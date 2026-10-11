@@ -11,6 +11,7 @@ from tonyagent.sandbox.base import (
 from tonyagent.sandbox.docker_backend import DockerSandboxBackend
 from tonyagent.sandbox.local_backend import LocalBackend
 from tonyagent.sandbox.wsb_backend import WsbSandboxBackend
+from tonyagent.sandbox.wsl_backend import WslSandboxBackend, detect_wsl_distro
 
 __all__ = [
     "SandboxBackend",
@@ -22,6 +23,8 @@ __all__ = [
     "DockerSandboxBackend",
     "LocalBackend",
     "WsbSandboxBackend",
+    "WslSandboxBackend",
+    "detect_wsl_distro",
     "shared_sandbox_manager",
     "get_shared_sandbox_manager",
 ]

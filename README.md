@@ -49,16 +49,42 @@ meant a second catalogue implementation returning "unknown" for most fields.
 
 ### ?�� Security-First Design
 - **API keys stored in OS keyring** (Windows Credential Manager, macOS Keychain, Linux Secret Service)
-- **Sandboxed execution** via Docker or Windows Sandbox
+- **Sandboxed execution** via Docker, WSL2, or Windows Sandbox
 - **Command allowlist/denylist** for shell operations
 - **Folder locking** during AI generation to prevent conflicts
 - **Configurable confirmation** for destructive operations
 
 ### ?�� Sandboxed Execution
-- **Docker backend**: Full Linux environment with network isolation
+- **Docker backend**: Full Linux environment with network isolation and per-container limits
+- **WSL backend**: The Docker-free path -- the same sandbox server, run inside your WSL2 distro's network and PID namespaces, with the project folder live via the /mnt drive mount
 - **Windows Sandbox backend**: Native Windows isolation (in progress)
 - **Resource limits**: CPU, memory, and timeout controls
 - **Persistent workspace** across sessions
+
+#### Running without Docker
+
+Docker is the strongest containment where it is available, but it is no
+longer required for the agent to run commands. With `sandbox.type = "auto"`
+(the default) the backend is picked in this order:
+
+1. **docker** -- when a daemon answers a ping.
+2. **wsl** -- when `wsl.exe` exists and you have a distro installed (Docker
+   Desktop's helper distro is skipped). Network is off by default
+   (`unshare -n`), processes run in a PID namespace so nothing outlives the
+   session, and files the agent writes land as your own user.
+3. **local** -- no containment at all: the browser and read-only file tools
+   work, and `execute_command` / `execute_js` are refused on purpose.
+
+Pick explicitly with `[sandbox] type = "wsl"`, or choose the distro with
+`wsl_distro = "Ubuntu-24.04"` (empty = your default distro). Two capabilities
+depend on what is inside the distro, not on TONYAgent: `execute_js` needs
+Node.js and the browser tools need Playwright -- when the distro has neither,
+`execute_js` says so and the browser tools fall back to the host browser
+(which refuses internal addresses by default, like the network tools).
+
+What the WSL backend does **not** have is per-container memory/CPU limits;
+that is what Docker's cgroups provide. If you run both, Docker remains the
+backend to prefer.
 
 ---
 
@@ -66,7 +92,7 @@ meant a second catalogue implementation returning "unknown" for most fields.
 
 ### Prerequisites
 - **Python 3.11+**
-- **Docker Desktop** (for sandboxed execution)
+- **Docker Desktop** (for sandboxed execution) — or **WSL2** alone, which is enough (see "Running without Docker")
 - **Git** (for version control operations)
 
 ### Installation
@@ -148,7 +174,7 @@ pip install -e ".[packaging]"
 <summary><b>Windows</b></summary>
 
 - Windows 10/11 Pro/Enterprise required for Windows Sandbox
-- Docker Desktop with WSL2 backend recommended
+- Docker Desktop with WSL2 backend recommended (or just WSL2 — see "Running without Docker")
 - Install Visual C++ Build Tools if building from source
 </details>
 
@@ -190,7 +216,7 @@ base_url = "http://localhost:1234/v1"
 model = "local-model"
 
 [sandbox]
-type = "docker"           # docker, wsb (Windows Sandbox)
+type = "auto"              # auto, docker, wsl, wsb (Windows Sandbox), local
 docker_image = "tonyagent/sandbox:latest"
 memory_limit = "2g"
 cpu_limit = "2"
@@ -323,7 +349,7 @@ When the AI wants to execute a potentially destructive action (file deletion, sh
 | **Core** | `src/tonyagent/core/` | Conversation state, events, modes; served over JSONL by `headless/server.py` |
 | **Providers** | `src/tonyagent/providers/` | 8 LLM adapters + factory |
 | **Tools** | `src/tonyagent/tools/` | 15 tools + orchestrator |
-| **Sandbox** | `src/tonyagent/sandbox/` | Docker + WSB backends |
+| **Sandbox** | `src/tonyagent/sandbox/` | Docker + WSL backends, WSB stub |
 | **Config** | `src/tonyagent/config/` | Settings, keyring, migration |
 | **Utils** | `src/tonyagent/utils/` | Logging, threading, paths |
 
