@@ -1,10 +1,49 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChatMessage } from "./events.js";
 import { MarkdownText } from "./MarkdownText.js";
+import { AppMark } from "./AppMark.js";
 
 interface Props {
   messages: ChatMessage[];
   busy: boolean;
+  project: string;
+  onChooseFolder?: () => void;
+  canChooseFolder?: boolean;
+}
+
+/**
+ * What the empty panel needs, which is not what the transcript needs.
+ *
+ * Its own interface rather than a slice of `Props`: `FirstRun` renders no
+ * messages and is never busy, and writing it as `Props` would mean the empty
+ * state had to be handed two arguments it cannot use -- which is the shape a
+ * test ends up asserting against instead of the component.
+ */
+interface FirstRunProps {
+  /**
+   * The project folder the core is working on, or "" when there is none.
+   *
+   * Passed in rather than read here: the panel has no backend of its own, and a
+   * second source for "what folder is this" is a second thing to be wrong.
+   */
+  project: string;
+  /** Open the folder picker. Omitted when the caller has no picker to open. */
+  onChooseFolder?: () => void;
+  /** Whether that button can be pressed right now. */
+  canChooseFolder?: boolean;
+}
+
+/**
+ * The folder's own name, out of a path.
+ *
+ * The last segment, on either separator, because the paths here arrive from
+ * Windows (`C:\Users\me\project`) and from the picker, which on some machines
+ * hands back a forward-slash form. The full path is the button's `title`, so
+ * the two are both available and neither is the only one.
+ */
+function folderName(path: string): string {
+  const parts = path.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? path;
 }
 
 const STATUS_MARK: Record<"running" | "ok" | "failed", string> = {
@@ -144,7 +183,85 @@ function Bubble({ message }: { message: ChatMessage }) {
   );
 }
 
-export function MessageList({ messages, busy }: Props) {
+/**
+ * What the conversation area says before there is a conversation.
+ *
+ * It was a wordmark and one line, and it was correct as far as it went --
+ * except that the two things a new user most needs to know were in the
+ * composer's *placeholder*, which they have to notice and click into before
+ * they can read. So the hints are promoted here, and the mark is drawn at a
+ * size that says what this window is before anyone types.
+ *
+ * The project folder is here for the same reason, and it is the one control on
+ * the panel. Before this, the only place to change the folder was a row inside
+ * the settings panel -- a panel that opens on top of the very window the user
+ * is looking at, behind a menu they have to find. A new chat is *about* a
+ * folder: the agent's tools resolve every path against it, and with none
+ * chosen every file read answers "no project folder selected". So the thing
+ * the chat depends on is said in the middle of the chat.
+ *
+ * **Leaving it alone keeps the folder.** The button is "Change...", not
+ * "Choose...", whenever there is already a folder, and the name beside it is
+ * the one in force. Nothing is asked and nothing is reset by starting a chat,
+ * which is what `App.startNewChat` already promised -- this shows the promise
+ * instead of hiding it in the settings panel.
+ *
+ * The panel used to hold nothing focusable at all, and that rule is narrowed
+ * rather than dropped: one `<button>`, and the test names it. An empty state is
+ * still where an app is most tempted to offer a demo conversation or a "what
+ * can I do?" link, and each of those would still add a tab stop to the surface
+ * a user is trying to leave by pressing Tab once and typing.
+ *
+ * The hints are `<kbd>` and text because they describe keys rather than offer
+ * them: pressing `/` here would type a slash into the composer, which is
+ * exactly what it does everywhere else.
+ */
+function FirstRun({ project, onChooseFolder, canChooseFolder }: FirstRunProps) {
+  return (
+    <div className="empty">
+      <AppMark className="empty-mark" size={104} />
+      <h1>TONYAgent</h1>
+      <p>Ask for something. The agent will use its tools to do it.</p>
+      {/*
+        The folder, named, with the one control. `title` on the name rather
+        than on the button: the button's own text is "Change...", which says
+        nothing about what it would change to, and a truncated name with the
+        full path on hover is the compromise that keeps one line.
+      */}
+      <div className="empty-folder">
+        <p className="empty-folder-name" title={project || undefined}>
+          {project ? folderName(project) : "No project folder"}
+        </p>
+        {onChooseFolder && (
+          <button
+            type="button"
+            className="btn"
+            onClick={onChooseFolder}
+            disabled={!canChooseFolder}
+          >
+            {project ? "Change..." : "Choose folder..."}
+          </button>
+        )}
+      </div>
+      <ul className="empty-hints">
+        <li>
+          <kbd>/</kbd> for skills
+        </li>
+        <li>
+          <kbd>@</kbd> for threads or files
+        </li>
+      </ul>
+    </div>
+  );
+}
+
+export function MessageList({
+  messages,
+  busy,
+  project,
+  onChooseFolder,
+  canChooseFolder,
+}: Props) {
   // Pin to the bottom as tokens stream in. Keyed on message count rather than
   // text, so this does not fire on every delta.
   const endRef = useRef<HTMLDivElement>(null);
@@ -154,10 +271,11 @@ export function MessageList({ messages, busy }: Props) {
 
   if (messages.length === 0) {
     return (
-      <div className="empty">
-        <h1>TONYAgent</h1>
-        <p>Ask for something. The agent will use its tools to do it.</p>
-      </div>
+      <FirstRun
+        project={project}
+        onChooseFolder={onChooseFolder}
+        canChooseFolder={canChooseFolder}
+      />
     );
   }
 

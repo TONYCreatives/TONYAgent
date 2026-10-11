@@ -9,6 +9,7 @@ from typing import Any
 
 from tonyagent.tools.base import Tool, ToolResult, ToolResultStatus, ToolCategory, register_tool
 from tonyagent.folder.manager import folder_manager
+from tonyagent.tools.images import EDGE_NOTE, MAX_SOURCE_BYTES, encode
 
 
 def _line_delta(before: str, after: str) -> tuple[int, int]:
@@ -48,32 +49,57 @@ def _resolve_path(path: str) -> Path:
     project_root = folder_manager.current_folder
     if not project_root:
         raise ValueError("No project folder selected")
-    
+
     target = (project_root / path).resolve()
-    
+
     try:
         target.relative_to(project_root.resolve())
     except ValueError:
         raise ValueError(f"Path '{path}' attempts to escape project folder")
-    
+
     return target
+
+
 @register_tool
-class ReadFileTool(Tool):
-    """Read a text file from the project folder.
+class ReadTool(Tool):
+    """Read a text file from the project folder, optionally one line window.
 
     Paths are project-relative and confined to the project folder; a path that
     escapes it is refused rather than clamped, so the model learns that the
     folder is the boundary rather than discovering it by reading someone else's
     SSH key.
+
+    ``offset`` and ``limit`` exist because reading a whole file is the most
+    expensive single call a tool can make. A 4000-line file is tens of thousands
+    of tokens, and a model that wanted line 12 pays for all of it -- once per
+    turn, because the cost lives in the history rather than in the call.
+
+    Lines are numbered, 1-based, because everything downstream refers to lines by
+    number: the model quoting one back to the user, and the next ``edit`` whose
+    ``old_string`` has to match exactly. Leaving the model to count is how an
+    off-by-one becomes an edit in the wrong place. The window is reported against
+    the file's total, so "that is the whole file" stays distinguishable from
+    "there is more" -- the difference between answering and guessing.
     """
 
-    name = "read_file"
-    description = "Read the contents of a file from the project folder."
+    name = "read"
+    description = (
+        "Read a file from the project folder, with line numbers. Use offset and "
+        "limit to read part of a large file."
+    )
     category = ToolCategory.FILE
     parameters = {
         "type": "object",
         "properties": {
             "path": {"type": "string", "description": "Relative path from project root"},
+            "offset": {
+                "type": "integer",
+                "description": "First line to read, 1-based. Defaults to the start.",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "How many lines to read. Defaults to the end.",
+            },
             "encoding": {"type": "string", "enum": ["utf-8", "latin-1", "cp1252"], "default": "utf-8"},
         },
         "required": ["path"],
@@ -82,22 +108,145 @@ class ReadFileTool(Tool):
     destructive = False
     requires_confirmation = False
 
-    async def execute(self, path: str, encoding: str = "utf-8") -> ToolResult:
+    async def execute(self, path: str, offset: int | None = None,
+                      limit: int | None = None, encoding: str = "utf-8") -> ToolResult:
         try:
             target = _resolve_path(path)
             if not target.exists():
                 return ToolResult(status=ToolResultStatus.ERROR, error=f"File not found: {path}")
             if not target.is_file():
                 return ToolResult(status=ToolResultStatus.ERROR, error=f"Not a file: {path}")
-            
+
             content = target.read_text(encoding=encoding)
-            return ToolResult(status=ToolResultStatus.SUCCESS, output=content)
+            lines = content.splitlines()
+            total = len(lines)
+
+            start = max(0, (offset or 1) - 1)
+            if start > total:
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    error=(
+                        f"offset {offset} is past the end of {path}, "
+                        f"which has {total} line(s)"
+                    ),
+                )
+            end = total if limit is None else min(total, start + max(0, limit))
+            window = lines[start:end]
+
+            if not window:
+                body = "(no lines in that range)"
+            else:
+                body = "\n".join(
+                    f"{start + index + 1}\t{line}"
+                    for index, line in enumerate(window)
+                )
+            span = f"lines {start + 1}-{start + len(window)} of {total}"
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                output=f"{path} ({span})\n{body}",
+            )
         except Exception as e:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
 
 
 @register_tool
-class WriteFileTool(Tool):
+class ReadImageTool(Tool):
+    """Read an image file from the project folder and look at it.
+
+    The pixels go to the model rather than to a path: the picture is attached to
+    the tool message and is gone when the turn ends (see ``ToolResult.images``),
+    so nothing is written and there is nothing to clean up afterwards. That is
+    the difference between this and ``browser_screenshot``, which writes because
+    its output is something to keep -- this output is something to look at.
+
+    Confined to the project folder like every other file tool, and refused for a
+    file that is not an image rather than sending bytes the provider will reject
+    with a complaint about a format nobody asked about.
+    """
+
+    name = "read_image"
+    description = (
+        "Read an image file from the project folder and look at it. Use it for a "
+        "screenshot, diagram or photograph that the project contains."
+    )
+    category = ToolCategory.FILE
+    parameters = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "Relative path from project root"},
+        },
+        "required": ["path"],
+        "additionalProperties": False,
+    }
+    destructive = False
+    requires_confirmation = False
+
+    async def execute(self, path: str) -> ToolResult:
+        try:
+            target = _resolve_path(path)
+            if not target.exists():
+                return ToolResult(status=ToolResultStatus.ERROR, error=f"File not found: {path}")
+            if not target.is_file():
+                return ToolResult(status=ToolResultStatus.ERROR, error=f"Not a file: {path}")
+
+            size = target.stat().st_size
+            if size > MAX_SOURCE_BYTES:
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    error=(
+                        f"{path} is {size / (1024 * 1024):.1f} MB, over the "
+                        f"{MAX_SOURCE_BYTES // (1024 * 1024)} MB limit for an image "
+                        "handed to the model."
+                    ),
+                )
+
+            # Imported here so this module imports anywhere, matching
+            # `screen_tools`. Pillow is a declared dependency, but a broken one
+            # should fail this tool rather than the whole tool registry.
+            from PIL import Image, UnidentifiedImageError
+
+            try:
+                image = Image.open(target)
+                image.load()
+            except UnidentifiedImageError:
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    error=(
+                        f"{path} is not an image file that can be opened. PNG, JPEG, "
+                        "GIF and WebP are what this is tested with."
+                    ),
+                )
+
+            part, original_w, original_h, out_w, out_h = encode(image)
+            said = (
+                f"{path} is {original_w}x{original_h} and is attached to you as a "
+                "picture."
+            )
+            if (out_w, out_h) != (original_w, original_h):
+                said += " " + EDGE_NOTE.format(
+                    ow=original_w, oh=original_h, w=out_w, h=out_h
+                )
+            return ToolResult(
+                status=ToolResultStatus.SUCCESS,
+                output=said,
+                # The model needs to know what it was handed, because the size it
+                # reads here is the size on disk and not the size it can see.
+                artifacts=[
+                    {
+                        "type": "image",
+                        "path": path,
+                        "source": [original_w, original_h],
+                        "sent_as": [out_w, out_h],
+                    }
+                ],
+                images=[part],
+            )
+        except Exception as e:
+            return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
+
+
+@register_tool
+class WriteTool(Tool):
     """Create or overwrite a file in the project folder.
 
     Destructive and confirmation-gated: it replaces existing content, so the
@@ -105,7 +254,7 @@ class WriteFileTool(Tool):
     ``file_change`` artifact so the UI can show a diff.
     """
 
-    name = "write_file"
+    name = "write"
     description = "Create or overwrite a file in the project folder."
     category = ToolCategory.FILE
     parameters = {
@@ -152,49 +301,99 @@ class WriteFileTool(Tool):
 
 
 @register_tool
-class EditFileTool(Tool):
+class EditTool(Tool):
     """Replace an exact string inside an existing file.
 
-    Fails rather than guessing when the string is absent or ambiguous, because
-    a "helpful" fuzzy edit is a corruption the model will then reason about as
-    if it were intentional.
+    **The match has to be unambiguous.** This refuses an ``old_string`` that
+    appears more than once, because "replace the first one" is a guess about
+    which one the model meant, and a wrong guess is a corruption the model will
+    then reason about as if it were intentional. The previous version of this
+    tool made exactly that guess, silently.
+
+    The error says how many matches there were and names both ways out: include
+    more surrounding context to pin the one that was meant, or pass
+    ``replace_all`` to say that all of them are meant. Those are different
+    intentions and the tool cannot tell them apart, so it asks rather than
+    picking.
+
+    ``old_string`` is matched against the raw file, not the numbered output of
+    ``read``. The numbers are a reading aid; the tab and digits in front of a
+    line are not part of it.
     """
 
-    name = "edit_file"
-    description = "Edit a file by replacing old_text with new_text (exact match required)."
+    name = "edit"
+    description = (
+        "Replace an exact string in a file. The match must be unique unless "
+        "replace_all is set."
+    )
     category = ToolCategory.FILE
     parameters = {
         "type": "object",
         "properties": {
             "path": {"type": "string", "description": "Relative path from project root"},
-            "old_text": {"type": "string", "description": "Exact text to replace"},
-            "new_text": {"type": "string", "description": "New text to insert"},
+            "old_string": {"type": "string", "description": "Exact text to replace"},
+            "new_string": {"type": "string", "description": "Text to replace it with"},
+            "replace_all": {
+                "type": "boolean",
+                "description": "Replace every occurrence instead of requiring a unique one.",
+                "default": False,
+            },
         },
-        "required": ["path", "old_text", "new_text"],
+        "required": ["path", "old_string", "new_string"],
         "additionalProperties": False,
     }
     destructive = True
     requires_confirmation = True
 
-    async def execute(self, path: str, old_text: str, new_text: str) -> ToolResult:
+    async def execute(self, path: str, old_string: str, new_string: str,
+                      replace_all: bool = False) -> ToolResult:
         try:
             target = _resolve_path(path)
             if not target.exists():
                 return ToolResult(status=ToolResultStatus.ERROR, error=f"File not found: {path}")
-            
+
+            # An empty `old_string` matches at every position in the file, so
+            # `replace_all` on it would rewrite the whole thing with
+            # `new_string` interleaved -- a destructive no-op that reads like a
+            # successful edit. Refused by name rather than left to arithmetic.
+            if old_string == "":
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    error="old_string is empty, which matches everywhere in the file",
+                )
+
             content = target.read_text(encoding="utf-8")
-            if old_text not in content:
-                return ToolResult(status=ToolResultStatus.ERROR, error="old_text not found in file")
-            
-            new_content = content.replace(old_text, new_text, 1)
+            occurrences = content.count(old_string)
+            if occurrences == 0:
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    error=f"old_string not found in {path}",
+                )
+            if occurrences > 1 and not replace_all:
+                return ToolResult(
+                    status=ToolResultStatus.ERROR,
+                    error=(
+                        f"old_string appears {occurrences} times in {path}, so which "
+                        "one to replace would be a guess. Include more surrounding "
+                        "lines to make it unique, or pass replace_all to replace "
+                        "every occurrence."
+                    ),
+                )
+
+            new_content = (
+                content.replace(old_string, new_string)
+                if replace_all
+                else content.replace(old_string, new_string, 1)
+            )
             # Diff the whole file before and after, not just the replaced
             # block: a replacement can shift surrounding lines, and the tree
             # badge is about the file, not the span.
             added, removed = _line_delta(content, new_content)
             target.write_text(new_content, encoding="utf-8")
+            replaced = occurrences if replace_all else 1
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
-                output=f"Replaced 1 occurrence in {path}",
+                output=f"Replaced {replaced} occurrence(s) in {path}",
                 artifacts=[_change_artifact(path, added, removed)],
             )
         except Exception as e:
@@ -253,6 +452,7 @@ class DeleteFileTool(Tool):
         except Exception as e:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
 
+
 @register_tool
 class ListDirTool(Tool):
     """List the contents of a directory in the project folder.
@@ -283,7 +483,7 @@ class ListDirTool(Tool):
                 return ToolResult(status=ToolResultStatus.ERROR, error=f"Path not found: {path}")
             if not target.is_dir():
                 return ToolResult(status=ToolResultStatus.ERROR, error=f"Not a directory: {path}")
-            
+
             entries = []
             if recursive:
                 for root, dirs, files in os.walk(target):
@@ -299,7 +499,7 @@ class ListDirTool(Tool):
             else:
                 for entry in target.iterdir():
                     entries.append(entry.name + ("/" if entry.is_dir() else ""))
-            
+
             entries.sort()
             output = "\n".join(entries) if entries else "(empty)"
             return ToolResult(status=ToolResultStatus.SUCCESS, output=output)

@@ -260,3 +260,42 @@ def summarise(attachments: list[dict[str, Any]]) -> str:
     names = ", ".join(item["name"] for item in attachments)
     noun = "file" if len(attachments) == 1 else "files"
     return f"Attached {len(attachments)} {noun}: {names}"
+
+
+def strip_images(messages: list[Any]) -> list[dict[str, Any]]:
+    """Messages as plain dicts, with base64 image parts left out.
+
+    Every conversation is written to disk as ``[m.to_dict() for m in messages]``,
+    and an `image_url` part carries its whole picture inline as base64. A user
+    attachment is one file and the user chose it; a screenshot tool can fire
+    several times in a turn, and at 1568px each is a megabyte of base64. Ten
+    captures would make one saved chat larger than the entire rest of the store.
+
+    So the pixels are dropped on the way to disk and replaced by a note saying
+    one was here. The model still saw it: this runs when the turn is already
+    over, and a screenshot is a picture of *now*, which would be misleading on a
+    reload in any case -- the window the user had open then is not the one they
+    have open now.
+
+    Text parts and every other field are untouched, and a message with no image
+    in it comes back byte for byte.
+    """
+    kept: list[dict[str, Any]] = []
+    for message in messages:
+        data = message.to_dict()
+        content = data.get("content")
+        if isinstance(content, list) and any(
+            isinstance(part, dict) and part.get("type") == "image_url"
+            for part in content
+        ):
+            data["content"] = [
+                part
+                if not (isinstance(part, dict) and part.get("type") == "image_url")
+                else {
+                    "type": "text",
+                    "text": "[an image was returned by a tool and is not kept in the saved conversation]",
+                }
+                for part in content
+            ]
+        kept.append(data)
+    return kept

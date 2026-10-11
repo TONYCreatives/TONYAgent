@@ -1,0 +1,262 @@
+
+/* --- transcript ---------------------------------------------------------- */
+/*
+ * Runs edge to edge, like the reference: the content is inset with padding but
+ * the column itself is not a centred card. The max-width keeps line length
+ * readable without turning the transcript into a boxed panel.
+ */
+.transcript {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 0 4px;
+  user-select: text;
+  /*
+   * Both edges reserved, always.
+   *
+   * Twice over, and both halves earn their keep. `stable` because this panel is
+   * the one that gains and loses a scrollbar as a conversation arrives: without
+   * it the whole column jumped 5px sideways the moment a message overflowed the
+   * window, under a composer that did not move. `both-edges` because the
+   * scrollbar is otherwise taken out of this box only -- the composer below is
+   * centred in the full width -- so the messages sat 5px left of the field they
+   * reply to, and would have sat there permanently.
+   */
+  scrollbar-gutter: stable both-edges;
+}
+
+/*
+ * `--column-inset`, not the 28 this had.
+ *
+ * The measure above is the column's box, and 28 of it went on padding: the
+ * messages were 624px wide inside a 680px field, so the composer -- whose own
+ * inset is 19 -- overhung them by 23px on the left. Both numbers were "right"
+ * and the pair was wrong. The inset is now the one token the composer also
+ * takes, so the first character of a message and the placeholder in the field
+ * below it are the same pixel.
+ */
+.transcript-inner {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 0 var(--column-inset);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.row {
+  display: flex;
+}
+
+.row-user {
+  justify-content: flex-end;
+}
+
+.row-assistant {
+  justify-content: flex-start;
+}
+
+/*
+ * `fit-content` is what makes a bubble hug its text; `max-width` caps it so a
+ * long message wraps instead of spanning the window. This is the fix the
+ * Tkinter UI never got -- see NEXT_SESSION.md section 8, where a grid weight
+ * could not achieve it and pixel measurement was required. Flexbox does it
+ * declaratively.
+ */
+.bubble {
+  width: fit-content;
+  max-width: min(680px, 84%);
+  padding: 9px 14px;
+  border-radius: var(--radius-md);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bubble-user {
+  background: var(--raised);
+  color: var(--fg);
+  border-bottom-right-radius: 3px;
+}
+
+.bubble-assistant {
+  background: transparent;
+  color: var(--fg-dim);
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* Assistant text is body copy, not a bubble: no box, no fill. */
+.bubble-assistant .bubble-text {
+  max-width: 100%;
+}
+
+/*
+ * The first run: what the conversation area says before there is a
+ * conversation.
+ *
+ * The composition is mark, wordmark, one line, two hints, and the reading
+ * order is the one a person arriving cold would want -- what this is, then
+ * what to do, then the two keys that would otherwise only be visible inside a
+ * composer they had to click into first.
+ *
+ * Every element here is a label rather than a control except one: the project
+ * folder's "Change..." button, which is a control because a new chat is about a
+ * folder and this is the only place on this panel that can change it. The rest
+ * carries no `background` that reads as a target, because a chip that looks
+ * like a button on a surface with no other buttons on it is the one way this
+ * could lie about being interactive.
+ */
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /*
+   * Air, stated twice: 8px of it between the blocks, and 28 around them. The
+   * previous 6/24 was tight enough that the wordmark sat against the mark like a
+   * caption rather than above a subtitle, and the hints read as the fourth line
+   * of the paragraph rather than as the two keys they are.
+   */
+  gap: 8px;
+  color: var(--fg-mute);
+  text-align: center;
+  padding: 28px;
+}
+
+/*
+ * The mark at a size you can see it from across the room, on `--accent` --
+ * 5.8:1 on the field, well past the 3:1 that a graphic of this size owes.
+ *
+ * `13vh` rather than a fixed width because this block is the only vertically
+ * centred thing in the window and it is the first thing that has to survive a
+ * short one: the floor is the 44px below which the glyph stops being a glyph,
+ * and the ceiling is the `size` the component was handed, so the two ends of
+ * the clamp are both stated rather than guessed. `height: auto` off the
+ * viewBox's 1:1 keeps it square.
+ *
+ * No margin under it, and that is a measurement rather than an omission. The
+ * strokes occupy 272 of the artwork's 512 units, so a 104px box holds 55px of
+ * ink and carries 27px of the artwork's own air below it -- measured on the
+ * running app, where the ink ends 27.6px above the box and the wordmark began
+ * 40px after it. Adding a margin on top of that is what detaches the two; a
+ * negative one would tighten it at this size and nearly touch at 520px tall,
+ * because the slack scales with the box and a pixel margin does not. So the
+ * space under the mark is the space the artwork already asked for, at every
+ * size.
+ *
+ * It arrives on `rise-in` and `--motion-base`, which is the pair every other
+ * arriving surface in this app uses -- the row menu, the sidebar, the banner.
+ * A first-run panel with its own entrance would be the one piece of motion in
+ * the window that felt like it had been pasted in.
+ */
+.empty-mark {
+  display: block;
+  width: clamp(44px, 13vh, 104px);
+  height: auto;
+  color: var(--accent);
+  animation: rise-in var(--motion-base) var(--ease-out) both;
+}
+
+/*
+ * The wordmark, in the accent.
+ *
+ * It used to be the one piece of gradient *text* in the app -- the accent read
+ * through the letters with `background-clip: text` and a transparent colour.
+ * With the accent flat there is nothing left to clip, so it is plain `color`
+ * again, and the mark above it (`.empty-mark`) and this word are the same blue
+ * by construction rather than by two gradient stops that happened to agree.
+ */
+.empty h1 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.empty p {
+  margin: 0;
+  font-size: var(--text-base);
+}
+
+/*
+ * The two hints the composer's placeholder carries, promoted.
+ *
+ * A list so the browser's own `list-style: none` is not the only thing keeping
+ * bullets off it -- the row is a row because it is two items, and it will take
+ * a third without becoming a paragraph. Wrapping is on for the same reason:
+ * at a narrow width the two hints stack rather than running off the side, and
+ * the composer below them is already 680px wide at its widest.
+ *
+ * `--text-sm` for the words and `--text-xs` for the key. The key is a symbol
+ * you recognise by shape, so it sits a step below the sentence that explains it
+ * rather than level with it; and 11px is as small as this app sets text anyone
+ * is meant to read, `--text-2xs` being reserved for the things that are shapes
+ * rather than sentences. Both come off the type scale, which is the point --
+ * `font-size: 11px` written here would survive a retune of the scale looking
+ * deliberate.
+ */
+/*
+ * The project folder, named, in the middle of the empty chat.
+ *
+ * The one control on a panel that used to have none, and it is placed between
+ * the pitch and the key hints rather than under them: what the window *is* is
+ * the mark and the name, what it is about to *do* is the folder, and the hints
+ * are a footnote to both. Centred because the panel's `align-items: center`
+ * already does it and this block is no wider than its contents.
+ *
+ * `margin-top: 4px` and not 0: the block above is a sentence at
+ * `--text-base`, and a button whose border sits level with that sentence's
+ * descenders reads as part of the sentence rather than as a control next to it.
+ * The 16px the hints take below is what separates *this* from *those*, which
+ * is why the gap here is the smaller of the two.
+ *
+ * The name is `--fg-dim` rather than `--fg`: it is a fact about the window's
+ * state, not the thing being acted on, and it must not compete with the
+ * wordmark above it. `max-width` with an ellipsis is here because a deeply
+ * nested project path is longer than most windows are wide, and the full path
+ * is on the element's `title` for exactly that case.
+ */
+.empty-folder {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  min-width: 0;
+}
+
+.empty-folder-name {
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  max-width: 42ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty-hints {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 16px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-sm);
+}
+
+.empty-hints kbd {
+  display: inline-block;
+  min-width: 20px;
+  margin-right: 7px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--raised);
+  color: var(--fg-dim);
+  /* Inherited rather than the UA's monospace: a key drawn in the app's own
+     face reads as part of this window, and one drawn in Consolas reads as a
+     quotation from somewhere else. */
+  font-family: inherit;
+  font-size: var(--text-xs);
+  text-align: center;
+}

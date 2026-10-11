@@ -27,12 +27,13 @@
  */
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
+
+import { readStylesheet } from "./stylesheet.js";
 
 // `tsc` emits the tests to `.tmp/` and copies no other file, so the stylesheet
 // is one directory up from the compiled module rather than beside it.
-const STYLESHEET = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const STYLESHEET = readStylesheet();
 
 /** `selector { body }` pairs, brace nesting stepped over. */
 function rules(css: string): { block: string; body: string }[] {

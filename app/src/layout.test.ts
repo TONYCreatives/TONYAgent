@@ -18,12 +18,17 @@
  */
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { describe, test } from "node:test";
+
+import { readStylesheet, readStylesheetSource, stylesheetModules } from "./stylesheet.js";
 
 // `tsc` emits the tests to `.tmp/` and copies no other file, so the stylesheet
 // is one directory up from the compiled module.
-const STYLESHEET = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const STYLESHEET = readStylesheet();
+
+/** The entry itself: the `@import` list, with no rules behind it. */
+const readEntry = () => readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
 /**
  * `selector { body }` pairs, comments and the reduced-motion block stripped.
@@ -69,6 +74,110 @@ function withoutReducedMotion(css: string): string {
 
 const RULES = rules(STYLESHEET);
 
+// --- colour maths -----------------------------------------------------------
+// At module scope because three describes need it: the palette's ladders, the
+// focus ring's legibility, and the composer's depth check. Each has a copy of
+// this and they drift.
+
+/** The declared hex of a token, e.g. `tokens("bg") === "#1a1a1a"`. */
+const tokens = (name: string) =>
+  new RegExp(`--${name}: *(#[0-9a-f]{6})`, "i").exec(STYLESHEET)?.[1];
+
+/** Any declared value, for the steps that are lengths rather than colours. */
+const tokenRaw = (name: string) =>
+  new RegExp(`--${name}: *([^;]+);`, "i").exec(STYLESHEET)?.[1]?.trim();
+
+const rgb = (hex: string) =>
+  [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+
+/** WCAG relative luminance. Linearised, not the 0.2126r+... approximation. */
+const luminance = (hex: string) =>
+  rgb(hex)
+    .map((v) => v / 255)
+    .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4))
+    .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+
+/** WCAG contrast ratio between two hex colours. */
+const contrast = (a: string, b: string) => {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+};
+
+/**
+ * A flat masked colour token -- `rgb(r g b / a)` -- as `{ hex, alpha }`, or null.
+ *
+ * `--wash` is one colour at low alpha rather than a gradient's stops, and the
+ * alpha is the interesting half: it is what keeps the ink on a washed row
+ * legible. A gradient's ends would each need their own check; a flat tint needs
+ * one, which is the whole reason this is simpler than the helper it replaced.
+ */
+const flatMasked = (name: string) => {
+  const m = /rgba?\(\s*(\d+)\s+(\d+)\s+(\d+)\s*(?:\/\s*([\d.]+)\s*)?\)/i.exec(
+    tokenRaw(name) ?? "",
+  );
+  if (!m) return null;
+  return {
+    hex:
+      "#" +
+      [m[1], m[2], m[3]].map((v) => Number(v).toString(16).padStart(2, "0")).join(""),
+    alpha: m[4] === undefined ? 1 : parseFloat(m[4]),
+  };
+};
+
+
+/**
+ * Composite one hex over another, as the compositor does.
+ *
+ * Alpha compositing is not linear in the colours, so a wash cannot be reasoned
+ * about by looking at its stops: `rgb(99 147 240 / 0.18)` is a *very* different
+ * pixel over `--bg` than the same blue at full strength, and it is the
+ * composited pixel that the text has to be readable against.
+ */
+function over(hex: string, alpha: number, onto: string): string {
+  const top = rgb(hex);
+  const back = rgb(onto);
+  return (
+    "#" +
+    top
+      .map((v, i) => Math.round(v * alpha + back[i] * (1 - alpha)))
+      .map((v) => v.toString(16).padStart(2, "0"))
+      .join("")
+  );
+}
+
+/**
+ * How much colour a pixel carries: its largest channel minus its smallest.
+ *
+ * Separating "selected" from "hovered" is not a lightness question. The wash
+ * composited over `--bg` is *darker* than `--hover` at its bright end, so the
+ * two are within about 1.1:1 of each other by luminance and could not be told
+ * apart by contrast at all. What tells them apart is that one is achromatic and
+ * the other is not, which is the property worth asserting.
+ */
+const chroma = (hex: string) => {
+  const [r, g, b] = rgb(hex);
+  return Math.max(r, g, b) - Math.min(r, g, b);
+};
+
+/**
+ * Resolve a token to its hex, following `var()` references.
+ *
+ * Needed because `--focus-ring` is declared as `var(--accent-bright)`. An
+ * earlier version of the test that checked it read `--accent-bright` directly,
+ * which meant it passed whatever `--focus-ring` was set to -- it was asserting
+ * a fact about a different token than the one in the rule. The depth cap turns
+ * a cycle into a clear failure instead of a stack overflow.
+ */
+function resolveHex(name: string, depth = 0): string | undefined {
+  const raw = tokenRaw(name);
+  if (!raw) return undefined;
+  const ref = /^var\(\s*(--[\w-]+)/.exec(raw);
+  if (ref) {
+    return depth >= 4 ? undefined : resolveHex(ref[1].slice(2), depth + 1);
+  }
+  return /^#[0-9a-f]{6}$/i.test(raw) ? raw : undefined;
+}
+
 /**
  * The stylesheet with its comments removed, for asserting that a selector or
  * token is *absent*.
@@ -87,7 +196,7 @@ const RULES = rules(STYLESHEET);
  * cancellation of a selector that no longer exists is harmless, and a
  * cancellation of one that does is a *feature*.
  */
-const SOURCE = STYLESHEET.replace(/\/\*[\s\S]*?\*\//g, "");
+const SOURCE = readStylesheetSource();
 
 /** Every declaration block written for exactly `selector`, in source order. */
 function bodies(selector: string): string[] {
@@ -99,6 +208,32 @@ function body(selector: string): string {
   const found = bodies(selector);
   assert.ok(found.length > 0, `${selector} has no rule in the stylesheet at all`);
   return found[found.length - 1];
+}
+
+/**
+ * One side of a `margin`/`padding` shorthand, in CSS px.
+ *
+ * Longhand first, then the shorthand expanded the way CSS expands it: one value
+ * is all four sides, two is vertical/horizontal, three adds the bottom, four is
+ * all of them. `side` is 0 for top/left and 2 for bottom/right.
+ *
+ * This is here rather than inlined because the first version of it was wrong
+ * in exactly the way it exists to prevent: `padding: 18px` is a single value
+ * meaning all four sides, and reading index 1 out of it returned `undefined`,
+ * which the `?? 0` turned into a confident zero. A stylesheet assertion that
+ * measures nothing passes, so a helper that silently returns 0 is worse than
+ * no helper.
+ */
+function boxSide(text: string, prop: "margin" | "padding", side: 0 | 2): number {
+  const longhand = new RegExp(`${prop}-${side === 0 ? "top|left" : "bottom|right"}:\\s*([\\d.]+)px`)
+    .exec(text);
+  if (longhand) return parseFloat(longhand[1]);
+  const values = new RegExp(`(?:^|;)\\s*${prop}:\\s*([^;]+)`).exec(text)?.[1].trim().split(/\s+/) ?? [];
+  if (values.length === 0) return 0;
+  if (values.length === 1) return parseFloat(values[0]);
+  // 2 -> vertical/horizontal, 3 -> top/horizontal/bottom, 4 -> all four.
+  const index = values.length === 2 ? 1 : side;
+  return parseFloat(values[index]);
 }
 
 // --- the collapsed rail ----------------------------------------------------
@@ -160,17 +295,16 @@ describe("the app shell's rows", () => {
   });
 
   test("every other in-flow child names its row explicitly", () => {
-    // Auto-placement fills row 1 first. A build that renders no Files panel at
-    // all would then push the rail into the title bar's row and move the whole
-    // window down 42px, and nothing about that failure points at the grid.
-    for (const selector of [".rail", ".main", ".sidebar-reopen"]) {
+    // Auto-placement fills row 1 first, so a rail or a main that did not name
+    // its row would be pushed into the title bar's and move the whole window
+    // down `--topbar-h`, and nothing about that failure points at the grid.
+    for (const selector of [".rail", ".main"]) {
       assert.match(body(selector), /grid-row:\s*2\b/, `${selector} does not name row 2`);
     }
     // And each names its column, for the same reason: `.main` was once
     // auto-placed and landed in the collapsed rail's track.
     assert.match(body(".rail"), /grid-column:\s*1\b/);
     assert.match(body(".main"), /grid-column:\s*2\b/);
-    assert.match(body(".sidebar-reopen"), /grid-column:\s*3\b/);
   });
 
   test("the shell has one column layout, because the rail never changes width", () => {
@@ -194,12 +328,14 @@ describe("the app shell's rows", () => {
     );
   });
 
-  test("the Files overlay starts below the title bar", () => {
-    // It is an overlay, so it would otherwise cover the caption -- putting its
-    // own header where the window's close button is -- and take the drag region
-    // with it, leaving a window with the panel open impossible to move.
-    assert.match(body(".sidebar"), /top:\s*var\(--topbar-h\)/);
-    assert.match(body(".sidebar-scrim"), /inset:\s*var\(--topbar-h\)/);
+  test("the Files pane is a pane of the sidebar, not a surface of its own", () => {
+    // It used to be a right-hand overlay: its own absolute surface, its own
+    // scrim and a reopen handle for when it was closed. It is a pane now -- the
+    // sidebar's segmented control chooses it, it fills the sidebar's remaining
+    // height, and there is nothing left to pin to a window edge or to reopen.
+    assert.doesNotMatch(SOURCE, /\.sidebar-reopen/);
+    assert.doesNotMatch(SOURCE, /\.sidebar-scrim/);
+    assert.match(body(".files-pane"), /flex:\s*1/);
   });
 });
 
@@ -226,67 +362,191 @@ describe("the budget number field", () => {
     assert.match(body(".budget-problem"), /color:\s*var\(--danger\)/);
   });
 });
-// --- the palette, measured off the reference --------------------------------
-describe("the palette is the reference's", () => {
-  // Every value here was counted out of a screenshot of the Freebuff window
-  // running on this machine, not chosen. That makes them worth pinning: a
-  // palette drifts one plausible-looking edit at a time, and the drift is
-  // invisible in a diff and in review -- the window still looks deliberate, it
-  // just no longer looks like the thing it was copied from.
+// --- the palette -------------------------------------------------------------
+describe("the palette is ours", () => {
+  // This block used to pin the twelve neutral values to the hexes counted out
+  // of a screenshot of another application, one `assert.equal` per colour, and
+  // justify each one by saying it was the reference's.
   //
-  // The accents of the scale are the ones that matter, because they are what
-  // the eye reads as "same app": the window's dominant field, the chrome above
-  // it, and the chip that sits on both.
-  const tokens = (name: string) =>
-    new RegExp(`--${name}: *(#[0-9a-f]{6})`, "i").exec(STYLESHEET)?.[1];
+  // That is a test that cannot survive being disagreed with. Every assertion
+  // was a value, so the only way to change the palette was to delete the
+  // evidence, and the only way for the palette to stay put was to keep copying
+  // someone else's window. It also had nothing to say about whether the ramp
+  // worked, which is the part that was actually wrong: --fg-mute sat at 4.21:1
+  // on the field, under what 11px text needs, and no assertion here could see
+  // that because every assertion was about a hex.
+  //
+  // What follows asserts the *properties* the two ladders have to have --
+  // achromatic, ordered, legible -- and computes them from the token values in
+  // the file. A step can be nudged and these still hold; a step that breaks the
+  // ordering or the contrast floor fails, and says which.
+  /** Every neutral, in the order the depth ladder climbs. */
+  const SURFACES = ["bg", "surface", "chrome", "input", "raised", "chip"];
+  const BORDERS = ["border-soft", "border", "border-strong"];
+  const TEXT = ["fg", "fg-dim", "fg-mute"];
 
-  test("the three surfaces are the reference's three", () => {
-    assert.equal(tokens("bg"), "#1c1d1c", "the dominant field is not the reference's");
-    assert.equal(tokens("chrome"), "#292b2a", "the bar is not the reference's");
-    assert.equal(tokens("chip"), "#3b3e3a", "the chip is a step off the reference's");
+  test("no neutral carries a tint", () => {
+    // The decision this palette is built on: the accent is the only chroma in
+    // the window. The ladder it replaced was a warm green-grey, and a chroma
+    // of three or four is enough to make two different windows read as the
+    // same one -- which is exactly what was happening.
+    //
+    // Asserted across *every* neutral rather than a sample, because "mostly
+    // achromatic" is not a thing a palette can be.
+    const tinted: string[] = [];
+    for (const name of [...SURFACES, ...BORDERS, ...TEXT]) {
+      const [r, g, b] = rgb(tokens(name)!);
+      if (r !== g || g !== b) tinted.push(`--${name} ${tokens(name)}`);
+    }
+    assert.deepEqual(tinted, [], "neutrals that are not r === g === b");
   });
 
-  test("and they are warm greys, not neutral ones", () => {
-    // The reference is 99.5% neutral with a green cast (0.47% of its pixels
-    // carry any chroma, and all of that is the accent). A neutral #1c1c1c is a
-    // different colour that reads as a different app beside it, and it is the
-    // kind of "tidy" edit nobody notices making.
-    for (const name of ["bg", "chrome", "chip"]) {
-      const hex = tokens(name)!;
-      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  test("the surfaces climb, so depth has one direction", () => {
+    const ladder: [string, number][] = SURFACES.map((n) => [n, luminance(tokens(n)!)]);
+    for (let i = 1; i < ladder.length; i += 1) {
+      const [prevName, prev] = ladder[i - 1];
+      const [name, now] = ladder[i];
       assert.ok(
-        Math.abs(r - b) <= 2 && g >= r && g >= b,
-        `--${name} ${hex} is not the reference's warm grey`,
+        prev < now,
+        `--${name} (${tokens(name)}) is not above --${prevName} (${tokens(prevName)})`,
       );
     }
   });
 
-  test("the text ramp is three steps, brightest first", () => {
-    const luminance = (name: string) => {
-      const hex = tokens(name)!;
-      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
-      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    };
-    assert.ok(
-      luminance("fg") > luminance("fg-dim") &&
-        luminance("fg-dim") > luminance("fg-mute"),
-      "the text ramp is not descending",
+  test("the borders climb too, and stay above the surfaces they edge", () => {
+    const ladder: [string, number][] = BORDERS.map((n) => [n, luminance(tokens(n)!)]);
+    for (let i = 1; i < ladder.length; i += 1) {
+      assert.ok(ladder[i - 1][1] < ladder[i][1], `border ladder breaks at --${ladder[i][0]}`);
+    }
+    // A hairline darker than the thing it outlines is not a hairline; it is a
+    // second, weaker border the eye reads as dirt.
+    assert.ok(luminance(tokens("border-soft")!) > luminance(tokens("input")!));
+    assert.ok(luminance(tokens("border")!) > luminance(tokens("raised")!));
+  });
+
+  test("the text ladder clears the legibility floor it is used at", () => {
+    // The floors are the ones the tokens are actually used at: --fg is body
+    // text, --fg-dim is secondary, and --fg-mute is metadata at 11px and below,
+    // which is the small-text case. Before this ramp --fg-mute was 4.21:1 and
+    // failed the last of these, which no hex-pinning assertion could have
+    // caught.
+    const floors: Record<string, number> = { fg: 12, "fg-dim": 7, "fg-mute": 4.5 };
+    for (const name of TEXT) {
+      const ratio = contrast(tokens(name)!, tokens("bg")!);
+      assert.ok(
+        ratio >= floors[name],
+        `--${name} ${tokens(name)} is ${ratio.toFixed(2)}:1 on --bg, below `
+          + `the ${floors[name]}:1 it is used at`,
+      );
+    }
+  });
+
+  test("the type, radius and elevation scales climb", () => {
+    // Three ladders now, and the same rule as the surfaces: a step that does
+    // not climb is not a step, it is a second name for the one below it. The
+    // type ladder is read in px and the radii likewise, so this is the only
+    // place that has to know they are lengths at all.
+    const px = (name: string) => parseFloat(tokenRaw(name)!);
+    for (const [label, names] of [
+      ["type", ["text-2xs", "text-xs", "text-sm", "text-base", "text-md", "text-lg", "text-xl"]],
+      ["radius", ["radius-xs", "radius-sm", "radius-md", "radius-lg"]],
+    ] as const) {
+      const values = names.map((n) => px(n));
+      for (let i = 1; i < values.length; i += 1) {
+        assert.ok(
+          values[i] > values[i - 1],
+          `--${names[i]} (${values[i]}px) is not above --${names[i - 1]} (${values[i - 1]}px)`,
+        );
+      }
+      assert.ok(values.length > 1, `the ${label} ladder is a single step`);
+    }
+    // The pill is the one radius that is not a length, so it is excluded from
+    // the climb above rather than special-cased inside it.
+    assert.ok(parseFloat(tokenRaw("radius-pill")!) > px("radius-lg"));
+  });
+
+  test("every scale step is used by at least one rule", () => {
+    // `--motion-slow` was declared for as long as this file existed and used
+    // zero times, which is exactly what a scale grows when nothing checks. So
+    // it is checked: parse the step names out of `:root`, then require each one
+    // to be consumed by a rule outside it.
+    //
+    // Adding a step nobody uses is not free even when it looks free -- it is a
+    // name that a later rule will reach for and a value that nothing keeps
+    // honest.
+    const declared = new Set(
+      [...body(":root").matchAll(/(--(?:text|radius|shadow|motion|accent)[\w-]*)\s*:/g)].map(
+        (m) => m[1],
+      ),
+    );
+    const used = new Set<string>();
+    for (const rule of RULES) {
+      if (rule.selectors.includes(":root")) continue;
+      for (const m of rule.body.matchAll(/var\((--(?:text|radius|shadow|motion|accent)[\w-]*)/g)) {
+        used.add(m[1]);
+      }
+    }
+    assert.deepEqual(
+      [...declared].filter((t) => !used.has(t)).sort(),
+      [],
+      "declared in :root and never used by a rule",
     );
   });
 
-  test("the accent is this app's own, read off its own icon", () => {
-    // The neutrals above are borrowed on purpose, and stay borrowed. The accent
-    // is not: it used to be the reference's sage, which meant the app shipped a
-    // blue icon on the taskbar and a sage window around it. It is now a value
-    // out of the shipped artwork -- #2f6feb is 80-87% of the opaque pixels of
-    // every icon size, and #6393f0 is the step on its own antialias ramp.
+  test("no rule writes a length the scales already own", () => {
+    // The same failure as the raw-colour test, one dimension over. Fourteen
+    // font sizes, three radii and eleven durations were literals a moment ago;
+    // every one of them was a value a palette or scale change could not reach.
     //
-    // Pinned to #6393f0 rather than #2f6feb on purpose: the icon blue is 3.70:1
-    // on --bg, which is short of the 4.5:1 body text needs, and the accent also
-    // paints small text. The ramp step is 5.61:1. Both are the icon's.
+    // Two families are exempt and both are exempt because they are not on a
+    // scale: `border-radius: 50%` and `1px`, which make a dot or a 3px-tall
+    // indicator rather than expressing a step.
+    const offenders: string[] = [];
+    for (const rule of RULES) {
+      if (rule.selectors.includes(":root")) continue;
+      const selector = rule.selectors.join(", ");
+      for (const decl of rule.body.split(";")) {
+        const d = decl.trim();
+        if (/^font-size:\s*[\d.]+px/.test(d)) offenders.push(`${selector} -> ${d}`);
+        if (/^border-radius:\s*[\d.]+px/.test(d) && !/^border-radius:\s*1px/.test(d)) {
+          offenders.push(`${selector} -> ${d}`);
+        }
+        if (/^transition:/.test(d) && /\b[\d.]+m?s\b/.test(d)) offenders.push(`${selector} -> ${d}`);
+      }
+    }
+    assert.deepEqual(offenders, [], "raw lengths outside the scale tokens");
+  });
+
+  test("the accent is this app's own, read off its own icon", () => {
+    // Pinned to a value rather than a property, and deliberately so. Every
+    // other assertion here survived the palette changing; this one exists to
+    // fail loudly when the *artwork* changes instead, because the accent is not
+    // a free parameter -- it is a value read out of app/icons/*.png
+    // and a re-drawn icon invalidates it.
+    //
+    // #2f6feb is the ground, 99.25% of the opaque non-white pixels across the
+    // fifteen raster sizes, and #6393f0 is the darkest step on its own
+    // antialias ramp that still clears 4.5:1. The ground itself is only 3.81:1
+    // on --bg (#1a1a1a) and this accent also paints small text. Both values are
+    // the icon's own, and neither moved when the mark was redrawn flat: the
+    // redraw changed how much of the icon is ground rather than ramp, which is
+    // why only the percentage in tokens.css needed re-measuring.
     assert.equal(tokens("accent"), "#6393f0");
-    // And it must be readable as ink on top of itself.
     assert.equal(tokens("accent-fg"), "#0b1020");
+  });
+
+  test("the accent is legible as text, and its ink is legible on it", () => {
+    // The reason the token is the ramp step and not the ground is contrast, so
+    // the reason is asserted rather than described: if someone swaps the accent
+    // for a prettier blue, this is what tells them it went too dark.
+    assert.ok(
+      contrast(tokens("accent")!, tokens("bg")!) >= 4.5,
+      `--accent ${tokens("accent")} is not readable as text on --bg`,
+    );
+    assert.ok(
+      contrast(tokens("accent-fg")!, tokens("accent")!) >= 4.5,
+      `--accent-fg ${tokens("accent-fg")} is not readable on the accent fill`,
+    );
   });
 
   test("the accent and --ok are not the same hue wearing two names", () => {
@@ -299,8 +559,8 @@ describe("the palette is the reference's", () => {
     // is high in it, and a test built that way would have passed on two
     // colours a person cannot tell apart.
     const hue = (name: string) => {
-      const [r, g, b] = [1, 3, 5]
-        .map((i) => parseInt(tokens(name)!.slice(i, i + 2), 16) / 255)
+      const [r, g, b] = rgb(tokens(name)!)
+        .map((v) => v / 255)
         .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
       const max = Math.max(r, g, b);
       const min = Math.min(r, g, b);
@@ -352,38 +612,290 @@ describe("the palette is the reference's", () => {
 
   test("the browser is told this window is dark", () => {
     // Without it, scrollbars, the scrollbar corner and form-control defaults
-    // paint themselves light inside a #1c1d1c window.
+    // paint themselves light inside a near-black window.
     assert.match(body(":root"), /color-scheme:\s*dark/);
   });
 });
 
-// --- the chips ---------------------------------------------------------------
-describe("chips are rounded rectangles, not stadiums", () => {
-  test("the conversation tab uses the fixed radius", () => {
-    // The reference rounds its chips to one radius everywhere -- the tab, the
-    // selected row, the composer's segmented tabs -- and reserves the stadium
-    // for pills that are actually pills (counters, badges). A stadium on the
-    // tab reads as a different control at the same colour.
-    assert.match(body(".tab"), /border-radius:\s*var\(--radius\)/);
+// --- chips, and what "selected" looks like -----------------------------------
+//
+// This block used to assert the opposite of what it asserts now: "chips are
+// rounded rectangles, not stadiums", on the reasoning that one radius for cards
+// and the stadium reserved for badges keeps a chip from reading as a different
+// control. That reasoning was not wrong, it was just answering a question this
+// window has since answered differently -- a shape language where *every*
+// control you can see the edge of is a stadium and every container is a rounded
+// rectangle. The old assertions are inverted here rather than deleted, because
+// the thing worth holding is the *rule*, and the rule changed.
+describe("a selected thing is a wash, and the tab is a tab", () => {
+  test("the conversation tab is a browser tab, not a chip", () => {
+    // It was the reference's chip -- a stadium floating in the middle of the
+    // bar, which is the shape of a *control*. It is the shape a browser gives
+    // the page it is showing: the height of the strip it is cut into, rounded at
+    // the top and **square at the bottom**, so it reads as attached to the top
+    // of the window rather than as a pill that happens to be up there.
+    //
+    // The strip is the bar's height and the tabs take that height, which is what
+    // puts their bottom edge on the bar's own rather than in the middle of the
+    // chrome. It is the *strip* that stretches them: a tab stretching itself is
+    // a tab that only fills the bar when it is the only thing in it.
+    assert.match(body(".tabs"), /align-items:\s*stretch/);
+    assert.match(body(".tabs"), /height:\s*100%/);
+    // Asserted as the four corners rather than as one radius, because the square
+    // pair is the whole of the shape: a radius on the lower corners lifts the tab
+    // off the edge it is attached to, and it is a chip again.
+    assert.match(
+      body(".tab"),
+      /border-radius:\s*var\(--radius-xs\) var\(--radius-xs\) 0 0/,
+    );
     assert.doesNotMatch(body(".tab"), /border-radius:\s*var\(--radius-pill\)/);
   });
 
-  test("it is the chip colour, and the selected row is the same one", () => {
-    // Both measured at #3b3e3a in the reference. Two literals for one step of a
-    // scale is how the scale stops meaning anything.
-    assert.match(body(".tab"), /background:\s*var\(--chip\)/);
-    assert.match(body(".chatrow.is-active"), /background:\s*var\(--chip\)/);
+  test("and the first tab starts on the rail's right edge", () => {
+    // The other half of "the tab is a tab": where the strip *is*. It used to be
+    // offset by `--list-w` minus the rail minus the gap so that it began on the
+    // conversation panel's right edge. That is only the right answer while the
+    // panel is open, and the panel is an overlay that starts closed -- so the
+    // common window led with a logo, 224px of empty bar, and a lone tab.
+    //
+    // The strip is pulled back by exactly the bar's own gap, which is what puts
+    // the first tab's left edge on the rail's right edge instead of 8px into the
+    // bar. Asserted as the *relationship* rather than as `-8px`, because two
+    // copies of eight are two things to keep in step; the day the bar's gap
+    // moves, the strip has to move with it.
+    //
+    // The offset is also asserted absent: a `0` left in front of a stale
+    // `--list-w` expression is the half-written failure this replaces, and it
+    // would read as aligned without being aligned.
+    const gap = parseFloat(/gap:\s*([0-9.]+)px/.exec(body(".topbar"))![1]);
+    const pull = parseFloat(/margin-left:\s*-([0-9.]+)px/.exec(body(".tabs"))![1]);
+    assert.equal(pull, gap, "the strip is not pulled back by the bar's own gap");
+    assert.doesNotMatch(body(".tabs"), /--list-w|--rail-w/);
+  });
+
+
+  test("everything you can be *on* takes the wash, and none of it is a fill", () => {
+    // The first two were both `--chip`, the flat step the depth ladder reserves
+    // for "raised". A raised step is the right answer for a badge, which is a
+    // thing other things sit on, and the wrong one for a selected row, which is
+    // a state -- `--chip` is one step off `--hover`, so "the one you are in" and
+    // "the one under the pointer" were a shade apart. The wash is a colour the
+    // hover cannot be.
+    assert.match(body(".tab.is-active"), /background:\s*var\(--wash\)/);
+    assert.match(body(".chatrow.is-active"), /background:\s*var\(--wash\)/);
+
+    // And the last two joined them. Both were solid accent fills, which is the
+    // one treatment this window keeps for *press me* -- a disc of it in the rail
+    // read as a control bolted onto the strip, and a preset painted with it read
+    // as a button rather than as the value in force.
+    assert.match(
+      body(".rail-btn.is-active"),
+      /background:\s*var\(--wash\)/,
+      "the rail's chosen item is not the wash",
+    );
+    assert.match(
+      body(".budget-preset.is-active"),
+      /background:\s*var\(--wash\)/
+      ,
+      "the chosen budget preset is not the wash",
+    );
+  });
+
+  test("neither of them draws a hairline any more", () => {
+    // The edge of a chip is a shape, not a line. A 1px frame around a stadium is
+    // what made the tab read as a card that happened to be short, and a frame on
+    // a selected row is a box drawn inside a panel that already has edges.
+    for (const selector of [".tab", ".chatrow.is-active"]) {
+      assert.doesNotMatch(
+        body(selector),
+        /border(-top|-right|-bottom|-left)?:\s*1px/,
+        `${selector} draws a hairline around a shape whose edge is its own fill`,
+      );
+    }
   });
 });
 
-// --- the bar's indent --------------------------------------------------------
+// --- the strip's own robustness ---------------------------------------------
+describe("the tab strip gives way instead of overflowing the window", () => {
+  test("the strip can shrink, so a long one cannot push the caption out", () => {
+    // `flex: none` held the strip at its content width however tight the bar got,
+    // and Close is the last control on the bar, so it was the first thing to end
+    // up outside the window.
+    assert.match(body(".tabs"), /flex:\s*0 1 auto/);
+    assert.match(body(".tabs"), /min-width:\s*0/);
+    // Still capped and still not growing: yielding is not the strip taking the
+    // bar's slack for itself.
+    assert.match(body(".tabs"), /max-width:\s*60%/);
+    // Past the ceiling it scrolls, rather than crushing the tabs flat.
+    assert.match(body(".tabs"), /overflow-x:\s*auto/);
+  });
+
+  test("a tab keeps a width it can be read at, and the strip scrolls instead", () => {
+    // A tab is the thing the user is aiming at, and its lead slot and its close
+    // glyph do not shrink. Without a floor, a ten-tab strip in a narrow window
+    // squeezed the glyph out of the tab it belonged to.
+    assert.match(body(".tab"), /flex:\s*0 1 auto/);
+    assert.match(body(".tab"), /min-width:\s*72px/);
+  });
+
+  test("the model id is ellipsised, not wrapped onto a second line", () => {
+    // A model id has no spaces in it, so a long one broke at whatever character
+    // fit and grew the chip two rows tall inside a 52px bar.
+    assert.match(body(".chip"), /white-space:\s*nowrap/);
+    assert.match(body(".chip"), /max-width:\s*240px/);
+    assert.match(
+      body(".chip > span:first-child"),
+      /text-overflow:\s*ellipsis/,
+      "the unbroken id has nothing to stop it crowding the caption",
+    );
+  });
+
+  test("the busy ring sits in a slot that every tab already has", () => {
+    // Asserted in the stylesheet rather than only in the DOM: the slot is what
+    // keeps the title still, and a slot with no width does not.
+    assert.match(body(".tab-lead"), /width:\s*12px/);
+    assert.match(body(".tab-lead"), /flex:\s*none/);
+  });
+
+  test("no separator is drawn beside the tab you are in, or the one you are on", () => {
+    // Asserted as the selector group, because a rule naming only the active tab
+    // leaves the hairline on its right -- the one that touches the wash.
+    for (const selector of [
+      ".tab.is-active::before",
+      ".tab:hover::before",
+      ".tab.is-active + .tab::before",
+      ".tab:hover + .tab::before",
+    ]) {
+      assert.match(body(selector), /opacity:\s*0/, `${selector} still draws its hairline`);
+    }
+    // The base hairline keeps a fade, so a pointer crossing the strip does not
+    // make the dividers blink in and out.
+    assert.match(body(".tab + .tab::before"), /transition:\s*opacity/);
+  });
+});
+
+// --- the accent --------------------------------------------------------------
+describe("the accent is one flat blue, and it is the icon's", () => {
+  test("there is no gradient left anywhere, because the icon is one colour", () => {
+    // The accent used to be a two-stop gradient: the icon's blue rotated 36
+    // degrees toward violet at the far end. The redesign asks for the icon's own
+    // blue and nothing beside it, so `--grad-accent` is deleted rather than
+    // flattened -- a gradient token whose two stops happened to match would
+    // still be the place the two drift apart again.
+    assert.doesNotMatch(SOURCE, /grad-accent/);
+    assert.doesNotMatch(SOURCE, /grad-wash/);
+  });
+
+  test("the rules that wear it paint the token, so there is one blue", () => {
+    // A hex written into a rule is the failure this guards: it looks identical
+    // on the day it is written and it is the copy that keeps the old colour the
+    // next time the accent moves. Every accent fill names `--accent` instead.
+    // The rail's active indicator used to be in this list. It is the wash now,
+    // along with the chosen budget preset: a solid accent belongs to a control
+    // that does something when you press it, not to one that is already chosen,
+    // and both of these were the latter wearing the former's ink.
+    const wearers = [
+      [".icon-btn.send-btn", body(".icon-btn.send-btn")],
+      [".icon-btn.stop-btn", body(".icon-btn.stop-btn")],
+      [".btn-accent", body(".btn-accent")],
+      [".empty h1", body(".empty h1")],
+    ];
+    for (const [selector, rule] of wearers) {
+      assert.match(
+        rule,
+        /(background|color):\s*var\(--accent\)/,
+        `${selector} does not paint the accent token`,
+      );
+      assert.doesNotMatch(
+        rule,
+        /linear-gradient\(\s*(#|rgb)/,
+        `${selector} writes its own fill instead of using the token`,
+      );
+    }
+  });
+
+  test("the accent clears the text floor on the field, because the wordmark is it", () => {
+    // `.empty h1` is the wordmark in accent-coloured *text*, so the accent has
+    // to be legible as text and not merely as a fill. 4.5:1 is that bar, and it
+    // is the reason `--accent` is one ramp step up from the icon's own ground.
+    const ratio = contrast(tokens("accent")!, tokens("bg")!);
+    assert.ok(
+      ratio >= 4.5,
+      `--accent ${tokens("accent")} is ${ratio.toFixed(2)}:1 on --bg, under the text floor`,
+    );
+  });
+
+  test("the selection wash is the same blue at low alpha", () => {
+    // The wash carries the accent without *being* the accent -- the selected
+    // conversation, the open tab. Flat now, so a selected row is one pixel value
+    // rather than a gradient's two; the alpha stays bounded because the row's
+    // ink sits on top of it.
+    const wash = flatMasked("wash");
+    assert.ok(wash, "--wash is not a flat rgb() colour");
+    assert.ok(
+      wash.alpha > 0 && wash.alpha <= 0.35,
+      `the wash is at alpha ${wash.alpha}, which stops being a wash`,
+    );
+    assert.equal(
+      wash.hex.toLowerCase(),
+      tokens("accent")!.toLowerCase(),
+      "the wash is not the accent's own blue",
+    );
+  });
+
+  test("the ink on a washed row clears the floor on the pixel it is painted on", () => {
+    // `--fg` on the title and `--fg-dim` on the timestamp, measured against the
+    // *composited* wash rather than against `--bg`, because that is the surface
+    // they are drawn on. Alpha compositing is not linear in the colours, so the
+    // composite is computed rather than reasoned about.
+    const wash = flatMasked("wash")!;
+    const surface = over(wash.hex, wash.alpha, tokens("bg")!);
+    for (const ink of ["fg", "fg-dim"]) {
+      const ratio = contrast(tokens(ink)!, surface);
+      assert.ok(
+        ratio >= 4.5,
+        `--${ink} is ${ratio.toFixed(2)}:1 on the composited wash (${surface}), `
+          + "under the floor for the text that wears it",
+      );
+    }
+  });
+
+  test("a washed row is told from a hovered one by hue, not by lightness", () => {
+    // The reason the selected row is a wash rather than a flat grey step is
+    // stated in `conversation-list.css`: `--chip` sat one step off `--hover`, so
+    // "the one you are in" and "the one under the pointer" were a shade apart.
+    // Composited over `--bg` the wash is *darker* than the hover tone, about
+    // 1.1:1 by luminance, so a contrast check alone would call them the same
+    // colour. What separates them is that the wash carries chroma and `--hover`
+    // is achromatic, which is why this asserts chroma and not a ratio.
+    assert.equal(chroma(tokens("hover")!), 0, "--hover is supposed to be achromatic");
+    const wash = flatMasked("wash")!;
+    const painted = chroma(over(wash.hex, wash.alpha, tokens("bg")!));
+    assert.ok(
+      painted >= 12,
+      `the composited wash carries chroma ${painted}, which the pointer tone `
+        + "could be mistaken for in greyscale",
+    );
+  });
+});
+
+// --- the bar's left corner ---------------------------------------------------
 describe("the title bar is indented past the left column", () => {
-  test("it starts inside the main column, not against the window", () => {
-    // The reference's bar is split by the same boundary the content below it
-    // is, and its conversation tab starts 8px inside that split. The caption
-    // stays hard against the right edge, so the bar's two ends are deliberately
-    // not symmetrical.
-    assert.match(body(".topbar"), /padding:\s*0 0 0 calc\(var\(--rail-w\) \+ 8px\)/);
+  test("the mark takes the rail's column, so the tab still starts past it", () => {
+    // The indent used to be the bar's own padding, and it is the mark's width
+    // now. The two are equivalent: `--rail-w` of mark plus the bar's own 8px gap
+    // puts the conversation tab exactly where the padding used to -- 8px past
+    // the boundary the content below the bar is split by, which is where the
+    // reference puts its tab. The caption stays hard against the right edge, so
+    // the bar's two ends are deliberately not symmetrical.
+    //
+    // Asserted as the three parts rather than as one computed offset, because
+    // the arrangement is what matters: a `padding` that came back alongside the
+    // mark would double the indent, and that reads as "almost aligned" rather
+    // than as a bug.
+    assert.match(body(".topbar"), /padding:\s*0;/);
+    assert.match(body(".topbar"), /gap:\s*8px/);
+    assert.match(body(".topbar-mark"), /width:\s*var\(--rail-w\)/);
   });
 
   test("and the indent does NOT follow the conversation panel", () => {
@@ -410,7 +922,10 @@ describe("the conversation list floats over the transcript", () => {
     // inside it re-wraps on the way. Taking the panel out of flow means the
     // only thing that moves is a `transform`.
     assert.match(body(".chatlist"), /position:\s*absolute/);
-    assert.match(body(".chatlist"), /left:\s*var\(--rail-w\)/);
+    // x=0, over the rail: the rail is the collapsed state of one sidebar and
+    // this panel is the expanded state, so the panel covers the strip rather
+    // than sitting to its right. See the panel's own comment.
+    assert.match(body(".chatlist"), /left:\s*0\b/);
     assert.match(body(".chatlist"), /bottom:\s*0\b/);
     // `absolute` with no `grid-column`/`grid-row`: those would be inert, and
     // inert declarations are how a rule ends up documenting an arrangement that
@@ -418,17 +933,14 @@ describe("the conversation list floats over the transcript", () => {
     assert.doesNotMatch(body(".chatlist"), /grid-/);
   });
 
-  test("and it is the reference's 255px, pinned to the rail's right edge", () => {
-    // Measured at x=92..538 of a full-DPI capture, beside the rail's x=0..92.
-    // The old 236px was a compromise against truncating titles in a column the
-    // rail shared; the rail is out of the way now, so the reference's own width
-    // costs nothing and the compromise can go.
-    assert.match(STYLESHEET, /--list-w:\s*255px/);
+  test("and it is the reference's width, pinned to the rail's right edge", () => {
+    // Widened from the reference's 260px in the restructure. A roomier sidebar
+    // -- a 40px "New chat" button and 12px row insets -- needs the extra width
+    // to keep a title off its ellipsis, and the list is the one surface where
+    // the text is the content. Pinned by value so a future tweak moves it
+    // deliberately rather than by drift.
+    assert.match(STYLESHEET, /--list-w:\s*288px/);
     assert.match(body(".chatlist"), /width:\s*var\(--list-w\)/);
-    // The sum is still the reference's 307px of sidebar, measured from the
-    // window's left edge to the panel's right edge. Worth pinning because it is
-    // the number a reader will check against the reference.
-    assert.equal(52 + 255, 307);
   });
 
   test("it slides, from the edge it is anchored to", () => {
@@ -474,8 +986,16 @@ describe("the rail is a full-height strip down the left edge", () => {
     // been moved out to an overlay -- so there is nothing left to paint over it,
     // and the old arrangement had a way to go wrong: a strip whose background
     // belonged to a container sized by its contents stops at the last icon.
-    assert.match(body(".rail"), /background:\s*var\(--chrome\)/);
-    assert.match(body(".chatlist"), /background:\s*var\(--bg\)/);
+    // The rail is the window's edge and it is frosted now, like the title bar
+    // and the status bar -- the three are one material (`--glass-chrome`). See
+    // the glass block in tokens.css; the fill is still a token this line can
+    // name, rather than a literal it cannot see.
+    assert.match(body(".rail"), /background:\s*var\(--glass-chrome\)/);
+    // The conversation panel is frosted now rather than painted --bg, so the
+    // transcript behind it reaches the eye through the blur. Asserted against
+    // the glass token, so the frosted fill is still the application's own value
+    // and not a literal this line cannot see.
+    assert.match(body(".chatlist"), /background:\s*var\(--glass-panel\)/);
     assert.match(body(".rail"), /height:\s*100%/);
   });
 
@@ -510,74 +1030,400 @@ describe("the rail is a full-height strip down the left edge", () => {
   });
 });
 
-// --- the composer's measured box --------------------------------------------
-describe("the composer is the size the reference draws it", () => {
-  test("720px wide, because 1258 physical pixels at 1.75 scale is 719", () => {
-    // The old 860px came from a downscaled screen-rect capture, so it was
-    // really measuring something else. In the full-DPI capture the field spans
-    // x=840..2098 and sits centred in the transcript column with a ~171px
-    // gutter either side, which is a deliberate maximum rather than a fill.
-    assert.match(body(".composer-inner"), /max-width:\s*720px/);
+// --- the measure ------------------------------------------------------------
+describe("the composer and the transcript share one measure", () => {
+  test("and they share it by construction, not by agreement", () => {
+    // This is the invariant, and it is the reason the number is a token.
+    //
+    // It did not hold. The transcript column was 860px and the composer 720px,
+    // so the field sat inboard of the messages it was replying to, and nothing
+    // in either file said whether that was the design or an accident. A test
+    // comparing two numbers would only have frozen the accident; one token
+    // cannot drift, because there is no second number to drift from.
+    //
+    // Asserted on the *token*, so changing the measure is one edit and does not
+    // invalidate a test that only ever claimed the two are the same.
+
+
+// --- motion coverage ---------------------------------------------------------
+/**
+ * Every state change that can animate has something to animate it.
+ *
+ * This began as an audit of the whole stylesheet, and it found 38 state rules
+ * changing a visible property with nothing to interpolate it: the conversation
+ * list, the model picker's rows, the file tree, the permission menu and every
+ * form field snapped where the rest of the window faded over 110ms.
+ *
+ * The defect is invisible to a rule-by-rule read, which is why it survived: the
+ * missing transition is not in the rule that is wrong -- it is absent from the
+ * rule that should have carried it. So it is asserted over the cascade at once,
+ * the way the colour-and-scale tests above are.
+ *
+ * A transition counts for a state when two things hold: its *subject* (the last
+ * compound of its selector, states removed) is the same element or a subset of
+ * the one changing, and the properties it lists cover everything that changes.
+ * So a transition on `.icon-btn` covers `.icon-btn.send-btn`, and one on
+ * `.composer-inner` deliberately does *not* cover the textarea inside it -- an
+ * inherited transition does not animate a descendant.
+ */
+describe("every state change has a transition to animate it", () => {
+  /** What is worth interpolating. `font-weight` and `text-decoration` are
+   *  absent on purpose: neither animates reliably, so requiring a transition
+   *  for them would be requiring a lie. */
+  const ANIMATABLE = ["background", "background-color", "color", "border-color", "transform", "opacity", "filter", "height"];
+  /** What each shorthand covers, so `background` counts for `background-color`. */
+  const COVERS: Record<string, string[]> = { background: ["background-color"], border: ["border-color"] };
+
+  const STATES = /:(hover|active|focus|focus-visible)\b|\.is-active|\[data-/;
+
+  /**
+   * The element a selector's last compound names: its tag and its classes, with
+   * states and attributes removed.
+   *
+   * The tag is in here because `.rowmenu button` and `.rowmenu button:hover` are
+   * the same element and carry no class at all -- a classes-only reading gives
+   * both an empty set and matches nothing.
+   */
+  function subject(selector: string): Set<string> {
+    const last = selector.split(/[\s>+~]+/).filter(Boolean).pop() ?? "";
+    const out = new Set<string>();
+    const tag = last.match(/^([a-z][\w-]*)/);
+    if (tag) out.add(tag[1]);
+    for (const m of last.matchAll(/\.([A-Za-z][\w-]*)/g)) out.add(m[1]);
+    return out;
+  }
+
+  /** The properties every `transition` in a body lists, shorthands expanded. */
+  function transitioned(body: string): Set<string> {
+    const out = new Set<string>();
+    for (const match of body.matchAll(/transition\s*:\s*([^;]+);/g)) {
+      for (const part of match[1].split(",")) {
+        const first = part.trim().split(/\s+/)[0];
+        if (!first) continue;
+        out.add(first);
+        for (const also of COVERS[first] ?? []) out.add(also);
+      }
+    }
+    return out;
+  }
+
+  function changed(body: string): Set<string> {
+    const out = new Set<string>();
+    for (const prop of ANIMATABLE) {
+      if (new RegExp(`(^|[\\s;])${prop}\\s*:`).test(body)) out.add(prop);
+    }
+    return out;
+  }
+
+  const isSubset = (a: Set<string>, b: Set<string>) =>
+    a.size > 0 && [...a].every((x) => b.has(x));
+
+  test("no interactive state repaints itself in a single frame", () => {
+    // A state listed here is deliberately instant, and adding one is a claim
+    // that has to be argued beside it.
+    const INSTANT_ON_PURPOSE = [
+      // The stylesheet cannot see this one: the element is rendered as
+      // `class="btn btn-accent"`, so the transition that animates it is on
+      // `.btn` -- which lists both `background` and `filter` now. A CSS-only
+      // reading sees `.btn-accent` and no transition anywhere.
+      ".btn-accent:hover:not(:disabled)",
+      // A native scrollbar part. Chromium paints it, and it takes no
+      // transition from a stylesheet, so requiring one would be requiring a
+      // rule that does nothing.
+      "::-webkit-scrollbar-thumb:hover",
+    ];
+
+    const gaps: string[] = [];
+    for (const rule of RULES) {
+      for (const selector of rule.selectors) {
+        if (!STATES.test(selector)) continue;
+        // A disabled control has no state to ease into; it is inert.
+        // A control that is switched off has no state to ease into: both a
+        // plain `:disabled` rule and a `:disabled:hover` one say "do not
+        // respond", and both are inert by design.
+        if (selector.includes(":disabled")) continue;
+        const wanted = changed(rule.body);
+        if (wanted.size === 0) continue;
+        if (INSTANT_ON_PURPOSE.includes(selector)) continue;
+        const mine = subject(selector);
+        const covered = RULES.some(
+          (other) =>
+            other.selectors.some((s) => isSubset(subject(s), mine)) &&
+            [...wanted].every((prop) => transitioned(other.body).has(prop)),
+        );
+        if (!covered) gaps.push(`${selector} -> ${[...wanted].sort().join(", ")}`);
+      }
+    }
+    assert.deepEqual(
+      [...new Set(gaps)].sort(),
+      [],
+      "a state changes a visible property with nothing to animate it",
+    );
+  });
+});
+    for (const selector of [".composer-inner", ".transcript-inner", ".hint", ".banner"]) {
+      assert.match(
+        body(selector),
+        /max-width:\s*var\(--measure\)/,
+        `${selector} does not take the shared measure`,
+      );
+    }
+    const measure = new RegExp("--measure: *([\\d.]+)px", "i").exec(STYLESHEET)?.[1];
+    assert.ok(measure, "--measure is not declared");
   });
 
-  test("and its field is the reference's one recessed panel", () => {
-    // #222423 is 4.6% of the reference's window, and every one of those pixels
-    // lies inside the composer's bounds -- it is the only panel big enough to
-    // read a recessed colour off.
-    assert.match(STYLESHEET, /--surface: *#222423/i);
+  test("and the text inside it starts on one edge, the composer's included", () => {
+    // The half of the invariant the box could not carry.
+    //
+    // Sharing `--measure` was not enough, and that is the whole reason this test
+    // exists. The transcript spent 28px of its 680 on padding while the composer
+    // spent 19, so the messages were 624px wide inside the field that replied to
+    // them: same centre, different edges, and both numbers looked deliberate.
+    //
+    // So the inset is a token too, and the composer is written *from* it: its
+    // field and its control row subtract their own 1px border from the token,
+    // which is the only reason the composer's text and the far side of that
+    // border agree. That subtraction hard-codes the border, so the border is
+    // pinned here -- a 2px border would put the composer's text one pixel right
+    // of every other line and nothing else would notice.
+    const border = parseFloat(/border:\s*([\d.]+)px\s+solid/.exec(body(".composer-inner"))![1]);
+    assert.equal(border, 1, "the composer's border is not the 1px the inset subtracts");
+    const measure = parseFloat(
+      new RegExp("--measure: *([\\d.]+)px", "i").exec(STYLESHEET)![1],
+    );
+    const inset = parseFloat(
+      new RegExp("--column-inset: *([\\d.]+)px", "i").exec(STYLESHEET)![1],
+    );
+    // A band, for the same reason the measure has one: under half a control's
+    // own inset a line touches the column's edge, and over 40px the column has
+    // paid its whole width for air on both sides. It also catches the one
+    // failure a token cannot: a typo in the token itself, which every rule would
+    // then follow faithfully.
+    assert.ok(inset >= 8, `--column-inset ${inset}px puts text against the column's edge`);
+    assert.ok(inset <= 40, `--column-inset ${inset}px is air rather than an inset`);
+    assert.ok(inset * 2 < measure, `--column-inset ${inset}px leaves no column to inset from`);
+    // And every rule that puts a line of text in the column has to take it: the
+    // messages, the field itself and its control row, the hint under it, the
+    // banner above it, and the log strip. The two inside the composer subtract
+    // the border they sit behind; the rest take the whole inset.
+    for (const selector of [
+      ".transcript-inner",
+      ".hint",
+      ".banner",
+      ".logstrip",
+    ]) {
+      assert.match(
+        body(selector),
+        /var\(--column-inset\)/,
+        `${selector} does not take the column's inset`,
+      );
+    }
+    for (const selector of [".composer textarea", ".composer-row"]) {
+      assert.match(
+        body(selector),
+        /calc\(var\(--column-inset\) - 1px\)/,
+        `${selector} does not hold the column's line behind the composer's border`,
+      );
+    }
+  });
+
+  test("and the transcript is centred on the composer's axis, scrollbar or not", () => {
+    // The column's centre is a fact about the window, not about whether this
+    // conversation happens to overflow. `.transcript` is the only scroller in
+    // the lower half, and its scrollbar took 10px out of its own box: the
+    // messages sat 5px left of the field below them, and -- worse than the
+    // offset -- they *moved* there the moment a conversation grew past the
+    // window. `both-edges` reserves the gutter on both sides, so the two boxes
+    // share one centre at every scroll position.
+    assert.match(body(".transcript"), /scrollbar-gutter:\s*stable\s+both-edges/);
+  });
+
+  test("and it is narrow enough to be read, wide enough to be a field", () => {
+    // A measure has two failure modes and this sits between them: under about
+    // 560px the transcript stops holding a code block, over about 760px a line
+    // of 13px prose runs past 90 characters and the eye loses the start of the
+    // next one. Asserted as a band, because either edge of it is a real defect
+    // and neither edge is a constant.
+    const measure = parseFloat(new RegExp("--measure: *([\\d.]+)px", "i").exec(STYLESHEET)![1]);
+    assert.ok(measure >= 560, `--measure ${measure}px cannot hold a code block`);
+    assert.ok(measure <= 760, `--measure ${measure}px is too wide to read across`);
+  });
+
+  test("and its field is one step above the field it sits on", () => {
+    // A recessed panel has to be readable *as* a panel, which is a claim about
+    // depth rather than about a colour. Asserted against the depth ladder: the
+    // composer's field must be above `--bg` and below the controls that sit on
+    // it. Pinning #222423 here would have meant asserting a colour nobody can
+    // argue with and everybody can edit.
+    const lift = (name: string) => {
+      const hex = new RegExp(`--${name}: *(#[0-9a-f]{6})`, "i").exec(STYLESHEET)![1];
+      const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    assert.ok(lift("surface") > lift("bg"), "--surface is not above --bg");
+    assert.ok(lift("surface") < lift("input"), "--surface is not below --input");
+    assert.match(body(".composer-inner"), /background:\s*var\(--glass-field\)/);
+  });
+});
+
+// --- keyboard focus ---------------------------------------------------------
+describe("a keyboard user can see where they are", () => {
+  test("the ring is drawn on every focusable thing, once", () => {
+    // Until this there was no rule anywhere in the file that set an `outline`,
+    // and five that set it to `none`, so focus fell through to the UA default:
+    // 1px #101010 on a #1a1a1a field, measured at 1.13:1. On nine controls in
+    // ten, focusing changed nothing a person could see.
+    //
+    // One rule, not one per control: a ring that has to be re-declared for
+    // every new button is a ring that the next button will not have.
+    const rules = RULES.filter((r) => r.selectors.includes(":focus-visible"));
+    assert.equal(rules.length, 1, `there are ${rules.length} :focus-visible rules, not 1`);
+    assert.match(rules[0].body, /outline:\s*2px solid var\(--focus-ring\)/);
+    // Positive and load bearing: at a negative offset the ring would sit on the
+    // control's own fill and vanish on exactly the buttons that need marking.
+    assert.match(rules[0].body, /outline-offset:\s*2px/);
+  });
+
+  test("nothing suppresses it but the one field that says it its own way", () => {
+    // The five `outline: none` that are gone existed only because there was no
+    // ring to show, and any one of them back would out-specify a bare
+    // `:focus-visible` and kill the ring on that control while every other
+    // control in the app still showed it.
+    //
+    // One exception, and it is not a control: the composer's text field. **A text
+    // input matches `:focus-visible` on a *mouse* click** -- the browser's
+    // heuristic, not this app's -- so the field drew the ring on every click, and
+    // clicking a chat in the sidebar focuses it. The card already says it is
+    // focused by taking its own border to `--accent`, so the two were two blue
+    // boxes saying one thing: measured at 758x63, `outline-offset: 2px`.
+    //
+    // Asserted as the exact set rather than as a count, so a second suppression
+    // cannot ride in behind this one.
+    const suppressions = RULES.filter((r) => /outline:\s*none/.test(r.body));
+    assert.deepEqual(
+      suppressions.map((r) => r.selectors.join(", ")),
+      [".composer textarea:focus-visible"],
+      "something other than the composer's field suppresses the focus ring",
+    );
+    // And that field has something else to say, so the suppression is not the
+    // whole treatment -- a field that suppressed the ring and said nothing would
+    // be the original bug with the colours swapped.
+    assert.match(
+      body(".composer-inner:focus-within"),
+      /border-color:\s*var\(--accent\)/,
+    );
+  });
+
+  test("and it is legible on every surface it can land on", () => {
+    // The four surfaces a focused control can sit against: the field, the
+    // chrome the rail and title bar are painted, a raised card, and the
+    // selected chip. 3:1 is the non-text bar, and the ring is non-text.
+    //
+    // `--focus-ring` is resolved through whatever it points at, so this holds
+    // for the token the rule actually reads and not for a token it happens to
+    // share a name with.
+    const ring = resolveHex("focus-ring");
+    assert.ok(ring, "--focus-ring does not resolve to a colour");
+    for (const surface of ["bg", "chrome", "raised", "chip"]) {
+      const r = contrast(ring, tokens(surface)!);
+      assert.ok(
+        r >= 3,
+        `--focus-ring ${ring} is ${r.toFixed(2)}:1 on --${surface}, under 3:1`,
+      );
+    }
+    // And it must not be the colour of the control it rings: `--accent` is the
+    // fill of the send button, the accent button and the mode pills, so a ring
+    // in it disappears into the thing it is marking.
+    assert.notEqual(
+      ring,
+      tokens("accent"),
+      "the focus ring is the accent, which is the fill of the buttons it marks",
+    );
+  });
+});
+
+// --- the density the controls have to hit -----------------------------------
+describe("the rail's targets are big enough to hit", () => {
+  test("the rail is as wide as its buttons and its air", () => {
+    // Pinned by value, like `--topbar-h` and `--list-w`, because the derived
+    // check below cannot see this one on its own. Widened to 64px in the
+    // restructure: a 44px button inside it leaves 10px a side, which is the air
+    // the other assertion asks for.
+    assert.match(STYLESHEET, /--rail-w:\s*64px/);
+  });
+
+  test("a rail button is at least the 40px minimum click target", () => {
+    // It was 38x34. 34px is under the 40px minimum, and the rail is the one
+    // place in this app where every control is reached by a pointer alone --
+    // the settings and stop buttons are the only way back to a usable window
+    // once a turn is running.
+    const railW = parseFloat(/--rail-w: *([\d.]+)px/.exec(STYLESHEET)![1]);
+    const w = parseFloat(/width: *([\d.]+)px/.exec(body(".rail-btn"))![1]);
+    const h = parseFloat(/height: *([\d.]+)px/.exec(body(".rail-btn"))![1]);
+    assert.ok(w >= 40, `rail buttons are ${w}px wide`);
+    assert.ok(h >= 40, `rail buttons are ${h}px tall`);
+    // And the rail has to hold one with room either side, or it stops reading
+    // as a strip and becomes a column of squares.
+    assert.ok(
+      railW - w >= 8,
+      `a ${w}px button in a ${railW}px rail leaves ${(railW - w) / 2}px a side`,
+    );
   });
 });
 
 // --- re-measured at full DPI ------------------------------------------------
 describe("the bar and the tab pill, re-measured at full DPI", () => {
-  test("the title bar is 48px, not the 46px the downscaled capture gave", () => {
-    // 85 physical pixels of bar in the reference. 46px was read off a capture
-    // that had already lost the 1.75 scale factor.
-    assert.match(STYLESHEET, /--topbar-h:\s*48px/);
+  test("the title bar is 52px, which is one text line plus its margins", () => {
+    // It was 44px after the last re-derivation. The restructure gives the bar
+    // more air around its one row of 13px text, and 52px is that text over 19px
+    // of margin -- still a bar sized to its contents rather than to someone
+    // else's caption buttons.
+    assert.match(STYLESHEET, /--topbar-h:\s*52px/);
+    // And the caption buttons have to survive inside it, because they fill the
+    // bar's height and a bar too short for them clips their own labels.
+    const bar = parseFloat(/--topbar-h: *([\d.]+)px/.exec(STYLESHEET)![1]);
+    assert.ok(bar >= 40, `a ${bar}px bar cannot hold a 40px caption button`);
   });
 
-  test("the tab pill's hairline is --border, not the lighter --border-strong", () => {
-    // #363936 outlines the reference's pill, which is --border. --border-strong
-    // is two steps up the scale and draws a visible frame around a chip that is
-    // meant to sit flush on the chrome.
-    assert.match(body(".tab"), /border:\s*1px solid var\(--border\)/);
-    assert.doesNotMatch(body(".tab"), /var\(--border-strong\)/);
+  test("the tab sits flush on the chrome, with no hairline at all", () => {
+    // This used to pin the tab's hairline to `--border` rather than the lighter
+    // `--border-strong`, which was the right question while it had one. It has
+    // none now: the wash separates the tab you are in from the chrome behind it.
+    //
+    // Asserted on the tab's own two controls rather than on the tab: a `<button>`
+    // arrives with a border, and both of them have to be told not to draw one.
+    // The tab itself is a box, and its edge is its fill.
+    for (const selector of [".tab-open", ".tab-close"]) {
+      assert.match(body(selector), /border:\s*0/);
+      assert.doesNotMatch(body(selector), /border:\s*1px solid/);
+      assert.doesNotMatch(body(selector), /var\(--border-strong\)/);
+    }
   });
 });
 
-// --- projects in the conversation panel -------------------------------------
-describe("conversations are grouped under a project header", () => {
-  test("the group's rows are indented, so the hierarchy reads without a legend", () => {
-    // A list is scanned, not read. Indent is the cue that says "these belong to
-    // the name above" without needing a colour key or a border, and it is what
-    // the reference does.
-    assert.match(body(".chatproj-rows"), /padding:\s*0 0 0 14px/);
+// --- the conversation panel's folder ----------------------------------------
+describe("the panel names the folder it is showing", () => {
+  test("the folder is a control, so it can be changed from the list", () => {
+    // The list is scoped to one folder, so the folder is the thing a user needs
+    // to be able to move -- and the picker used to hang off the project group's
+    // header, which is gone. A heading that could not be pressed would leave the
+    // chats pane with no way to change folders at all.
+    assert.match(body(".chatlist-folder"), /cursor:\s*pointer/);
+    // Undone rather than restyled: a `<button>` arrives with a border, a grey
+    // background and a centred label, and all three have to go for it to read as
+    // the heading it still is.
+    assert.match(body(".chatlist-folder"), /border:\s*0/);
+    assert.match(body(".chatlist-folder"), /background:\s*transparent/);
+    assert.match(body(".chatlist-folder"), /text-align:\s*left/);
   });
 
-  test("the header is a control, so it says whether it is open", () => {
-    // It folds its conversations away, and a fold that only shows in the caret's
-    // shape leaves a screen reader reporting a full project as though it were
-    // the only thing on screen.
-    assert.match(body(".chatproj-head"), /display:\s*flex/);
-    // The header is not selectable-looking: a filled row here would be one more
-    // thing in the list that looks like a conversation and is not.
-    assert.doesNotMatch(body(".chatproj-head"), /background:\s*var\(--(raised|chip)\)/);
-  });
-
-  test("the header can shrink its own name rather than widening the panel", () => {
-    // The panel is 255px and a project is a full path. Without `min-width: 0`
-    // the flex item's automatic minimum size is its content, so one long
-    // folder name would push the panel past its fixed width -- the same trap
-    // `.chatlist` itself is documented against.
-    assert.match(body(".chatproj-toggle"), /min-width:\s*0\b/);
-    assert.match(body(".chatproj-name"), /text-overflow:\s*ellipsis/);
-  });
-
-  test("the caret has its own box, because a glyph's box is not its shape", () => {
-    // Without the fixed width the arrow's advance box sits a pixel off the
-    // folder outline beside it, and the two read as misaligned rather than as
-    // one row.
-    assert.match(body(".chatproj-caret"), /width:\s*8px/);
+  test("the folder can shrink rather than widening the panel", () => {
+    // The panel is 255px and a folder is a full path. Without `min-width: 0` the
+    // flex item's automatic minimum size is its content, so one long folder name
+    // would push the panel past its fixed width -- the same trap `.chatlist`
+    // itself is documented against.
+    assert.match(body(".chatlist-folder-name"), /min-width:\s*0\b/);
+    assert.match(body(".chatlist-folder-name"), /text-overflow:\s*ellipsis/);
   });
 
   test("the project name on the New chat button is pushed to the far edge", () => {
@@ -595,6 +1441,19 @@ describe("conversations are grouped under a project header", () => {
     // heading away with its rows.
     assert.match(body(".chatlist-rows"), /flex:\s*1/);
     assert.match(body(".chatlist-rows"), /overflow-y:\s*auto/);
+  });
+
+  test("and the empty list grows, so the foot is at the bottom either way", () => {
+    // `.chatlist-rows` is not *rendered* when there are no conversations -- the
+    // component swaps it for `.chatlist-empty` -- so with the empty list at
+    // `flex: none` the foot had nothing above it taking the free height and sat
+    // wherever the content ended. Measured in a real window, not read off the
+    // stylesheet: the foot landed 218px into a 712px panel, which is what "the
+    // settings button is not at the bottom of the sidebar" looks like.
+    //
+    // Both, and not one or the other: exactly one of the two is on screen at a
+    // time, so the foot is pinned in both states only if both declare it.
+    assert.match(body(".chatlist-empty"), /flex:\s*1/);
   });
 });
 
@@ -653,6 +1512,63 @@ describe("permission and thinking read as one control in the settings panel", ()
     assert.match(body(".modal"), /overflow-y:\s*auto/);
   });
 
+  test("and settings is a pane of the sidebar, not a dialog over the window", () => {
+    // Settings and Search are panes of the left sidebar now. The panel keeps
+    // `.modal` as its root -- its heading, its rows and its sticky footer are
+    // all styled from there -- and `.chatlist .modal` is what turns that markup
+    // into a pane. Scoped by the sidebar so the modal rules themselves stay
+    // exactly what the other two dialogs need.
+    const pane = body(".chatlist .modal");
+    assert.match(pane, /width:\s*100%/);
+    assert.match(pane, /max-width:\s*none/);
+    assert.match(pane, /border-radius:\s*0/);
+    assert.match(pane, /background:\s*none/);
+    /*
+     * And the scrollbar's gutter is reserved, because this is the pane whose
+     * height is chosen by which tab is showing. The Model tab overflows and
+     * Permission does not, so measured, the content box moved between **251px
+     * and 241px** on every switch -- while the tab pill was sliding, whose
+     * transform is a percentage of the track that had just moved underneath it.
+     * The transcript reserves its gutter for the same reason; `stable` alone,
+     * because nothing below this pane is centred against the full width.
+     */
+    assert.match(pane, /scrollbar-gutter:\s*stable/);
+    // And the sticky footer reaches past that gutter, so the Close row's rule
+    // spans the panel instead of stopping at the scrollbar's edge. Measured
+    // before this rule: the footer ran 0..277 against a panel of 0..287.
+    assert.match(
+      body(".chatlist .modal .modal-actions"),
+      /margin-right:\s*calc\(-18px - var\(--scrollbar\)\)/,
+    );
+  });
+
+  test("and its rows stack, because the sidebar is 288px wide", () => {
+    // The model row is a grid of provider, model and Apply side by side, which
+    // needs about 420px to say anything: at the sidebar's 252px of usable width
+    // the model id is three characters and a scrollbar. Stacked, every control
+    // gets the full width and the row reads down the panel like the rest.
+    assert.match(body(".chatlist .settings-row-model"), /grid-template-columns:\s*1fr\b/);
+    assert.match(body(".chatlist .settings-row"), /flex-wrap:\s*wrap/);
+    // The search panel's own width and height cap give way to the sidebar's.
+    assert.match(body(".chatlist .search-modal"), /width:\s*100%/);
+    assert.match(body(".chatlist .search-modal"), /max-height:\s*none/);
+  });
+
+  test("the sub-panes take the tabs' place, at the tabs' height", () => {
+    // Settings and Search swap the segmented control for a back row rather than
+    // sitting under it, so entering one does not shift the pane below it up by a
+    // row's worth -- and the control that leaves a pane is where the control
+    // that reached it was.
+    assert.match(body(".chatlist-subhead"), /height:\s*32px/);
+    assert.match(body(".chatlist-back"), /place-items:\s*center/);
+    // And the chats content is hidden for every pane that is not Chats, so a
+    // pane added later cannot quietly keep the conversation list behind it.
+    assert.match(
+      body('.chatlist:not([data-pane="chats"]) .chatlist-rows'),
+      /display:\s*none/,
+    );
+  });
+
   test("the menu is as wide as the row that opened it", () => {
     // `left: 0; right: 0` with no width, so the panel grows with the label
     // instead of the menu leaving the row it belongs to. A fixed 320px -- what
@@ -668,8 +1584,15 @@ describe("permission and thinking read as one control in the settings panel", ()
     // error colour would be a lie. And `--fg-dim` would be too quiet for the
     // one thing in the menu a user must not have to read the description to
     // notice.
-    assert.match(body(".permchoice-warn"), /color:\s*var\(--accent\)/);
+    //
+    // It is `--accent-bright` rather than `--accent` because this badge is the
+    // one place accent-coloured text sits on a *raised* chip rather than on the
+    // field, and `--accent` is 3.6:1 there -- under the small-text floor, and
+    // worse than the sage it replaced. `--accent-bright` is the next step up
+    // the same icon ramp and clears it at 5.4:1.
+    assert.match(body(".permchoice-warn"), /color:\s*var\(--accent-bright\)/);
     assert.doesNotMatch(body(".permchoice-warn"), /var\(--danger\)/);
+    assert.match(body(".permchoice-warn"), /background:\s*var\(--chip\)/);
   });
 
   test("the trigger is a field, like the settings rows beside it", () => {
@@ -686,16 +1609,20 @@ describe("permission and thinking read as one control in the settings panel", ()
     // number is meaningless, and a rule left behind would be a hard limit on a
     // panel that is already the width of its container.
     assert.doesNotMatch(SOURCE, /\.permchoice\s*\{[^}]*--composer/);
-    assert.doesNotMatch(body(".permchoice"), /max-width:\s*720px/);
+    assert.doesNotMatch(body(".permchoice"), /max-width:\s*var\(--measure\)/);
     assert.match(body(".permchoice"), /width:\s*100%/);
   });
 
   test("the selected mode pill is the palette's selected step, not a light box", () => {
     // It was #d0d0d0 on #141414 -- the brightest thing in an app whose darkest
     // surface is #1c1d1c -- and no token reached it, so nothing could have
-    // retinted it. It now uses the same `--chip` the conversation row, the tab
-    // pill and the selected rail item use, which is what makes all four read as
-    // one "selected" rather than as four unrelated fills.
+    // retinted it. It uses `--chip`, the raised step -- and it is now the only
+    // selected thing that does: the row and the tab take the wash, because a
+    // segmented control is a control that happens to be selected and those two
+    // are states. The distinction is the point, not an oversight.
+    // (It used to be the same `--chip` the conversation row, the tab pill and
+    // the selected rail item all shared, which is what made all four read as one
+    // "selected" rather than as four unrelated fills.)
     assert.match(body(".mode.is-active"), /background:\s*var\(--chip\)/);
     assert.match(body(".mode.is-active"), /color:\s*var\(--fg\)/);
     assert.doesNotMatch(body(".mode.is-active"), /#[0-9a-fA-F]{3,8}/);
@@ -705,6 +1632,108 @@ describe("permission and thinking read as one control in the settings panel", ()
     // Without the auto margin the label, the ladder and the value sit in a
     // cluster at the left and the caret has nowhere to go.
     assert.match(body(".permchoice-value"), /margin-left:\s*auto/);
+  });
+
+  test("the provider row's two fields are one width, which only a grid can say", () => {
+    // Measured on the running app: as a flex row with `flex: 1` on both fields
+    // the select came out 172.8px against the model input's 198.8px, in a 452px
+    // panel -- both items computing `flex: 1 1 0%` with `min-width: 0`, which
+    // should have split the free space evenly and did not. Rather than chase the
+    // engine, the row states the relationship: two equal fields and a button.
+    //
+    // Pinned because it is the kind of rule a later pass simplifies back to
+    // `display: flex` for consistency with the rows around it, and that
+    // simplification is invisible in the markup and 26px wide on screen.
+    assert.match(body(".settings-row-model"), /display:\s*grid/);
+    assert.match(body(".settings-row-model"), /grid-template-columns:\s*1fr\s+1fr\s+auto/);
+    // The rows around it are still flex, so the exception is one row and not the
+    // beginning of two layout systems in one panel.
+    assert.match(body(".settings-row"), /display:\s*flex/);
+  });
+
+  test("two fields stacked are two fields, not one with a line across it", () => {
+    // Measured on the running build: `.settings-row` declared an 8px `gap` and
+    // no vertical rhythm at all, so the base-URL field sat 0px under the
+    // provider row -- two 30px fields with their borders one pixel apart,
+    // 452px wide. It is the kind of thing no screenshot in a bug report
+    // describes precisely ("a bit tight") and no amount of reading the markup
+    // reveals, because the markup is two innocent sibling divs.
+    //
+    // Pinned as a relationship rather than as the number, because the number is
+    // the part worth changing later: the gap has to be at least the row's own
+    // 8px, or two unrelated controls stack up looking like one grid.
+    const stacked = parseFloat(/margin-top:\s*([\d.]+)px/.exec(body(".settings-row ~ .settings-row"))?.[1] ?? "0");
+    assert.ok(stacked > 0, "a second row is laid out flush against the first");
+
+    const inner = parseFloat(/gap:\s*([\d.]+)px/.exec(body(".settings-row"))?.[1] ?? "0");
+    assert.ok(
+      stacked >= inner,
+      `a ${stacked}px gap between rows is narrower than the ${inner}px inside one, so the pair reads as one field`,
+    );
+
+    // And it is the gap the panel already puts between prose and a field, so
+    // "the second field" and "the first field" are introduced the same way.
+    const afterNote = boxSide(body(".settings-note"), "margin", 2);
+    assert.equal(stacked, afterNote, "the two fields are not spaced like the field and its note");
+
+    // A general sibling, not `+`: an element rendered between the two rows must
+    // not silently take the gap back to zero.
+    assert.match(body(".settings-row ~ .settings-row"), /margin-top:\s*[\d.]+px/);
+    assert.equal(RULES.filter((r) => r.selectors.includes(".settings-row + .settings-row")).length, 0);
+  });
+});
+
+// --- the key group's buttons ------------------------------------------------
+describe("the key group's two buttons", () => {
+  test("each takes half the line, and a lone one takes all of it", () => {
+    // A grid rather than `flex: 1` on both, for the reason `.settings-row-model`
+    // is one: two flex items with equal `flex` and `min-width: 0` measured 172.8
+    // against 198.8 in this panel, and "the very half" is the whole request.
+    assert.match(body(".settings-key-actions"), /display:\s*grid/);
+    assert.match(
+      body(".settings-key-actions"),
+      /grid-template-columns:\s*1fr 1fr/,
+    );
+    // With no stored key there is one button, and it spans both tracks: half a
+    // line with nothing beside it is a gap rather than a layout.
+    assert.match(
+      body(".settings-key-actions > .btn:only-child"),
+      /grid-column:\s*span 2/,
+    );
+  });
+});
+
+// --- the settings panel's scrollbar -----------------------------------------
+describe("the dialog's scrollbar stays inside the dialog's corners", () => {
+  test("its travel is inset at both ends, and only on the rounded dialog", () => {
+    // The defect: `.modal` is a 24px-radius box that scrolls, and a scrollbar is
+    // a square-cornered box. Chromium paints the scrollbar over the border box
+    // without clipping it to the radius, so at either end of its travel the last
+    // few pixels of the thumb were drawn on the scrim rather than on the panel.
+    // Measured on the settings panel at 1200x800, before: **7.0px of thumb past
+    // the silhouette at the top and 7.0px at the bottom** -- y 28.5..35.5 and
+    // y 764.0..771.0. The line appeared to continue past the dialog's corner and
+    // stop in mid-air.
+    //
+    // The travel is inset rather than the thumb, so the thumb's denominator
+    // shrinks along with it; measured after, at both ends of the scroll:
+    // zero rows outside.
+    for (const end of ["decrement", "increment"]) {
+      const sel = `.modal::-webkit-scrollbar-button:vertical:${end}`;
+      const found = RULES.find((r) => r.selectors.includes(sel));
+      assert.ok(found, `${sel} is not in the stylesheet at all`);
+      assert.match(found.body, /display:\s*block/);
+      assert.match(found.body, /height:\s*\d+px/);
+      // The buttons exist only to take space. Anything opaque in here would
+      // paint a control the panel never asked for, which is how the browser's
+      // own arrow glyphs would get in.
+      assert.match(found.body, /background:\s*transparent/);
+    }
+
+    // And it is scoped to `.modal` on purpose: the transcript is a full-bleed
+    // scroller with no corners to be outside of, and inset travel there would
+    // cost accuracy for nothing. The global rule must stay bare.
+    assert.doesNotMatch(body("::-webkit-scrollbar"), /button/);
   });
 });
 
@@ -765,5 +1794,188 @@ describe("the conversation panel dims what is behind it", () => {
     // the shadow says "this has an edge of its own". Dropping the shadow when
     // the scrim arrived would lose the second without gaining anything.
     assert.match(body(".chatlist"), /box-shadow:/);
+  });
+});
+
+// --- the first-run panel ----------------------------------------------------
+/*
+ * Rules jsdom cannot measure, about a panel with nothing in it to interact
+ * with.
+ *
+ * The composition is asserted here and the behaviour is asserted in
+ * `MessageList.test.tsx`: that it holds no tab stop is a DOM question, but
+ * *how it is drawn* -- scaled to the window, coloured off the accent ramp, and
+ * set at steps off the type scale rather than at sizes somebody typed -- is a
+ * cascade question, and a cascade question is what this file is for.
+ *
+ * Three of these would pass unchanged against a worse design, which is why each
+ * names the failure it replaces.
+ */
+describe("the stylesheet is split into modules, and nothing is left out", () => {
+  // The split's only real failure mode is silent: a module written but never
+  // imported still parses, still lints, still shows up in the editor, and the
+  // rule simply never reaches the browser. Every other assertion in this file
+  // reads the concatenation, so it would pass on a stylesheet with a hole in
+  // it -- it would just be asserting about less than it looks.
+  const modules = stylesheetModules();
+
+  test("the entry imports every module, once each, and holds no rules itself", () => {
+    assert.ok(modules.length > 1, "the entry is not an index of modules any more");
+    assert.deepEqual(
+      [...new Set(modules)],
+      modules,
+      `the same module is imported twice, which doubles every rule in it: ${modules.join(", ")}`,
+    );
+
+    // An `entry` that also carries rules is a file whose split has begun but
+    // not finished, and the rules in it are the ones the ordering does not
+    // describe. The entry is an index or it is a stylesheet; it cannot be both.
+    assert.doesNotMatch(
+      readEntry(),
+      /\{/,
+      "the entry declares rules as well as importing modules, so its cascade order is unstated",
+    );
+  });
+
+  test("every module on disk is imported, and every import resolves", () => {
+    const onDisk = readdirSync(new URL("styles/", new URL("../src/", import.meta.url)))
+      .filter((n) => n.endsWith(".css"))
+      .sort();
+    const imported = [...modules].sort();
+    assert.deepEqual(
+      imported,
+      onDisk,
+      "a module in styles/ is not in styles.css, so its rules never load",
+    );
+  });
+
+  test("no rule is empty", () => {
+    // Deleting the last declaration out of a rule leaves an empty one, and an
+    // empty rule is invisible from here: the browser drops it, so the file reads
+    // as though the rule had never been written. `.sidebar-filter input:focus`
+    // sat that way for the whole of this sweep after `outline: none` came out of
+    // it, and its selector was the only one in the stylesheet the document did
+    // not resolve.
+    const empty = [...STYLESHEET.matchAll(/([^{}]+)\{\s*\}/g)].map((m) =>
+      m[1].split(/\s+/).join(" "),
+    );
+    assert.deepEqual(empty, [], `rules with nothing in them: ${empty.join(" | ")}`);
+  });
+
+  test("no module imports another, because the reader resolves one level only", () => {
+    // Vite would follow a nested `@import`; `readStylesheet` would not, because it
+    // reads the entry's list and nothing else. So a module that reaches sideways
+    // would reach the browser and not the tests, and every assertion in this file
+    // would quietly be about a smaller stylesheet than the one shipping.
+    assert.doesNotMatch(
+      STYLESHEET,
+      /@import/,
+      "a module imports another module; the tests read the entry's list and cannot follow it",
+    );
+  });
+});
+
+describe("the first-run panel", () => {
+  test("the mark scales with the window instead of being pinned", () => {
+    // A fixed width would be right for the rail, which has one size forever,
+    // and wrong here: this is the only vertically centred thing in the window,
+    // and on a short one a 104px mark plus three lines of text is the first
+    // thing to collide with the composer.
+    //
+    // `clamp` and not `min()`: the ceiling is the size the component was handed
+    // and the floor is the smallest size at which the glyph is still a glyph,
+    // and both ends of the range have to be stated for the rule to be right on
+    // a window nobody tested.
+    const mark = body(".empty-mark");
+    assert.match(mark, /width:\s*clamp\(/);
+    assert.match(mark, /clamp\(\s*\d+px,\s*[\d.]+vh,\s*\d+px\s*\)/);
+    // Off the viewBox's own 1:1, or the mark goes oval on the surface where it
+    // is the largest thing on screen.
+    assert.match(mark, /height:\s*auto/);
+
+    // And it is not pinned the other way either: a `flex-shrink` of 0 would
+    // make the clamp above unreachable inside a short flex column.
+    assert.ok(
+      !/flex-shrink:\s*0/.test(mark),
+      "the mark refuses to shrink, which is the case the clamp exists for",
+    );
+  });
+
+  test("the mark is the accent, painted through `color`", () => {
+    // Two different jobs on the same icon ramp: the mark is a picture on the
+    // field and the focus ring has to be legible against four surfaces, which
+    // is why the ring has a token of its own. Reuse is right here -- both are
+    // the icon's own blue -- and a literal hex is not, because `--accent` is
+    // read out of the rasterised artwork.
+    const mark = body(".empty-mark");
+    assert.match(mark, /color:\s*var\(--accent\)/);
+    // `color`, not `stroke` or `fill`. The glyph is drawn on `currentColor` so
+    // the surface chooses; a rule that set `stroke` here would win over the
+    // component's own attribute and quietly diverge from the rail's copy.
+    assert.doesNotMatch(mark, /(stroke|fill):/);
+
+    // The mark is legible as a graphic, which is 3:1 rather than 4.5:1 -- the
+    // lower bar is for the non-text case, and asserting it here is what stops
+    // somebody re-deriving `--accent` against `--chip` and losing the mark with
+    // the badges.
+    assert.ok(
+      contrast(tokens("accent")!, tokens("bg")!) >= 3,
+      "the mark does not clear 3:1 on the field it sits on",
+    );
+  });
+
+  test("the hints are set from the type scale, not from sizes", () => {
+    // Two steps, adjacent, and the smaller one on the key. The failure being
+    // guarded against is `font-size: 11px` written into the rule, which reads
+    // as a harmless local decision right up until the type scale is retuned and
+    // these two are left behind at the old values.
+    const row = body(".empty-hints");
+    assert.match(row, /font-size:\s*var\(--text-sm\)/);
+
+    const key = body(".empty-hints kbd");
+    assert.match(key, /font-size:\s*var\(--text-xs\)/);
+    assert.match(key, /font-family:\s*inherit/);
+
+    // And the ladder really is a ladder here rather than two names for one
+    // value: the key sits a step below the sentence that explains it.
+    assert.ok(
+      parseFloat(tokenRaw("text-xs")!) < parseFloat(tokenRaw("text-sm")!),
+      "--text-xs and --text-sm are the same size",
+    );
+
+    // The wordmark and the line keep the steps they already had.
+    assert.match(body(".empty h1"), /font-size:\s*var\(--text-lg\)/);
+    assert.match(body(".empty p"), /font-size:\s*var\(--text-base\)/);
+  });
+
+  test("the hint row is a row, and it wraps rather than overflowing", () => {
+    // `flex` because a two-item row is a row, not a paragraph with a slash in
+    // it; `wrap` because the composer under it is 680px wide at its widest and
+    // the panel above it is not.
+    const row = body(".empty-hints");
+    assert.match(row, /display:\s*flex/);
+    assert.match(row, /flex-wrap:\s*wrap/);
+    assert.match(row, /justify-content:\s*center/);
+    // `list-style: none` rather than relying on nothing: it is a `<ul>`, so the
+    // bullets are the UA's to remove and they have to be removed on purpose.
+    assert.match(row, /list-style:\s*none/);
+  });
+
+  test("the mark arrives, and the arrival is cancelled under reduced motion", () => {
+    // It reuses `rise-in` and `--motion-base`, the pair every other arriving
+    // surface in this app uses. A first-run panel with its own entrance would
+    // be the one piece of motion in the window that looks pasted in.
+    assert.match(body(".empty-mark"), /animation:\s*rise-in var\(--motion-base\)/);
+
+    // And the cancellation is asserted rather than assumed. `reducedMotion.test
+    // .ts` already fails the run if a rule sets `animation` without a matching
+    // entry; this is the other direction -- the entry has to name the selector
+    // that is actually written, since `.empty-mark` and `.empty-mark[data-state]`
+    // do not match the same thing and only one of them wins on specificity.
+    const block = /@media[^{]*prefers-reduced-motion:\s*reduce[^{]*\{([\s\S]*)\}\s*$/.exec(
+      STYLESHEET,
+    );
+    assert.ok(block, "the reduced-motion block is gone from the stylesheet");
+    assert.match(block[1], /\.empty-mark\s*\{\s*animation:\s*none/);
   });
 });

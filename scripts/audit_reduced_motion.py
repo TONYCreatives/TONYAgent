@@ -21,7 +21,28 @@ import re
 import sys
 from pathlib import Path
 
-STYLESHEET = Path(__file__).resolve().parent.parent / "app" / "src" / "styles.css"
+SRC = Path(__file__).resolve().parent.parent / "app" / "src"
+ENTRY = SRC / "styles.css"
+
+
+def read_cascade() -> str:
+    """Every rule, in cascade order.
+
+    ``styles.css`` is an entry that ``@import``s one module per surface out of
+    ``styles/``. The entry holds no rules at all, so reading it would report
+    every animation in the app as missing from the cancellation list. The
+    modules are imported in the order they were one file, so concatenating them
+    in that order is the cascade -- the same rule ``app/src/stylesheet.ts``
+    applies for the TypeScript tests.
+    """
+    order = re.findall(
+        r'@import\s+"\./styles/([^"]+)"', ENTRY.read_text(encoding="utf-8")
+    )
+    if not order:
+        raise SystemExit(f"{ENTRY} has no @import lines; the audit cannot see the cascade")
+    return "\n".join(
+        (SRC / "styles" / name).read_text(encoding="utf-8").rstrip() for name in order
+    )
 MEDIA_QUERY = "prefers-reduced-motion: reduce"
 
 
@@ -116,7 +137,7 @@ def covered_by(selector: str, cancelled: set[str]) -> bool:
 
 
 def main() -> int:
-    css = strip_comments(STYLESHEET.read_text(encoding="utf-8"))
+    css = strip_comments(read_cascade())
 
     # Isolate the reduced-motion block, and everything outside it.
     inside: list[tuple[str, str]] = []

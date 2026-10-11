@@ -14,6 +14,9 @@ interface Props {
    */
   needsProvider?: boolean;
   onConfigure?: () => void;
+  logLines?: string[];
+  logsOpen?: boolean;
+  onToggleLogs?: () => void;
 }
 
 export function StatusBar({
@@ -24,6 +27,9 @@ export function StatusBar({
   busy,
   needsProvider,
   onConfigure,
+  logLines = [],
+  logsOpen = false,
+  onToggleLogs,
 }: Props) {
   return (
     <footer className="statusbar">
@@ -47,6 +53,20 @@ export function StatusBar({
           <span className="sep" />
           <span className="busy">working...</span>
         </>
+      )}
+      {onToggleLogs && (
+        <button
+          type="button"
+          className="statusbar-logs"
+          onClick={onToggleLogs}
+          aria-expanded={logsOpen}
+          title={logsOpen ? "Hide logs" : "Show logs"}
+        >
+          <span>Logs</span>
+          {logLines.length > 0 && (
+            <span className="statusbar-logs-count">{logLines.length}</span>
+          )}
+        </button>
       )}
     </footer>
   );

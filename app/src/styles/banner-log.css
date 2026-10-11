@@ -1,0 +1,50 @@
+
+/* --- banner + log -------------------------------------------------------- */
+.banner {
+  max-width: var(--measure);
+  margin: 0 auto 6px;
+  /* 18 plus its own 1px border is the column's 19, so the banner's text starts
+     on the same edge as the composer's below it. It is the one card in the
+     window that is the width of the field rather than inside the transcript,
+     and two stacked boxes whose text does not line up read as a mistake. */
+  padding: 8px calc(var(--column-inset) - 1px);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--danger);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Core stderr. stdout is protocol-only, so this is the only place a core-side
+ * failure can surface. Capped and scrollable so a chatty core cannot push the
+ * composer off screen.
+ */
+/*
+ * The log strip now lives as a drawer just above the status bar, toggled from
+ * the status bar itself rather than from a bar between the transcript and the
+ * composer. This keeps the chat-to-input flow uninterrupted.
+ */
+.logstrip {
+  max-width: var(--measure);
+  margin: 0 auto;
+  max-height: 150px;
+  overflow-y: auto;
+  padding: 8px var(--column-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: var(--surface);
+  color: var(--fg-mute);
+  /* Log lines are prose about the work, not code: `--sans`. */
+  font-family: var(--sans);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.logstrip-empty {
+  color: var(--fg-dim);
+  font-style: italic;
+}

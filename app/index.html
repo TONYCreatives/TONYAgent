@@ -3,6 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      The webview's content security policy, and the only copy of it.
+
+      It used to live in `tauri.conf.json`, which was the one place the packaged
+      webview's rules could be written when a Rust shell was what opened the
+      window. There is no Rust shell now, so the policy belongs with the page it
+      governs -- and it is a `<meta>` rather than a header because the page is
+      served by a plain static server with no header hook worth adding.
+
+      `webviewPolicy.test.ts` reads this tag, because nothing else can see the
+      rules: a CSP that forbids something simply makes the browser drop it, with
+      no error in the console and no failure in a jsdom test, since jsdom does
+      not enforce CSP at all. Every attachment preview in this app is a `data:`
+      URL rendered by an `<img>`, so this tag is the tripwire for a class of bug
+      that is invisible everywhere else.
+
+      `script-src` is deliberately absent and resolves to `default-src 'self'`:
+      no `unsafe-eval`, no `unsafe-inline`. The scripts the window runs are its
+      own bundle plus what the host injects, and host injection is not subject
+      to this policy.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:"
+    />
     <title>TONYAgent</title>
   </head>
   <body>
@@ -10,3 +35,4 @@
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
+

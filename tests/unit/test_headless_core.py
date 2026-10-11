@@ -8,6 +8,7 @@ import asyncio
 import io
 import json
 import os
+import queue
 import subprocess
 import sys
 from pathlib import Path
@@ -22,11 +23,9 @@ from tonyagent.providers import ChatCompletionChunk
 
 # --- the boundary itself ---------------------------------------------------
 def test_core_import_does_not_pull_in_a_gui_toolkit():
-    """Regression: importing the core used to drag in Tkinter.
+    """Regression: importing the core must not drag in a GUI toolkit.
 
-    ``tonyagent.core.__init__`` re-exported the Tk app, so even
-    ``tonyagent.core.session`` loaded a GUI toolkit and the core could not run
-    as a sidecar.
+    The core runs as a Tauri sidecar and must work without a display.
     """
     code = (
         "import sys; sys.path.insert(0, 'src');"
@@ -38,13 +37,6 @@ def test_core_import_does_not_pull_in_a_gui_toolkit():
     )
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "", f"GUI toolkit was imported: {out.stdout!r}"
-
-
-def test_gui_app_is_still_importable_explicitly():
-    """Lazy re-export must not break existing callers."""
-    from tonyagent.core import TONYAgentApp
-
-    assert TONYAgentApp.__name__ == "TONYAgentApp"
 
 
 # --- event bus -------------------------------------------------------------
@@ -426,6 +418,36 @@ def test_a_rejected_bind_leaves_the_session_reporting_no_provider():
     assert by_id[2]["result"]["provider"] == ""
 
 
+def test_state_reports_the_sandbox_the_core_actually_has(monkeypatch):
+    """The window's Start and Stop button have to be true after a reload.
+
+    `state` used to say nothing about the sandbox, so a reloaded window kept
+    whatever it had been told by `sandbox.status` events -- and after a reload
+    that is nothing at all. The result was a panel offering Stop over a core
+    with no runtime, or Start over one that was already serving.
+
+    The runtime is faked through `get_runtime_backend` rather than by poking the
+    manager's own fields, so `is_running` -- the rule under test -- is really
+    executed rather than restated here.
+    """
+    from tonyagent.sandbox import get_shared_sandbox_manager
+    from tonyagent.sandbox.base import SandboxStatus
+
+    manager = get_shared_sandbox_manager()
+    monkeypatch.setattr(manager, "get_runtime_backend", lambda: None)
+    frames = _drive([{"id": 1, "method": "state"}])
+    assert frames[0]["result"]["sandbox"] == "stopped"
+
+    class Running:
+        status = SandboxStatus.RUNNING
+
+    monkeypatch.setattr(manager, "get_runtime_backend", lambda: Running())
+    frames = _drive([{"id": 1, "method": "state"}])
+    # The same word the `sandbox.status` event carries, so a window that started
+    # the sandbox and a window that reloaded onto it agree on what to draw.
+    assert frames[0]["result"]["sandbox"] == "running"
+
+
 def test_bind_provider_rejects_a_scheme_less_base_url():
     """Regression: a base_url with no scheme reached httpx and surfaced as
     "Request URL is missing an 'http://' or 'https://' protocol".
@@ -552,6 +574,134 @@ def test_server_installs_the_confirmation_bridge_automatically():
     tool_orchestrator.set_confirmation_callback(None)
 
 
+def test_question_respond_requires_an_id():
+    frames = _drive([{"id": 1, "method": "user.respond", "params": {"answer": "y"}}])
+    assert frames[0]["error"]["code"] == "rejected"
+    assert "id" in frames[0]["error"]["message"]
+
+
+def test_question_requests_are_published_as_events():
+    """Regression: a question no window knows about is a turn that hangs.
+
+    The tool blocks on a future until `user.respond` arrives, so if the ask
+    never reached the wire the user would watch an idle window for the full 60s
+    timeout with nothing anywhere saying why. The bridge is what prevents that,
+    and it has to be installed by hand if the server is bypassed.
+    """
+    from tonyagent.core import user_io
+
+    session = _session()
+    seen = _collect(session.bus)
+    session.install_question_bridge()
+
+    request = user_io.QuestionRequest(
+        id="q9",
+        tool_name="ask_user_question",
+        kind="question",
+        prompt="Which database?",
+        options=["Postgres", "SQLite"],
+    )
+    session._on_user_asked(request)
+    # Taken down again, so an ask cannot outlive the event that raised it.
+    session._on_user_resolved("q9", "Postgres")
+
+    asked = [e for e in seen if e.type == EventType.USER_ASKED]
+    settled = [e for e in seen if e.type == EventType.USER_RESOLVED]
+    assert asked, "no question event was published"
+    assert asked[0].payload["id"] == "q9"
+    assert asked[0].payload["prompt"] == "Which database?"
+    assert asked[0].payload["options"] == ["Postgres", "SQLite"]
+    assert asked[0].payload["kind"] == "question"
+    assert settled, "the ask was never taken down"
+    assert settled[0].payload["answered"] is True
+
+
+def test_server_installs_the_question_bridge_automatically():
+    """A core must be able to ask the user without any UI wiring, either."""
+    from tonyagent.core import user_io
+
+    session = _session()
+    _drive([{"id": 1, "method": "ping"}], session=session)
+    assert user_io.is_listening() is True
+
+
+def test_a_question_answered_over_the_wire_reaches_the_tool():
+    """The whole path, with no test doubles in it.
+
+    A tool asks, the event leaves on stdout as a real frame, the reply comes
+    back as a real ``user.respond`` request, and the tool -- still blocked on
+    its future -- returns the answer. The frontend half has its own tests; this
+    is the half where a silent failure is a turn that hangs.
+    """
+    import tonyagent.tools  # noqa: F401 -- importing registers every tool
+    from tonyagent.core import user_io
+    from tonyagent.tools import tool_registry
+
+    class _AnsweringStdin:
+        """stdin that answers an ask once the ask's id is known.
+
+        The server reads with a blocking ``readline`` on an executor thread, so
+        a queue-backed object is enough to make the round trip real: the answer
+        is a genuine frame, written only after the ask has been published and
+        its id read back out of the event stream.
+        """
+
+        def __init__(self):
+            self._lines: "queue.Queue[str]" = queue.Queue()
+
+        def answer(self, params: dict) -> None:
+            frame = {"id": 1, "method": "user.respond", "params": params}
+            self._lines.put(json.dumps(frame) + "\n")
+
+        def close(self) -> None:
+            self._lines.put("")
+
+        def readline(self) -> str:
+            return self._lines.get()
+
+    session = _session()
+    seen = _collect(session.bus)
+    stdin = _AnsweringStdin()
+    stdout = io.StringIO()
+    server = StdioServer(session, stdin, stdout)
+
+    async def go():
+        ask = asyncio.create_task(
+            tool_registry.get("ask_user_question").execute(
+                question="Which branch?", options=["main", "dev"]
+            )
+        )
+        # Bounded in seconds rather than in yields: this whole round trip runs on
+        # a reader thread the event loop has to hand control back to, and a fixed
+        # count of ``sleep(0)`` calls can run out on a busy machine while the
+        # ask is still on its way to the wire.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 5.0
+        asked = []
+        while not asked:
+            if loop.time() >= deadline:
+                break
+            asked = [e for e in seen if e.type == EventType.USER_ASKED]
+            await asyncio.sleep(0)
+        assert asked, "the ask never reached the wire"
+        stdin.answer({"id": asked[0].payload["id"], "answer": "dev"})
+        stdin.close()
+        await server.serve()
+        return await ask
+
+    result = asyncio.run(go())
+    assert result.status.value == "success"
+    assert result.output == 'The user answered: "dev"'
+    assert user_io.pending_count() == 0
+
+    frames = [json.loads(l) for l in stdout.getvalue().splitlines() if l.strip()]
+    # The ask was a real event frame on the wire, and the answer got exactly
+    # one reply -- saying it was answered, which is the part a late reply would
+    # have turned into `answered: false`.
+    assert any(f.get("event") and f.get("type") == "user.asked" for f in frames)
+    assert any(f.get("result", {}).get("answered") is True for f in frames)
+
+
 def test_sandbox_stats_reports_empty_when_not_running():
     """Stats are best-effort; a stopped sandbox must not raise."""
     session = _session()
@@ -632,7 +782,15 @@ def test_key_save_stores_the_key_and_reports_only_the_provider(fake_keyring):
         {"id": 1, "method": "key.save",
          "params": {"provider": "openrouter", "api_key": _KEY}},
     ])
-    assert frames[0]["result"] == {"provider": "openrouter", "saved": True}
+    # The reply carries the name it stored under and whether the name was
+    # recorded; it never carries the value. "default" is the historical slot,
+    # which is why the keyring entry is the old one and not "key:default".
+    assert frames[0]["result"] == {
+        "provider": "openrouter",
+        "name": "default",
+        "saved": True,
+        "listed": True,
+    }
     assert fake_keyring.store[("TONYAgent", "openrouter:api_key")] == _KEY
 
 
@@ -691,21 +849,76 @@ def test_key_save_requires_both_fields(fake_keyring):
 def test_key_delete_removes_the_stored_key(fake_keyring):
     fake_keyring.store[("TONYAgent", "openrouter:api_key")] = _KEY
     frames = _drive([
-        {"id": 1, "method": "key.delete", "params": {"provider": "openrouter"}},
+        {"id": 1, "method": "key.delete",
+         "params": {"provider": "openrouter", "name": "default"}},
     ])
-    assert frames[0]["result"] == {"provider": "openrouter", "deleted": True}
+    assert frames[0]["result"] == {
+        "provider": "openrouter",
+        "name": "default",
+        "deleted": True,
+    }
     assert ("TONYAgent", "openrouter:api_key") not in fake_keyring.store
 
 
-def test_there_is_no_method_that_returns_a_key():
-    """A get-key method is a screenshot waiting to happen.
+def test_key_reveal_hands_back_the_key_for_the_provider_asked(fake_keyring):
+    fake_keyring.store[("TONYAgent", "openrouter:api_key")] = _KEY
+    frames = _drive([
+        {"id": 1, "method": "key.reveal", "params": {"provider": "openrouter"}},
+    ])
+    assert frames[0]["result"] == {
+        "provider": "openrouter",
+        "name": "default",
+        "api_key": _KEY,
+    }
 
-    Guards the design decision, not the code: adding `key.get` would be a
-    one-line change that silently breaks it.
+
+def test_key_reveal_reports_nothing_rather_than_failing(fake_keyring):
+    """No stored key is an ordinary answer, not an error.
+
+    The panel shows the field empty and the user can save one. A rejected
+    request would put an error banner over a state that is simply "none yet".
     """
-    server = StdioServer(_session(), io.StringIO(""), io.StringIO())
-    assert not [m for m in server._handlers if "get" in m and "key" in m]
+    frames = _drive([
+        {"id": 1, "method": "key.reveal", "params": {"provider": "anthropic"}},
+    ])
+    assert frames[0]["result"] == {
+        "provider": "anthropic",
+        "name": "default",
+        "api_key": None,
+    }
 
+
+def test_key_reveal_requires_a_provider(fake_keyring):
+    frames = _drive([{"id": 1, "method": "key.reveal", "params": {}}])
+    assert frames[0]["error"]["code"] == "rejected"
+
+
+def test_key_reveal_is_the_only_way_a_key_leaves_the_keyring(fake_keyring):
+    """The design decision, restated now that a reveal was asked for.
+
+    This test used to assert that *no* method returned a key at all. What is
+    worth guarding now is the shape of the exception: exactly one method returns
+    one, and nothing a window reads on its own -- `state`, `providers.list` --
+    carries it. A method that pulls a key out of the keyring without a press is
+    the regression, not the reveal itself.
+    """
+    fake_keyring.store[("TONYAgent", "openrouter:api_key")] = _KEY
+
+    for method in ("state", "providers.list"):
+        frames = _drive([{"id": 1, "method": method}])
+        assert _KEY not in json.dumps(frames), f"{method} leaked the key"
+
+    server = StdioServer(_session(), io.StringIO(""), io.StringIO(""))
+    # key.list and key.activate are named here so a future method cannot join
+    # the family without this test noticing. Neither reads a secret: key.list
+    # answers names, key.activate answers which name is in force.
+    assert sorted(m for m in server._handlers if m.startswith("key.")) == [
+        "key.activate",
+        "key.delete",
+        "key.list",
+        "key.reveal",
+        "key.save",
+    ]
 
 def test_providers_list_reports_credential_presence_after_a_save(fake_keyring):
     """`has_credentials` must reflect the keyring without revealing the key."""
@@ -744,6 +957,49 @@ def restore_folder():
     yield folder_manager
     if previous is not None:
         folder_manager.set_folder(previous)
+
+
+def test_sandbox_start_without_a_path_uses_the_folder_already_chosen(
+    tmp_path, restore_folder, monkeypatch
+):
+    """Regression: the panel's Start button failed on every press.
+
+    The button sends `sandbox.start` with no path, because the core already
+    holds the folder the window is showing and restating it would only let the
+    two disagree. Nothing had ever sent that call: `folder_manager` was used in
+    `AgentSession.start_sandbox` and never imported, which no test noticed
+    because every previous caller passed a path and the `or` short-circuited
+    before the name was looked up. The window reported the raw Python error to
+    the user.
+
+    Only the container is faked. The name resolution above it is the thing that
+    broke, and a fake higher up would have hidden exactly that -- the first
+    version of this test stubbed `start_sandbox` itself and passed against the
+    broken code.
+    """
+    from tonyagent.sandbox import get_shared_sandbox_manager
+
+    restore_folder.set_folder(tmp_path)
+    manager = get_shared_sandbox_manager()
+    configs: list[object] = []
+
+    async def fake_start(config):
+        configs.append(config)
+        return True
+
+    monkeypatch.setattr(manager, "start", fake_start)
+
+    frames = _drive([{"id": 1, "method": "sandbox.start", "params": {}}])
+    # By id, not by position: starting emits a `sandbox.status` push before it
+    # replies, so the first frame on the wire is not the answer.
+    reply = next(f for f in frames if f.get("id") == 1)
+
+    assert "error" not in reply, reply
+    assert reply["result"]["running"] is True
+    # The container was asked for the folder the core was already on, and the
+    # reply names it -- that string is what the window files chats under.
+    assert [c.project_path for c in configs] == [str(tmp_path)]
+    assert reply["result"]["project"] == str(tmp_path)
 
 
 def test_switching_to_a_conversation_moves_the_working_folder_to_its_project(

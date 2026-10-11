@@ -7,23 +7,15 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
     "typecheck": "tsc --noEmit",
-    "build:proto": "tsc -p tsconfig.test.json && node --test \".tmp/**/*.test.js\"",
-    "test": "npm run build:proto",
-    "tauri:build": "tauri build",
-    "tauri:dev": "tauri dev",
-    "sidecar": "python ../scripts/build_sidecar.py"
+    "build:proto": "node -e \"require('fs').rmSync('.tmp',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test \".tmp/**/*.test.js\"",
+    "test": "npm run build:proto"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-dialog": "^2",
-    "@tauri-apps/plugin-shell": "^2",
     "react": "^19",
     "react-dom": "^19"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^24",
     "@types/react": "^19",

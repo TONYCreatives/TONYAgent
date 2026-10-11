@@ -343,3 +343,76 @@ def test_the_list_is_still_newest_first(store):
     second = store.create(title="Second")
     order = [c.id for c in store.list()]
     assert order.index(second.id) < order.index(first.id)
+
+
+# --- moving between folders ------------------------------------------------
+def test_a_conversation_can_be_filed_under_a_folder(store):
+    conversation = store.create(title="About the api", project="D:/work/api")
+    store.move(conversation.id, "D:/work/web")
+
+    assert store.load(conversation.id).project == "D:/work/web"
+
+
+def test_a_move_survives_a_reopen(store):
+    """The folder a chat is about is on disk, not in memory.
+
+    This is the half that matters: the window works in one folder at a time and
+    lists that folder's chats, so a move that only lived in this process would
+    put the chat back in the old folder's list on the next launch.
+    """
+    conversation = store.create(title="About the api", project="D:/work/api")
+    store.move(conversation.id, "D:/work/web")
+
+    reopened = ConversationStore(store.root).load(conversation.id)
+    assert reopened is not None
+    assert reopened.project == "D:/work/web"
+
+
+def test_a_move_keeps_the_transcript_and_the_id(store):
+    """A chat that moved is the same chat.
+
+    Nothing is copied, so the id is the same one -- which is what lets the window
+    go on looking at it. A move that wrote a new file would be a *different*
+    conversation, and the window would have to be told which one it now has.
+    """
+    original = _seed(store, "Big one")
+    before = store.load(original.id)
+    store.move(original.id, "D:/work/web")
+
+    after = store.load(original.id)
+    assert after is not None
+    assert after.id == before.id
+    assert after.title == before.title
+    assert after.messages == before.messages
+
+
+def test_a_moved_chat_goes_to_the_top_of_its_new_folder(store):
+    """It is the chat the user just moved in, so it is the one they are on.
+
+    Stamped rather than left alone: the row belongs at the top of the list it was
+    moved into, not wherever its last turn left it -- which can be days down a
+    list the user is now reading from the top.
+    """
+    stale = _seed(store, "Old")
+    store.create(title="Fresh")
+    assert [c.title for c in store.list()] == ["Fresh", "Old"]
+
+    store.move(stale.id, "D:/work/web")
+    assert [c.title for c in store.list()][0] == "Old"
+
+
+def test_moving_something_that_is_not_there_reports_it_as_missing(store):
+    assert store.move("0" * 32, "D:/work/web") is None
+
+
+def test_moving_to_no_folder_at_all_is_allowed(store):
+    """`""` is a real value rather than a mistake.
+
+    It is where a chat saved before `project` existed lives, and where a chat
+    goes back to. Refusing it would make the one field that can hold "no folder"
+    impossible to set.
+    """
+    conversation = store.create(title="Orphan", project="D:/work/api")
+    store.move(conversation.id, "")
+
+    assert store.load(conversation.id).project == ""

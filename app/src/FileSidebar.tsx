@@ -1,11 +1,11 @@
 /**
- * Right-hand Files panel.
+ * The Files pane of the left sidebar.
  *
- * An overlay rather than a third column. Docked, an empty panel held 425px --
- * a third of a 1200px window -- open indefinitely to report that the agent had
- * not touched anything yet, permanently narrowing the transcript. It now floats
- * over it behind a scrim, so it is obviously temporary and clicking away
- * dismisses it.
+ * It was a right-hand overlay: its own surface, its own scrim, its own header
+ * and a reopen handle for when it was closed. It is a *pane* now -- one of the
+ * two the sidebar switches between -- so there is one surface to open, one
+ * header above it and nowhere to reopen from: the segmented control that
+ * reveals it is also what puts it away. See `.chatlist-tabs` and `.files-pane`.
  *
  * The tree is fed by the parent rather than read from disk. The core already
  * owns the sandbox and the folder, so letting the UI walk the filesystem would
@@ -13,7 +13,6 @@
  */
 
 import { useMemo, useState } from "react";
-import { useDelayedUnmount } from "./useDelayedUnmount.js";
 
 export interface TreeEntry {
   /** Path relative to the project root, or the folder name for a directory. */
@@ -29,11 +28,9 @@ interface Props {
   entries: TreeEntry[];
   filter: string;
   onFilterChange: (value: string) => void;
-  onToggle: () => void;
   onChooseFolder: () => void;
   /** True once a folder is selected, so the empty state can say which. */
   hasProject: boolean;
-  open: boolean;
 }
 
 function Caret({ open }: { open: boolean }) {
@@ -76,26 +73,17 @@ function Glyph({ kind }: { kind: "dir" | "file" }) {
   );
 }
 
-export function FileSidebar({
+export function FilesPane({
   entries,
   filter,
   onFilterChange,
-  onToggle,
   onChooseFolder,
   hasProject,
-  open,
 }: Props) {
   // Folders open by default; the depth is capped at 1 because the core has no
   // method for enumerating a subtree yet, and inventing a fake tree would be
   // worse than showing a flat list.
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-
-  // The panel and its scrim stay mounted while sliding out, so the branch
-  // below is on `mounted` rather than on `open`. The two branches are mutually
-  // exclusive *trees*, so the reopen button cannot appear until the panel is
-  // really gone -- which is also why the delay is invisible here: nobody is
-  // waiting on a button that has not shown up yet.
-  const mounted = useDelayedUnmount(open);
 
   const visible = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -103,81 +91,8 @@ export function FileSidebar({
     return entries.filter((e) => e.name.toLowerCase().includes(needle));
   }, [entries, filter]);
 
-  if (!mounted) {
-    return (
-      <button
-        type="button"
-        className="sidebar-reopen"
-        onClick={onToggle}
-        title="Show files"
-        aria-label="Show files"
-      >
-        <svg
-          width="15"
-          height="15"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-        </svg>
-      </button>
-    );
-  }
-
   return (
-    <>
-      {/* Dismisses on any click outside the panel, which is the affordance the
-          docked version could not offer: there was nothing to dismiss *to*. */}
-      <button
-        type="button"
-        className="sidebar-scrim"
-        data-state={open ? "open" : "closed"}
-        onClick={onToggle}
-        tabIndex={-1}
-        aria-label="Close files"
-      />
-      <aside className="sidebar" data-state={open ? "open" : "closed"} aria-label="Files">
-      <div className="sidebar-head">
-        <svg
-          width="15"
-          height="15"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-        </svg>
-        <span className="sidebar-title">Files</span>
-        <div className="topbar-spacer" />
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={onToggle}
-          title="Hide files"
-          aria-label="Hide files"
-        >
-          <svg
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.7"
-            strokeLinecap="round"
-            aria-hidden="true"
-          >
-            <path d="M9 7V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v2" />
-            <path d="M4 7h16v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
-          </svg>
-        </button>
-      </div>
+    <div className="files-pane" aria-label="Files">
 
       <label className="sidebar-filter">
         <svg
@@ -271,7 +186,6 @@ export function FileSidebar({
           })}
         </div>
       )}
-      </aside>
-    </>
+    </div>
   );
 }

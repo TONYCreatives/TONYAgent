@@ -100,6 +100,57 @@ export function readFile(file: File): Promise<PendingAttachment> {
   });
 }
 
+/**
+ * The images on the clipboard, as `File`s named for where they came from.
+ *
+ * A paste is not a file pick, and the difference shows in the name: a picked
+ * file has one the user chose, while a pasted one has whatever the source
+ * application called it -- `image.png` from a screenshot tool, `image2.png`
+ * from Word, a fragment-laden name from a browser. So the name is replaced.
+ *
+ * The index makes them unique within one paste. Uniqueness against attachments
+ * that are *already queued* is not settled here, because it cannot be: this
+ * function is handed a clipboard and knows nothing about the composer's list,
+ * and guessing at it would produce a `pasted-1.png` that still collides with
+ * the one already in the strip. The composer resolves that, where the list is.
+ *
+ * Only images are taken. A text paste is text and the browser handles it; a
+ * text *file* pasted as an attachment is a rarer wish the file picker covers.
+ *
+ * An empty list means there was no picture, which is the caller's signal to
+ * leave the browser's own paste alone.
+ */
+export function imagesFromClipboard(data: DataTransfer | null): File[] {
+  if (!data) return [];
+  const found: File[] = [];
+  // `items` rather than `files`: on a paste, `files` has been empty in some
+  // WebView builds while `items` is populated.
+  for (const item of Array.from(data.items ?? [])) {
+    if (item.kind !== "file") continue;
+    if (!(item.type || "").startsWith("image/")) continue;
+    const file = item.getAsFile();
+    if (!file) continue;
+    found.push(
+      new File([file], `pasted-${found.length + 1}${extensionFor(file.type)}`, {
+        type: file.type,
+      }),
+    );
+  }
+  return found;
+}
+
+const MIME_EXTENSIONS: Record<string, string> = {
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/webp": ".webp",
+  "image/gif": ".gif",
+};
+
+/** The extension a known image type gets, or none for one we do not know. */
+function extensionFor(mime: string): string {
+  return MIME_EXTENSIONS[mime] ?? "";
+}
+
 /** The `attachments` payload for the `send` RPC. */
 export function toWire(attachments: PendingAttachment[]) {
   return attachments.map((a) => ({ name: a.name, mime: a.mime, data: a.data }));

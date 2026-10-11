@@ -56,12 +56,12 @@ _DUMMY: dict[str, Any] = {
 
 #: Per-parameter overrides, where the type alone is not a usable value.
 _OVERRIDES: dict[tuple[str, str], Any] = {
-    ("read_file", "path"): "hello.txt",
-    ("write_file", "path"): "written.txt",
-    ("write_file", "content"): "hello\n",
-    ("edit_file", "path"): "hello.txt",
-    ("edit_file", "old_string"): "hello",
-    ("edit_file", "new_string"): "goodbye",
+    ("read", "path"): "hello.txt",
+    ("write", "path"): "written.txt",
+    ("write", "content"): "hello\n",
+    ("edit", "path"): "hello.txt",
+    ("edit", "old_string"): "hello",
+    ("edit", "new_string"): "goodbye",
     ("delete_file", "path"): "doomed.txt",
     ("list_dir", "path"): ".",
     ("grep", "pattern"): "hello",

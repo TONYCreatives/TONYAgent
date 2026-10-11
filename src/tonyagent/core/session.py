@@ -3,9 +3,9 @@
 This is the piece that lets TONYAgent run without a display. It owns message
 history, provider selection and the tool loop, and reports everything it does
 through :class:`~tonyagent.core.events.EventBus`. It imports no GUI toolkit, so
-it can be driven by Tkinter, by a Tauri sidecar over stdio, or by a test.
+it can be driven by a Tauri sidecar over stdio, or by a test.
 
-The behaviour previously lived inside ``MainWindow._generate_response`` mixed
+The behaviour previously lived inside the Tkinter UI's ``_generate_response`` mixed
 together with widget updates. Extracting it is what makes the core reusable: a
 new frontend only sends text in and renders events out.
 """
@@ -39,7 +39,9 @@ from tonyagent.providers import (
     ToolSchema,
 )
 from tonyagent.providers.base import MessageRole
-from tonyagent.tools import ALL_SCHEMAS, ToolCall, tool_orchestrator
+from tonyagent.core import user_io
+from tonyagent.core.task_state import SessionState, set_current_state
+from tonyagent.tools import ALL_SCHEMAS, ToolCall, ToolResult, tool_orchestrator
 
 #: Said when a model used its whole token allowance thinking and wrote nothing.
 #: The tokens are billed either way, so the user needs to know the difference
@@ -81,7 +83,10 @@ def _default_max_tool_calls() -> int:
     try:
         from tonyagent.config.settings import settings
 
-        return max(1, int(settings.tools.max_tool_calls))
+        stored = int(settings.tools.max_tool_calls)
+        # 0 is the no-limit sentinel and survives a restart; anything below it
+        # was never a budget and is corrected to the floor.
+        return stored if stored == 0 else max(1, stored)
     except Exception as exc:  # noqa: BLE001 - a bad setting must not stop a launch
         logger.warning(f"Could not read max_tool_calls; using 10: {exc}")
         return 10
@@ -142,6 +147,11 @@ class AgentSession:
         #: The per-turn tool budget, read once at construction so a mid-turn
         #: settings change cannot make the counter and the label disagree.
         self.max_tool_calls: int = _default_max_tool_calls()
+        #: The plan and the goal for this conversation, rendered into the system
+        #: prompt and written by the planning tools. Adopted through `set_state`
+        #: so the tools and this session hold the *same* object -- see there.
+        self.state: SessionState = SessionState()
+        set_current_state(self.state)
 
     # -- provider ------------------------------------------------------------
     def bind_provider(
@@ -195,13 +205,44 @@ class AgentSession:
             self._cancel.set()
 
     def clear(self) -> None:
-        """Drop the conversation history."""
+        """Drop the conversation history, and the plan that went with it.
+
+        The plan goes too: a task list outliving the transcript it was written
+        against is a list describing work whose context has been thrown away, and
+        it would still be rendered into the prompt of the conversation that
+        replaced it.
+        """
         self.messages.clear()
+        self.set_state(SessionState())
+
+    def set_state(self, state: SessionState) -> None:
+        """Adopt a plan and publish it to the tools that write to it.
+
+        **Both halves, and to the same object.** The session renders the state into
+        the system prompt and the planning tools mutate it, so handing the tools a
+        copy would leave the model updating a plan it never sees again -- the plan
+        would appear to save and then read as unchanged on the next turn.
+        """
+        self.state = state
+        set_current_state(state)
 
     # -- sandbox -------------------------------------------------------------
     async def start_sandbox(self, project_path: str = "") -> bool:
-        """Start the shared sandbox and report the outcome as an event."""
+        """Start the shared sandbox and report the outcome as an event.
+
+        With no path, the folder the core already holds is used -- which is
+        what the Settings panel's Start button sends, because the window is
+        showing that folder and restating it would only let the two disagree.
+
+        ``folder_manager`` is imported here rather than at module scope because
+        it was previously never imported at all: every caller passed a path, so
+        ``project_path or ...`` short-circuited before the name was looked up
+        and the missing import went unnoticed. The pathless call -- the only
+        way to restart a sandbox on an already-chosen folder -- raised
+        ``NameError: folder_manager`` on every press of the new button.
+        """
         from tonyagent.config.settings import settings
+        from tonyagent.folder import folder_manager
         from tonyagent.sandbox import SandboxConfig, get_shared_sandbox_manager
 
         path = project_path or str(folder_manager.current_folder or "")
@@ -251,6 +292,22 @@ class AgentSession:
         from tonyagent.sandbox import get_shared_sandbox_manager
 
         return get_shared_sandbox_manager().is_isolated()
+
+    def sandbox_status(self) -> str:
+        """Report the runtime as the session finds it right now.
+
+        Asked by state so a reloaded window knows whether a sandbox is up
+        without being told: the folder is restored from disk, but a container is
+        not, so before this the panel could sit on stopped while the core was
+        serving a running runtime (or the reverse).
+
+        The same string the sandbox.status event carries, so a window that
+        started the sandbox itself and a window that reloaded onto it render the
+        same word.
+        """
+        from tonyagent.sandbox import get_shared_sandbox_manager
+
+        return "running" if get_shared_sandbox_manager().is_running() else "stopped"
 
     async def stop_sandbox(self) -> None:
         """Stop the shared sandbox."""
@@ -325,6 +382,43 @@ class AgentSession:
             EventType.CONFIRMATION_RESOLVED,
             {"id": tool_call_id, "confirmed": bool(confirmed)},
         )
+
+    # -- questions / presentations -------------------------------------------
+    def install_question_bridge(self) -> None:
+        """Route questions and presentations through the event bus.
+
+        The same shape as the confirmation bridge, and the same reason: a tool
+        that stops the turn has to put something in front of the user, and the
+        event bus is the only channel a window has. Both hooks stay synchronous
+        -- they publish an event and nothing else, exactly like the
+        confirmation callback, which has to run while the tool is suspended.
+        """
+        user_io.set_callbacks(self._on_user_asked, self._on_user_resolved)
+
+    def _on_user_asked(self, request: Any) -> None:
+        """Publish an ask. ``to_payload`` is the contract the window reads."""
+        self.emit(EventType.USER_ASKED, request.to_payload())
+
+    def _on_user_resolved(self, question_id: str, answer: str | None) -> None:
+        """Take a settled ask down in the window.
+
+        Emitted from ``user_io`` on every path that ends an ask -- answered,
+        timed out, or abandoned by a cancelled turn -- so the dialog cannot
+        outlive the turn that raised it.
+        """
+        self.emit(
+            EventType.USER_RESOLVED,
+            {"id": question_id, "answered": answer is not None},
+        )
+
+    def respond_to_question(self, question_id: str, answer: str) -> bool:
+        """Answer a pending question. False if there was nothing to answer.
+
+        Delegates, rather than emitting here: ``user_io`` emits
+        ``user.resolved`` when it settles, so a late answer for a question that
+        already timed out produces no event at all instead of a stale one.
+        """
+        return user_io.respond(question_id, answer)
 
     def send(self, text: str, attachments: list[dict] | None = None) -> str:
         """Queue a user message. Returns the turn id, or "" if rejected.
@@ -445,20 +539,28 @@ class AgentSession:
     def set_max_tool_calls(self, limit: int) -> int:
         """Change the per-turn tool budget. Returns what took effect.
 
-        Floored at one rather than at zero. A budget of zero refuses every
-        tool, which is a different thing from a small budget and is expressed
-        by taking tools off the model's list -- so the floor corrects a
-        mistake instead of obeying it.
+        Floored at one rather than at zero -- except for the one value that is
+        not a budget at all: **0 means no limit**. A budget of zero is otherwise
+        the refusal of every tool, which is a different thing from a small
+        budget and is expressed by taking tools off the model's list, so the
+        floor corrects a mistake instead of obeying it. "No limit" needs a value
+        too, and zero is the only number below the floor -- which is exactly what
+        makes it safe to give the opposite meaning here, and only here. Every
+        reader of `max_tool_calls` has to know that; there is one comparison that
+        matters and it is written to test the budget rather than the number.
 
         The change applies from the *next* turn. A turn in flight is mid-loop
         with its own idea of how far it may go, and moving the number under it
         would make the labels on results already in the transcript wrong.
         """
-        self.max_tool_calls = max(1, int(limit))
+        wanted = int(limit)
+        self.max_tool_calls = wanted if wanted == 0 else max(1, wanted)
         return self.max_tool_calls
 
     def _tool_budget_label(self) -> str:
         """Where the turn stands, as the model and the UI both read it."""
+        if not self.max_tool_calls:
+            return f"Tool call {self._tool_calls_used} of no limit"
         return f"Tool call {self._tool_calls_used}/{self.max_tool_calls}"
 
     def _budget_exhausted_error(self) -> str:
@@ -603,8 +705,17 @@ class AgentSession:
         Built per request rather than stored, so the prompt always matches the
         mode in force. `self.messages` stays exactly what the user and the
         model said, which keeps `clear()` and the history tests honest.
+
+        The plan is appended to the prompt rather than sent as a message. It is not
+        something either party *said* -- and in the history the model would read its
+        own plan back as a claim it had made, while `clear()` and the history tests
+        would have to account for a turn nobody took.
         """
-        return [ChatMessage(role="system", content=self._mode.system_prompt), *self.messages]
+        prompt = self._mode.system_prompt
+        plan = self.state.render()
+        if plan:
+            prompt = f"{prompt}\n\n{plan}"
+        return [ChatMessage(role="system", content=prompt), *self.messages]
 
     async def _iter_chunks(self, tools: list[ToolSchema]):
         """Yield chunks, normalising the providers' three call shapes.
@@ -784,8 +895,22 @@ class AgentSession:
         no matching result -- so dropping the refused ones would turn a
         finished, explainable turn into a 400 on the *next* message, with the
         cause one request removed from anything the user can see.
+
+        **Three phases, and the order between them is load-bearing.** The batch
+        is planned first -- what runs, what is refused, and each admitted call's
+        number in the turn -- then the admitted calls run, concurrently when
+        nothing in the batch will ask the user a question, and only then are the
+        refusals emitted. Refusals *last* is the part that is easy to get wrong:
+        a refusal quotes the budget line the turn actually reached, and the
+        frontend reads the final ``TOOL_COMPLETED`` as the failure, so emitting
+        them while planning would have both of them describing a turn that had
+        not run yet.
         """
-        refused = False
+        #: Admitted calls, each with the budget line it was admitted under.
+        planned: list[tuple[ToolCall, dict[str, Any]]] = []
+        #: ``(call id, tool name)`` pairs the budget would not pay for.
+        refused: list[tuple[str, str]] = []
+
         for raw in tool_calls:
             self._check_cancelled()
             function = raw.get("function", {}) or {}
@@ -793,63 +918,164 @@ class AgentSession:
             if not name:
                 continue
             call_id = raw.get("id") or uuid.uuid4().hex
-            if self._tool_calls_used >= self.max_tool_calls:
-                refused = True
-                self._append_refused_tool_message(call_id, name, turn_id)
+            # A truth test, not `!= 0`: 0 is the no-limit sentinel, so the
+            # budget only bites when there is one.
+            if self.max_tool_calls and self._tool_calls_used >= self.max_tool_calls:
+                refused.append((call_id, name))
                 continue
             try:
                 arguments = json.loads(function.get("arguments") or "{}")
             except (ValueError, TypeError):
                 # A malformed arguments blob is the model's fault, not a crash.
                 arguments = {}
-            call = ToolCall(id=call_id, name=name, arguments=arguments)
             # Counted before the call runs, not after it returns. A tool that
             # fails still consumed a call: the model asked for it, the request
             # went out, and the budget is what bounds spending. Counting only
             # successes would make a loop of failing tools free.
             self._tool_calls_used += 1
-            self.emit(
-                EventType.TOOL_STARTED,
-                {
-                    "id": call.id,
-                    "name": call.name,
-                    "arguments": call.arguments,
-                    "tool_call_budget": self._budget_payload(),
-                },
-                turn_id=turn_id,
-            )
-            # The async entry point is required: the synchronous
-            # execute_tool() refuses to run inside a live event loop, so
-            # calling it from a coroutine used to raise and the tool silently
-            # never ran.
-            result = await tool_orchestrator.execute_tool_async(call)
-            payload = result.to_dict()
-            # The same field the model reads, on the same number. The card and
-            # the model must not be able to disagree about how far the turn
-            # got, and there is exactly one place that knows.
-            payload["tool_call_budget"] = self._budget_payload()
-            self.emit(
-                EventType.TOOL_COMPLETED,
-                {
-                    "id": call.id,
-                    "name": call.name,
-                    "result": payload,
-                    "tool_call_budget": self._budget_payload(),
-                },
-                turn_id=turn_id,
-            )
-            self.messages.append(
-                ChatMessage(
-                    role="tool",
-                    content=json.dumps(payload),
-                    tool_call_id=call.id,
+            # The number is frozen here rather than read again when the call
+            # finishes. With calls running concurrently the turn has moved on by
+            # then, and every result would report the *last* number instead of
+            # its own -- so the model and the card would be told the same wrong
+            # place in the turn, which is the kind of agreement that hides a bug.
+            planned.append(
+                (
+                    ToolCall(id=call_id, name=name, arguments=arguments),
+                    self._budget_payload(),
                 )
             )
+
+        if planned:
+            # Every card is announced before anything runs, so the transcript
+            # shows the whole batch as in flight rather than revealing it one
+            # call at a time as each happens to be scheduled.
+            for call, budget in planned:
+                self.emit(
+                    EventType.TOOL_STARTED,
+                    {
+                        "id": call.id,
+                        "name": call.name,
+                        "arguments": call.arguments,
+                        "tool_call_budget": budget,
+                    },
+                    turn_id=turn_id,
+                )
+
+            results = await self._execute_batch(planned)
+
+            for (call, budget), result in zip(planned, results):
+                payload = result.to_dict()
+                # The same field the model reads, on the same number. The card
+                # and the model must not be able to disagree about how far the
+                # turn got, and there is exactly one place that knows.
+                payload["tool_call_budget"] = budget
+                self.emit(
+                    EventType.TOOL_COMPLETED,
+                    {
+                        "id": call.id,
+                        "name": call.name,
+                        "result": payload,
+                        "tool_call_budget": budget,
+                    },
+                    turn_id=turn_id,
+                )
+                self.messages.append(
+                    ChatMessage(
+                        role="tool",
+                        content=self._tool_content(payload, result),
+                        tool_call_id=call.id,
+                    )
+                )
+
+        for call_id, name in refused:
+            self._append_refused_tool_message(call_id, name, turn_id)
+
         # Every round that produced a result gets a number, whether the turn
         # continues or stops at the cap: the digest references the results by
         # these numbers.
         self._round_orders.append(round_no)
-        return refused
+        return bool(refused)
+
+    async def _execute_batch(
+        self, planned: list[tuple[ToolCall, dict[str, Any]]]
+    ) -> list[ToolResult]:
+        """Run the admitted calls, concurrently when nothing will prompt.
+
+        Results come back in the order the calls were planned, which is what the
+        wire needs: the tool messages after an assistant message's ``tool_calls``
+        array have to line up with it one for one, and a batch answering out of
+        order would pair each result with the wrong request.
+
+        **A batch with a confirmation prompt in it runs in order.** That is the
+        whole reason ``will_prompt`` exists. Concurrent prompts would put two
+        dialogs on screen at once, and the second would be asking about a call
+        the user has not read yet -- so the case that needs a human stays exactly
+        as sequential as it has always been, and only the case that needs nobody
+        gets faster.
+
+        One call is run in line rather than through a task. A gather of one is
+        all cost and no concurrency.
+        """
+        if len(planned) == 1 or any(
+            tool_orchestrator.will_prompt(call.name, call.arguments)
+            for call, _ in planned
+        ):
+            return [await self._execute_one(call) for call, _ in planned]
+
+        tasks = [asyncio.create_task(self._execute_one(call)) for call, _ in planned]
+        try:
+            return list(await asyncio.gather(*tasks))
+        except BaseException:
+            # Nothing may be left running behind a failure. A turn the user
+            # stopped that keeps executing tools is not stopped, and a gather
+            # abandoned because one call raised would leave the rest running
+            # with nobody reading their results. The tasks are cancelled *and
+            # awaited*, so their exceptions are collected rather than surfacing
+            # later as "never retrieved".
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
+    async def _execute_one(self, call: ToolCall) -> ToolResult:
+        """One tool call, on the entry point a coroutine has to use.
+
+        ``execute_tool()`` -- the synchronous one -- refuses to run inside a live
+        event loop, so calling it from a coroutine used to raise and the tool
+        silently never ran. That is why this goes through the async entry point
+        and why the cancellation check is here rather than only around the batch.
+        """
+        self._check_cancelled()
+        return await tool_orchestrator.execute_tool_async(call)
+
+    @staticmethod
+    def _tool_content(payload: dict[str, Any], result: Any) -> Any:
+        """The tool message: JSON text, or text plus the images it produced.
+
+        A tool that returns a picture has to put the picture in the message. A
+        path would not do it -- the model would be told a file exists and would
+        have to ask for it with a second tool call, which is a different product
+        with an extra round trip and one more thing to fail. So a result
+        carrying images becomes the same OpenAI-style content-parts list a user
+        attachment uses, with the JSON first so the words still lead.
+
+        Plain JSON otherwise, which is every other tool and therefore the shape
+        the rest of the transcript is already built around.
+        """
+        images = getattr(result, "images", None)
+        if not images:
+            return json.dumps(payload)
+        parts: list[dict[str, Any]] = [{"type": "text", "text": json.dumps(payload)}]
+        for image in images:
+            parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{image['mime']};base64,{image['data']}"
+                    },
+                }
+            )
+        return parts
 
     def _budget_payload(self) -> dict[str, Any]:
         """The turn's tool-call standing, as one dict for every consumer."""

@@ -361,12 +361,17 @@ async def test_sandbox_file_tools_surface_container_errors(sandbox_file_backend)
 
 
 def test_sandbox_file_tools_are_registered_and_advertised():
-    """Registry and ALL_SCHEMAS are parallel sources of truth - keep them in sync."""
+    """Registering the tool is what advertises it.
+
+    These two checks used to be separate: the tools had to be added to the
+    registry *and* to a hand-written schema list. Only the registry edit exists
+    now, so this asserts both halves follow from it.
+    """
     import tonyagent.tools as T
 
     for name in ("sandbox_read_file", "sandbox_list_files"):
         assert name in T.tool_registry.list_names(), f"{name} not registered"
-        assert name in T.SCHEMAS_BY_NAME, f"{name} missing from schemas"
+        assert name in T.SCHEMAS_BY_NAME, f"{name} missing from the derived schemas"
         tool = T.tool_registry.get(name)
         assert tool.sandbox_required is True
         assert tool.destructive is False
@@ -374,11 +379,17 @@ def test_sandbox_file_tools_are_registered_and_advertised():
 
 
 def test_registry_and_schemas_never_diverge():
-    """A tool registered but not advertised silently breaks every model call."""
+    """A tool registered but not advertised silently breaks every model call.
+
+    The schemas are derived from the registry, so this cannot drift by hand
+    any more -- what it still catches is a derivation that silently produces
+    nothing, which fails the same way a missing tool does.
+    """
     import tonyagent.tools as T
 
     registered = set(T.tool_registry.list_names())
     advertised = set(T.SCHEMAS_BY_NAME)
+    assert advertised, "the derivation produced no schemas at all"
     assert registered == advertised, (
         f"only registered: {registered - advertised}; only advertised: {advertised - registered}"
     )
@@ -820,115 +831,3 @@ def test_snapshot_schemas_advertised():
                        ("set_viewport_size", "width")):
         assert name in T.SCHEMAS_BY_NAME
         assert prop in T.SCHEMAS_BY_NAME[name]["parameters"]["properties"]
-
-
-# --- Regression: streaming contract mismatch (no reply for OpenAI family) -----
-
-class _AsyncGenProvider:
-    """Shape 1: a true async generator (Anthropic / Gemini / Ollama)."""
-
-    async def chat_completion(self, messages, tools=None, tool_choice=None, stream=False, **kw):
-        for piece in ("Hel", "lo ", "world"):
-            yield ChatCompletionChunk(content=piece)
-
-
-class _CoroGenProvider:
-    """Shape 2: a coroutine that returns an async generator (OpenAI family)."""
-
-    async def chat_completion(self, messages, tools=None, tool_choice=None, stream=False, **kw):
-        async def gen():
-            for piece in ("Hel", "lo ", "world"):
-                yield ChatCompletionChunk(content=piece)
-
-        return gen()
-
-
-class _CoroOnceProvider:
-    """Shape 3: a coroutine that returns one non-streaming completion."""
-
-    async def chat_completion(self, messages, tools=None, tool_choice=None, stream=False, **kw):
-        return ChatCompletion(content="Hello world", finish_reason="stop", model="m")
-
-
-def _make_window(provider):
-    """A MainWindow stand-in exposing just the chunk normaliser."""
-    from tonyagent.ui.views.main_window import MainWindow
-
-    win = MainWindow.__new__(MainWindow)
-    win._current_provider = provider
-    win._message_history = []
-    return win
-
-
-@pytest.mark.parametrize(
-    "provider_cls", [_AsyncGenProvider, _CoroGenProvider, _CoroOnceProvider]
-)
-async def test_iter_provider_chunks_handles_every_shape(provider_cls):
-    """Regression: 'async for' got a coroutine -> no reply.
-
-    The UI iterated provider.chat_completion() directly. That works only when the
-    method is a true async generator; the OpenAI-compatible family returns a
-    coroutine, so every message silently produced
-    "'async for' requires an object with __aiter__ method, got coroutine".
-    """
-    win = _make_window(provider_cls())
-    text = "".join([c.content or "" async for c in win._iter_provider_chunks(None)])
-    assert text == "Hello world"
-
-
-async def test_old_direct_iteration_pattern_was_broken():
-    """Documents exactly why the helper exists."""
-    for provider_cls in (_CoroGenProvider, _CoroOnceProvider):
-        with pytest.raises(TypeError, match="__aiter__"):
-            async for _ in provider_cls().chat_completion(messages=[]):
-                pass
-
-
-async def test_iter_provider_chunks_yields_tool_calls():
-    """A tool-call-only response must not be dropped as empty."""
-
-    class ToolOnly:
-        async def chat_completion(self, messages, tools=None, tool_choice=None, stream=False, **kw):
-            return ChatCompletion(
-                content=None,
-                tool_calls=[{"id": "c1", "type": "function",
-                             "function": {"name": "read_file", "arguments": "{}"}}],
-                finish_reason="tool_calls", model="m",
-            )
-
-    win = _make_window(ToolOnly())
-    chunks = [c async for c in win._iter_provider_chunks(None)]
-    assert len(chunks) == 1
-    assert chunks[0].tool_calls
-
-
-async def test_iter_provider_chunks_handles_empty_response():
-    class Empty:
-        async def chat_completion(self, messages, tools=None, tool_choice=None, stream=False, **kw):
-            return ChatCompletion(content=None, finish_reason="stop", model="m")
-
-    win = _make_window(Empty())
-    assert [c async for c in win._iter_provider_chunks(None)] == []
-
-
-def test_ui_does_not_iterate_chat_completion_directly():
-    """Guard both the UI and the core against the raw form coming back.
-
-    The turn loop now lives in ``AgentSession``. The UI delegates to it, so
-    neither file may call ``chat_completion`` in the broken raw form - that form
-    raised "'async for' requires an object with __aiter__, got coroutine" for
-    every OpenAI-compatible provider.
-    """
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[2]
-    ui = (root / "src/tonyagent/ui/views/main_window.py").read_text(encoding="utf-8")
-    core = (root / "src/tonyagent/core/session.py").read_text(encoding="utf-8")
-
-    assert "async for chunk in self._current_provider.chat_completion" not in ui
-    # The UI must not call the provider directly at all; it goes through the
-    # session, which owns the only implementation.
-    assert ".chat_completion(" not in ui, "the UI must not drive the provider"
-    # Exactly one implementation of the normalisation exists, in the core.
-    assert core.count("_iter_chunks") >= 2
-    assert "chat_completion(" in core

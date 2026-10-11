@@ -15,6 +15,10 @@ class OpenRouterProvider(OpenAICompatibleProvider):
     key_length = 73
 
     name = "openrouter"
+    #: Declared rather than written into `__init__`, so the endpoint is a fact
+    #: about the vendor that a reader (and the registry test) can see without
+    #: constructing one. Every other provider declares its own this way.
+    base_url = "https://openrouter.ai/api/v1"
     #: A handful of ids to seed the model field with. OpenRouter proxies
     #: hundreds more and the field takes any of them, so this is a starting
     #: point rather than the list.
@@ -33,6 +37,6 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         headers = extra_headers or {}
         headers.setdefault("HTTP-Referer", "https://tonyagent.local")
         headers.setdefault("X-Title", "TONYAgent")
-        super().__init__(api_key=api_key, model=model, base_url=base_url or "https://openrouter.ai/api/v1",
+        super().__init__(api_key=api_key, model=model, base_url=base_url or self.base_url,
                         extra_headers=headers, timeout=timeout, max_retries=max_retries)
 

@@ -1,0 +1,60 @@
+
+/* --- scrollbars ---------------------------------------------------------- */
+::-webkit-scrollbar {
+  width: var(--scrollbar);
+  height: var(--scrollbar);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: var(--radius-pill);
+  background-clip: content-box;
+  /* `--raised`, not #333. The thumb was a pure neutral grey in a palette whose
+     every other value is a warm green-grey -- and the header calls out exactly
+     this substitution by name, because "#333 instead of a token" is the kind of
+     tidy edit that makes a window read as a different app. */
+  background-color: var(--raised);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--hover);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/*
+ * The dialog's scrollbar, inset at both ends so its thumb stays inside the
+ * panel's corners.
+ *
+ * `.modal` is a 24px-radius box that scrolls, and a scrollbar is a
+ * square-cornered box: Chromium paints it over the border box without clipping
+ * it to the radius, so at either end of its travel the last few pixels of the
+ * thumb are drawn on the scrim rather than on the panel. Measured on the
+ * settings panel at 1200x800: the thumb is 4px wide at x 841.75..845.75, and
+ * **7.0px of it sits outside the panel's silhouette at the top and 7.0px at the
+ * bottom** -- y 28.5..35.5 and y 764.0..771.0. The line appears to continue past
+ * the dialog's corner and stop in mid-air.
+ *
+ * Two invisible buttons at the ends of the track shorten the *travel* rather
+ * than the thumb, which is the honest way to do this: the thumb still reports
+ * the visible fraction, because its denominator shrinks along with it. Giving
+ * the thumb extra transparent borders instead also works, and reports about
+ * four points low -- a scrollbar that lies about how much is left is worse than
+ * one that overhangs by seven pixels.
+ *
+ * Scoped to `.modal` because this is a fact about *that* box's radius. The
+ * transcript is a full-bleed scroller with no corners to be outside of.
+ */
+.modal::-webkit-scrollbar-button:vertical:decrement,
+.modal::-webkit-scrollbar-button:vertical:increment {
+  display: block;
+  height: 14px;
+  background: transparent;
+  border: none;
+}

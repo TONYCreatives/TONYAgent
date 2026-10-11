@@ -261,6 +261,74 @@ test("a confirmation request and its resolution clear the modal", () => {
   assert.equal(state.pendingConfirm, null);
 });
 
+test("a question and its resolution clear the ask modal", () => {
+  let state = applyEvent(
+    initialState,
+    event("user.asked", {
+      id: "q1",
+      name: "ask_user_question",
+      kind: "question",
+      prompt: "Postgres or SQLite?",
+      content: "",
+      options: ["Postgres", "SQLite"],
+    }),
+  );
+  assert.equal(state.pendingAsk?.prompt, "Postgres or SQLite?");
+  assert.deepEqual(state.pendingAsk?.options, ["Postgres", "SQLite"]);
+  assert.equal(state.pendingAsk?.kind, "question");
+  assert.equal(state.pendingAsk?.name, "ask_user_question");
+  state = applyEvent(state, event("user.resolved", { id: "q1" }));
+  assert.equal(state.pendingAsk, null);
+});
+
+test("a presentation is told apart from a question, and carries its body", () => {
+  const state = applyEvent(
+    initialState,
+    event("user.asked", {
+      id: "q2",
+      name: "present",
+      kind: "presentation",
+      prompt: "What I found",
+      content: "Line one\nLine two",
+      options: [],
+    }),
+  );
+  assert.equal(state.pendingAsk?.kind, "presentation");
+  assert.equal(state.pendingAsk?.prompt, "What I found");
+  assert.equal(state.pendingAsk?.content, "Line one\nLine two");
+  assert.deepEqual(state.pendingAsk?.options, []);
+});
+
+test("a question with no options opens anyway, with none to click", () => {
+  // A payload with a junk or absent `options` must still open the dialog: the
+  // dialog is what unblocks the turn, and a blank button is a better outcome
+  // than no dialog at all.
+  const state = applyEvent(
+    initialState,
+    event("user.asked", { id: "q3", name: "ask_user_question", kind: "question", prompt: "Which?" }),
+  );
+  assert.deepEqual(state.pendingAsk?.options, []);
+});
+
+test("a finished turn cannot leave an ask behind", () => {
+  // A stopped turn is the one path where the core may settle an ask after the
+  // window has already ended the turn. A dialog the turn can no longer answer
+  // is a dialog that can never be closed, so `turn.finished` takes it down
+  // rather than waiting for the core to say so.
+  let state = applyEvent(
+    initialState,
+    event("user.asked", {
+      id: "q4",
+      name: "ask_user_question",
+      kind: "question",
+      prompt: "Still there?",
+    }),
+  );
+  assert.ok(state.pendingAsk);
+  state = applyEvent(state, event("turn.finished"));
+  assert.equal(state.pendingAsk, null);
+});
+
 test("sandbox and log events are ignored without disturbing the view", () => {
   const before = applyEvent(initialState, event("turn.started"));
   const after = applyEvent(before, event("sandbox.status", { status: "running" }));

@@ -62,25 +62,44 @@ async def main() -> int:
 
     # -- 1. tools that need no sandbox --------------------------------------
     from tonyagent.tools.file_tools import (
-        DeleteFileTool, EditFileTool, ListDirTool, ReadFileTool, WriteFileTool,
+        DeleteFileTool, EditTool, ListDirTool, ReadImageTool, ReadTool, WriteTool,
     )
     from tonyagent.tools.search_tools import GlobTool, GrepTool
     from tonyagent.tools.network_tools import HttpRequestTool
 
     print(f"[all-tools] project: {tmp}")
 
-    r = await ReadFileTool().execute("hello.txt")
-    record("read_file", r)
+    r = await ReadTool().execute("hello.txt")
+    record("read", r)
     assert r.status is ToolResultStatus.SUCCESS and "hello world" in r.output
+    assert "1\thello world" in r.output, "read must number its lines"
 
-    r = await WriteFileTool().execute("notes/new.txt", "brand new")
-    record("write_file", r)
+    # The line window, which is the reason `read` took `offset`/`limit`.
+    r = await ReadTool().execute("hello.txt", offset=2, limit=1)
+    record("read(window)", r)
+    assert r.status is ToolResultStatus.SUCCESS and "2\tsecond line" in r.output
+
+    r = await WriteTool().execute("notes/new.txt", "brand new")
+    record("write", r)
     assert r.status is ToolResultStatus.SUCCESS and (tmp / "notes" / "new.txt").exists()
     assert r.artifacts and r.artifacts[0]["data"]["added"] == 1
 
-    r = await EditFileTool().execute("hello.txt", "second line", "SECOND LINE")
-    record("edit_file", r)
+    r = await EditTool().execute("hello.txt", "second line", "SECOND LINE")
+    record("edit", r)
     assert r.status is ToolResultStatus.SUCCESS and "SECOND LINE" in (tmp / "hello.txt").read_text()
+
+    # The refusal that is the whole point of `edit` over a plain replace: two
+    # matches is a guess about which one was meant, so it declines to guess and
+    # names both ways out.
+    (tmp / "dupes.txt").write_text("same\nx\nsame\n", encoding="utf-8")
+    await expect_error(
+        "edit(ambiguous)", EditTool().execute("dupes.txt", "same", "changed"), "2 times"
+    )
+    assert (tmp / "dupes.txt").read_text() == "same\nx\nsame\n", "a refusal edited the file"
+
+    r = await EditTool().execute("dupes.txt", "same", "changed", replace_all=True)
+    record("edit(replace_all)", r)
+    assert r.status is ToolResultStatus.SUCCESS and (tmp / "dupes.txt").read_text() == "changed\nx\nchanged\n"
 
     r = await ListDirTool().execute(".", recursive=True, max_depth=2)
     record("list_dir", r)
@@ -94,7 +113,7 @@ async def main() -> int:
     record("glob", r)
     assert r.status is ToolResultStatus.SUCCESS and "hello.txt" in r.output
 
-    await expect_error("read_file(escape)", ReadFileTool().execute("../outside.txt"), "escape")
+    await expect_error("read(escape)", ReadTool().execute("../outside.txt"), "escape")
 
     r = await DeleteFileTool().execute("notes/new.txt")
     record("delete_file", r)
@@ -106,6 +125,207 @@ async def main() -> int:
 
     await expect_error(
         "http_request(ssrf)", HttpRequestTool().execute("http://127.0.0.1:9/x"), "blocked"
+    )
+
+    # -- 1b. the tools added with the tool-system pass ------------------------
+    from tonyagent.tools.job_tools import JobKillTool, JobListTool, JobOutputTool
+    from tonyagent.tools.jobs import jobs_registry
+    from tonyagent.tools.network_tools import WebFetchTool
+    from tonyagent.tools.shell_tools import ExecuteCommandTool, set_host_execution
+
+    from PIL import Image
+
+    Image.new("RGB", (24, 16), (10, 20, 30)).save(tmp / "pic.png")
+
+    r = await ReadImageTool().execute("pic.png")
+    record("read_image", r)
+    assert r.status is ToolResultStatus.SUCCESS and r.images, r.error
+    assert r.images[0]["mime"] == "image/png"
+    assert "24x16" in r.output
+    # The pixels are deliberately not in the dict written into a conversation.
+    assert "images" not in r.to_dict()
+
+    await expect_error(
+        "read_image(text)", ReadImageTool().execute("hello.txt"), "not an image"
+    )
+
+    r = await WebFetchTool().execute("https://example.com", timeout=15)
+    record("web_fetch", r)
+    assert r.status is ToolResultStatus.SUCCESS and "example" in r.output.lower()
+
+    await expect_error(
+        "web_fetch(ssrf)", WebFetchTool().execute("http://127.0.0.1:9/x"), "blocked"
+    )
+
+    # Background jobs live on the host, so they are exercised with host execution
+    # on. The sandbox cannot hold one at all, and that refusal is asserted in the
+    # sandbox section below rather than here.
+    set_host_execution(True)
+    try:
+        # A quick job first, for the output path.
+        r = await ExecuteCommandTool().execute(
+            "python -c \"print('from a job')\"", background=True
+        )
+        record("execute_command(background)", r)
+        assert r.status is ToolResultStatus.SUCCESS, r.error
+        quick = jobs_registry.all()[0]
+
+        r = await JobOutputTool().execute(quick.id, wait=True, timeout_ms=15000)
+        record("job_output", r)
+        assert r.status is ToolResultStatus.SUCCESS and "from a job" in r.output
+
+        r = await JobOutputTool().execute(quick.id)
+        assert "no new output" in r.output, "job_output returned the same text twice"
+
+        # Then one that is *still running*, so the kill below is a real kill and
+        # not a report that there was nothing left to stop.
+        r = await ExecuteCommandTool().execute(
+            "python -c \"import time; time.sleep(60)\"", background=True
+        )
+        assert r.status is ToolResultStatus.SUCCESS, r.error
+        long_job = jobs_registry.all()[-1]
+
+        r = await JobListTool().execute()
+        record("job_list", r)
+        assert r.status is ToolResultStatus.SUCCESS and long_job.id in r.output
+        assert "running" in r.output
+
+        r = await JobKillTool().execute(long_job.id)
+        record("job_kill", r)
+        assert "Stopped" in r.output, r.output
+        assert not long_job.running, "the job survived job_kill"
+    finally:
+        set_host_execution(False)
+        jobs_registry.shutdown()
+
+    # -- 1c. the planning tools ----------------------------------------------
+    from tonyagent.core.task_state import SessionState, set_current_state
+    from tonyagent.tools.planning_tools import (
+        CreateGoalTool, GetGoalTool, TodoWriteTool, UpdateGoalTool,
+    )
+
+    set_current_state(SessionState())
+
+    r = await TodoWriteTool().execute(
+        todos=[
+            {"text": "read the config"},
+            {"text": "change the default", "status": "in_progress"},
+        ]
+    )
+    record("todo_write", r)
+    assert r.status is ToolResultStatus.SUCCESS and "1. [ ] read the config" in r.output
+    assert "2. [~] change the default" in r.output
+
+    # The list is replaced, not merged -- which is what makes dropping a step
+    # possible at all.
+    r = await TodoWriteTool().execute(todos=[{"text": "read the config"}])
+    assert "change the default" not in r.output, "todo_write merged instead of replacing"
+
+    await expect_error(
+        "todo_write(bad item)",
+        TodoWriteTool().execute(todos=[{"text": "fine"}, {"status": "pending"}]),
+        "no text",
+    )
+
+    r = await CreateGoalTool().execute(objective="Ship the retry fix")
+    record("create_goal", r)
+    assert r.status is ToolResultStatus.SUCCESS and "Ship the retry fix" in r.output
+
+    await expect_error(
+        "create_goal(already set)",
+        CreateGoalTool().execute(objective="something else"),
+        "already an active goal",
+    )
+
+    r = await GetGoalTool().execute()
+    record("get_goal", r)
+    assert r.status is ToolResultStatus.SUCCESS and "Ship the retry fix" in r.output
+
+    await expect_error(
+        "update_goal(blocked, no note)",
+        UpdateGoalTool().execute(status="blocked"),
+        "blocked on",
+    )
+
+    r = await UpdateGoalTool().execute(status="blocked", note="waiting on review")
+    record("update_goal", r)
+    assert r.status is ToolResultStatus.SUCCESS and "blocked" in r.output
+
+    set_current_state(SessionState())
+
+    # -- 1b. the tools that reach the user ------------------------------------
+    # Neither needs the sandbox, and one of them is the only tool whose happy
+    # path *requires* something a script cannot supply: a person. So the script
+    # stands in for one -- which is the same standing-in the window does, one
+    # `user.respond` away -- and then checks the two failure paths that a real
+    # run hits with nobody there.
+    from tonyagent.core import user_io
+    from tonyagent.tools.user_tools import AskUserQuestionTool, PresentTool
+
+    async def _answered(coro):
+        """Run a tool that stops for the user, with a user who answers.
+
+        The answer has to come from inside the loop: `await`ing the tool
+        directly would suspend the very task that has to answer it.
+        """
+        asked: list = []
+        user_io.set_callbacks(asked.append, lambda *_: None)
+        task = asyncio.create_task(coro)
+        try:
+            for _ in range(200):
+                if asked:
+                    break
+                await asyncio.sleep(0)
+            assert asked, "the tool never asked"
+            user_io.respond(asked[-1].id, "Postgres")
+            return await task
+        finally:
+            user_io.reset()
+
+    r = await _answered(
+        AskUserQuestionTool().execute(
+            question="Postgres or SQLite?", options=["Postgres", "SQLite"]
+        )
+    )
+    record("ask_user_question", r)
+    assert r.status is ToolResultStatus.SUCCESS
+    assert 'The user answered: "Postgres"' in r.output
+
+    # Nobody listening is the state a scripted or headless run is in, and the
+    # tool must say so rather than wait out its timeout.
+    await expect_error(
+        "ask_user_question(no user)",
+        AskUserQuestionTool().execute(question="Anyone there?"),
+        "no user to ask",
+    )
+
+    await expect_error(
+        "ask_user_question(bad options)",
+        AskUserQuestionTool().execute(question="Which?", options=["a", "a"]),
+        "listed twice",
+    )
+
+    asked = []
+    user_io.set_callbacks(asked.append, lambda *_: None)
+    task = asyncio.create_task(
+        PresentTool().execute(content="I read the config and changed the default.", title="What I found")
+    )
+    for _ in range(200):
+        if asked:
+            break
+        await asyncio.sleep(0)
+    assert asked, "present never asked"
+    user_io.respond(asked[-1].id, "skip the migration")
+    r = await task
+    user_io.reset()
+    record("present", r)
+    assert r.status is ToolResultStatus.SUCCESS
+    assert 'The user responded: "skip the migration"' in r.output
+
+    await expect_error(
+        "present(no content)",
+        PresentTool().execute(content="  "),
+        "needs content",
     )
 
     # -- 2. sandbox_required tools -------------------------------------------

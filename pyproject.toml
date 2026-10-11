@@ -6,7 +6,6 @@ readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.11"
 dependencies = [
-    "customtkinter>=5.2.0",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
     "tomli>=2.0.0",
@@ -25,6 +24,17 @@ dependencies = [
     "markdown2>=2.4.0",
     "pygments>=2.17.0",
     "python-dotenv>=1.0.0",
+    # The screen-capture tool, and nothing else. It was already installed on
+    # this machine -- transitively, by a package that happens to want it -- and
+    # `take_screenshot` imported it on the strength of that. Declared, so a
+    # clean install cannot ship a tool that dies on import.
+    "Pillow>=10.0.0",
+    # The window. This is the shell that used to be a Rust crate: `tonyagent.window`
+    # opens a native window around the built frontend, starts the core as a child
+    # process and carries messages between them. On Windows it brings pythonnet,
+    # which is what puts the WebView2 control in a WinForms window; there is no
+    # Rust toolchain, no cargo and no Windows SDK in the build any more.
+    "pywebview>=6.0",
 ]
 
 [project.optional-dependencies]

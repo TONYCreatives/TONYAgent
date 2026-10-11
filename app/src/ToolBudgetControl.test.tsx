@@ -66,6 +66,44 @@ async function control(props: {
   };
 }
 
+// --- no limit ---------------------------------------------------------------
+test("choosing no limit asks the core for zero, which is the sentinel", async () => {
+  // Zero is the one value below the floor of one, which is what lets it mean the
+  // opposite of a budget. The control has to send it as it is: a client that
+  // clamped it to 1 would report a limit the user did not choose, and one that
+  // never sent it would make the choice a decoration.
+  const { container, calls } = await control({ value: 10, open: true });
+  const none = one(container, ".budget-preset-none") as HTMLButtonElement;
+
+  assert.equal(none.textContent?.trim(), "No limit");
+  assert.equal(none.getAttribute("aria-pressed"), "false");
+  // Its own class, not `.budget-preset`: the row above is asserted to hold
+  // numbers, and a word among them would make that assertion mean less.
+  assert.ok(!none.className.includes("budget-preset ") && !none.className.endsWith("budget-preset"));
+
+  await click(none);
+  assert.deepEqual(calls, [0]);
+});
+
+test("a budget of zero reads as no limit, not as a count of none", async () => {
+  const { container } = await control({ value: 0, open: true });
+  assert.equal(
+    one(container, ".budget-preset-none")?.getAttribute("aria-pressed"),
+    "true",
+  );
+  assert.equal(
+    one(container, ".budget-preset-none")?.className.includes("is-active"),
+    true,
+    "the chosen sentinel is not marked as chosen",
+  );
+  // The trigger is the only thing on screen when the popover is shut, and
+  // "0 per turn" would read as a budget of none rather than as no budget.
+  assert.match(
+    one(container, ".tool-budget-btn")?.getAttribute("title") ?? "",
+    /no limit/,
+  );
+});
+
 /**
  * A control whose open state the test actually owns.
  *

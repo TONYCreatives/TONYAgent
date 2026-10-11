@@ -1,14 +1,19 @@
 /**
  * The rail's icons, and the one that had to be drawn rather than transcribed.
  *
- * **The settings gear is asserted on its shape, not on its pixels.** It used to
- * be two concentric circles with eight radial ticks, which is what you get by
- * writing a gear as "a body and some teeth" instead of as a shape: it reads as a
- * sun or a brightness icon, and at the 17px the rail draws it the ticks are far
- * enough apart that the eye never joins them to the body. So what is asserted
- * is the thing that was wrong -- a sun is two circles and radial marks, a gear
- * is one outline with teeth in it -- which is checkable from the markup and is
- * the part that actually regressed.
+ * **The settings gear is asserted on its construction, not on its pixels.** It
+ * has been wrong twice. It began as two concentric circles with eight radial
+ * ticks -- which is what you get by writing a gear as "a body and some teeth"
+ * instead of as a shape, and it reads as a sun. It was then redrawn as one
+ * continuous *outline* around the teeth, which helped and was not enough: at the
+ * 17px the rail draws it, a thin ring around a thin hub ring is still two rings,
+ * and it still read as brightness rather than as settings.
+ *
+ * So it is filled now, which is what Windows itself does for this control, and
+ * what is asserted is the thing that makes it a gear rather than a sun: one
+ * path, filled rather than stroked, with the hub cut out of it rather than
+ * drawn on top. All three are checkable from the markup and all three are what
+ * regressed each time.
  *
  * Everything else here is the rail's standing contract, gathered because the
  * gear change was the first time this component's markup was edited since it
@@ -30,10 +35,11 @@ async function renderRail(over: Partial<React.ComponentProps<typeof IconRail>> =
       messageCount={0}
       expanded={false}
       onToggle={() => {}}
-      onClear={() => {}}
       onCancel={() => {}}
       onSettings={() => {}}
       onSearch={() => {}}
+      dashboardOpen={false}
+      onDashboard={() => {}}
       {...over}
     />,
   );
@@ -44,45 +50,35 @@ const settingsButton = (c: HTMLElement) =>
   one(c, '.rail-btn[aria-label="Settings"]')!;
 
 describe("the settings button's glyph", () => {
-  test("it is a gear, not a sun", async () => {
-    // A sun is concentric circles with marks radiating outward; that is
-    // literally what it used to be, and it is what a gear must not look like.
-    // Asserted as the absence of the two things a sun is made of.
+  test("it is one filled silhouette, not a ring with marks around it", async () => {
+    // A sun is concentric circles with marks radiating outward; a ring is a
+    // thin outline around thin teeth. This is neither: it is one closed shape
+    // with the teeth as part of its edge.
     const container = await renderRail();
     const svg = one(settingsButton(container), "svg")!;
     const shapes = [...svg.children].map((node) => node.tagName.toLowerCase());
 
+    assert.deepEqual(shapes, ["path"], "the gear is drawn as more than one mark");
     assert.ok(
       !shapes.includes("circle"),
       "the gear is built from circles, which is what made it read as a sun",
     );
-    // Every mark is a path, and there is more than one of them: a hub and a
-    // toothed body. A single path is the whole silhouette, which is what
-    // survives being drawn small.
-    assert.deepEqual(
-      [...new Set(shapes)],
-      ["path"],
-      "the gear's marks are not all paths, so they do not join into one shape",
-    );
-    assert.ok(
-      svg.querySelectorAll("path").length >= 2,
-      "the gear has one path, so there is no body for the teeth to belong to",
-    );
+    assert.equal(svg.getAttribute("fill"), "currentColor");
+    assert.equal(svg.getAttribute("stroke"), "none");
   });
 
-  test("its teeth are part of one outline, not marks beside it", async () => {
-    // The old glyph's ticks were separate strokes floating outside a circle.
-    // Asserted as the absence of short standalone segments: a path that is
-    // nothing but a straight dash from one radius to another is exactly that.
+  test("the hub is a hole in it, not a circle drawn on top", async () => {
+    // `evenodd` and a second subpath. Under the default rule a second subpath
+    // wound the same way would *fill*, and the gear would come out as a solid
+    // blob -- which reads as a flower rather than as a cog.
     const container = await renderRail();
-    const paths = [...one(settingsButton(container), "svg")!.querySelectorAll("path")];
-    const dashOnly = paths.filter((path) =>
-      /d="[ML][^A-Za-z]*"/.test(path.getAttribute("d") ?? ""),
-    );
-    assert.equal(
-      dashOnly.length,
-      0,
-      "the gear still has teeth drawn as marks beside the body rather than in it",
+    const svg = one(settingsButton(container), "svg")!;
+    const d = one(settingsButton(container), "svg path")!.getAttribute("d") ?? "";
+
+    assert.equal(svg.getAttribute("fill-rule"), "evenodd");
+    assert.ok(
+      (d.match(/[Mm]/g) ?? []).length >= 2,
+      "the path has one subpath, so there is nothing for the hub to be cut out of",
     );
   });
 
@@ -90,7 +86,7 @@ describe("the settings button's glyph", () => {
     const container = await renderRail();
     const svg = one(settingsButton(container), "svg")!;
     assert.equal(svg.getAttribute("aria-hidden"), "true");
-    assert.equal(svg.getAttribute("stroke"), "currentColor");
+    assert.equal(svg.getAttribute("focusable"), "false");
   });
 });
 
@@ -126,6 +122,30 @@ describe("the rail is a strip of icons that never changes width", () => {
       "Close sidebar",
     );
     assert.equal(one(open, ".rail-toggle")!.getAttribute("aria-expanded"), "true");
+  });
+
+  test("the rail shows which destination you are on, not just what is clickable", async () => {
+    // `.rail-btn.is-active` is the rail's only lit state, and until this it was
+    // reached by exactly one thing: the Stop button, while a turn runs. So the
+    // rail could say "something is happening" and nothing else -- opening the
+    // conversation panel, which is the most common thing anyone does here, lit
+    // no lamp at all.
+    //
+    // The toggle is a destination like the others even though its control is
+    // different, so it carries the same class. Asserted on the toggle rather
+    // than counted, because the busy state legitimately lights a second item and
+    // a count would call that a bug.
+    const closed = await renderRail({ expanded: false });
+    assert.ok(
+      !one(closed, ".rail-toggle")!.className.includes("is-active"),
+      "the closed panel's toggle is lit",
+    );
+
+    const open = await renderRail({ expanded: true });
+    assert.ok(
+      one(open, ".rail-toggle")!.className.includes("is-active"),
+      "the open panel's toggle is not lit, so the rail does not say where you are",
+    );
   });
 
   test("the panel's width does not follow it -- only the toggle's name does", async () => {
@@ -164,36 +184,29 @@ describe("the rail is a strip of icons that never changes width", () => {
     );
   });
 
-  test("Stop appears only mid-turn, and Clear only with something to clear", async () => {
+  test("Stop appears only mid-turn, and nothing else is conditional", async () => {
     // Addressed by `aria-label` rather than by text: the rail draws icons, so
     // `texts` returns one empty string per button and says nothing about which
     // control is which. The toggle is excluded by `.rail-btn:not(.rail-toggle)`
-    // because it also carries `.rail-btn` and is not one of the items below the
-    // logo -- the thing under test here is which entries appear, not the toggle.
+    // because it also carries `.rail-btn` and is not one of the items below it --
+    // the thing under test here is which entries appear, not the toggle.
+    //
+    // Clear is gone from this list on purpose: it was a trash glyph between the
+    // toggle and Search, and clearing belongs beside the conversation list rather
+    // than in the window's own strip. The sidebar's foot carries it.
     const names = (c: HTMLElement) =>
       all(c, ".rail-btn:not(.rail-toggle)").map((b) => b.getAttribute("aria-label"));
 
     const idle = await renderRail({ messageCount: 0 });
-    assert.deepEqual(names(idle), ["Clear conversation", "Search project", "Settings"]);
+    assert.deepEqual(names(idle), ["Search project", "Usage dashboard", "Settings"]);
 
     const busy = await renderRail({ busy: true, messageCount: 4 });
     assert.deepEqual(names(busy), [
-      "Clear conversation",
       "Stop generating",
       "Search project",
+      "Usage dashboard",
       "Settings",
     ]);
-
-    const empty = await renderRail({ messageCount: 0 });
-    const clear = one(
-      empty,
-      '.rail-btn[aria-label="Clear conversation"]',
-    ) as HTMLButtonElement;
-    assert.equal(
-      clear.disabled,
-      true,
-      "Clear is live with nothing in the conversation to clear",
-    );
   });
 
   test("an unreachable core disables the entries that need it", async () => {
@@ -218,6 +231,44 @@ describe("the rail is a strip of icons that never changes width", () => {
       (one(container, ".rail-toggle") as HTMLButtonElement).disabled,
       false,
       "the sidebar toggle was disabled with no core, leaving no way back to it",
+    );
+  });
+});
+
+describe("the rail draws no mark of its own", () => {
+  test("the app's glyph is in the title bar and nowhere in the strip", async () => {
+    // The rail's head carried the app's glyph in a `--raised` box -- the text
+    // "TA" once, then the drawing `icon.svg` ships. The mark moved to the title
+    // bar's corner and this copy did not leave with it, so the window drew the
+    // same drawing twice: 22px in the corner and 32px here, 64px apart, which is
+    // what made the rail's one read as a second logo rather than as the app's.
+    //
+    // Asserted as an *absence*, like the two in `MessageList.test.tsx` and
+    // `AppMark.test.tsx`. A test that checked the rail drew the right glyph
+    // would pass with the glyph in the wrong place, and the wrong place is the
+    // whole failure here.
+    const container = await renderRail();
+
+    assert.equal(
+      all(container, ".rail-logo").length,
+      0,
+      "the rail is drawing the app's mark again",
+    );
+    // And not in some other box either. Every glyph the rail does draw is a
+    // `path` -- the toggle, search and stop are stroked outlines and the gear is
+    // one filled silhouette -- so a `rect` inside the strip can only be the
+    // mark's two strokes.
+    assert.equal(
+      all(container, ".rail svg rect").length,
+      0,
+      "the mark's rects are inside the rail, so the glyph came back in a new box",
+    );
+    // The head is the toggle: nothing above it but the strip's own padding.
+    const strip = one(container, ".rail")!;
+    assert.equal(
+      strip.firstElementChild?.className.split(" ")[0],
+      "rail-btn",
+      "something is above the rail's first control again",
     );
   });
 });

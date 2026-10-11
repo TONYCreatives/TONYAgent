@@ -92,6 +92,25 @@ export interface ChatState {
     description: string;
     destructive: boolean;
   } | null;
+  /**
+   * Non-null while the core is blocked on the user.
+   *
+   * A question (`ask_user_question`) or a presentation (`present`) is a tool
+   * that stops the turn until the user answers, so the window is the only
+   * thing that can unblock it. Same lifecycle as `pendingConfirm` above and
+   * deliberately the same shape of state; the difference is that an answer is
+   * text rather than a yes/no.
+   */
+  pendingAsk: {
+    id: string;
+    /** The tool that is asking, shown so the user knows where it came from. */
+    name: string;
+    /** "question" or "presentation" -- see `QuestionDialog`. */
+    kind: string;
+    prompt: string;
+    content: string;
+    options: string[];
+  } | null;
 }
 
 export const initialState: ChatState = {
@@ -99,6 +118,7 @@ export const initialState: ChatState = {
   busy: false,
   error: null,
   pendingConfirm: null,
+  pendingAsk: null,
 };
 
 /** A message with nothing in it yet, reasoning included. */
@@ -408,8 +428,37 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
       return next;
     }
 
+    case "user.asked": {
+      // Payload keys mirror core/user_io.py::QuestionRequest.to_payload.
+      next.pendingAsk = {
+        id: payloadString(payload, "id") ?? "",
+        name: payloadString(payload, "name") ?? "tool",
+        kind: payloadString(payload, "kind") ?? "question",
+        prompt: payloadString(payload, "prompt") ?? "",
+        content: payloadString(payload, "content") ?? "",
+        // Filtered rather than trusted: the options are what the buttons say,
+        // and a non-string among them would render as an empty button the user
+        // cannot choose between.
+        options: Array.isArray(payload.options)
+          ? payload.options.filter((option): option is string => typeof option === "string")
+          : [],
+      };
+      return next;
+    }
+
+    case "user.resolved": {
+      next.pendingAsk = null;
+      return next;
+    }
+
     case "turn.finished": {
       next.busy = false;
+      // A cancelled turn is the one path that can end with an ask still
+      // outstanding -- the core settles it, but a turn the user stopped may
+      // already be gone before the event lands. A dialog the turn can no
+      // longer answer is a dialog that can never be closed, so it goes here
+      // too rather than waiting for the core to say so.
+      next.pendingAsk = null;
       dropEmptyAssistantMessages(next);
       return next;
     }

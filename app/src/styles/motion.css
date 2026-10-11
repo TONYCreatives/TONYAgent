@@ -1,0 +1,101 @@
+
+/* --- motion ---------------------------------------------------------------- */
+/*
+ * Every animated surface in the app, in one place.
+ *
+ * The rule these all follow: a surface renders conditionally and mounts with no
+ * prior state, so it cannot transition *into* existence -- CSS transitions need
+ * a before and an after, and a node that did not exist has no before. The
+ * enter animation therefore has to be a keyframe, driven by a `data-state` the
+ * component sets on mount, and the exit has to be the same keyframe played by
+ * the same node with the other value. `useDelayedUnmount` is what keeps that
+ * node alive long enough for the exit to be seen; nothing here works without
+ * it, and nothing here is needed if it is removed.
+ *
+ * `both` fill on every animation is deliberate. Without it the element snaps
+ * back to its unanimated style in the frame after the animation ends, which on
+ * a fade is a visible flash at the end of the fade.
+ */
+
+/* Enter and exit pairs. Kept as separate keyframes rather than one reversed:
+   the two directions do not want the same geometry, so `rise-out` is shorter
+   than `rise-in` and a menu does not scale from the corner it opened at. */
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+@keyframes rise-out {
+  to { opacity: 0; transform: translateY(4px); }
+}
+
+/*
+ * A menu or popover arriving: a rise plus a hair of scale.
+ *
+ * The scale is what makes a floating panel read as *placed* rather than as
+ * having slid in from somewhere -- it grows the last two percent out of the
+ * control that opened it, so the eye connects the two. `rise-in` stays as it is
+ * for the things that are not anchored to a control: the transcript rows and the
+ * first-run mark, which have nothing to be placed against.
+ */
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+}
+
+/* The row menu: it grows out of the button that opened it. */
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.96); }
+}
+
+@keyframes menu-out {
+  to { opacity: 0; transform: scale(0.98); }
+}
+
+/* Backdrops are a full-window tint, so they fade only -- translating a layer
+   that covers everything just reveals the edges. `fade-*` is the generic pair
+   and `scrim-*` is its alias for the files panel's dismiss layer; they are
+   kept as separate names so a future scrim that wants different timing does not
+   have to move every backdrop to get it. */
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+
+@keyframes fade-out {
+  to { opacity: 0; }
+}
+
+@keyframes scrim-in {
+  from { opacity: 0; }
+}
+
+@keyframes scrim-out {
+  to { opacity: 0; }
+}
+
+/*
+ * The sidebar, anchored to the left edge and sliding in from it.
+ *
+ * 16px, and not its own full width: the panel should read as having slid out
+ * from under the window edge rather than as having been assembled out of
+ * nothing. A larger distance looks like a different animation, and at
+ * `--list-w` a slide of even half that would cross a third of the transcript.
+ */
+@keyframes slide-in-left {
+  from { opacity: 0; transform: translateX(-16px); }
+}
+
+@keyframes slide-out-left {
+  to { opacity: 0; transform: translateX(-16px); }
+}
+
+/* The log strip animates its own height rather than a wrapper's, because its
+   height is capped by `max-height: 150px` and it has to reach that cap. */
+@keyframes strip-open {
+  from { opacity: 0; max-height: 0; }
+  to { opacity: 1; max-height: 150px; }
+}
+
+@keyframes strip-close {
+  from { opacity: 1; max-height: 150px; }
+  to { opacity: 0; max-height: 0; }
+}

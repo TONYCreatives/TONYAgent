@@ -1,0 +1,115 @@
+
+/* --- search panel -------------------------------------------------------- */
+.search-modal {
+  /* Wider than the settings modal: a hit is a path plus a source line, and
+     truncating either to fit 500px would defeat the point of showing it. */
+  width: min(760px, 100%);
+  display: flex;
+  flex-direction: column;
+  max-height: min(640px, 100%);
+}
+
+/*
+ * As a pane of the sidebar, the width is the sidebar's and there is no height to
+ * cap: the panel scrolls inside the sidebar the way the chats list does, and a
+ * `max-height` measured against the window would leave the results short of the
+ * foot by however tall the title bar is.
+ */
+.chatlist .search-modal {
+  width: 100%;
+  max-height: none;
+}
+
+.search-results {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-top: 12px;
+}
+
+.search-count {
+  margin-bottom: 6px;
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+}
+
+.search-list {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.search-hit {
+  padding: 6px 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.search-hit-head {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 3px;
+  font-family: var(--sans);
+  font-size: var(--text-xs);
+}
+
+.search-hit-file {
+  color: var(--fg-dim);
+  overflow-wrap: anywhere;
+}
+
+.search-hit-line {
+  color: var(--fg-mute);
+}
+
+.search-hit-body {
+  margin: 0;
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * The matching line inside a context block. The core marks it with a leading
+ * ">" that splitContext turns into this class. The accent is the app's only
+ * chromatic element, and this is one of the two places it is allowed: the
+ * other is the diff stats, where a colour also carries meaning.
+ */
+.search-hit-line-on {
+  color: var(--accent);
+}
+
+.settings-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0 0;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.settings-check input {
+  width: 14px;
+  height: 14px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-check input:disabled {
+  cursor: default;
+}
+
+.settings-check em {
+  display: block;
+  margin-top: 2px;
+  color: var(--fg-mute);
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.sidebar-empty .btn {
+  margin-top: 10px;
+}

@@ -10,49 +10,51 @@
 
 **A local-first desktop AI agent for automating programming tasks**
 
-[Features](#-features) • [Quick Start](#-quick-start) • [Installation](#-installation) • [Configuration](#-configuration) • [Usage](#-usage) • [Architecture](#-architecture) • [Development](#-development) • [Troubleshooting](#-troubleshooting) • [License](#-license)
+[Features](#-features) ??[Quick Start](#-quick-start) ??[Installation](#-installation) ??[Configuration](#-configuration) ??[Usage](#-usage) ??[Architecture](#-architecture) ??[Development](#-development) ??[Troubleshooting](#-troubleshooting) ??[License](#-license)
 
 </div>
 
 ---
 
-## ✨ Features
+## ??Features
 
-### 🤖 Multi-Provider LLM Support
-Connect to **8+ LLM providers** with a unified interface:
-- **OpenAI** (GPT-4, GPT-3.5, etc.)
-- **Anthropic** (Claude 3 Opus/Sonnet/Haiku)
-- **Google Gemini** (Gemini Pro, Flash)
-- **Mistral** (Mistral Large, Small, etc.)
-- **Groq** (Llama 3, Mixtral, Gemma - fast inference)
-- **OpenRouter** (Access 100+ models via single API)
-- **Ollama** (Local models - Llama 3, CodeLlama, etc.)
-- **Custom OpenAI-compatible endpoints** (LM Studio, vLLM, etc.)
+### ?�� Multi-Provider LLM Support
+Connect to **two aggregator providers** with one OpenAI-compatible wire format:
+- **OpenRouter** (one key, most hosted models)
+- **OpenCode Go** (a second aggregator)
 
-### 🎨 Modern Desktop UI
-- Built with **customtkinter** for native-looking, modern interfaces
+Both publish real metadata alongside their model list — reasoning support, effort
+levels, pricing — which is where the model picker and the thinking dial get their
+values. The single-vendor dialects that used to be listed here are gone: they
+answered the model list with an id and nothing else, so keeping them would have
+meant a second catalogue implementation returning "unknown" for most fields.
+
+### ?�� Modern Desktop UI
+- Built with **React** in a native window: the interface is HTML and CSS, rendered by the system webview with no browser around it (`pywebview`, in `src/tonyagent/window/`)
 - **Light/Dark/System themes** with pill-shaped design
 - Real-time streaming chat with token-by-token display
 - Tool call visualization and confirmation dialogs
 - Responsive layout with collapsible sidebar
 
-### 🛠️ Rich Tool Ecosystem (15 Tools)
+### ?���?Rich Tool Ecosystem (32 Tools)
 | Category | Tools |
 |----------|-------|
-| **File Operations** | `read_file`, `write_file`, `edit_file`, `delete_file`, `list_dir` |
-| **Search** | `grep_search`, `glob_search` |
-| **Shell** | `execute_command` (with allowlist/denylist) |
-| **Network** | `http_request` |
-| **Browser Automation** | `navigate`, `click`, `type_text`, `evaluate_js`, `screenshot`, `execute_js` |
+| **File** (8) | `read` (with `offset`/`limit`), `read_image`, `write`, `edit` (unique match, or `replace_all`), `delete_file`, `list_dir`, `sandbox_read_file`, `sandbox_list_files` |
+| **Search** (2) | `grep`, `glob` |
+| **Shell** (5) | `execute_command` (allowlist/denylist, plus `background=true` for long-running jobs), `execute_js`, `job_list`, `job_output`, `job_kill` |
+| **Network** (2) | `http_request`, `web_fetch` |
+| **Browser** (10) | `browser_navigate`, `browser_click`, `browser_type`, `browser_eval`, `browser_snapshot`, `browser_get_text`, `browser_wait_for`, `browser_scroll`, `browser_screenshot`, `set_viewport_size` |
+| **Utility** (1) | `take_screenshot` |
+| **Planning** (4) | `todo_write`, `create_goal`, `get_goal`, `update_goal` — the task list and goal are rendered into the system prompt and saved with the conversation |
 
-### 🔒 Security-First Design
+### ?�� Security-First Design
 - **API keys stored in OS keyring** (Windows Credential Manager, macOS Keychain, Linux Secret Service)
 - **Sandboxed execution** via Docker or Windows Sandbox
 - **Command allowlist/denylist** for shell operations
 - **Folder locking** during AI generation to prevent conflicts
 - **Configurable confirmation** for destructive operations
 
-### 📦 Sandboxed Execution
+### ?�� Sandboxed Execution
 - **Docker backend**: Full Linux environment with network isolation
 - **Windows Sandbox backend**: Native Windows isolation (in progress)
 - **Resource limits**: CPU, memory, and timeout controls
@@ -60,7 +62,7 @@ Connect to **8+ LLM providers** with a unified interface:
 
 ---
 
-## 🚀 Quick Start
+## ?? Quick Start
 
 ### Prerequisites
 - **Python 3.11+**
@@ -84,21 +86,36 @@ pre-commit install
 
 ### First Run
 
-```bash
-# Launch the application
-python -m tonyagent
-# Or if installed as package:
-tonyagent
+Double-click **`TONYAgent.lnk`** in the repository folder. If it is not there, or
+you would rather have it on the Desktop:
+
+```powershell
+# in the repository folder
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\make_shortcut.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\make_shortcut.ps1 -Destination "$env:USERPROFILE\Desktop"
 ```
 
+The shortcut points at `Start TONYAgent (Prebuilt).bat`, which is the entry point
+worth having: it rebuilds the frontend when it is behind and checks that
+`pywebview` is installed before it opens anything. From a terminal, the window on
+its own is:
+
+```bash
+python -m tonyagent.window     # opens the window; the core is its child process
+```
+
+(`python -m tonyagent` — which this section used to say — is not a command:
+`tonyagent` is a package with no `__main__`, so it exits with "cannot be directly
+executed".)
+
 1. **Select a project folder** from the sidebar
-2. **Configure your LLM provider** in Settings → Provider
+2. **Configure your LLM provider** in Settings ??Provider
 3. **Enter your API key** (securely stored in OS keyring)
 4. **Start chatting** - the agent will use tools to complete tasks!
 
 ---
 
-## 📦 Installation
+## ?�� Installation
 
 ### From Source (Recommended)
 
@@ -109,7 +126,7 @@ pip install -e .
 # With development tools (linting, testing, type checking)
 pip install -e ".[dev]"
 
-# With packaging tools (PyInstaller, NSIS)
+# The window is `pywebview`, which is a runtime dependency rather than a build one
 pip install -e ".[packaging]"
 ```
 
@@ -117,7 +134,6 @@ pip install -e ".[packaging]"
 
 | Dependency | Purpose |
 |------------|---------|
-| `customtkinter>=5.2` | Modern UI framework |
 | `pydantic>=2.5` | Data validation & settings |
 | `keyring>=24.0` | Secure credential storage |
 | `openai>=1.10`, `anthropic>=0.18`, `google-generativeai>=0.3` | LLM provider SDKs |
@@ -154,7 +170,7 @@ pip install -e ".[packaging]"
 
 ---
 
-## ⚙️ Configuration
+## ?�️ Configuration
 
 TONYAgent uses a **TOML-based configuration** with secure keyring storage for secrets.
 
@@ -214,7 +230,7 @@ export TONYAGENT_LOG_LEVEL=DEBUG
 ```
 
 ### API Key Management
-Keys are **never written to config files**. Use the UI (Settings → Provider → API Key) or:
+Keys are **never written to config files**. Use the UI (Settings ??Provider ??API Key) or:
 
 ```bash
 # Via keyring CLI (cross-platform)
@@ -223,12 +239,12 @@ python -c "import keyring; keyring.set_password('tonyagent', 'openai', 'sk-...')
 
 ---
 
-## 💡 Usage
+## ?�� Usage
 
 ### Basic Workflow
 
 1. **Open a project folder** - Click "Open Folder" in sidebar
-2. **Choose provider & model** - Settings → Provider
+2. **Choose provider & model** - Settings ??Provider
 3. **Enter API key** - Securely saved to OS keyring
 4. **Start sandbox** - Click "Start Sandbox" in status bar (optional but recommended)
 5. **Chat naturally** - Describe what you want to accomplish
@@ -249,15 +265,15 @@ python -c "import keyring; keyring.set_password('tonyagent', 'openai', 'sk-...')
 When the AI wants to execute a potentially destructive action (file deletion, shell command), you'll see a confirmation dialog:
 
 ```
-┌─────────────────────────────────────────┐
-│  Confirm Tool Execution                 │
-├─────────────────────────────────────────┤
-│  Tool: execute_command                  │
-│  Command: rm -rf dist/                  │
-│  Working Dir: /project                  │
-│                                         │
-│  [Allow]  [Allow Always]  [Deny]        │
-└─────────────────────────────────────────┘
+?��??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�??
+?? Confirm Tool Execution                 ??
+?��??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�??
+?? Tool: execute_command                  ??
+?? Command: rm -rf dist/                  ??
+?? Working Dir: /project                  ??
+??                                        ??
+?? [Allow]  [Allow Always]  [Deny]        ??
+?��??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�??
 ```
 
 ### Keyboard Shortcuts
@@ -273,38 +289,38 @@ When the AI wants to execute a potentially destructive action (file deletion, sh
 
 ---
 
-## 🏗️ Architecture
+## ?���?Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        TONYAgent (Main Process)                 │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │   UI Layer   │  │  Core Logic  │  │  Config/State│          │
-│  │  (Views)     │◄─┤  (Controller)│─►│  (Persistence)         │
-│  └──────┬───────┘  └──────┬───────┘  └──────────────┘          │
-│         │                 │                                      │
-│         ▼                 ▼                                      │
-│  ┌──────────────────────────────────────────────┐               │
-│  │           Tool Orchestrator                  │               │
-│  │  (JSON schema registry, execution dispatcher)│               │
-│  └────────────────────┬─────────────────────────┘               │
-│                       │                                         │
-│         ┌─────────────┼─────────────┐                           │
-│         ▼             ▼             ▼                           │
-│  ┌───────────┐ ┌───────────┐ ┌───────────┐                     │
-│  │ Provider  │ │  Sandbox  │ │  File     │                     │
-│  │ Adapter   │ │  Manager  │ │  System   │                     │
-│  └───────────┘ └───────────┘ └───────────┘                     │
-└─────────────────────────────────────────────────────────────────┘
+?��??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�??
+??                       TONYAgent (Main Process)                 ??
+?? ?��??�?�?�?�?�?�?�?�?�?�?�?�?�?? ?��??�?�?�?�?�?�?�?�?�?�?�?�?�?? ?��??�?�?�?�?�?�?�?�?�?�?�?�?�??         ??
+?? ??  UI Layer   ?? ?? Core Logic  ?? ?? Config/State??         ??
+?? ?? (Views)     ?�◄?�?? (Controller)?��??�│  (Persistence)         ??
+?? ?��??�?�?�?�?�?��??�?�?�?�?�?�?? ?��??�?�?�?�?�?��??�?�?�?�?�?�?? ?��??�?�?�?�?�?�?�?�?�?�?�?�?�??         ??
+??        ??                ??                                     ??
+??        ??                ??                                     ??
+?? ?��??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�??              ??
+?? ??          Tool Orchestrator                  ??              ??
+?? ?? (JSON schema registry, execution dispatcher)??              ??
+?? ?��??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?��??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�??              ??
+??                      ??                                        ??
+??        ?��??�?�?�?�?�?�?�?�?�?�?�?�?��??�?�?�?�?�?�?�?�?�?�?�?�??                          ??
+??        ??            ??            ??                          ??
+?? ?��??�?�?�?�?�?�?�?�?�?�???��??�?�?�?�?�?�?�?�?�?�???��??�?�?�?�?�?�?�?�?�?�??                    ??
+?? ??Provider  ???? Sandbox  ???? File     ??                    ??
+?? ??Adapter   ???? Manager  ???? System   ??                    ??
+?? ?��??�?�?�?�?�?�?�?�?�?�???��??�?�?�?�?�?�?�?�?�?�???��??�?�?�?�?�?�?�?�?�?�??                    ??
+?��??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�??
 ```
 
 ### Key Modules
 
 | Module | Path | Responsibility |
 |--------|------|----------------|
-| **App Entry** | `src/tonyagent/__main__.py` | CLI entry point |
-| **Core App** | `src/tonyagent/core/app.py` | Lifecycle, config, main loop |
-| **UI Views** | `src/tonyagent/ui/views/` | Main window, chat, sidebar |
+| **Window** | `src/tonyagent/window/` | The desktop shell: opens the window, serves the bundle, owns the core |
+| **Interface** | `app/src/` | The React interface, built by Vite into `app/dist/` |
+| **Core** | `src/tonyagent/core/` | Conversation state, events, modes; served over JSONL by `headless/server.py` |
 | **Providers** | `src/tonyagent/providers/` | 8 LLM adapters + factory |
 | **Tools** | `src/tonyagent/tools/` | 15 tools + orchestrator |
 | **Sandbox** | `src/tonyagent/sandbox/` | Docker + WSB backends |
@@ -313,15 +329,15 @@ When the AI wants to execute a potentially destructive action (file deletion, sh
 
 ### Data Flow
 
-1. **User input** → MainWindow → ToolOrchestrator
-2. **Orchestrator** → Builds tool schemas → Sends to LLM Provider
-3. **Provider** → Streams response → Parses tool calls
-4. **Orchestrator** → Executes tools (with confirmations)
-5. **Results** → Fed back to LLM → Final response to UI
+1. **User input** ??the window ??ToolOrchestrator
+2. **Orchestrator** ??Builds tool schemas ??Sends to LLM Provider
+3. **Provider** ??Streams response ??Parses tool calls
+4. **Orchestrator** ??Executes tools (with confirmations)
+5. **Results** ??Fed back to LLM ??Final response to UI
 
 ---
 
-## 🛠️ Development
+## ?���?Development
 
 ### Setup
 
@@ -357,23 +373,22 @@ pytest tests/ --cov=src/tonyagent --cov-report=html
 
 ```
 tonyagent/
-├── .github/workflows/      # CI/CD pipelines
-├── docker/sandbox/         # Docker sandbox image
-├── scripts/                # Build & utility scripts
-├── src/tonyagent/          # Main package
-│   ├── config/             # Configuration & keyring
-│   ├── core/               # App lifecycle
-│   ├── folder/             # Project folder management
-│   ├── providers/          # LLM provider adapters
-│   ├── sandbox/            # Sandbox backends
-│   ├── tools/              # Tool implementations
-│   ├── ui/                 # CustomTkinter UI
-│   └── utils/              # Shared utilities
-├── tests/                  # Test suite
-│   ├── unit/
-│   ├── integration/
-│   └── ui/
-└── windows/                # Windows Sandbox config
+?��??� .github/workflows/      # CI/CD pipelines
+?��??� docker/sandbox/         # Docker sandbox image
+?��??� scripts/                # Build & utility scripts
+?��??� src/tonyagent/          # Main package
+??  ?��??� config/             # Configuration & keyring
+??  ?��??� core/               # Core session & events
+??  ?��??� folder/             # Project folder management
+??  ?��??� providers/          # LLM provider adapters
+??  ?��??� sandbox/            # Sandbox backends
+??  ?��??� tools/              # Tool implementations
+??  ?��??� utils/              # Shared utilities
+?��??� tests/                  # Test suite
+??  ?��??� unit/
+??  ?��??� integration/
+??  ?��??� ui/
+?��??� windows/                # Windows Sandbox config
 ```
 
 ### Adding a New Provider
@@ -394,7 +409,7 @@ tonyagent/
 
 ---
 
-## 🐛 Troubleshooting
+## ?�� Troubleshooting
 
 ### Common Issues
 
@@ -430,7 +445,7 @@ python -c "import keyring; keyring.delete_password('tonyagent', 'openai')"
 
 ---
 
-## 📚 Related Documentation
+## ?�� Related Documentation
 
 | Document | Description |
 |----------|-------------|
@@ -441,7 +456,7 @@ python -c "import keyring; keyring.delete_password('tonyagent', 'openai')"
 
 ---
 
-## 🤝 Contributing
+## ?�� Contributing
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/amazing-feature`
@@ -464,7 +479,7 @@ Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
 
 ---
 
-## 📄 License
+## ?�� License
 
 **MIT License** - See [LICENSE](LICENSE) for details.
 
@@ -494,9 +509,8 @@ SOFTWARE.
 
 ---
 
-## 🙏 Acknowledgments
+## ?�� Acknowledgments
 
-- **[customtkinter](https://github.com/TomSchimansky/CustomTkinter)** - Modern UI framework
 - **[Pydantic](https://github.com/pydantic/pydantic)** - Data validation
 - **[Loguru](https://github.com/Delgan/loguru)** - Beautiful logging
 - **[Playwright](https://playwright.dev/python/)** - Browser automation
@@ -506,8 +520,8 @@ SOFTWARE.
 
 <div align="center">
 
-**Made with ❤️ by [Tony Lee](https://github.com/tonylee)**
+**Made with ?�️ by [Tony Lee](https://github.com/tonylee)**
 
-⭐ Star this repo if you find it useful!
+�?Star this repo if you find it useful!
 
 </div>

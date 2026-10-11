@@ -109,6 +109,20 @@ export interface PermissionInfo {
    * Full, and a user picking between them must not have to parse a sentence.
    */
   runs_any_command: boolean;
+  /**
+   * Whether model-authored code runs on the user's own machine.
+   *
+   * **The one flag here that is about *where* code runs rather than whether it
+   * may.** Everything else narrows; this one changes the containment. Inside
+   * Docker a command cannot reach the user's files outside one mounted folder;
+   * on the host it can, and it does.
+   *
+   * Reported over the wire rather than left to the description so the menu can
+   * put it in front of the user as a gain and a marker. A permission level that
+   * grants your machine and mentions it only in a sentence is a permission
+   * level nobody reads before they pick it.
+   */
+  runs_on_host: boolean;
 }
 
 export interface PermissionList {
@@ -143,6 +157,14 @@ export function permissionGain(
   above?: PermissionInfo,
 ): string | null {
   if (!above) return null;
+  // Host execution is checked FIRST, and that ordering is the point. Going from
+  // High to Full gains three things, and only one of them changes where the
+  // agent's commands run. Reporting "can run commands outside the allow-list" as
+  // the headline for that step would describe a difference that is real and is
+  // also, by far, the smaller one -- so the gain line names the boundary instead.
+  if (!here.runs_on_host && above.runs_on_host) {
+    return "Runs on this computer, outside the sandbox";
+  }
   if (!here.runs_commands && above.runs_commands) return "Can run shell commands";
   if (!here.runs_any_command && above.runs_any_command) {
     return "Can run commands outside the allow-list";
@@ -210,7 +232,11 @@ export function PermissionMenu({
         selected: level.name === value,
         label: level.label,
         description: level.description,
+        // First for the same reason `permissionGain` checks it first: this is
+        // the marker that means "your machine", and it has to be the one a user
+        // scanning the list actually reads.
         markers: [
+          ...(level.runs_on_host ? ["on this computer"] : []),
           ...(level.runs_any_command ? ["any command"] : []),
           ...(level.skips_confirmation ? ["no prompts"] : []),
         ],

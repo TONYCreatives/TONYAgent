@@ -1,0 +1,140 @@
+
+/* --- the sidebar's Files pane -------------------------------------------- */
+/*
+ * The Files tree, as one pane of the left sidebar.
+ *
+ * It used to be a right-hand overlay: its own surface, its own scrim, its own
+ * header and a reopen handle -- a second panel to open, position and dismiss.
+ * It is a pane now. `.chatlist-tabs` switches the sidebar's body between this
+ * and the conversation list, so everything to do with being an overlay is gone
+ * and what is left is the tree and its filter.
+ *
+ * `flex: 1` and `min-height: 0` give it the same shape the rows have in the
+ * other pane: the filter stays put and only the tree scrolls.
+ */
+.files-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  /* It mounts when the segmented control is switched to Files, so this plays
+     once per switch and is what keeps the change from being a hard cut. */
+  animation: rise-in var(--motion-base) var(--ease-out) both;
+}
+
+/*
+ * The filter is a <label> wrapping an icon and an <input>. The field chrome
+ * lives on the label, but the input itself must be reset explicitly: a bare
+ * <input> keeps the UA's white background, black text and native border, and
+ * that is what showed through as "the design is not applied".
+ *
+ * For the same reason :focus and ::placeholder are NOT set on the label. A
+ * label cannot receive focus, and its ::placeholder would never reach the
+ * nested input. Both belong on the input; :focus-within carries the focus
+ * treatment up to the wrapper that actually draws the field.
+ */
+.sidebar-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  margin: 12px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  /* A search field is the one input in this window that is a latch rather than
+     a form control -- you type two letters and leave -- so it is the one input
+     that gets a stadium. */
+  border-radius: var(--radius-pill);
+  background: var(--input);
+  color: var(--fg-mute);
+  cursor: text;
+  transition: border-color var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.sidebar-filter:focus-within {
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
+
+.sidebar-filter input {
+  /* Take the whole space the label allows, and allow it to shrink so the
+     placeholder truncates instead of forcing the field wider. */
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.sidebar-filter input::placeholder {
+  color: var(--fg-mute);
+  opacity: 1;
+}
+
+.sidebar-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 6px 12px;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  cursor: default;
+  user-select: none;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.tree-row:hover {
+  background: var(--input);
+  color: var(--fg);
+}
+
+.tree-caret {
+  flex: none;
+  width: 12px;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+}
+
+.tree-icon {
+  flex: none;
+  color: var(--fg-mute);
+}
+
+.tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Diff stats on changed files: the only place two hues appear together. */
+.tree-add {
+  color: var(--ok);
+  font-family: var(--sans);
+  font-size: var(--text-xs);
+}
+
+.tree-del {
+  color: var(--danger);
+  font-family: var(--sans);
+  font-size: var(--text-xs);
+}
+
+.sidebar-empty {
+  padding: 18px 14px;
+  color: var(--fg-mute);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}

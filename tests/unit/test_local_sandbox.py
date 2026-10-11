@@ -12,14 +12,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from tonyagent.sandbox.base import SandboxConfig, SandboxManager, SandboxStatus
-from tonyagent.tools.base import tool_registry
+from tonyagent.tools.base import ToolCategory, tool_registry
 from tonyagent.tools.schemas import ALL_SCHEMAS, SCHEMAS_BY_NAME
 
 
-# --- parity between the Tool classes and the hand-written schemas -----------
+# --- the advertised schemas are the registry, and stay that way -------------
+#
+# These used to be *parity* tests. ``schemas.py`` was a second, hand-written copy
+# of every tool's declaration, and the tests that lived here compared that copy
+# against the classes to catch drift.
+#
+# That whole class of bug is gone: the schemas are now derived from the registry
+# (``Tool.describe``), so a test comparing the two would be comparing a thing to
+# itself and would pass no matter what either one said. What can still break is
+# the *derivation*, and the tests below are the ways it can.
 
 
 def _registered_tools() -> dict:
@@ -36,69 +43,111 @@ def _registered_tools() -> dict:
     return {t.name: t for t in tools}
 
 
-def test_every_registered_tool_has_a_schema():
+#: Every field a descriptor has to carry. A tool missing one is a tool the window
+#: cannot describe and the orchestrator cannot gate.
+#:
+#: This is a floor, not an equality: a descriptor may carry more. `folder_required`
+#: was added when `web_fetch` made the orchestrator's `!= "http_request"` special
+#: case untenable, and adding it here is what makes the next flag a deliberate
+#: decision rather than an omission nobody notices.
+_DESCRIPTOR_FIELDS = frozenset({
+    "name",
+    "description",
+    "parameters",
+    "category",
+    "destructive",
+    "requires_confirmation",
+    "sandbox_required",
+    "isolation_required",
+    "folder_required",
+})
+
+
+def test_the_registry_is_populated_before_the_schemas_are_read():
+    """The import-order hazard the derivation introduced.
+
+    ``ALL_SCHEMAS`` is built from the registry on first access, so reading it
+    before ``tonyagent.tools`` has imported the tool modules binds an empty list.
+    An empty tool list raises nothing anywhere -- it is a model offered no tools
+    at all, which presents as a model that simply refuses to act.
+    """
     registered = set(_registered_tools())
-    assert registered == set(SCHEMAS_BY_NAME), (
-        "the registry and schemas.py disagree about which tools exist: "
-        f"only in registry {sorted(registered - set(SCHEMAS_BY_NAME))}, "
-        f"only in schemas {sorted(set(SCHEMAS_BY_NAME) - registered)}"
-    )
+    assert registered, "no tools registered at all"
+    assert set(SCHEMAS_BY_NAME) == registered
+    assert len(ALL_SCHEMAS) == len(registered)
 
 
-@pytest.mark.parametrize("flag", ["sandbox_required", "isolation_required"])
-def test_schema_flags_match_the_tool_classes(flag):
-    """The duplicated flags must not drift apart.
+def test_every_descriptor_carries_the_full_field_set():
+    """A missing flag is a tool nothing can gate.
 
-    Nothing at runtime reads the schema copy, so a mismatch would not fail
-    loudly -- it would just make the two sources of truth disagree.
+    ``describe`` emits all four flags even when they are False precisely so this
+    holds. The hand-written schemas it replaced omitted the false ones, which
+    made "absent" and "false" look identical to a reader and let a new tool leave
+    one out without anything noticing.
     """
-    tools = _registered_tools()
-    mismatched = {
-        name: (getattr(tool, flag, False), SCHEMAS_BY_NAME[name].get(flag, False))
-        for name, tool in tools.items()
-        if bool(getattr(tool, flag, False)) != bool(SCHEMAS_BY_NAME[name].get(flag, False))
+    incomplete = {
+        name: sorted(_DESCRIPTOR_FIELDS - set(schema))
+        for name, schema in SCHEMAS_BY_NAME.items()
+        if not _DESCRIPTOR_FIELDS <= set(schema)
     }
-    assert not mismatched, f"{flag} differs between class and schema: {mismatched}"
+    assert not incomplete, f"descriptors missing fields: {incomplete}"
 
 
-@pytest.mark.parametrize("field", ["category", "destructive", "requires_confirmation"])
-def test_schema_metadata_matches_the_tool_classes(field):
-    """The rest of the mirrored metadata is pinned for the same reason.
+def test_every_descriptor_advertises_a_complete_json_schema():
+    """``parameters`` must be a whole JSON Schema, not a bare properties map.
 
-    ``category`` drifted silently once already: ``execute_js`` was filed under
-    BROWSER while living in the browser module, and nothing noticed because
-    only the two sandbox flags were being compared.
+    This is the shape that has to reach the provider: the model reads
+    ``parameters["properties"]`` for its argument names. A bare properties map
+    here would be re-wrapped correctly downstream, so the mistake would stay
+    hidden until the model could not name a single argument.
     """
-    tools = _registered_tools()
-    mismatched = {
-        name: (getattr(tool, field), SCHEMAS_BY_NAME[name].get(field))
-        for name, tool in tools.items()
-        if getattr(tool, field) != SCHEMAS_BY_NAME[name].get(field)
-    }
-    assert not mismatched, f"{field} differs between class and schema: {mismatched}"
+    bad = []
+    for name, schema in SCHEMAS_BY_NAME.items():
+        parameters = schema.get("parameters") or {}
+        if parameters.get("type") != "object":
+            bad.append(f"{name}: parameters.type is {parameters.get('type')!r}")
+        if not isinstance(parameters.get("properties"), dict):
+            bad.append(f"{name}: no properties map")
+        for keyword in ("type", "properties", "required", "additionalProperties"):
+            if keyword in (parameters.get("properties") or {}):
+                bad.append(f"{name}: {keyword!r} nested as a parameter name")
+    assert not bad, "\n".join(bad)
 
 
-@pytest.mark.parametrize("field", ["description", "parameters"])
-def test_model_facing_text_matches_the_tool_classes(field):
-    """What the model reads must be what the class says.
-
-    ``schemas.py`` is the copy that reaches the provider, so a divergence here
-    is the model being told something the code does not do.
-    """
-    tools = _registered_tools()
-    mismatched = [
-        name for name, tool in tools.items()
-        if getattr(tool, field) != SCHEMAS_BY_NAME[name].get(field)
+def test_every_descriptor_names_a_real_category():
+    """``category`` is documented as driving UI filtering, so a string is not enough."""
+    bad = [
+        f"{name}: {schema.get('category')!r}"
+        for name, schema in SCHEMAS_BY_NAME.items()
+        if not isinstance(schema.get("category"), ToolCategory)
     ]
-    assert not mismatched, f"{field} differs between class and schema: {mismatched}"
+    assert not bad, f"descriptors without a ToolCategory: {bad}"
+
+
+def test_describe_and_get_schema_agree_on_the_wrapping():
+    """The two conversions must not disagree about where ``properties`` lives.
+
+    ``describe`` is the flat declaration; ``get_schema`` is the OpenAI-wrapped
+    one. ``get_schema`` used to wrap an already-complete schema a *second* time,
+    advertising a single parameter named ``type``. Nothing called it, which is
+    the only reason that never reached a model. Pinned so the next caller
+    inherits working code.
+    """
+    for name, tool in _registered_tools().items():
+        wrapped = tool.get_schema()["function"]["parameters"]
+        assert set(wrapped.get("properties") or {}) == set(
+            tool.parameters.get("properties") or {}
+        ), f"{name}: get_schema and parameters disagree about the argument names"
 
 
 def test_every_tool_documents_itself():
     """A tool class should say what it does.
 
-    The absence of these is why ``schemas.py`` had to be maintained by hand:
-    with nothing on the class, the schema looked like the only description
-    there was.
+    This is now the *only* place a description can come from, which is what makes
+    it worth asserting: the description the model reads is ``Tool.description``,
+    so a tool with no docstring and no description is a tool the model is shown
+    with nothing explaining it. (This test predates the derivation and was the
+    reason the hand-written schemas looked like the only description there was.)
     """
     undocumented = sorted(
         name for name, tool in _registered_tools().items()

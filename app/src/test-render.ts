@@ -112,6 +112,34 @@ export async function contextMenu(
 }
 
 /**
+ * Press the left mouse button on an element, and hand back the event.
+ *
+ * The *coordinates* are the point of it: the window's edges are found by
+ * position, so a test that can press "on the window" but cannot say where
+ * cannot tell a resize from a drag. `detail` is the click count, which is the
+ * only thing that distinguishes a double-click from the two single presses it is
+ * made of -- and the two do different things to a title bar.
+ */
+export async function mouseDown(
+  element: Element,
+  position: { clientX?: number; clientY?: number; detail?: number } = {},
+): Promise<MouseEvent> {
+  let event!: MouseEvent;
+  await act(async () => {
+    event = new window.MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: position.clientX ?? 40,
+      clientY: position.clientY ?? 20,
+      detail: position.detail ?? 1,
+    });
+    element.dispatchEvent(event);
+  });
+  return event;
+}
+
+/**
  * Press the pointer somewhere, which is how a menu is dismissed.
  *
  * Deliberately not `click`. jsdom synthesises `click` but not the `pointerdown`
@@ -216,3 +244,34 @@ export function one(container: ParentNode, selector: string): HTMLElement | null
 export function texts(container: ParentNode, selector: string): (string | null)[] {
   return all(container, selector).map((node) => node.textContent);
 }
+
+/**
+ * Every way an element can be reached by Tab, as one selector.
+ *
+ * Shared rather than written per test, because a shorter copy in a second file
+ * is a list that quietly stops covering something: this one is what says a
+ * decorative surface holds no tab stops at all, and a second, smaller list
+ * would be a second, smaller claim.
+ *
+ * `[tabindex]` is in the list *including* the `-1` case. On a surface that is
+ * meant to hold nothing, any `tabindex` at all is the bug, and a selector that
+ * excluded the negative values would report zero while the element stayed
+ * reachable by script.
+ */
+export const FOCUSABLE = [
+  "a[href]",
+  "area[href]",
+  "audio[controls]",
+  "button",
+  "details",
+  "embed",
+  "iframe",
+  "input",
+  "object",
+  "select",
+  "summary",
+  "textarea",
+  "video[controls]",
+  "[contenteditable]",
+  "[tabindex]",
+].join(", ");

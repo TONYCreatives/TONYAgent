@@ -15,10 +15,13 @@
 
 import "./test-dom.js";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { ConversationList, type ConversationSummary } from "./ConversationList.js";
+import {
+  ConversationList,
+  rowsForFolder,
+  type ConversationSummary,
+} from "./ConversationList.js";
 import {
   all,
   blur,
@@ -35,6 +38,7 @@ import {
 } from "./test-render.js";
 import { exitDurationMs } from "./useDelayedUnmount.js";
 import { dom } from "./test-dom.js";
+import { readStylesheet } from "./stylesheet.js";
 
 const { window } = dom;
 
@@ -51,7 +55,7 @@ const { window } = dom;
  * is one directory up from the compiled module.
  */
 const stylesheet = window.document.createElement("style");
-const STYLESHEET = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const STYLESHEET = readStylesheet();
 stylesheet.textContent = STYLESHEET;
 window.document.head.appendChild(stylesheet);
 
@@ -75,6 +79,10 @@ interface Handlers {
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onDuplicate: (id: string) => void;
+  // The rail's actions, which the panel carries in its foot while it covers
+  // the rail. Rendered only; their disabled logic mirrors `IconRail`.
+  onSearch: () => void;
+  onSettings: () => void;
 }
 
 let calls: Handlers & {
@@ -116,6 +124,8 @@ async function renderList(
     onDuplicate: (id) => {
       calls.duplicated.push(id);
     },
+    onSearch: () => {},
+    onSettings: () => {},
     renamed: [],
     opened: [],
     deleted: [],
@@ -133,6 +143,13 @@ async function renderList(
       project={project}
       busy={false}
       connected
+      pane="chats"
+      onPaneChange={() => {}}
+      files={[]}
+      fileFilter=""
+      onFileFilterChange={() => {}}
+      onChooseFolder={() => {}}
+      hasProject={false}
       {...calls}
     />,
   );
@@ -140,14 +157,57 @@ async function renderList(
 
 const rows = (container: HTMLElement) => all(container, ".chatrow");
 const titles = (container: HTMLElement) => texts(container, ".chatrow-title");
-/** The project group headers, in the order they are drawn. */
-const projectNames = (container: HTMLElement) =>
-  texts(container, ".chatproj-name");
 const input = (container: HTMLElement) =>
   one(container, ".chatrow-input") as HTMLInputElement | null;
 
-const menuItems = (container: HTMLElement) =>
-  texts(container, ".rowmenu [role='menuitem']");
+const menuItems = () =>
+  texts(document.body, ".rowmenu [role='menuitem']");
+
+// --- the head ----------------------------------------------------------------
+describe("the sidebar's head", () => {
+  test("carries the toggle and no logo", async () => {
+    // The app's mark is the *window's*, and it lives in the title bar's top-left
+    // corner now. This head is only on screen while the panel is open, so a mark
+    // here was a logo that came and went with a panel -- and the wordmark beside
+    // it went too, because the tab up there already says "TONYAgent" whenever no
+    // conversation is open.
+    const container = await renderList([conversation()]);
+    const head = one(container, ".chatlist-head")!;
+
+    assert.deepEqual(
+      [...head.children].map((element) => element.className.split(" ")[0]),
+      ["chatlist-toggle"],
+    );
+    assert.equal(one(container, ".chatlist-brand"), null);
+  });
+});
+
+// --- the foot ----------------------------------------------------------------
+describe("the sidebar's foot", () => {
+  test("carries the rail's actions, and no delete-a-chat button", async () => {
+    // Clear was the third -- a trash glyph beside Search and Settings -- and it
+    // read as "delete this chat", which is not what it did: it emptied the
+    // transcript you were reading and left the conversation in the list.
+    // Deleting a conversation is the row menu's Delete, which names the row it
+    // acts on. Asserted as an absence, like the head's test above: the failure
+    // is the button being there again.
+    const container = await renderList([conversation()]);
+    const labels = all(container, ".chatlist-act").map((b) =>
+      b.getAttribute("aria-label"),
+    );
+
+    assert.deepEqual(labels, ["Search project", "Settings"]);
+    assert.equal(
+      one(container, '.chatlist-act[aria-label="Clear conversation"]'),
+      null,
+      "the delete-a-chat button is back in the foot",
+    );
+    // And no unnamed third control by another name: the foot is exactly the two
+    // buttons the rail also carries.
+    assert.equal(all(container, ".chatlist-foot button").length, 2);
+  });
+});
+
 
 // --- the panel's own state ------------------------------------------------
 describe("the panel reports which way it is moving", () => {
@@ -189,6 +249,13 @@ describe("the panel reports which way it is moving", () => {
         project=""
         busy={false}
         connected
+        pane="chats"
+        onPaneChange={() => {}}
+        files={[]}
+        fileFilter=""
+        onFileFilterChange={() => {}}
+        onChooseFolder={() => {}}
+        hasProject={false}
         {...calls}
       />,
     );
@@ -203,7 +270,7 @@ describe("the scrim behind the panel", () => {
   test("it says which way it is moving, like the panel it dims", async () => {
     // The scrim is a CSS-animated surface, so "open" cannot mean "the node is
     // there": a node that only exists while open has no closed state to fade
-    // out of. Same `data-state` contract as `.chatlist` and `.sidebar-scrim`.
+    // out of. Same `data-state` contract as the `.chatlist` it dims.
     const container = await renderList([conversation()]);
     assert.equal(one(container, ".chatlist-scrim")!.dataset.state, "open");
 
@@ -215,6 +282,13 @@ describe("the scrim behind the panel", () => {
         project=""
         busy={false}
         connected
+        pane="chats"
+        onPaneChange={() => {}}
+        files={[]}
+        fileFilter=""
+        onFileFilterChange={() => {}}
+        onChooseFolder={() => {}}
+        hasProject={false}
         {...calls}
       />,
     );
@@ -245,8 +319,8 @@ async function rightClick(row: HTMLElement): Promise<void> {
   await contextMenu(row);
 }
 
-async function chooseMenuItem(container: HTMLElement, label: string): Promise<void> {
-  const item = all(container, ".rowmenu [role='menuitem']").find(
+async function chooseMenuItem(label: string): Promise<void> {
+  const item = all(document.body, ".rowmenu [role='menuitem']").find(
     (n) => n.textContent === label,
   );
   assert.ok(item, `no "${label}" in the menu`);
@@ -255,7 +329,7 @@ async function chooseMenuItem(container: HTMLElement, label: string): Promise<vo
 
 async function openEditor(container: HTMLElement, index = 0): Promise<HTMLInputElement> {
   await rightClick(rows(container)[index]);
-  await chooseMenuItem(container, "Rename");
+  await chooseMenuItem("Rename");
   const field = input(container);
   assert.ok(field, "Rename did not open an editor");
   return field;
@@ -266,7 +340,7 @@ describe("the row menu", () => {
   test("a right-click offers rename, duplicate and delete", async () => {
     const container = await renderList([conversation()]);
     await rightClick(rows(container)[0]);
-    assert.deepEqual(menuItems(container), ["Rename", "Duplicate", "Delete"]);
+    assert.deepEqual(menuItems(), ["Rename", "Duplicate", "Delete"]);
   });
 
   test("it opens on the row that was clicked, not the first one", async () => {
@@ -274,7 +348,7 @@ describe("the row menu", () => {
     const second = conversation({ id: "b".repeat(32), title: "Second" });
     const container = await renderList([first, second]);
     await rightClick(rows(container)[1]);
-    await chooseMenuItem(container, "Duplicate");
+    await chooseMenuItem("Duplicate");
     assert.deepEqual(calls.duplicated, [second.id]);
   });
 
@@ -283,7 +357,7 @@ describe("the row menu", () => {
     const more = one(container, ".chatrow-more");
     assert.ok(more, "the row has no keyboard-reachable trigger");
     await click(more);
-    assert.deepEqual(menuItems(container), ["Rename", "Duplicate", "Delete"]);
+    assert.deepEqual(menuItems(), ["Rename", "Duplicate", "Delete"]);
   });
 
   test("escape closes it without acting", async () => {
@@ -293,21 +367,21 @@ describe("the row menu", () => {
     // Dismissed, but still in the tree: it has to be, or there is nothing for
     // the exit animation to play and the menu would only ever be able to
     // appear. "Closed" is a state, not an absence.
-    assert.equal(one(container, ".rowmenu")!.dataset.state, "closed");
+    assert.equal(one(document.body, ".rowmenu")!.dataset.state, "closed");
     assert.deepEqual(calls.renamed, []);
     assert.deepEqual(calls.deleted, []);
     await wait(exitDurationMs() + 60);
-    assert.equal(one(container, ".rowmenu"), null);
+    assert.equal(one(document.body, ".rowmenu"), null);
   });
 
   test("pressing elsewhere closes it", async () => {
     const container = await renderList([conversation()]);
     await rightClick(rows(container)[0]);
-    assert.ok(one(container, ".rowmenu"));
+    assert.ok(one(document.body, ".rowmenu"));
     await pointerDown(window.document.body);
-    assert.equal(one(container, ".rowmenu")!.dataset.state, "closed");
+    assert.equal(one(document.body, ".rowmenu")!.dataset.state, "closed");
     await wait(exitDurationMs() + 60);
-    assert.equal(one(container, ".rowmenu"), null);
+    assert.equal(one(document.body, ".rowmenu"), null);
   });
 
   test("a closing menu keeps its items, so the exit does not empty itself", async () => {
@@ -317,17 +391,17 @@ describe("the row menu", () => {
     // The anchor and the items are both still there after dismissal. A menu
     // that dropped its contents on close would visibly collapse to nothing
     // while fading, which is the animation announcing its own bug.
-    assert.deepEqual(menuItems(container), ["Rename", "Duplicate", "Delete"]);
+    assert.deepEqual(menuItems(), ["Rename", "Duplicate", "Delete"]);
   });
 
   test("an open menu is not inert, a closing one is", async () => {
     const container = await renderList([conversation()]);
     await rightClick(rows(container)[0]);
-    assert.equal(one(container, ".rowmenu")!.dataset.state, "open");
+    assert.equal(one(document.body, ".rowmenu")!.dataset.state, "open");
     // The real guard is in the stylesheet, but the attribute that drives it is
     // the half of that contract this side owns.
     await press("Escape");
-    assert.equal(one(container, ".rowmenu")!.dataset.state, "closed");
+    assert.equal(one(document.body, ".rowmenu")!.dataset.state, "closed");
   });
 
   test("Delete is the only item painted in the danger colour", async () => {
@@ -340,7 +414,7 @@ describe("the row menu", () => {
     // before the fix: `rgb(122, 122, 122)`, same as Rename.
     const container = await renderList([conversation()]);
     await rightClick(rows(container)[0]);
-    const items = all(container, ".rowmenu [role='menuitem']");
+    const items = all(document.body, ".rowmenu [role='menuitem']");
     const colour = (label: string) =>
       dom.window.getComputedStyle(items.find((n) => n.textContent === label)!).color;
 
@@ -357,7 +431,7 @@ describe("the row menu", () => {
     // kind of thing" everywhere else in this file.
     const container = await renderList([conversation()]);
     await rightClick(rows(container)[0]);
-    const items = all(container, ".rowmenu [role='menuitem']");
+    const items = all(document.body, ".rowmenu [role='menuitem']");
     const deleteStyle = dom.window.getComputedStyle(items.find((n) => n.textContent === "Delete")!);
     const duplicateStyle = dom.window.getComputedStyle(items.find((n) => n.textContent === "Duplicate")!);
 
@@ -418,20 +492,20 @@ describe("the row menu", () => {
     await rightClick(rows(container)[0]);
     await press("Escape");
     await wait(exitDurationMs() + 60);
-    assert.equal(one(container, ".rowmenu"), null, "the first menu never went away");
+    assert.equal(one(document.body, ".rowmenu"), null, "the first menu never went away");
 
     // The window listeners that dismiss the menu are torn down and rebuilt
     // around `openMenuAt`, so a stale one cannot survive to close the second
     // menu on its way in.
     await rightClick(rows(container)[1]);
-    await chooseMenuItem(container, "Duplicate");
+    await chooseMenuItem("Duplicate");
     assert.deepEqual(calls.duplicated, [second.id]);
   });
 
   test("delete removes the row it was opened on", async () => {
     const container = await renderList([conversation()]);
     await rightClick(rows(container)[0]);
-    await chooseMenuItem(container, "Delete");
+    await chooseMenuItem("Delete");
     assert.deepEqual(calls.deleted, [conversation().id]);
   });
 
@@ -445,10 +519,10 @@ describe("the row menu", () => {
     // tree so the exit has something to animate.
     const container = await renderList([conversation()]);
     await rightClick(rows(container)[0]);
-    const item = all(container, ".rowmenu [role='menuitem']")[0];
+    const item = all(document.body, ".rowmenu [role='menuitem']")[0];
     await pointerDown(item);
     assert.equal(
-      one(container, ".rowmenu")!.dataset.state,
+      one(document.body, ".rowmenu")!.dataset.state,
       "open",
       "pressing a menu item dismissed the menu it was in",
     );
@@ -461,7 +535,7 @@ describe("the row menu", () => {
     // handler is being believed.
     const container = await renderList([conversation()]);
     await rightClick(rows(container)[0]);
-    const item = all(container, ".rowmenu [role='menuitem']")[1];
+    const item = all(document.body, ".rowmenu [role='menuitem']")[1];
     await pointerDown(item);
     await click(item);
     assert.deepEqual(calls.duplicated, [conversation().id]);
@@ -567,137 +641,117 @@ describe("renaming a conversation", () => {
   });
 });
 
-// --- projects --------------------------------------------------------------
-describe("conversations are filed under the project they belong to", () => {
+// --- one folder at a time ---------------------------------------------------
+describe("the list is the current folder's chats", () => {
   // Windows paths, escaped twice. A single backslash here would be an escape
-  // sequence that JS eats -- `"\Users"` is `Users` -- and the test would then
-  // be grouping on a path no Windows machine has ever produced.
+  // sequence that JS eats -- `"\Users"` is `Users` -- and the test would then be
+  // filtering on a path no Windows machine has ever produced.
   const TONY = "C:\\Users\\iig2y\\Desktop\\TONYAgent";
   const API = "D:\\work\\api";
 
-  test("a conversation appears under its own project, not a flat list", async () => {
-    // The whole point of the change. A flat list cannot answer "which project
-    // is this chat about", and the answer is what decides whether picking the
-    // row does anything useful.
-    const container = await renderList([
-      conversation({ title: "Alpha work", project: TONY }),
-      conversation({ id: "b", title: "Endpoint notes", project: API }),
-    ]);
-
-    assert.deepEqual(projectNames(container), ["TONYAgent", "api"]);
-    // Still both reachable: grouping reorders, it never drops.
-    assert.deepEqual(titles(container), ["Alpha work", "Endpoint notes"]);
-  });
-
-  test("one header per project, however many chats are under it", async () => {
-    const container = await renderList([
-      conversation({ title: "One", project: TONY }),
-      conversation({ id: "b", title: "Two", project: TONY }),
-      conversation({ id: "c", title: "Three", project: API }),
-    ]);
-
-    assert.deepEqual(projectNames(container), ["TONYAgent", "api"]);
-    assert.equal(all(container, ".chatproj").length, 2);
-    // The count is the real one, so a folded group still says what it hides.
-    assert.deepEqual(titles(container), ["One", "Two", "Three"]);
-  });
-
-  test("the open project comes first, and the rest keep the core's order", async () => {
-    // The user is working in `api`; the project they are scanning for should not
-    // be below two others, and the rest should stay newest-first rather than
-    // being re-sorted by name.
+  test("only the open folder's conversations are drawn", async () => {
+    // The whole change. One folder at a time: the list is the folder the window
+    // is working in, not a tree of every folder it has ever been pointed at.
     const container = await renderList(
       [
         conversation({ title: "Alpha work", project: TONY }),
         conversation({ id: "b", title: "Endpoint notes", project: API }),
-        conversation({ id: "c", title: "Older alpha", project: TONY }),
       ],
+      "",
+      true,
+      TONY,
+    );
+
+    assert.deepEqual(titles(container), ["Alpha work"]);
+  });
+
+  test("another folder's chats are filtered, not deleted", async () => {
+    // They are still in what the core reported -- this is a view of one folder,
+    // and changing back to that folder is what brings them back. Asserted on the
+    // rule directly, because "not drawn" and "gone" look identical in the DOM
+    // and only one of them is acceptable.
+    const all = [
+      conversation({ title: "Alpha work", project: TONY }),
+      conversation({ id: "b", title: "Endpoint notes", project: API }),
+    ];
+
+    assert.deepEqual(
+      rowsForFolder(all, API).map((c) => c.title),
+      ["Endpoint notes"],
+    );
+    assert.deepEqual(
+      rowsForFolder(all, TONY).map((c) => c.title),
+      ["Alpha work"],
+    );
+  });
+
+  test("with no folder open the list is everything", async () => {
+    // There is nothing to scope by yet, and the alternative -- showing only the
+    // chats that have no folder -- would greet a first run with an empty list
+    // while the user's real chats sat behind a folder they had not picked yet.
+    const container = await renderList([
+      conversation({ title: "Alpha work", project: TONY }),
+      conversation({ id: "b", title: "Endpoint notes", project: API }),
+      conversation({ id: "c", title: "Old chat", project: "" }),
+    ]);
+
+    assert.deepEqual(titles(container), [
+      "Alpha work",
+      "Endpoint notes",
+      "Old chat",
+    ]);
+  });
+
+  test("the head names the folder, and its tooltip carries the whole path", async () => {
+    // Two folders called `api` in different trees are the same label otherwise,
+    // and which one is open is not something the user can work out from a name
+    // they chose themselves.
+    const container = await renderList(
+      [conversation({ project: API })],
       "",
       true,
       API,
     );
+    const head = one(container, ".chatlist-folder")!;
 
-    assert.deepEqual(projectNames(container), ["api", "TONYAgent"]);
-    assert.deepEqual(titles(container), [
-      "Endpoint notes",
-      "Alpha work",
-      "Older alpha",
-    ]);
-  });
-
-  test("a chat with no project is grouped, not hidden", async () => {
-    // Every conversation saved before `project` existed has none. Dropping them
-    // would lose rows the user can still open -- and the list silently
-    // shrinking is the kind of thing nobody notices until they need one.
-    const container = await renderList([
-      conversation({ title: "Old chat", project: "" }),
-      conversation({ id: "b", title: "New chat", project: TONY }),
-    ]);
-
-    assert.deepEqual(projectNames(container), ["No project", "TONYAgent"]);
-    assert.deepEqual(titles(container), ["Old chat", "New chat"]);
-  });
-
-  test("the header folds its conversations away and brings them back", async () => {
-    const container = await renderList([
-      conversation({ title: "Alpha work", project: TONY }),
-    ]);
-
-    const toggle = one(container, ".chatproj-toggle")!;
-    assert.equal(toggle.getAttribute("aria-expanded"), "true");
-
-    await click(toggle);
-    assert.deepEqual(titles(container), [], "the fold did not hide the rows");
-    assert.equal(
-      one(container, ".chatproj-toggle")!.getAttribute("aria-expanded"),
-      "false",
-      "a folded group still claims to be open",
+    assert.deepEqual(texts(container, ".chatlist-folder-name"), ["api"]);
+    assert.ok(
+      head.title.includes("D:\\work\\api"),
+      `the tooltip lost the path: ${head.title}`,
     );
+  });
 
-    await click(one(container, ".chatproj-toggle")!);
-    assert.deepEqual(titles(container), ["Alpha work"]);
+  test("the head is also the way to change the folder", async () => {
+    // The picker used to hang off the project group's header, which is gone. The
+    // folder is now the only thing above the list, so it is the thing that has
+    // to open the picker -- otherwise the chats pane has no way to change
+    // folders at all, and the folder is what the whole list is scoped to.
+    const container = await renderList(
+      [conversation({ project: TONY })],
+      "",
+      true,
+      TONY,
+    );
+    await click(one(container, ".chatlist-folder")!);
+
+    assert.equal(calls.picks, 1);
   });
 
   test("New chat says which project it will file under", async () => {
     // Silently filing a chat under whatever folder was open last is how a
     // conversation ends up somewhere the user did not mean, so the button has to
     // show it before the press rather than after.
-    const container = await renderList([conversation({ project: TONY })], "", true, TONY);
+    const container = await renderList(
+      [conversation({ project: TONY })],
+      "",
+      true,
+      TONY,
+    );
     assert.deepEqual(texts(container, ".chatlist-new-project"), ["TONYAgent"]);
   });
 
   test("and says it will ask when there is no project yet", async () => {
     const container = await renderList([conversation()]);
     assert.deepEqual(texts(container, ".chatlist-new-project"), ["Choose folder"]);
-  });
-
-  test("the folder picker is offered on the open project only", async () => {
-    // It picks the project for the *next* chat, so drawing it on every group
-    // would offer a control that does nothing to the group it sits on.
-    const container = await renderList(
-      [
-        conversation({ title: "Alpha work", project: TONY }),
-        conversation({ id: "b", title: "Endpoint notes", project: API }),
-      ],
-      "",
-      true,
-      API,
-    );
-
-    const adds = all(container, ".chatproj-add");
-    assert.equal(adds.length, 1);
-    await click(adds[0]);
-    assert.equal(calls.picks, 1);
-  });
-
-  test("the header's tooltip carries the whole path, not just the name", async () => {
-    // Two projects called `api` in different trees are the same row otherwise,
-    // and which one is open is not something the user can work out from a name
-    // they chose themselves.
-    const container = await renderList([conversation({ project: API })]);
-    assert.ok(
-      one(container, ".chatproj-toggle")!.title.includes("D:\\work\\api"),
-      `the tooltip lost the path: ${one(container, ".chatproj-toggle")!.title}`,
-    );
   });
 });

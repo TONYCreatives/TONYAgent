@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { TauriBackend } from "./backend.js";
+import { CoreBackend } from "./backend.js";
 import {
   applyEvent,
   appendUserMessage,
@@ -13,10 +13,12 @@ import { ConfirmDialog } from "./ConfirmDialog.js";
 import {
   ConversationList,
   type ConversationSummary,
+  type SidebarPane,
 } from "./ConversationList.js";
 import { pickFolder } from "./dialog.js";
-import { FileSidebar, type TreeEntry } from "./FileSidebar.js";
+import type { TreeEntry } from "./FileSidebar.js";
 import { IconRail } from "./IconRail.js";
+import { Dashboard, type UsageSummary } from "./Dashboard.js";
 import { MessageList } from "./MessageList.js";
 import {
   summaryLine,
@@ -24,28 +26,29 @@ import {
   toWire,
   type PendingAttachment,
 } from "./attachments.js";
-import type { ModelList } from "./ModelPicker.js";
+import { ModelPicker, type ModelList } from "./ModelPicker.js";
 import { Overlay } from "./Overlay.js";
+import { QuestionDialog } from "./QuestionDialog.js";
 import { SearchPanel, type SearchMatch } from "./SearchPanel.js";
 import type { PermissionList, ReasoningInfo } from "./SettingsMenus.js";
-import { SettingsPanel, type ProviderInfo } from "./SettingsPanel.js";
+import { SettingsPanel, type KeyEntry, type ProviderInfo } from "./SettingsPanel.js";
 import { StatusBar } from "./StatusBar.js";
-import { TopBar } from "./TopBar.js";
+import { TopBar, type Tab } from "./TopBar.js";
 import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount.js";
 import { useWindowControls } from "./useWindowControls.js";
 
 /**
  * The whole window.
  *
- * `backend` is a seam, not a setting. The default builds the real sidecar
+ * `backend` is a seam, not a setting. The default builds the real host
  * client, which is what the shipped window wants; a test passes one built over
  * a fake transport, which is what makes this component renderable at all.
  *
- * **Why the prop is the concrete `TauriBackend` and not an interface.** The
+ * **Why the prop is the concrete `CoreBackend` and not an interface.** The
  * obvious move is to declare a `Backend` interface and pass a plain object, and
  * it is the wrong one here: an interface is a second statement of the protocol,
  * and this file's own module comment records what that costs -- a second
- * implementation that drifts from the first. `TauriBackend`'s constructor
+ * implementation that drifts from the first. `CoreBackend`'s constructor
  * already takes a transport factory, so a test can supply the *bytes* and still
  * exercise the real framing, request ids, reply routing and error handling
  * underneath. The protocol is verified once and the window is verified on top
@@ -63,11 +66,21 @@ import { useWindowControls } from "./useWindowControls.js";
  * driving the packaged app and watching a folder picker appear -- which is
  * exactly how the project binding went unnoticed for as long as it did.
  */
+/**
+ * The id of the Usage tab.
+ *
+ * A sentinel rather than a conversation id, and deliberately *not* shaped like
+ * one: it can never collide with a real conversation, so the strip's callbacks
+ * can tell the two kinds apart by identity instead of searching the
+ * conversation list on every click.
+ */
+const USAGE_TAB = "usage-tab";
+
 export function App({
   backend: injected,
   pickProject: injectedPick,
 }: {
-  backend?: TauriBackend;
+  backend?: CoreBackend;
   pickProject?: () => Promise<string | null>;
 } = {}) {
   const [state, setState] = useState<ChatState>(initialState);
@@ -88,7 +101,6 @@ export function App({
   const [sandbox, setSandbox] = useState("stopped");
   const [project, setProject] = useState("");
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [settingsNotice, setSettingsNotice] = useState<string | null>(null);
   /**
@@ -101,6 +113,15 @@ export function App({
   const [maxToolCalls, setMaxToolCalls] = useState<number | null>(null);
   const [budgetOpen, setBudgetOpen] = useState(false);
   /**
+   * The Usage tab: absent, open as a tab, or open and showing.
+   *
+   * Three states rather than a boolean plus a tab list, because the tab and the
+   * view are one thing -- `open` is a tab you are not looking at, which is what
+   * every other tab in this strip can be. It is never persisted: reopening the
+   * window on a chart would hide the conversation it was left on.
+   */
+  const [usageTab, setUsageTab] = useState<"closed" | "open" | "active">("closed");
+  /**
    * The provider's model list, or null before it has been read.
    *
    * Null and empty are different things and the menu says which is which: an
@@ -109,9 +130,20 @@ export function App({
    */
   const [modelList, setModelList] = useState<ModelList | null>(null);
   const [modelListError, setModelListError] = useState<string | null>(null);
-  const [searchOpen, setSearchOpen] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversation, setConversation] = useState("");
+  /**
+   * The chats open in the title bar's tab strip, in the order they were opened.
+   *
+   * **A tab is an open conversation, not a copy of one.** The core holds a single
+   * session, so switching tabs is `conversations.switch` and the transcript is
+   * re-read. Nothing is duplicated, and two tabs cannot disagree about what a
+   * chat says, because there is only ever one of it.
+   *
+   * The active tab is `conversation`, above -- one piece of state rather than two
+   * that would have to be kept in step.
+   */
+  const [tabs, setTabs] = useState<string[]>([]);
   const [modes, setModes] = useState<ModeInfo[]>([]);
   const [mode, setMode] = useState("build");
   /**
@@ -170,7 +202,7 @@ export function App({
   const conversationsMounted = useDelayedUnmount(railExpanded);
 
   /*
-   * The caption buttons. Null outside the Tauri shell, so the bar draws nothing
+   * The caption buttons. Null when there is no window, so the bar draws nothing
    * rather than drawing three controls with nothing behind them.
    *
    * Read here and passed into the bar rather than called inside it so the top
@@ -199,12 +231,32 @@ export function App({
    */
   const logsMounted = useDelayedUnmount(logsOpen);
   const shownConfirm = useLastValue(state.pendingConfirm);
-  // Closed by default. The Files panel is 425px of a three-column window, and
-  // opening it by default squeezed the transcript on a normal laptop width for
-  // no benefit until the agent has actually touched a file. It still opens
-  // itself the moment a folder is chosen, which is when it has something to say.
-  const [filesOpen, setFilesOpen] = useState(false);
+  const shownAsk = useLastValue(state.pendingAsk);
+  /**
+   * Which pane the left sidebar is showing, and the tree's filter.
+   *
+   * The Files tree was a panel of its own on the right edge of the window, and
+   * Settings and Search were dialogs over it; all three are panes of the one
+   * sidebar now, so "is it open" is no longer a question about a surface -- the
+   * sidebar is the surface, and this says which of its four faces is in front.
+   * It still switches to Files the moment a folder is chosen, which is when the
+   * tree has something to say.
+   */
+  const [sidebarPane, setSidebarPane] = useState<SidebarPane>("chats");
   const [fileFilter, setFileFilter] = useState("");
+
+  /**
+   * Bring one of the sidebar's panes forward.
+   *
+   * Two state changes that have to happen together: the pane, and the sidebar
+   * that shows it. Settings and search used to open as overlays and needed only
+   * the first; as panes they need both, and a caller that set the pane alone
+   * would be pointing at a panel nobody can see.
+   */
+  const openSidebarPane = useCallback((pane: SidebarPane) => {
+    setSidebarPane(pane);
+    setRailExpanded(true);
+  }, []);
 
   /**
    * Files changed this session, from the core's own `file_change` artifacts.
@@ -239,11 +291,11 @@ export function App({
   }, [state.messages]);
 
   // One backend per window. Held in a ref rather than state: it is not
-  // renderable, and recreating it would spawn a second sidecar. The `?? null`
+  // renderable, and recreating it would start a second core. The `?? null`
   // is what lets an injected backend skip that construction entirely, so a
-  // test never reaches `makeSidecarTransport`.
-  const backendRef = useRef<TauriBackend | null>(injected ?? null);
-  if (backendRef.current === null) backendRef.current = new TauriBackend();
+  // test never reaches `makeHostTransport`.
+  const backendRef = useRef<CoreBackend | null>(injected ?? null);
+  if (backendRef.current === null) backendRef.current = new CoreBackend();
 
   // The folder picker, on the same terms as the backend: the real one by
   // default, a stub where a test can choose what "the user picked a folder" and
@@ -273,7 +325,7 @@ export function App({
     // this effect runs once, so there is nothing to tear down here.
     backend.onBackendExit(() => setConnected(false));
 
-    // The sidecar reports its own failures on stderr, and stdout is protocol
+    // The core reports its own failures on stderr, and stdout is protocol
     // only -- so without this the UI has no way to show why the core died.
     const offLog = backend.onLog((line) => {
       setLogLines((prev) => [...prev.slice(-40), line]);
@@ -332,6 +384,7 @@ export function App({
           mode?: string;
           permission?: string;
           conversation?: string;
+          sandbox?: string;
         };
         // Provider names come from the core's registry. A local copy would
         // drift the moment a provider is added or renamed, and the panel would
@@ -347,7 +400,18 @@ export function App({
         setProviders(listed.providers ?? []);
         setMode(snapshot.mode ?? "build");
         if (snapshot.permission) setPermission(snapshot.permission);
-        if (snapshot.conversation) setConversation(snapshot.conversation);
+        if (snapshot.conversation) {
+          setConversation(snapshot.conversation);
+          // The strip starts with what the core was already on, so a window that
+          // reloads keeps the tab it was looking at rather than opening an empty
+          // one beside it.
+          setTabs([snapshot.conversation]);
+        }
+        // The core is asked what it has, not what this window last did. The
+        // sandbox outlives a window -- it is shared -- so a reload that assumed
+        // "stopped" would offer Start over a runtime that is already up, and a
+        // reload that assumed "running" would hide Stop over one that is not.
+        if (snapshot.sandbox) setSandbox(snapshot.sandbox);
         await refreshConversations();
         // Modes come from the core for the same reason providers do: a pill
         // list hardcoded here would drift from the tool allow-lists behind
@@ -387,8 +451,13 @@ export function App({
 
     void start();
 
-    // Stop the sidecar on unmount. Without this the Python process outlives
-    // the window and keeps holding the sandbox container.
+    // Stop the *client* on unmount, not the core.
+    //
+    // The core belongs to the host, and the host reaps it when the window
+    // closes -- so there is no process here to end. What this releases is this
+    // page's end of the conversation: replies still in flight are failed and the
+    // transport is dropped, so a remount starts clean rather than inheriting a
+    // half-torn-down connection.
     return () => {
       cancelled = true;
       void backend.stop();
@@ -421,27 +490,6 @@ export function App({
   }, []);
 
   /**
-   * Clear the conversation.
-   *
-   * Both sides have to agree: the core owns the real history, so dropping the
-   * local list alone would leave the next turn replaying messages the user can
-   * no longer see. Clear the core first, then the view.
-   */
-  const clear = useCallback(() => {
-    void backendRef.current!
-      .call("clear")
-      .then(() => {
-        setState(initialState);
-      })
-      .catch((error: unknown) => {
-        setState((prev) => ({
-          ...prev,
-          error: error instanceof Error ? error.message : String(error),
-        }));
-      });
-  }, []);
-
-  /**
    * Re-read the list from the core.
    *
    * The core decides what exists, so the list is always fetched rather than
@@ -465,9 +513,38 @@ export function App({
    * means this follows the new name without anyone having to remember to
    * update a second copy of it.
    */
-  const activeTitle = useMemo(
-    () => conversations.find((c) => c.id === conversation)?.title ?? "",
-    [conversations, conversation],
+  /**
+   * What the strip draws: one entry per open tab.
+   *
+   * Built from the list rather than from a second copy of the titles, so a rename
+   * shows up in the tab without anything having to remember to update it -- the
+   * same reason `activeTitle` is read out of the list.
+   *
+   * `renameable` is the row's `message_count` and not its title. A chat with no
+   * messages has a placeholder name, and renaming it would take the automatic
+   * title away from the first thing the user says: the core retitles only while
+   * the name is still "New chat", so a name typed into an empty chat is a name
+   * that chat can never outgrow.
+   */
+  const tabStrip = useMemo(
+    () => {
+      const strip: Tab[] = tabs.map((id) => {
+        const row = conversations.find((c) => c.id === id);
+        return {
+          id,
+          title: row?.title ?? "",
+          renameable: (row?.message_count ?? 0) > 0,
+        };
+      });
+      // Appended rather than pinned to the front: it opens when it is opened,
+      // like every other tab here, and putting it first would renumber the
+      // strip every time it was closed.
+      if (usageTab !== "closed") {
+        strip.push({ id: USAGE_TAB, title: "Usage", renameable: false });
+      }
+      return strip;
+    },
+    [tabs, conversations, usageTab],
   );
 
   /**
@@ -723,6 +800,9 @@ export function App({
     async (id: string) => {
       setState((prev) => ({ ...prev, error: null, busy: true }));
       closePanelToComposer();
+      // Selecting a chat is a switch away from the dashboard, which stays open
+      // as a tab rather than disappearing.
+      setUsageTab((open) => (open === "active" ? "open" : open));
       try {
         const result = (await backendRef.current!.call("conversations.switch", {
           id,
@@ -731,7 +811,15 @@ export function App({
           messages?: unknown[];
         };
         showMessages(result.messages ?? []);
-        if (result.conversation) setConversation(result.conversation.id);
+        const opened = result.conversation;
+        if (opened) {
+          setConversation(opened.id);
+          // Opening a chat gives it a tab. Clicking one that is already open
+          // activates the tab it has rather than adding a second -- two tabs on
+          // one conversation are two views of one session, and the only thing
+          // they could disagree about is which of them the user meant.
+          setTabs((prev) => (prev.includes(opened.id) ? prev : [...prev, opened.id]));
+        }
         await refreshConversations();
       } catch (error: unknown) {
         setState((prev) => ({
@@ -796,8 +884,22 @@ export function App({
    * project it belongs to -- and a chat that inherited whatever folder happened
    * to be open would be filed under a project the user never chose for it.
    */
+  /** Ask the core for one window of usage. Null when it cannot answer. */
+  const loadUsage = useCallback(
+    (period: string): Promise<UsageSummary | null> =>
+      backendRef
+        .current!.call("usage.summary", { window: period })
+        .then((reply) => reply as UsageSummary)
+        .catch(() => null),
+    [],
+  );
+
   const createConversation = useCallback(
     async (project = "") => {
+      // Any act that opens a conversation brings the transcript back, so a new
+      // chat cannot be typed into a window that is showing a chart. The tab
+      // stays open behind it, the way a tab you switched away from does.
+      setUsageTab((open) => (open === "active" ? "open" : open));
       setState((prev) => ({ ...prev, error: null, busy: true }));
       try {
         const result = (await backendRef.current!.call("conversations.create", {
@@ -806,7 +908,11 @@ export function App({
           conversation?: ConversationSummary;
         };
         showMessages([]);
-        if (result.conversation) setConversation(result.conversation.id);
+        const created = result.conversation;
+        if (created) {
+          setConversation(created.id);
+          setTabs((prev) => (prev.includes(created.id) ? prev : [...prev, created.id]));
+        }
         await refreshConversations();
       } catch (error: unknown) {
         setState((prev) => ({
@@ -859,24 +965,74 @@ export function App({
     await createConversation(target);
   }, [project, attachProject, closePanelToComposer, createConversation]);
 
+  /**
+   * Delete a conversation, and start a fresh one if it was the open one.
+   *
+   * **"Moved on to a fresh one" is not a courtesy.** With no conversation at all
+   * the window is in a state the rest of the core does not support: `_persist`
+   * returns early on an empty id, so a message typed into that empty state was
+   * never saved anywhere -- and the tab went on naming the chat that had just
+   * been deleted, because the title is read out of the list by the open id.
+   *
+   * The fresh conversation is created here rather than by the core, which is
+   * where its own delete handler's comment says the moving-on happens. A
+   * conversation invented in the core would be one the window has never heard
+   * of -- there is no push for "you are now in a different conversation" -- so
+   * the reply would have to carry it and every caller would have to adopt it.
+   * `conversations.create` already exists, files under the folder this window
+   * knows it is in, and answers here directly.
+   *
+   * Deleting a row you are *not* looking at is the other half: nothing moves, the
+   * list is just re-read.
+   */
   const deleteConversation = useCallback(
     async (id: string) => {
       try {
         await backendRef.current!.call("conversations.delete", { id });
-        // Deleting the open conversation leaves the window on nothing, which
-        // reads as a failure rather than as the result that was asked for, so
-        // the core clears the transcript and we open a fresh one to replace the
-        // row the user just removed.
+        // Its tab goes either way: the conversation no longer exists, and a tab
+        // on a deleted chat is a tab that cannot be opened.
+        setTabs((prev) => prev.filter((tab) => tab !== id));
         if (id === conversation) {
           setConversation("");
           setState((prev) => ({ ...prev, messages: [], error: null }));
+          await createConversation(project);
+        } else {
+          await refreshConversations();
         }
-        await refreshConversations();
       } catch (error: unknown) {
         setSettingsError(error instanceof Error ? error.message : String(error));
       }
     },
-    [conversation, refreshConversations],
+    [conversation, project, createConversation, refreshConversations],
+  );
+
+  /**
+   * Close a tab.
+   *
+   * **Closing a tab is not deleting a chat.** The conversation stays in the
+   * sidebar, which is where it has always been; what goes away is one of the
+   * views of it. Deleting is the row menu's Delete, and it is a different word
+   * on purpose.
+   *
+   * The window has to land somewhere. "Nowhere" is the state that lost messages
+   * before -- `_persist` returns early with no conversation id -- so the tab that
+   * takes the closed one's place is opened, or the one before it if it was the
+   * last one, and a fresh chat starts if it was the only tab.
+   */
+  const closeTab = useCallback(
+    async (id: string) => {
+      const index = Math.max(0, tabs.indexOf(id));
+      const rest = tabs.filter((tab) => tab !== id);
+      setTabs(rest);
+      if (id !== conversation) return;
+      const next = rest[Math.min(index, rest.length - 1)];
+      if (next) {
+        await openConversation(next);
+      } else {
+        await createConversation(project);
+      }
+    },
+    [tabs, conversation, project, openConversation, createConversation],
   );
 
   /**
@@ -922,71 +1078,86 @@ export function App({
   );
 
   /**
-   * Point the sandbox at a folder the user picked.
+   * Point the sandbox at a folder the user picked, and bring the chat with you.
    *
    * The picker returns null on cancel, which is a normal outcome and must not
    * be reported as an error. Anything else the core rejects -- a path that
    * vanished, a backend that will not start -- surfaces verbatim.
+   *
+   * **The open conversation is moved into the new folder.** The window works in
+   * one folder at a time and the sidebar lists that folder's chats, so a chat
+   * left filed under the old one would vanish from the list the moment the
+   * folder changed -- and a chat about a folder is exactly the thing you would
+   * want to carry across when you change which folder you are working in. The
+   * folder is bound first: `conversations.move` files the chat under a path the
+   * caller names, and a pick that did not take must not move anything.
+   *
+   * A failed move is reported and does not undo the folder. The folder is where
+   * the user asked to work; the chat is still readable where it was, and undoing
+   * the one to repair the other would be a worse surprise than the error.
    */
   const chooseFolder = useCallback(async () => {
     const chosen = await pickRef.current();
     if (!chosen) return;
     const attached = await attachProject(chosen);
     if (attached === "") return;
-    // The Files panel is the view of this folder; opening it here is what
-    // makes the pick feel like it did something. Only here and not in
-    // `attachProject`, because a chat that was asked for should not drag a
-    // second panel over the transcript the user is about to type into.
-    setFilesOpen(true);
-  }, [attachProject]);
+    if (conversation) {
+      try {
+        await backendRef.current!.call("conversations.move", {
+          id: conversation,
+          project: attached,
+        });
+      } catch (error: unknown) {
+        setSettingsError(error instanceof Error ? error.message : String(error));
+      }
+      await refreshConversations();
+    }
+    // The Files pane is the view of this folder, and opening the sidebar on it
+    // is what makes the pick feel like it did something. Only here and not in
+    // `attachProject`, because a chat that was asked for should not drag the
+    // sidebar open over the transcript the user is about to type into.
+    setSidebarPane("files");
+    setRailExpanded(true);
+  }, [attachProject, conversation, refreshConversations]);
 
   /**
-   * Escape closes the two overlays.
+   * Escape closes the sidebar.
    *
-   * An overlay you can only dismiss by aiming at a small close button is a trap
-   * for the keyboard, and the Files panel's scrim makes the click-anywhere
-   * target invisible -- there is nothing on screen to say "click here to
-   * close". Escape is the affordance that does not depend on seeing anything.
-   *
-   * Both are handled here rather than in `useDismiss`, which is the wrong tool
-   * for this: it dismisses on a press *outside* the surface, and a full-height
-   * overlay panel has no meaningful inside to protect -- a press on the
-   * transcript is a press the user may well have meant for the transcript.
+   * There is one overlay on the left now -- the sidebar -- so there is one
+   * thing to put away, and it returns to the chats pane on the way out, so the
+   * next open is not still showing a file tree from ten minutes ago.
    */
   useEffect(() => {
-    if (!filesOpen && !railExpanded) return;
+    if (!railExpanded) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      // Files first: it is the panel that opened on top, and the conversation
-      // panel is the one further back.
-      if (filesOpen) setFilesOpen(false);
-      else setRailExpanded(false);
+      // `defaultPrevented` is the other half: a menu inside the sidebar answers
+      // Escape itself, and `useDismiss` claims the key in the capture phase, so
+      // a press that closed a menu does not also close the sidebar behind it.
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      setSidebarPane("chats");
+      setRailExpanded(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [filesOpen, railExpanded]);
+  }, [railExpanded]);
+
+  /**
+   * Start the sandbox on the folder already chosen.
+   *
+   * Sends no path. `sandbox.start` falls back to the folder the core already
+   * has registered, which is the same folder this window is showing -- sending
+   * it would only restate what the core knows, and would let the two disagree.
+   */
+  const startSandbox = useCallback(() => {
+    setSettingsError(null);
+    void attachProject("");
+  }, [attachProject]);
 
   const stopSandbox = useCallback(() => {
     void backendRef.current!.call("sandbox.stop").catch((error: unknown) => {
       setSettingsError(error instanceof Error ? error.message : String(error));
     });
   }, []);
-
-  /**
-   * The panel's Apply button. Closes the panel on success -- its job is done,
-   * and leaving it up after a successful apply just invites a second click.
-   */
-  const bindProvider = useCallback(
-    (name: string, model: string, endpoint: string) => {
-      setSettingsError(null);
-      void applyBinding(name, model, endpoint)
-        .then(() => setSettingsOpen(false))
-        .catch((error: unknown) => {
-          setSettingsError(error instanceof Error ? error.message : String(error));
-        });
-    },
-    [applyBinding],
-  );
 
   const setTrust = useCallback((target: string, trusted: boolean) => {
     setTrustedProjects((prev) => {
@@ -1009,27 +1180,29 @@ export function App({
   }, []);
 
   /**
-   * Store an API key in the OS keyring.
+   * Store one named API key in the OS keyring.
    *
    * Resolves to a boolean rather than throwing: the panel reports success or
    * failure inline, and the core's own error text is deliberately vague about
    * *why* it failed, because the keyring's message can quote the value.
+   *
+   * An empty name means the default slot; the core canonicalises anything else.
    */
   const saveKey = useCallback(
-    async (saved: string, apiKey: string) => {
+    async (saved: string, name: string, apiKey: string) => {
       try {
         await backendRef.current!.call("key.save", {
           provider: saved,
           api_key: apiKey,
+          name,
         });
-        // Re-read the provider list so the "(no key)" marker and the Remove
-        // button reflect the keyring without this component guessing.
+        // Re-read the provider list so anything that reports has_credentials
+        // reflects the keyring without this component guessing.
         const listed = (await backendRef.current!.call("providers.list")) as {
           providers?: ProviderInfo[];
         };
         setProviders(listed.providers ?? []);
-        // Rebind, so a freshly saved key takes effect immediately instead of
-        // silently doing nothing until the user finds Apply. This also
+        // Rebind, so a freshly saved key takes effect immediately. This also
         // reconstructs the provider, which clears any HTTP client cached from
         // an earlier request that was built before the key existed. The model
         // and endpoint are carried over only if they belong to this provider;
@@ -1045,9 +1218,40 @@ export function App({
     [provider, model, baseUrl, applyBinding],
   );
 
-  const deleteKey = useCallback(async (provider: string) => {
+  /**
+   * Read one stored key, for the panel's reveal control.
+   *
+   * Resolves to null rather than throwing, on the same reasoning saveKey
+   * resolves to a boolean: the panel shows nothing either way, and an error
+   * banner over "there is nothing stored" would be a lie about the state.
+   *
+   * The value goes straight back to the caller and never enters this
+   * component's state, so no snapshot of the window holds a credential.
+   */
+  const revealKey = useCallback(
+    async (target: string, name: string): Promise<string | null> => {
+      try {
+        const reply = (await backendRef.current!.call("key.reveal", {
+          provider: target,
+          name,
+        })) as { api_key?: string | null };
+        return reply.api_key ?? null;
+      } catch {
+        return null;
+      }
+    },
+    [],
+  );
+
+  /**
+   * Remove one named key.
+   *
+   * The name is passed through as given: this never means "the active one", so
+   * a call that lost the name cannot delete a key the user did not point at.
+   */
+  const deleteKey = useCallback(async (target: string, name: string) => {
     try {
-      await backendRef.current!.call("key.delete", { provider });
+      await backendRef.current!.call("key.delete", { provider: target, name });
       const listed = (await backendRef.current!.call("providers.list")) as {
         providers?: ProviderInfo[];
       };
@@ -1057,6 +1261,64 @@ export function App({
       return false;
     }
   }, []);
+
+  /**
+   * The stored keys, as the core's registry reports them.
+   *
+   * Resolves to an empty list rather than throwing: the panel draws an "add a
+   * key" row either way, and an error banner over "you have none yet" would be
+   * a lie about the state.
+   */
+  const listKeys = useCallback(async (target?: string): Promise<KeyEntry[]> => {
+    try {
+      const reply = (await backendRef.current!.call(
+        "key.list",
+        target ? { provider: target } : {},
+      )) as KeyEntry[];
+      // Array.isArray, not a null check: a core that does not answer at all
+      // still resolves something (the tests' fake returns a marker object), and
+      // handing that to the panel's rows would throw inside render.
+      return Array.isArray(reply) ? reply : [];
+    } catch {
+      return [];
+    }
+  }, []);
+
+  /**
+   * Make one stored key the one a turn spends.
+   *
+   * A successful activation also re-binds the provider, because the HTTP client
+   * caches the credential it was built with -- without this the press would
+   * change the config and leave the next request using the old key.
+   */
+  const activateKey = useCallback(
+    async (target: string, name: string) => {
+      try {
+        await backendRef.current!.call("key.activate", { provider: target, name });
+        if (provider === target) await applyBinding(target, model, baseUrl);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [provider, model, baseUrl, applyBinding],
+  );
+
+  /**
+   * Bind the Base URL to the provider already in use.
+   *
+   * The panel no longer picks a provider or a model, so neither is an argument:
+   * the window's own selection is sent, which is the only one it can mean.
+   */
+  const applyEndpoint = useCallback(
+    (endpoint: string) => {
+      setSettingsError(null);
+      void applyBinding(provider, model, endpoint).catch((error: unknown) => {
+        setSettingsError(error instanceof Error ? error.message : String(error));
+      });
+    },
+    [provider, model, applyBinding],
+  );
 
   const search = useCallback(async (pattern: string): Promise<SearchMatch[]> => {
     const result = (await backendRef.current!.call("search", { pattern })) as {
@@ -1143,6 +1405,25 @@ export function App({
     });
   }, []);
 
+  const respondAsk = useCallback((id: string, answer: string) => {
+    // Cleared locally first, for the same reason as the confirmation above:
+    // the core settles the ask with `user.resolved`, and waiting on that would
+    // leave the dialog up -- over the turn it is meant to be unblocking -- for
+    // the length of the round trip.
+    //
+    // The answer is trimmed by the dialog, and may be empty: an empty answer is
+    // "no comment", which is a real answer the core can act on. It is not a
+    // cancellation, and the reply's `answered` flag says whether it still found
+    // anything to answer.
+    setState((prev) => ({ ...prev, pendingAsk: null }));
+    void backendRef.current!.call("user.respond", { id, answer }).catch((error: unknown) => {
+      setState((prev) => ({
+        ...prev,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    });
+  }, []);
+
   return (
     <div className="app">
       {/*
@@ -1157,7 +1438,46 @@ export function App({
         Placed first, and pinned to row 1 in CSS along with everything else, so
         no sibling's absence can move it into a different row.
       */}
-      <TopBar busy={state.busy} title={activeTitle} controls={windowControls} />
+      <TopBar
+        busy={state.busy}
+        tabs={tabStrip}
+        active={usageTab === "active" ? USAGE_TAB : conversation}
+        onSelect={(id) => {
+          if (id === USAGE_TAB) {
+            setUsageTab("active");
+            return;
+          }
+          // Choosing a chat is a switch away from the dashboard, which stays
+          // open behind it -- the same thing selecting another chat tab does.
+          setUsageTab((open) => (open === "active" ? "open" : open));
+          void openConversation(id);
+        }}
+        onClose={(id) => {
+          if (id === USAGE_TAB) {
+            setUsageTab("closed");
+            return;
+          }
+          void closeTab(id);
+        }}
+        onNewTab={() => void startNewChat()}
+        onRename={(id, title) => void renameConversation(id, title)}
+        controls={windowControls}
+        // Built here and placed by the bar, so `TopBar` stays presentational
+        // and knows nothing about models -- see its `modelSelector` prop.
+        modelSelector={
+          <ModelPicker
+            model={model}
+            busy={state.busy}
+            disabled={!connected}
+            list={modelList}
+            error={modelListError}
+            onOpen={() => {}}
+            onClose={() => {}}
+            onChange={(next) => void changeModel(next)}
+            onLoad={() => void loadModelList()}
+          />
+        }
+      />
 
       {/*
         The rail, alone in the shell's first column.
@@ -1175,13 +1495,16 @@ export function App({
         messageCount={state.messages.length}
         expanded={railExpanded}
         onToggle={() => setRailExpanded((open) => !open)}
-        onClear={clear}
         onCancel={cancel}
+        dashboardOpen={usageTab === "active"}
+        onDashboard={() =>
+          setUsageTab((open) => (open === "active" ? "open" : "active"))
+        }
         onSettings={() => {
           setSettingsError(null);
-          setSettingsOpen(true);
+          openSidebarPane("settings");
         }}
-        onSearch={() => setSearchOpen(true)}
+        onSearch={() => openSidebarPane("search")}
       />
 
       {/*
@@ -1208,74 +1531,122 @@ export function App({
           onDelete={(id) => void deleteConversation(id)}
           onRename={(id, title) => void renameConversation(id, title)}
           onDuplicate={(id) => void duplicateConversation(id)}
+          // The sidebar's second pane, and the state that switches to it. The
+          // App owns `pane` because choosing a folder has to be able to bring
+          // the Files pane forward -- see `chooseFolder`.
+          pane={sidebarPane}
+          onPaneChange={setSidebarPane}
+          files={treeEntries}
+          fileFilter={fileFilter}
+          onFileFilterChange={setFileFilter}
+          onChooseFolder={() => void chooseFolder()}
+          hasProject={project !== ""}
+          // The other two panes. Built here rather than by the sidebar, because
+          // the App owns every handler they need -- and passed as elements so
+          // `ConversationList` stays a container and never imports them.
+          settingsPane={
+            <SettingsPanel
+              connected={connected}
+              busy={state.busy}
+              providers={providers}
+              provider={provider}
+              baseUrl={baseUrl}
+              project={project}
+              sandbox={sandbox}
+              trusted={trustedProjects.has(project)}
+              permissionList={permissionList}
+              permission={permission}
+              reasoning={reasoning}
+              error={settingsError}
+              notice={settingsNotice}
+              // "Close" means back to the conversations now. The panel is a pane
+              // of the sidebar rather than a dialog over the window, so there is
+              // nothing to close -- there is somewhere to go back to.
+              onClose={() => setSidebarPane("chats")}
+              onChooseFolder={chooseFolder}
+              onStartSandbox={startSandbox}
+              onStopSandbox={stopSandbox}
+              onPermissionChange={changePermission}
+              onReasoningChange={(effort) => void changeReasoning(effort)}
+              onApplyEndpoint={applyEndpoint}
+              onTrust={setTrust}
+              onSaveKey={saveKey}
+              onDeleteKey={deleteKey}
+              onRevealKey={revealKey}
+              onActivateKey={activateKey}
+              onListKeys={listKeys}
+            />
+          }
+          searchPane={
+            <SearchPanel
+              connected={connected}
+              hasProject={project !== ""}
+              onSearch={search}
+            />
+          }
+          // The rail's actions, because the sidebar covers the rail when open
+          // (see ConversationList). Same handlers the rail is given, so the two
+          // states of the one sidebar cannot disagree about what a button does.
+          onSearch={() => openSidebarPane("search")}
+          onSettings={() => {
+            setSettingsError(null);
+            openSidebarPane("settings");
+          }}
         />
       )}
 
       <div className="main">
-        <MessageList messages={state.messages} busy={state.busy} />
-
-        {state.error && <div className="banner">{state.error}</div>}
-
         {/*
-         * Collapsed by default. The strip used to be a permanent 83px block
-         * wedged between the transcript and the composer, and at rest the only
-         * thing it said was "nothing is wrong" -- space spent saying so. A
-         * one-line bar keeps the log one click away and says nothing when it has
-         * nothing to say.
-         */}
-        <div className={`logbar${logsOpen ? " is-open" : ""}`}>
-          <button
-            type="button"
-            className="logbar-toggle"
-            onClick={() => setLogsOpen((open) => !open)}
-            aria-expanded={logsOpen}
-          >
-            <span className="logbar-caret">{logsOpen ? "▾" : "▸"}</span>
-            <span>Logs</span>
-            {logLines.length > 0 && (
-              <span className="logbar-count">{logLines.length}</span>
-            )}
-          </button>
-          {logsMounted && (
-            <div className="logstrip" data-state={logsOpen ? "open" : "closed"}>
-              {logLines.length === 0 ? (
-                <div className="logstrip-empty">No log output yet.</div>
-              ) : (
-                logLines.map((line, i) => <div key={i}>{line}</div>)
-              )}
-            </div>
-          )}
-        </div>
+          The Usage tab replaces the transcript and the composer together.
 
-        {/*
-          The composer, and nothing else. The permission ladder used to sit
-          above it as its own bar, with the Thinking dial as a native select in
-          the control row; both are in the settings panel now, where a user goes
-          to ask what this window may do rather than scrolling past a strip to
-          find out. See `SettingsMenus`.
+          The composer goes with the transcript because a text field under a
+          chart would offer a message for a conversation that is not on screen.
+          Choosing any chat brings both back and leaves this tab open behind it,
+          which is what selecting another tab does everywhere else in this
+          window -- see `openConversation`, `createConversation` and `TopBar`.
         */}
-        <Composer
-          inputRef={composerRef}
-          busy={state.busy}
-          disabled={!connected}
-          model={model}
-          modes={modes}
-          mode={mode}
-          onModeChange={changeMode}
-          onSend={send}
-          onCancel={cancel}
-          maxToolCalls={maxToolCalls}
-          budgetOpen={budgetOpen}
-          onBudgetOpen={() => setBudgetOpen(true)}
-          onBudgetClose={() => setBudgetOpen(false)}
-          onBudgetChange={(limit) => void changeToolBudget(limit)}
-          modelList={modelList}
-          modelListError={modelListError}
-          onModelMenuOpen={() => {}}
-          onModelMenuClose={() => {}}
-          onModelChange={(next) => void changeModel(next)}
-          onModelListLoad={() => void loadModelList()}
-        />
+        {usageTab === "active" ? (
+          <Dashboard
+            connected={connected}
+            onClose={() => setUsageTab("open")}
+            load={loadUsage}
+          />
+        ) : (
+          <>
+            <MessageList
+              messages={state.messages}
+              busy={state.busy}
+              project={project}
+              onChooseFolder={() => void chooseFolder()}
+              canChooseFolder={connected && !state.busy}
+            />
+
+            {state.error && <div className="banner">{state.error}</div>}
+
+            {/*
+              The composer, and nothing else. The permission ladder used to sit
+              above it as its own bar, with the Thinking dial as a native select
+              in the control row; both are in the settings panel now, where a
+              user goes to ask what this window may do rather than scrolling
+              past a strip to find out. See `SettingsMenus`.
+            */}
+            <Composer
+              inputRef={composerRef}
+              busy={state.busy}
+              disabled={!connected}
+              modes={modes}
+              mode={mode}
+              onModeChange={changeMode}
+              onSend={send}
+              onCancel={cancel}
+              maxToolCalls={maxToolCalls}
+              budgetOpen={budgetOpen}
+              onBudgetOpen={() => setBudgetOpen(true)}
+              onBudgetClose={() => setBudgetOpen(false)}
+              onBudgetChange={(limit) => void changeToolBudget(limit)}
+            />
+          </>
+        )}
 
         {shownConfirm && (
           <Overlay open={state.pendingConfirm !== null}>
@@ -1283,41 +1654,21 @@ export function App({
           </Overlay>
         )}
 
-        <Overlay open={settingsOpen} onDismiss={() => setSettingsOpen(false)}>
-          <SettingsPanel
-            connected={connected}
-            busy={state.busy}
-            providers={providers}
-            provider={provider}
-            model={model}
-            baseUrl={baseUrl}
-            project={project}
-            sandbox={sandbox}
-            trusted={trustedProjects.has(project)}
-            permissionList={permissionList}
-            permission={permission}
-            reasoning={reasoning}
-            error={settingsError}
-            notice={settingsNotice}
-            onClose={() => setSettingsOpen(false)}
-            onChooseFolder={chooseFolder}
-            onStopSandbox={stopSandbox}
-            onPermissionChange={changePermission}
-            onReasoningChange={(effort) => void changeReasoning(effort)}
-            onBindProvider={bindProvider}
-            onTrust={setTrust}
-            onSaveKey={saveKey}
-            onDeleteKey={deleteKey}
-          />
-        </Overlay>
+        {shownAsk && (
+          <Overlay open={state.pendingAsk !== null}>
+            <QuestionDialog request={shownAsk} onRespond={respondAsk} />
+          </Overlay>
+        )}
 
-        <Overlay open={searchOpen} onDismiss={() => setSearchOpen(false)}>
-          <SearchPanel
-            connected={connected}
-            hasProject={project !== ""}
-            onSearch={search}
-          />
-        </Overlay>
+        {logsMounted && (
+          <div className="logstrip" data-state={logsOpen ? "open" : "closed"}>
+            {logLines.length === 0 ? (
+              <div className="logstrip-empty">No log output yet.</div>
+            ) : (
+              logLines.map((line, i) => <div key={i}>{line}</div>)
+            )}
+          </div>
+        )}
 
         <StatusBar
           provider={provider}
@@ -1329,20 +1680,13 @@ export function App({
           onConfigure={() => {
             setSettingsError(null);
             setSettingsNotice(null);
-            setSettingsOpen(true);
+            openSidebarPane("settings");
           }}
+          logLines={logLines}
+          logsOpen={logsOpen}
+          onToggleLogs={() => setLogsOpen((open) => !open)}
         />
       </div>
-
-      <FileSidebar
-        entries={treeEntries}
-        filter={fileFilter}
-        onFilterChange={setFileFilter}
-        onToggle={() => setFilesOpen((v) => !v)}
-        onChooseFolder={chooseFolder}
-        hasProject={project !== ""}
-        open={filesOpen}
-      />
     </div>
   );
 }

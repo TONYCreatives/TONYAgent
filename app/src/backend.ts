@@ -1,11 +1,11 @@
 /**
- * Tauri sidecar client for the TONYAgent headless core.
+ * The core client for the TONYAgent headless backend.
  *
  * This is the ONLY place that knows the wire format. The React UI talks to
- * `TauriBackend`, which is deliberately shaped like the Tkinter app's use of
+ * `CoreBackend`, which is deliberately shaped like the Tkinter app's use of
  * AgentSession, so a component cannot tell which one is driving it.
  *
- * Wire protocol: newline-delimited JSON on the sidecar's stdout.
+ * Wire protocol: newline-delimited JSON on the core's stdout.
  *   request  {"id":1,"method":"send","params":{...}}
  *   reply    {"id":1,"result":{...}}            | {"id":1,"error":{...}}
  *   event    {"event":true,"type":"...","seq":1,"turn_id":null,"payload":{}}
@@ -14,11 +14,15 @@
  * before any events that request causes, so a turn id is always known before
  * its first delta arrives.
  *
- * NOTE: `@tauri-apps/plugin-shell` is imported lazily inside
- * makeSidecarTransport. A top-level import would make every consumer of this
- * file - including the protocol tests - require a Tauri install, which is
- * exactly the coupling this layout is meant to avoid.
+ * NOTE: the host is reached through `bridge.ts`, which imports nothing at all --
+ * it reads one global that the host installs. So every consumer of this file,
+ * including the protocol tests, stays runnable in plain Node with no window, no
+ * Python and no Rust toolchain. That is the same coupling this layout was built
+ * to avoid, and it survives the shell changing underneath it.
  */
+
+import { installPushHandlers, whenHostReady, type HostApi } from "./bridge.js";
+
 
 /** Wire names must stay in sync with tonyagent/core/events.py EventType. */
 export type EventType =
@@ -35,6 +39,8 @@ export type EventType =
   | "tool.failed"
   | "confirmation.requested"
   | "confirmation.resolved"
+  | "user.asked"
+  | "user.resolved"
   | "sandbox.status"
   | "sandbox.stats"
   | "log"
@@ -93,14 +99,58 @@ export interface CoreMethods {
    */
   "models.list": Record<string, never>;
   /**
-   * Store an API key in the OS keyring.
+   * Store an API key in the OS keyring under a name.
    *
-   * The key goes out on stdin and the reply carries only the provider name.
-   * There is deliberately no `key.get`: a method that returns a secret is a
-   * method whose secret can reach a screenshot.
+   * The key goes out on stdin and the reply carries only the provider and the
+   * name. `name` is optional and means "default", which is the field every
+   * key saved before names existed lives in.
    */
-  "key.save": { provider: string; api_key: string };
-  "key.delete": { provider: string };
+  "key.save": { provider: string; api_key: string; name?: string };
+  /**
+   * Every stored key as a row: provider, name, and whether it is the active one.
+   *
+   * No secret crosses here -- the core answers names, never values -- which is
+   * what lets the panel draw its list on mount without pulling a credential out
+   * of the keyring.
+   */
+  "key.list": { provider?: string };
+  /** `name` is required: deleting "the active one" is a destructive default. */
+  "key.delete": { provider: string; name: string };
+  /**
+   * Read one stored key back, on request.
+   *
+   * **The one method whose *reply* carries a secret** -- the mirror of
+   * `key.save`, where the value travels the other way. It exists because a user
+   * who cannot check which key is stored cannot tell a stale key from a wrong
+   * one, and the cost is the one this file used to refuse outright: a live
+   * credential in the DOM.
+   *
+   * So the bounding is at the call site rather than here -- one named row, one
+   * press, cleared on hide and on unmount. Nothing on a timer calls it:
+   * `key.list` answers names only, so a key never leaves the keyring unless
+   * somebody asks. `name` absent means the key in force.
+   */
+  "key.reveal": { provider: string; name?: string };
+  /**
+   * Choose which stored key this provider's turns spend.
+   *
+   * Separate from a save on purpose: adding a second key must not silently take
+   * over the credential the next message uses. The core refuses a name nothing
+   * is stored under, so a press cannot succeed into a broken provider.
+   */
+  "key.activate": { provider: string; name: string };
+  /**
+   * What this window has spent on API calls, aggregated for one window.
+   *
+   * `window` is one of `today`, `3d`, `7d`, `30d`, `all`; the core refuses an
+   * unknown name rather than defaulting, so a typo shows up as an error instead
+   * of a chart of the wrong period.
+   *
+   * One method rather than five, because the totals, the day series and the
+   * per-key breakdowns come from one pass over one set of records and are drawn
+   * together -- five calls would be five chances to disagree with each other.
+   */
+  "usage.summary": { window?: string };
   /**
    * Conversations.
    *
@@ -114,6 +164,16 @@ export interface CoreMethods {
   "conversations.delete": { id: string };
   "conversations.rename": { id: string; title: string };
   "conversations.duplicate": { id: string };
+  /**
+   * File a conversation under a folder.
+   *
+   * The window works in one folder at a time and the sidebar lists that folder's
+   * chats, so this is what carries the chat you are looking at across when you
+   * change folders. `project` is named rather than read from the core's own
+   * folder: the caller has just bound it, and a pick that did not take must not
+   * move anything.
+   */
+  "conversations.move": { id: string; project: string };
   /** Available composer modes and which one is in force. */
   "mode.list": Record<string, never>;
   "mode.set": { mode: string };
@@ -168,16 +228,24 @@ export interface CoreMethods {
   "sandbox.stop": Record<string, never>;
   "sandbox.stats": Record<string, never>;
   "confirm.respond": { id: string; confirmed: boolean };
+  /** Answer a question, or add a note to a presentation. Empty is an answer. */
+  "user.respond": { id: string; answer: string };
   "trust.set": { project: string; trusted: boolean };
 }
 
 /**
  * Methods whose params carry a secret.
  *
- * The request is written to the sidecar verbatim, because the core has to
+ * The request is written to the core verbatim, because the core has to
  * receive the real key. The list exists so the one place that could leak it --
  * a debug log of the outgoing frame -- is impossible to add by accident, and
  * so `backend.test.ts` can assert no diagnostic ever contains the value.
+ *
+ * `key.reveal` is deliberately *not* in here: its request is a provider name.
+ * Its secret comes back on the reply, and that path has no diagnostic at all --
+ * `handleLine` resolves the promise and writes nothing, which is why the only
+ * line it can echo is the non-JSON fallback, and a reply containing a key is
+ * JSON.
  */
 const SECRET_METHODS: ReadonlySet<string> = new Set(["key.save"]);
 
@@ -187,13 +255,13 @@ export function carriesSecret(method: string): boolean {
 }
 
 /**
- * Talks to the Python sidecar over stdio.
+ * Talks to the Python core over stdio.
  *
  * stdout is a byte stream with no framing beyond newlines, so chunks are
  * buffered until a complete line is available. A partial read is normal and
  * must never be treated as a message.
  */
-export class TauriBackend {
+export class CoreBackend {
   private transport: LineTransport | null = null;
   private buffer = "";
   private nextId = 1;
@@ -220,15 +288,15 @@ export class TauriBackend {
   private lifecycle: Promise<void> = Promise.resolve();
 
   /**
-   * @param makeTransport builds the transport. Defaults to a real Tauri
-   *   sidecar; tests pass a fake, which is what lets the protocol be verified
+   * @param makeTransport builds the transport. Defaults to the real window host
+   *   host; tests pass a fake, which is what lets the protocol be verified
    *   without Rust or Python.
    *
    * Declared as an explicit field rather than a constructor parameter property
    * so the file runs under Node's strip-only type stripping, which does not
    * support parameter properties.
    */
-  constructor(makeTransport: () => LineTransport = () => makeSidecarTransport()) {
+  constructor(makeTransport: () => LineTransport = () => makeHostTransport()) {
     this.makeTransport = makeTransport;
   }
 
@@ -252,7 +320,7 @@ export class TauriBackend {
     transport.onExit(() => {
       // Only tear down if this is still the *current* transport.
       //
-      // A sidecar's exit event is delivered asynchronously, so the one we just
+      // The core's exit event is delivered asynchronously, so the one we just
       // killed reports "exited" after the replacement has already been
       // assigned. An unconditional `this.transport = null` here therefore
       // killed the brand-new backend a moment after it started: the window
@@ -414,105 +482,86 @@ export class TauriBackend {
 // ---------------------------------------------------------------------------
 
 /**
- * The subset of the sidecar API TauriBackend uses.
+ * The subset of the core API that CoreBackend uses.
  *
  * Extracted so the protocol logic (line framing, request/reply pairing, event
- * dispatch) can be tested in plain Node with no Tauri, no Rust toolchain and no
+ * dispatch) can be tested in plain Node with no window, no Python and no
  * Python process. That is deliberate: the protocol is the contract, and it
- * should be verifiable before anyone can run `cargo build`.
+ * should be verifiable before anyone can open a window.
  */
 export interface LineTransport {
   start(): Promise<void>;
   write(line: string): Promise<void>;
   onStdout(fn: (text: string) => void): void;
+
   onStderr(fn: (text: string) => void): void;
   onExit(fn: () => void): void;
   kill(): Promise<void>;
 }
 
 /**
- * The real Tauri sidecar transport.
+ * The real transport: the window host.
  *
- * Isolated in its own factory so the protocol logic above stays testable in
- * plain Node: importing backend.ts must not require Tauri to be installed.
+ * The core is a child process of the *host*, not of this page, so there is
+ * nothing here to spawn and nothing here to kill. What this does is install the
+ * push handlers, wait for the bridge to announce itself, and then carry lines
+ * in one direction and out the other.
+ *
+ * The order of the first two steps is load-bearing. `installPushHandlers` must
+ * run *before* `ready()`, because `ready()` is what makes the host flush the
+ * frames it buffered while the page was loading -- and the first of those
+ * frames is the reply to the first request this backend sends. Reversed, that
+ * batch would be pushed into a global that did not exist yet, and the window
+ * would sit on "disconnected" with nothing in any log to say why.
+ *
+ * `whenHostReady` resolves to null when there is no host, and this throws
+ * rather than handing back a transport that quietly swallows writes. A page
+ * open in a browser has no core to talk to, and failing `start()` is how the
+ * window gets to say so.
  */
-function makeSidecarTransport(): LineTransport {
-  // Resolved lazily, and via a dynamic import() rather than a top-level one.
-  //
-  // A top-level `import` would be hoisted and evaluated when this module loads,
-  // which would make the protocol tests need Tauri installed -- the exact
-  // coupling this layout exists to avoid.
-  //
-  // A bare `require()` is not an option: it does not exist in an ES module, and
-  // Vite does not define one. `typeof require === "function"` is therefore
-  // false in the bundled app, and the previous fallback to
-  // `globalThis.__tauriRequire` was never defined either, so the spawn threw
-  // and the window silently showed "disconnected" forever.
-  //
-  // `import()` works in both worlds: Node resolves it for the tests, and Vite
-  // turns it into a real chunked import for the app.
-  // Tauri decodes the child's bytes for us (the default, non-raw encoding), so
-  // no TextDecoder belongs here.
-  let shellModule: typeof import("@tauri-apps/plugin-shell") | null = null;
-  const loadShell = async () => {
-    if (!shellModule) {
-      shellModule = await import("@tauri-apps/plugin-shell");
-    }
-    return shellModule;
-  };
-
-  // `Command` is generic over its output encoding; `string` is the variant the
-  // sidecar speaks, since stdout is JSONL text.
-  let cmd: import("@tauri-apps/plugin-shell").Command<string> | null = null;
-  // `spawn()` returns the Child handle that owns stdin and kill(). The Command
-  // itself only emits output and lifecycle events. Keeping these separate
-  // matters: writing to `cmd` was a type error that the previous `any` hid.
-  let child: import("@tauri-apps/plugin-shell").Child | null = null;
+function makeHostTransport(): LineTransport {
   let stdout: ((text: string) => void) | null = null;
   let stderr: ((text: string) => void) | null = null;
   let exit: (() => void) | null = null;
+  let api: HostApi | null = null;
 
   return {
     async start() {
-      // Bare sidecar name, no `binaries/` prefix and no target-triple suffix.
-      // Tauri resolves those itself: it matches the name against the
-      // `externalBin` entries in tauri.conf.json and appends
-      // `-<target-triple>`. Naming it "binaries/tonyagent-core" fails to
-      // resolve and the spawn is rejected with no obvious error.
-      const { Command } = await loadShell();
-      // Must match a `bundle.externalBin` entry in tauri.conf.json, which is
-      // "binaries/tonyagent-core". Tauri compares this string against those
-      // entries directly (also accepting the same name minus a trailing ".exe"),
-      // and rejects anything else with:
-      //   sidecar not configured under `tauri.conf.json > bundle > externalBin`
-      // The target triple is appended by Tauri when it resolves the file, so
-      // it must not appear here.
-      cmd = Command.sidecar("binaries/tonyagent-core");
-
-      // With the default (non-raw) encoding, `data` carries one line per
-      // event, newline already stripped. TauriBackend's ingest() buffers
-      // partial lines, so passing a line straight through is correct and
-      // avoids re-splitting text that is already framed.
-      cmd.stdout.on("data", (line: string) => stdout?.(line));
-      cmd.stderr.on("data", (line: string) => stderr?.(line));
-
-      // The Child handle is what owns stdin and kill(); `Command` does not.
-      child = await cmd.spawn();
-
-      // Process exit is reported on the Command's own `close` event, not on
-      // the Child. Without this the UI would sit on "connected" after the core
-      // died, and every later request would hang instead of failing.
-      cmd.on("close", () => exit?.());
-      cmd.on("error", (message: string) => {
-        // Surface a spawn failure rather than leaving the window blank.
-        stderr?.(`[sidecar] ${message}`);
-        exit?.();
+      api = await whenHostReady();
+      if (!api) {
+        throw new Error(
+          "No window host answered, so this page has no backend to talk to.",
+        );
+      }
+      // The host sends one *batch* per call, so splitting it back into lines is
+      // this side's job. `CoreBackend.ingest` buffers partial lines itself,
+      // which is what makes passing whole lines straight through correct.
+      // The host hands over *lines*, and this side speaks in chunks of the
+      // stream -- so the terminator has to be put back.
+      //
+      // **Without it, not one reply ever resolves.** `ingest` frames on
+      // newlines, so a batch of bare lines is appended to the buffer and never
+      // split, and every request stays pending forever: the window draws, says
+      // "connected", and then sits there with an empty model picker, no
+      // provider and no conversations. Measured, not reasoned about -- the core
+      // answered `state` with `project: ...\WebAIAgent` and the window went on
+      // showing "No project folder", and the only requests it ever sent were the
+      // three whose effects do not await a reply.
+      installPushHandlers({
+        frames: (lines) => {
+          for (const line of lines) stdout?.(`${line}\n`);
+        },
+        log: (line) => stderr?.(line),
+        exit: () => exit?.(),
       });
+      await api.ready();
     },
+
     async write(line: string) {
-      if (!child) throw new Error("sidecar not started");
-      await child.write(line);
+      if (!api) throw new Error("the window host is not ready");
+      await api.send(line);
     },
+
     onStdout(fn) {
       stdout = fn;
     },
@@ -522,10 +571,13 @@ function makeSidecarTransport(): LineTransport {
     onExit(fn) {
       exit = fn;
     },
+
     async kill() {
-      await child?.kill();
-      child = null;
-      cmd = null;
+      // Deliberately empty, and not an oversight. The core belongs to the host
+      // and the host reaps it when the window closes; killing it from here
+      // would mean a page that unmounts -- a remount, a hot reload -- takes the
+      // backend down with it while the window is still open.
+      api = null;
     },
   };
 }

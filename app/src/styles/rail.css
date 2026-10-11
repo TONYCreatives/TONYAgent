@@ -1,0 +1,183 @@
+
+/* --- icon rail ----------------------------------------------------------- */
+/*
+ * Column 1, row 2, and a full-height --chrome strip: `--rail-w` down the left
+ * edge from under the title bar to the bottom of the window.
+ *
+ * Three of those four facts are grid placement, and they are here rather than
+ * near `.app` because this is the only rule that has anything to say about the
+ * rail at all. It is a grid item in its own right: the conversation list used to
+ * share a column with it and has been moved out to an overlay (`.chatlist`), so
+ * the rail is now what column 1 *is* rather than the left part of something
+ * wider. It names its row and column explicitly for the reason every other
+ * in-flow child of the shell does -- auto-placement must not decide where the
+ * rail goes based on which siblings happen to render.
+ *
+ * `align-self` is deliberately absent and `height: 100%` deliberately present.
+ * The grid's default `stretch` would do the same job, but an explicit height is
+ * what makes the strip's full height readable here, where the thing being
+ * avoided is not obvious from `display: flex` and `flex-direction: column`.
+ * (The test that used to assert the absence of `align-self` is on
+ * `.rail-toggle`, not on the rail: that is a different declaration, on a
+ * different element, and it is still asserted.)
+ */
+.rail {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 0;
+  overflow: hidden;
+  /*
+   * Always --rail-w. The rail used to widen to --rail-w-expanded and grow text
+   * labels, which is the one thing the reference never does: its rail is a
+   * strip of icons at every width, and the conversation titles live in the
+   * panel beside it. The labels went with that -- `title` and `aria-label`
+   * already carry the name, which is where a keyboard user reads it.
+   */
+  width: var(--rail-w);
+  min-width: 0;
+  height: 100%;
+  /*
+   * No cross-axis growth, and no main-axis growth: the strip is its buttons on
+   * a full-height column, and the overlay panel beside it takes its own width.
+   */
+  flex: none;
+  /*
+   * --chrome, because the rail is the one surface that is not the field, and a
+   * rail that shares the transcript's colour would read as a fourth depth step.
+   * Painted on the rail itself rather than on a parent column that the list then
+   * painted --bg back over: the rail *is* the column, so there is nothing to paint
+   * over it and nothing that could stop the strip short at the last icon.
+   */
+  /* Frosted like the rest of the window's edge -- the rail, the title bar and
+     the status bar are one material. See the glass block in tokens.css. */
+  background: var(--glass-chrome);
+  background-image: var(--glass-sheen);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border-right: 1px solid var(--glass-edge);
+  /*
+   * No width transition, and none is wanted. The rail's width has not changed
+   * since the panel became an overlay -- it is `--rail-w` whether or not the
+   * conversation list is open -- so there is nothing here to animate, and an
+   * animated width on the one column that never changes would be motion for no
+   * state change at all.
+   */
+}
+
+/*
+ * The toggle used to carry `align-self: flex-start`, which overrode the rail's
+ * `align-items: center`. In the collapsed rail it pushed the reopen button to
+ * x=0 while every other icon sat at x=16, so the one control that brings the
+ * sidebar back was the one hanging against the window edge. Asserted as the
+ * *absence* of a declaration in layout.test.ts, because any value here
+ * reintroduces the misalignment and only the rail's own centring gets it right.
+ */
+
+/*
+ * Takes the strip's free height, which is what lets the settings gear sit at the
+ * foot of the rail rather than one row under Search. See `IconRail` for why the
+ * gear is held out of the run above it.
+ */
+.rail-spacer {
+  flex: 1;
+}
+
+.rail-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--ease-out);
+}
+
+/*
+ * Hover lifts the icon off the strip, not just out of the grey.
+ *
+ * The rail is the one surface the pointer travels *along*, and a row of glyphs
+ * that only recolour under it gives no feedback about which one is under it --
+ * colour says "something changed" but not "this, here". A 2px rise is the
+ * pointer picking the icon up for a moment: it reads as *this one* before the
+ * eye has finished finding it. Two pixels and not more, because the rail's
+ * own buttons sit 8px apart and a larger lift starts to look like the row is
+ * coming unstuck; and it rides `--motion-fast`/`--ease-out`, the pair every
+ * other hover in the window answers with, so the lift lands inside the same
+ * 110ms as the tint rather than trailing it.
+ *
+ * Disabled buttons keep their place: nothing is under the pointer to pick up
+ * if there is no action there.
+ */
+.rail-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--fg);
+  transform: translateY(-2px);
+}
+
+.rail-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/*
+ * The chosen item is the wash, in the button's own box -- the same silhouette
+ * the hover paints, because the two are now the same kind of thing.
+ *
+ * Three states, in the order they happened. It was `--hover` first, one step off
+ * the hover below it, which made "where am I" and "what is under the pointer"
+ * the same answer. Then it was a filled stadium in the accent: an *indicator*
+ * rather than a tint, deliberately 44x36 inside the 44px target, because
+ * "wider than tall is what makes it read as a slot the icon sits in" -- and a
+ * different silhouette was precisely what told a fill apart from a tint.
+ *
+ * The fill then became the wash -- a solid accent disc in a strip of grey glyphs
+ * read as a separate control bolted onto the rail, and it was the only selected
+ * thing in this window not taking the wash -- and that left the geometry
+ * stranded. A 44x36 stadium for the chosen item against a 44x44 rounded square
+ * for the hovered one is two silhouettes on one button, which is a difference
+ * with nothing left to say. Measured before this rule: the indicator was 44x36
+ * at `--radius-pill` and the button it sat in was 44x44 at 12px.
+ *
+ * So the state is painted on the button, which makes the shapes the same by
+ * construction rather than by two rules agreeing. `.rail-btn` keeps the 44x44
+ * click target and the 12px radius, and its own background is clipped by that
+ * radius -- there is no second box left to keep in step.
+ *
+ * The hover is restated rather than left to the rule above, which is *more*
+ * specific -- `.rail-btn:hover:not(:disabled)` is three selectors to this one's
+ * two -- and would otherwise repaint a chosen button with the plain hover tint,
+ * so the selection appeared to vanish under the pointer. The lift is the hover's
+ * own feedback and still happens; only the tint changes.
+ */
+.rail-btn.is-active,
+.rail-btn.is-active:hover:not(:disabled) {
+  background: var(--wash);
+  color: var(--fg);
+}
+
+.rail-badge {
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  min-width: 15px;
+  padding: 0 3px;
+  border-radius: var(--radius-pill);
+  background: var(--raised);
+  color: var(--fg-dim);
+  font-size: var(--text-2xs);
+  line-height: 13px;
+  text-align: center;
+  /* Same reason as the status bar: the count changes as the turn streams. */
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}

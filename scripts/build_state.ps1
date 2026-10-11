@@ -1,27 +1,26 @@
-# Decide which build stages actually have to run.
+# Decide whether the frontend build actually has to run.
 #
-# The build is three stages that each consume the previous one's output:
+# There is one stage now, and that is the change this file records:
 #
-#   1  vite build   app/src/**            -> app/dist/
-#   2  sidecar      src/**, sidecar.spec  -> app/src-tauri/binaries/
-#   3  tauri build  everything above      -> app/src-tauri/target/release/tonyagent-app.exe
+#   1  vite build   app/src/**, app/index.html  ->  app/dist/
 #
-# The build script used to run all three unconditionally, and there is no
-# incremental step anywhere in the chain: PyInstaller re-freezes the whole of
-# Python into a 45 MB executable from scratch every time, and vite re-bundles
-# the whole frontend. So a one-character edit to a React file costs the same as
-# a rewrite of the core, and the usual response is to stop rebuilding and start
-# running whatever is already there -- which is how a launcher ends up
-# silently serving last week's build.
+# The Rust shell and the frozen Python sidecar are gone. The window is
+# `python -m tonyagent.window`, which *reads* app/dist/ at runtime instead of
+# embedding it, so the frontend is the only thing with a build step at all --
+# there is nothing to link, nothing to freeze, and no cargo, no `rc.exe` and no
+# Windows SDK anywhere in the chain. A one-character edit to a React file now
+# costs a two-second `vite build` instead of a PyInstaller freeze plus a Rust
+# relink, which is what made the old three-stage version worth writing in the
+# first place.
 #
-# This script answers the question the launcher needs answered: for each stage,
-# is any of its inputs newer than the thing it produces? A stage whose inputs
-# are all older than its output has nothing to do, and saying so out loud is
-# what makes the skip visible rather than a guess.
+# The staleness question is still worth asking, and for the reason it always was:
+# a launcher that silently runs last week's bundle is the failure worth guarding
+# against, and "is the output older than the newest input" has one answer rather
+# than being a guess.
 #
-# Outputs one line per stale stage and nothing for a fresh one, so the caller
-# can read it straight into a loop. A missing output counts as stale, always:
-# that is what makes the first run after a clean build_state do the lot.
+# Outputs one line per stale stage and nothing for a fresh one, so the caller can
+# read it straight into a loop. A missing output counts as stale, always: that is
+# what makes the first run after a clean checkout do the build.
 
 param(
     # Repository root. Defaults to the parent of this script's directory.
@@ -30,58 +29,29 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# --- what each stage reads, and the single file that proves it ran ---------
+# --- what the stage reads, and the single file that proves it ran -----------
 #
-# Compared against one sentinel per stage rather than a count of files, so the
-# answer is "is the output newer than the newest input" -- a question with one
-# answer, instead of a per-file walk on every launch.
+# Compared against one sentinel rather than a count of files, so the answer is
+# "is the output newer than the newest input" -- a question with one answer,
+# instead of a per-file walk on every launch.
 $Stages = @(
     [pscustomobject]@{
         Name   = 'frontend'
         Inputs = @('app\src', 'app\index.html', 'app\package.json', 'app\vite.config.ts')
         Output = 'app\dist\index.html'
-    },
-    [pscustomobject]@{
-        Name   = 'sidecar'
-        Inputs = @('src', 'pyproject.toml', 'scripts\sidecar.spec', 'docker')
-        # Resolved inside the loop, not here. Globbing for the output while
-        # building the table meant that a tree with no frozen core -- a fresh
-        # clone, or binaries\ deleted -- produced $null, and the "a missing
-        # output is always stale" rule below never got to see it: the stage
-        # reported itself current. Found by a test, after a launcher run had
-        # already rebuilt the shell around a sidecar that was not there.
-        #
-        # The triple-suffixed name is what Tauri looks for and the target is
-        # read off the host, so the file is globbed rather than hardcoded, and
-        # the newest match wins in case a second triple is lying around.
-        OutputDir  = 'app\src-tauri\binaries'
-        OutputGlob = 'tonyagent-core-*'
-    },
-    [pscustomobject]@{
-        Name   = 'app'
-        # app\dist and app\src-tauri\binaries are inputs, not bystanders, and
-        # for the same reason: tauri.conf.json points frontendDist at the first
-        # and externalBin at the second, so stage 3 folds both into the binary
-        # rather than reading them at runtime. Leaving them out makes a skipped
-        # stage 3 dangerous in two ways that a sources-only comparison cannot
-        # see -- a frontend or sidecar rebuild that nothing has embedded yet,
-        # and a stage 3 that failed once after either was rebuilt, leaving an
-        # old .exe newer than every file in src-tauri and therefore "fresh",
-        # forever.
-        Inputs = @('app\dist', 'app\src-tauri\binaries', 'app\src-tauri\src', 'app\src-tauri\tauri.conf.json', 'app\src-tauri\Cargo.toml', 'app\src-tauri\build.rs', 'app\src-tauri\capabilities')
-        Output = 'app\src-tauri\target\release\tonyagent-app.exe'
     }
 )
 
 function Get-NewestInput {
     param([string[]]$Paths)
 
-    # Derived files are not inputs. Python's __pycache__ is the one that
-    # matters: running the test suite rewrites .pyc files under src/, which
-    # made the sidecar look stale after every pytest run, so every launch
-    # re-froze 45 MB of Python to pick up changes nobody had made. Measured,
-    # not assumed -- the newest "source" was core\__pycache__\conversations.pyc.
-    $derived = '\\(__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|node_modules|\.git)\\'
+    # Derived files are not inputs. Python's __pycache__ was the one that used to
+    # matter: running the test suite rewrites .pyc files under src/, which made a
+    # stage look stale after every pytest run and re-froze 45 MB of Python to
+    # pick up changes nobody had made. src/ is not an input any more, but the
+    # same trap is one directory away -- node_modules is rewritten by any
+    # install, and app/.tmp/ is rewritten by the test suite itself.
+    $derived = '\\(__pycache__|\.pytest_cache|\.mypy_cache|\.ruff_cache|node_modules|\.git|\.tmp)\\'
 
     $newest = $null
     foreach ($path in $Paths) {
@@ -107,21 +77,15 @@ function Get-NewestInput {
 $stale = @()
 
 foreach ($stage in $Stages) {
-    # $null when a globbed output matches nothing, which is the answer we want:
-    # nothing was built, so the stage is stale.
-    $outputPath = if ($stage.OutputDir) {
-        Get-ChildItem -LiteralPath (Join-Path $Root $stage.OutputDir) -Filter $stage.OutputGlob -File -ErrorAction SilentlyContinue |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1 -ExpandProperty FullName
-    }
-    elseif ([System.IO.Path]::IsPathRooted($stage.Output)) {
+    $outputPath = if ([System.IO.Path]::IsPathRooted($stage.Output)) {
         $stage.Output
     }
     else {
         Join-Path $Root $stage.Output
     }
 
-    if (-not $outputPath -or -not (Test-Path -LiteralPath $outputPath)) {
+    # A missing output is stale by definition: nothing has been built yet.
+    if (-not (Test-Path -LiteralPath $outputPath)) {
         $stale += $stage.Name
         continue
     }
@@ -136,32 +100,8 @@ foreach ($stage in $Stages) {
     }
 }
 
-# A stale earlier stage implies a stale app, and the reason is not a timestamp.
-#
-# Stage 3 consumes the outputs of both other stages rather than reading their
-# sources, so rebuilding one of them without relinking leaves the shell serving
-# yesterday's work:
-#
-#   * frontend -- tauri.conf.json sets beforeBuildCommand to `npm run build`,
-#     so `tauri build` re-bundles the frontend on its way to embedding
-#     app/dist/ in the Rust binary. Running the frontend stage alone produces a
-#     newer app/dist/ that nothing has embedded yet.
-#
-#   * sidecar -- the frozen core in app/src-tauri/binaries/ is not what the app
-#     runs. `tauri build` is what copies it next to the exe as
-#     tonyagent-core.exe, which is the path Tauri spawns and the copy the
-#     installers carry. Observed, not theorised: after a sidecar-only run the
-#     file in binaries/ was minutes old and the one next to the exe was a day
-#     old, and the script had said the build was finished.
-#
-# So "app" is reported whenever anything upstream of it is stale. It is the
-# honest answer rather than the reassuring one.
-if ($stale -notcontains 'app' -and ($stale -contains 'frontend' -or $stale -contains 'sidecar')) {
-    $stale += 'app'
-}
-
-# Reported in build order, which is also dependency order, so the caller can
-# read the list top to bottom and know what runs in what sequence.
+# Reported in build order, which is also dependency order, so the caller can read
+# the list top to bottom and know what runs in what sequence.
 foreach ($name in $stale) {
     Write-Output $name
 }

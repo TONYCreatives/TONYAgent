@@ -13,6 +13,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { Gear } from "./Gear.js";
 import { useDelayedUnmount } from "./useDelayedUnmount.js";
 import { useDismiss } from "./useDismiss.js";
 
@@ -152,23 +153,25 @@ export function ToolBudgetControl({
         aria-expanded={open}            title={
               value === null
                 ? "Tool call budget — reading"
-                : `Tool call budget: ${value} per turn`
+                : value === 0
+                  ? "Tool call budget: no limit"
+                  : `Tool call budget: ${value} per turn`
             }
         aria-label="Tool call budget"
       >
-        <svg
-          width="15"
-          height="15"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          aria-hidden="true"
-        >
-          <circle cx="12" cy="12" r="3.2" />
-          <path d="M12 4.2v2.1M12 17.7v2.1M4.2 12h2.1M17.7 12h2.1" />
-        </svg>
+        {/*
+          The sidebar's gear, not a glyph of this control's own.
+         
+          It was four ticks around a dot -- a dial, which is what the thing
+          *is* and not what it opens. A gear is the window's own word for "a
+          setting you can change", and this button opens a popover that changes
+          one, so it says the same thing the rail's Settings does.
+         
+          A node rather than a path: `Gear` is a filled silhouette and cannot be
+          nested inside a stroked svg of a different viewBox -- see the note on
+          `glyph` in `IconRail`, which has the same constraint.
+        */}
+        <Gear />
       </button>
 
       {mounted && (
@@ -200,11 +203,29 @@ export function ToolBudgetControl({
               </button>
             ))}
           </div>
+          {/*
+            The sentinel, on its own row rather than as a sixth pill above. The
+            row is a set of numbers and this is the one answer that is not a
+            count -- and six equal widths in a 232px popover would leave it 31px,
+            which "No limit" does not fit in. Zero on the wire means no limit;
+            see `AgentSession.set_max_tool_calls`.
+          */}
+          <button
+            type="button"
+            className={`budget-preset-none${value === 0 ? " is-active" : ""}`}
+            aria-pressed={value === 0}
+            disabled={disabled}
+            onClick={() => onChange(0)}
+          >
+            No limit
+          </button>
           {value !== null && !PRESETS.includes(value) && (
             // A value set from the environment, or a previous session. Shown
             // rather than silently snapped to a preset, so the control never
             // reports a budget the core is not holding.
-            <p className="budget-custom">Currently {value} per turn</p>
+            <p className="budget-custom">
+              {value === 0 ? "Currently no limit" : `Currently ${value} per turn`}
+            </p>
           )}
 
           <div className="budget-custom-row">
@@ -249,7 +270,13 @@ export function ToolBudgetControl({
               {problem}
             </p>
           )}
-          <button type="button" className="linkish budget-done" onClick={onClose}>
+          {/*
+            A real button, not a link. It was `.linkish` -- the same treatment the
+            status bar uses for "Logs" -- which in the footer of a popover read as
+            body text that happened to be clickable rather than as the way out.
+            `.btn` is what every other dismiss in this window is.
+          */}
+          <button type="button" className="btn budget-done" onClick={onClose}>
             Done
           </button>
         </div>

@@ -1,0 +1,754 @@
+
+/* --- conversation list ---------------------------------------------------- */
+/*
+ * An overlay panel, not a column. Beside the rail and over the transcript.
+ *
+ * Three reasons, and the first is the reason the reference itself does not
+ * share:
+ *
+ * - **The transcript is the point of the window.** Docked, an empty list held a
+ *   fifth of a 1200px window open indefinitely to say "no conversations yet",
+ *   and every message in it re-wrapped when it opened. The Files panel had
+ *   already been moved over the transcript for exactly this reason; this is the
+ *   same argument about the same window, and only one of the two panels was
+ *   taking it.
+ * - **It cannot animate otherwise.** A column's width is a grid track, and a
+ *   grid track cannot be transitioned: it snaps, and the text inside it
+ *   re-wraps on every intermediate frame. Floating it means the only thing
+ *   that moves is a `transform`, which is the one property that can be animated
+ *   without the layout underneath it being recomputed. This is why the panel is
+ *   an overlay rather than merely a narrower column -- the animation and the
+ *   layout fix are the same change.
+ * - **The window is resizable and the list is not.** `--list-w` is the
+ *   reference's own sidebar width, which it can afford because it is always the
+ *   same window. Here it is a fixed slice of a column that might be 900px or
+ *   2400px, and at
+ *   the narrow end that is the difference between a transcript that reads and
+ *   one that is a column of hyphenated fragments.
+ *
+ * **It is the rail's other half, not a panel beside it.** The rail is the
+ * collapsed state of one left sidebar and this is the expanded state -- the same
+ * column at two widths -- so the panel starts at x=0 and *covers* the rail
+ * rather than sitting to its right. That is the whole merge: opening it reads as
+ * the strip widening, not as a slab sliding in beside a strip. The cost is that
+ * the rail's own actions pass under it, which is why the panel carries the same
+ * two -- Search and Settings -- in its foot; see `.chatlist-foot`, and the
+ * toggle that closes it in `.chatlist-head`.
+ *
+ * `top: var(--topbar-h)` for the reason `.sidebar` also starts there -- it
+ * would otherwise cover the caption buttons and take the drag region with them.
+ */
+.chatlist {
+  position: absolute;
+  top: var(--topbar-h);
+  /* x=0, over the rail: the two are one sidebar at two widths -- see above. */
+  left: 0;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  /* The panel's own width, not a width picked to avoid truncation. */
+  width: var(--list-w);
+  min-height: 0;
+  /* A fixed width makes `min-width: 0` redundant here, but it is what lets a
+     long conversation title truncate rather than stretch the panel: the title's
+     own rule is `text-overflow: ellipsis` with `min-width: 0`, and that only
+     fires if the flex item above it is allowed to be narrower than its content. */
+  min-width: 0;
+  /* Frosted rather than painted, so the transcript behind it reaches the eye
+     through the blur -- see the glass block in tokens.css. That transmission is
+     what makes it read as a panel *over* the column instead of a second solid
+     one beside the rail; the far-side hairline is the panel's own lit edge now,
+     and it is on the panel's side rather than the rail's because the panel is
+     the surface that arrives. */
+  border-right: 1px solid var(--glass-edge);
+  background: var(--glass-panel);
+  background-image: var(--glass-sheen);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  /* The shadow is what says "this is on top of that" rather than "that is
+     beside this". Without it a floating panel on a near-black UI reads as a
+     column with a misplaced edge -- the same failure the Files panel's scrim
+     exists to solve, solved here with depth instead of a scrim. */
+  box-shadow: var(--shadow-2);
+}
+
+/*
+ * The sidebar's cap: the way back to the rail, and the app's own name.
+ *
+ * This is where the merge is legible. The rail's toggle and the panel's toggle
+ * are the same control in the two states of one sidebar, and they sit at the
+ * same spot -- top-left, `--topbar-h` tall -- so opening the sidebar looks like
+ * the strip widening rather than a different control appearing. The wordmark is
+ * here for the same reason it is in the rail: it is what says which app this is
+ * once the rail (which carried it) is covered.
+ */
+.chatlist-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--topbar-h);
+  flex: none;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--glass-edge);
+}
+
+.chatlist-toggle {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.chatlist-toggle:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.chatlist-toggle:active {
+  transform: scale(0.94);
+}
+
+/*
+ * The sidebar's switch: conversations or files, one at a time.
+ *
+ * A segmented control rather than two more sections in the body, because the
+ * two panes are alternatives rather than a list to scroll through -- and it is
+ * what let the Files tree stop being a surface of its own on the other edge of
+ * the window. Styled like `.mode-group` in the composer: same stadium, same
+ * `--chip` for the chosen half, so "one of these is selected" looks the same in
+ * both places -- except that here the fill is a pill that *slides*, which the
+ * mode group's cannot be: its halves have unequal widths and come from the core,
+ * so a single translated element has nothing fixed to measure against.
+ */
+.chatlist-tabs {
+  position: relative;
+  display: flex;
+  gap: 2px;
+  margin: 10px 12px 2px;
+  padding: 2px;
+  flex: none;
+  border-radius: var(--radius-pill);
+  background: var(--input);
+}
+
+/*
+ * The chosen half, as one element that slides between the two rather than as a
+ * background that swaps on whichever button happens to be active.
+ *
+ * The swap was instant in a way no other state in this window is: the fill
+ * jumped and the eye had to re-find it. One pill, translated along the track,
+ * makes the choice legible *as a movement* -- the eye follows it and arrives
+ * knowing which half won. It is `.chatlist-tabs::before` rather than a child
+ * element because nothing in the markup needs to change when the pane does:
+ * `.chatlist` already carries `data-pane`, and the transform is the whole
+ * difference between the two states.
+ *
+ * `position: relative` on `.chatlist-tab` is what keeps the labels above the
+ * pill: an absolutely positioned pseudo-element paints over in-flow content,
+ * so the buttons are positioned too and, as later siblings, they win. Their
+ * own backgrounds stay transparent -- the pill *is* the background now.
+ *
+ * The width is the track's own arithmetic: the full padding box, minus the 2px
+ * of padding at each end, minus the 2px gap between the halves, halved. The
+ * translate is one pill plus that gap, so the second half needs no second
+ * measurement.
+ */
+.chatlist-tabs::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 6px) / 2);
+  border-radius: var(--radius-pill);
+  background: var(--chip);
+  /* It travels half the control, so it takes the surface-arrival duration
+     rather than the 110ms a colour change would take. */
+  transition: transform var(--motion-base) var(--ease-out);
+  pointer-events: none;
+}
+
+.chatlist[data-pane="files"] .chatlist-tabs::before {
+  transform: translateX(calc(100% + 2px));
+}
+
+.chatlist-tab {
+  /* Positioned so the label paints above `.chatlist-tabs::before`; see the
+     pill's comment above. */
+  position: relative;
+  flex: 1;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  /* Only the ink moves here -- the fill belongs to the pill, and it is
+     transparent in both states -- plus the press. */
+  transition: color var(--motion-fast) ease, transform var(--motion-fast) var(--ease-out);
+}
+
+.chatlist-tab:hover:not(.is-active) {
+  color: var(--fg);
+}
+
+.chatlist-tab:active {
+  transform: scale(0.96);
+}
+
+.chatlist-tab.is-active {
+  /* The fill belongs to the pill now; the button keeps only the ink, which is
+     what says "this label is the chosen one" while the pill says which half. */
+  color: var(--fg);
+}
+
+/*
+ * The row Settings and Search get instead of the tabs.
+ *
+ * Same margins, same padding and the same 32px of height as `.chatlist-tabs`,
+ * so entering one of them does not shift everything below it up by a row's
+ * worth. The two rows are the same slot in the sidebar; only what fills it
+ * changes, and a control that changes places when you use it is a control you
+ * have to hunt for a second time.
+ */
+.chatlist-subhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 12px 2px;
+  padding: 2px;
+  height: 32px;
+  flex: none;
+}
+
+.chatlist-back {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.chatlist-back:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.chatlist-back:active {
+  transform: scale(0.94);
+}
+
+.chatlist-subhead-title {
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+/*
+ * One pane at a time. The chats content is hidden rather than unmounted, so
+ * switching to Files and back cannot remount the list and replay its row
+ * animation; the other panes are only *rendered* when they are wanted, because
+ * a tree is a long list and a settings panel is a set of reads, and neither has
+ * any business existing behind a hidden tab.
+ *
+ * Written as "not Chats" rather than as a list of the three panes to hide it
+ * from: every pane that is not Chats wants the conversations gone, and naming
+ * them one by one means a fifth pane would quietly keep the list on screen
+ * behind itself.
+ */
+.chatlist:not([data-pane="chats"]) .chatlist-new,
+.chatlist:not([data-pane="chats"]) .chatlist-label,
+.chatlist:not([data-pane="chats"]) .chatlist-rows,
+.chatlist:not([data-pane="chats"]) .chatlist-empty {
+  display: none;
+}
+
+/*
+ * Settings and Search have no foot.
+ *
+ * The foot is the rail's actions one rung lower -- Search and Settings -- and it
+ * exists because the sidebar covers the rail while it is open. Both of those are
+ * what you are already looking at when this applies, so they would be controls
+ * that lead to the pane in front of you.
+ */
+.chatlist[data-pane="settings"] .chatlist-foot,
+.chatlist[data-pane="search"] .chatlist-foot {
+  display: none;
+}
+
+/*
+ * The sidebar's foot: the rail's remaining actions, so opening the sidebar --
+ * which hides the rail -- does not put Search and Settings out of reach. They
+ * are `.rail-btn`'s siblings in a row rather than the rail's column, at the same
+ * 38px target and the same disabled rules.
+ *
+ * It is the panel's last child, and `.chatlist-rows` or `.chatlist-empty` above
+ * it takes the free height -- which is what puts it at the *bottom* of the panel
+ * rather than under whatever content happens to be there. Both of those declare
+ * `flex: 1` for that reason, and only one of them is rendered at a time.
+ */
+.chatlist-foot {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 8px 10px;
+  border-top: 1px solid var(--glass-edge);
+}
+
+.chatlist-act {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.chatlist-act:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.chatlist-act:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.chatlist-act:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/*
+ * The panel's own enter and exit.
+ *
+ * A translation, not a width, because the panel's width is fixed and because
+ * translating is the only way to move a panel of `--list-w` over the
+ * transcript without the transcript underneath re-laying-out as it passes. It
+ * slides *from* the left edge, because that is the edge it is anchored to: a
+ * panel that appeared 20px to the left of where it belongs would look like it
+ * was escaping from under the window frame.
+ *
+ * The exit is shorter and accelerating, like every other exit in this file. A
+ * panel that eases out as slowly as it eased in makes closing it feel like
+ * something to wait for.
+ */
+.chatlist[data-state="open"] {
+  /* `--motion-slow`: the sidebar is the one thing that travels a real distance,
+     so it gets the longer duration. Every exit in this file stays fast.
+
+     `--ease-spring` rather than `--ease-out`: a 16px travel decelerating to a
+     stop reads as a surface arriving from somewhere; the same travel arriving
+     with a hair of overshoot reads as a surface *landing*. The overshoot is
+     about 10% of the travel -- under 2px, over a rail whose colour is within
+     6/255 of the panel's -- so it is felt rather than seen. The exit keeps
+     `--ease-in`: overshoot on the way out would read as reluctance. */
+  animation: slide-in-left var(--motion-slow) var(--ease-spring) both;
+}
+
+.chatlist[data-state="closed"] {
+  animation: slide-out-left var(--motion-fast) var(--ease-in) both;
+  /* The panel is still on screen for the length of the exit, and a whole column
+     of click targets left live for 110ms after the user closed it is a
+     region where the next click goes nowhere. */
+  pointer-events: none;
+}
+/*
+ * The scrim behind the sidebar.
+ *
+ * On a near-black UI a dark scrim changes nothing on its own, so the panel
+ * read as a layout break rather than as something opened over the window. The
+ * blur and the light tint are what make it legible.
+ *
+ * `left: var(--rail-w)` and not 0: the rail is the window's one always-on
+ * control strip, and a scrim over it would dim the controls a user reaches for
+ * mid-turn -- Stop and Settings -- behind a backdrop they must first dismiss.
+ * The panel covers that strip itself when it is open, so the scrim's own left
+ * edge is never on screen; stopping at the rail is the arrangement that stays
+ * honest whether or not something later covers it.
+ *
+ * Below the title bar so it cannot cover the caption buttons or take the drag
+ * region with them.
+ */
+.chatlist-scrim {
+  position: absolute;
+  inset: var(--topbar-h) 0 0 var(--rail-w);
+  z-index: 3;
+  background: rgba(8, 8, 8, 0.35);
+  backdrop-filter: blur(1.5px);
+  border: 0;
+  padding: 0;
+  cursor: default;
+}
+
+.chatlist-new {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 12px 12px 10px;
+  padding: 0 12px;
+  height: 40px;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--raised);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-base);
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.chatlist-new:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--border-strong, var(--border));
+}
+
+.chatlist-new:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.chatlist-new:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.chatlist-empty {
+  /*
+   * The empty list takes the free height, and that is what pins the foot.
+   *
+   * Exactly one thing above the foot grows, and which one depends on whether
+   * there are conversations: `.chatlist-rows` when there are, this when there
+   * are not. It was `flex: none` and the foot had nothing to push it down -- so
+   * with an empty list the foot sat 218px into a 712px panel, which reads as the
+   * panel's actions floating in the middle of it rather than as a foot.
+   *
+   * Measured in the window, not read off this file: `.chatlist-rows` is not
+   * rendered at all when the list is empty, which is why the bug only showed up
+   * for a user with no conversations.
+   */
+  flex: 1;
+  padding: 0 14px 8px;
+}
+
+.chatlist-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 12px;
+  overflow-y: auto;
+  min-height: 0;
+  /* Only the rows scroll; the "New chat" button above them stays put. */
+  flex: 1;
+}
+
+/*
+ * The section label above the project groups.
+ *
+ * Small, dimmed, and not a control. It names what the groups below it are, which
+ * is the one thing a heading is for; a row-sized bold line would compete with
+ * the conversation titles it sits above, and those are what the panel is for.
+ */
+.chatlist-label {
+  padding: 8px 12px 8px;
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  flex: none;
+}
+
+/*
+ * The chats pane's one control above the list: the folder it is showing, and the
+ * way to change it.
+ *
+ * It carries `.chatlist-label` for the type and the dimming -- it is still a
+ * heading, and it is still hidden when the pane is not Chats -- and this is what
+ * makes it pressable. A heading is not a button, so the border, the background
+ * and the pointer have to be undone here and then given back on hover.
+ */
+.chatlist-folder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: color var(--motion-fast) ease;
+}
+
+.chatlist-folder:hover {
+  color: var(--fg);
+}
+
+/* Truncated rather than wrapped: a folder's name is one line by definition, and
+   the whole path is on the button's own `title`. */
+.chatlist-folder-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * The project a new chat will be filed under, shown on the New chat button.
+ *
+ * Pushed to the far edge with `margin-left: auto` rather than sat next to the
+ * label: it is the button's state rather than a second action, so it belongs at
+ * the end of the line where the eye finishes. A flex row with two children and
+ * no auto margin pins the first to the start and the second wherever it lands.
+ */
+.chatlist-new-project {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--fg-mute);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 96px;
+}
+
+.chatrow {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  /* `--radius-md`, one step up from the shape it had, because this is a list
+     item rather than a control: the row is as tall as two lines of text and a
+     small corner on a box that shape reads as a table cell. */
+  border-radius: var(--radius-md);
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.chatrow:hover {
+  background: var(--hover);
+}
+
+/*
+ * The selected conversation carries the accent wash rather than the flat
+ * `--chip`, and it is the only row that does. `--chip` is one step off the hover
+ * tone, so "this is the one you are in" and "this is the one under the pointer"
+ * were a shade apart; a tint the hover cannot be is worth more than a step.
+ *
+ * Measured on a painted row rather than reasoned about, and the answer is not the
+ * one this comment used to assume. Composited over `--bg` the wash's bright end
+ * is rgb(39 48 65) and `--hover` is rgb(56 56 56): the selected row is *darker*
+ * than the hovered one, and the two are about 1.1:1 by luminance. Contrast
+ * cannot tell them apart and neither can a greyscale screenshot. What separates
+ * them is that the wash carries hue (220 degrees at that end, turning to 253 at
+ * the far one) and `--hover` is achromatic -- so the tint reads as a different
+ * *kind* of thing, which is the whole argument for it. `layout.test.ts` asserts
+ * the chroma rather than a contrast ratio for exactly that reason.
+ */
+.chatrow.is-active {
+  background: var(--wash);
+}
+
+.chatrow-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 0;
+  background: none;
+  color: var(--fg-mute);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: color var(--motion-fast) ease;
+}
+
+.chatrow-open:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.chatrow.is-active .chatrow-open {
+  color: var(--fg);
+}
+
+.chatrow-title {
+  font-size: var(--text-sm);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chatrow-meta {
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * The row's management control. It replaces the delete button that used to sit
+ * here: rename and duplicate are the operations a row needs too, and three
+ * buttons on a 200px row is a toolbar, not a list.
+ */
+.chatrow-more {
+  flex: none;
+  width: 26px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.chatrow:hover .chatrow-more,
+.chatrow-more:focus-visible,
+.chatrow-more[aria-expanded="true"] {
+  opacity: 1;
+}
+
+.chatrow-more:hover {
+  color: var(--fg);
+}
+
+/*
+ * The inline rename field. Deliberately the same box the row was, so the title
+ * does not appear to jump when editing starts -- the text swaps in place.
+ */
+.chatrow-input {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--input);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.35;
+}
+
+/*
+ * The row menu. Fixed to the window and positioned from the click, so it
+ * behaves like a native menu: it is not clipped by the sidebar's overflow and
+ * it closes on the next click anywhere.
+ */
+.rowmenu {
+  position: fixed;
+  z-index: 40;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  /* `--radius-md`: a floating surface is a container, so it is one step off the
+     control radius rather than sharing it. A menu the same roundness as the
+     button that opened it reads as part of the button. */
+  border-radius: var(--radius-md);
+  /* Frosted, because a menu opens over whatever the user was reading and should
+     say so -- see the glass block in tokens.css. */
+  background: var(--glass-panel-strong);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow: var(--shadow-1);
+}
+
+.rowmenu button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--fg-mute);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.rowmenu button:hover,
+.rowmenu button:focus-visible {
+  /*
+   * `--hover`, not `--raised`. `--raised` is the colour of a *selected*
+   * conversation row, so a hovered menu item was painted exactly like the
+   * conversation the user had chosen -- a menu that looked selected rather than
+   * hovered. Nine other rules in this file use `--hover` for exactly this.
+   */
+  background: var(--hover);
+  color: var(--fg);
+}
+
+/*
+ * An item that cannot be used says so rather than being taken out of the menu.
+ *
+ * The menu is where a user finds out that renaming exists, and a chat with no
+ * messages is exactly when they would come looking for it -- so the row stays and
+ * goes quiet, with the reason on its `title`.
+ */
+.rowmenu button:disabled {
+  color: var(--fg-dim);
+  cursor: default;
+}
+
+.rowmenu button:disabled:hover {
+  background: none;
+  color: var(--fg-dim);
+}
+
+/*
+ * The destructive item, and the only place `--danger` reaches a menu.
+ *
+ * Two things had to be right for this to work at all, and neither was. It is
+ * written `.rowmenu button.rowmenu-danger` rather than `.rowmenu-danger`
+ * because the rule it has to beat is `.rowmenu button`, which is one class plus
+ * one element -- strictly more specific than a bare class, so the original
+ * single-class selector lost no matter how far down the file it sat and Delete
+ * rendered in the same grey as Rename. Measured before the fix:
+ * `color: rgb(122, 122, 122)`, identical to its neighbours.
+ *
+ * And it must come AFTER the hover rule, not merely be specific enough. Both
+ * selectors are now two classes plus an element, so the tie is broken by source
+ * order -- the same hazard `.btn-danger` documents further down. Sitting here,
+ * this wins, which is what keeps Delete red while it is hovered rather than
+ * fading to the neutral label colour.
+ *
+ * The divider is the app's own `--border-soft`, the same token used for every
+ * other separation in this file, and the gap above it is what makes the group
+ * read as "these two are the ordinary actions, this one is not" without a
+ * second look. An item that destroys something should not sit flush against the
+ * harmless ones.
+ */
+.rowmenu button.rowmenu-danger {
+  margin-top: 5px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--danger);
+}

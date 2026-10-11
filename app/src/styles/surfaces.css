@@ -1,0 +1,91 @@
+
+/* --- surfaces -------------------------------------------------------------- */
+/*
+ * A closing overlay must stop eating clicks the instant it is dismissed.
+ * It is still on screen for the length of the exit animation, and a full-window
+ * backdrop left clickable for 150ms after the user closed the dialog is a
+ * window in which the next click goes nowhere.
+ */
+.rowmenu[data-state="closed"],
+.modal-backdrop[data-state="closed"],
+.chatlist-scrim[data-state="closed"],
+.logstrip[data-state="closed"] {
+  pointer-events: none;
+}
+
+.rowmenu[data-state="open"] {
+  animation: menu-in var(--motion-fast) var(--ease-out) both;
+}
+
+.rowmenu[data-state="closed"] {
+  animation: menu-out var(--motion-fast) var(--ease-in) both;
+}
+
+/*
+ * `transform-origin` matters because `.rowmenu` is `position: fixed` and scaled.
+ * Scaling a fixed element about its centre would drag it away from the button
+ * the user clicked; the top-left corner is the anchor.
+ */
+.rowmenu {
+  transform-origin: top left;
+}
+
+.modal-backdrop[data-state="open"] {
+  animation: fade-in var(--motion-base) var(--ease-out) both;
+}
+
+.modelpicker[data-state="open"] {
+  animation: pop-in var(--motion-base) var(--ease-out) both;
+}
+
+.modelpicker[data-state="closed"] {
+  animation: rise-out var(--motion-fast) var(--ease-in) both;
+}
+
+.budget-popover[data-state="open"] {
+  animation: pop-in var(--motion-base) var(--ease-out) both;
+}
+
+.budget-popover[data-state="closed"] {
+  animation: rise-out var(--motion-fast) var(--ease-in) both;
+}
+
+.modal-backdrop[data-state="closed"] {
+  animation: fade-out var(--motion-fast) var(--ease-in) both;
+}
+
+/*
+ * The dialog inside the backdrop rises while the backdrop fades. Two elements,
+ * two animations, because a single opacity change on the pair makes the dialog
+ * look like it is fading rather than arriving.
+ *
+ * `> .modal` covers the search panel too: it is `class="modal search-modal"`,
+ * so `.search-modal` is a width override, not a second kind of dialog. Listing
+ * it separately would be a rule that silently stops applying the day that
+ * component drops the redundant class.
+ */
+.modal-backdrop[data-state="open"] > .modal {
+  animation: rise-in var(--motion-base) var(--ease-out) both;
+}
+
+.modal-backdrop[data-state="closed"] > .modal {
+  animation: rise-out var(--motion-fast) var(--ease-in) both;
+}
+
+.chatlist-scrim[data-state="open"] {
+  /* Matched to the sidebar it dims, so the tint arrives with the panel rather
+     than a beat behind it. */
+  animation: scrim-in var(--motion-slow) var(--ease-out) both;
+}
+
+.chatlist-scrim[data-state="closed"] {
+  animation: scrim-out var(--motion-fast) var(--ease-in) both;
+}
+
+.logstrip[data-state="open"] {
+  animation: strip-open var(--motion-base) var(--ease-out) both;
+}
+
+.logstrip[data-state="closed"] {
+  animation: strip-close var(--motion-fast) var(--ease-in) both;
+}

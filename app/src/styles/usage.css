@@ -1,0 +1,244 @@
+
+/* --- usage dashboard ------------------------------------------------------ */
+/*
+ * A view of `.main`, so it takes the column and scrolls as one thing. The
+ * transcript keeps a narrow measure on purpose; this is the one view that has to
+ * be wide, because a month of bars and a ranked list both stop meaning anything
+ * once they are squeezed into a message column.
+ */
+.usage {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 22px 24px;
+}
+
+.usage-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.usage-head h2 {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+/* The window picker: the same sliding-pill language as the sidebar and the
+   settings tabs, because it is the same kind of choice. */
+.usage-periods {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--input);
+}
+
+.usage-period {
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.usage-period:hover:not(.is-active) {
+  color: var(--fg);
+}
+
+.usage-period.is-active {
+  background: var(--chip);
+  color: var(--fg);
+}
+
+/* The way out goes to the far end: it is an exit, not another period. */
+.usage-head > .btn {
+  margin-left: auto;
+}
+
+.usage-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.usage-tile {
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.usage-tile-label {
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* The largest type in the window, and the scale's largest is 16px -- so this
+   is the top of it rather than a number of its own. */
+.usage-tile-value {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  /* Digits that do not shift as the number changes, so the row does not jitter
+     when the period is switched. */
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-tile-note {
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+}
+
+.usage-figure {
+  margin: 0 0 18px;
+  padding: 14px 16px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.usage-figure figcaption {
+  margin-bottom: 10px;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.usage-busy {
+  color: var(--fg-mute);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.usage-empty {
+  margin: 0;
+  color: var(--fg-mute);
+  font-size: var(--text-sm);
+}
+
+/*
+ * The day bars.
+ *
+ * Fixed height with the fills grown from the bottom, so the chart does not
+ * resize when the period changes from a quiet week to a busy one -- the numbers
+ * move, the frame stays where it was.
+ */
+.usage-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 140px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.usage-bar {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-end;
+  height: 100%;
+}
+
+.usage-bar-fill {
+  width: 100%;
+  min-height: 2px;
+  border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+  background: var(--accent);
+  transition:
+    height var(--motion-base) var(--ease-out),
+    background var(--motion-fast) ease;
+}
+
+/* A day with nothing still gets a mark. An absent bar reads as missing data
+   rather than as a day off. */
+.usage-bar-fill.is-empty {
+  background: var(--border);
+}
+
+.usage-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+}
+
+.usage-keys {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.usage-key-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: var(--text-sm);
+}
+
+.usage-key-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.usage-key-id {
+  color: var(--fg-mute);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+}
+
+.usage-key-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-key-track {
+  display: block;
+  height: 6px;
+  margin: 4px 0 3px;
+  border-radius: var(--radius-pill);
+  background: var(--input);
+  overflow: hidden;
+}
+
+.usage-key-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.usage-key-meta {
+  display: flex;
+  justify-content: space-between;
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+}
+
+.usage-key-failed {
+  color: var(--danger);
+}
+
+.usage-since {
+  margin: 0;
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+}

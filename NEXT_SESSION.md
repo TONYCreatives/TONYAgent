@@ -1,7 +1,100 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-10-03, after the seventh pass — Permission and
+**Last updated:** 2026-10-11, after Phase 4 of the tool port — see
+"`ask_user_question` and `present`" at the end, and read "The tool system, as it
+stands" in §0 first. The agent can now reach the *user* mid-turn: one tool asks
+a question and waits for an answer, one shows something and waits for it to be
+read, and the window answers both through one new method (`user.respond`). One
+event pair (`user.asked`/`user.resolved`), one dialog, one timeout, and the two
+tools fail differently on purpose — a question nobody answers is a failed call,
+a presentation nobody answered was still delivered. **34 tools.**
+**Was:** 2026-10-11, after the tool-system and planning passes — see the
+last two sections, "The tool system" and "The plan and the goal", and read
+"The tool system, as it stands" in §0 first. Tools are declared once instead of
+twice, a malformed call is refused
+in words the model can act on instead of failing inside a tool, the independent tool
+calls in one message run at the same time, `read`/`write`/`edit` are the file tools
+(`read` takes a line window, `edit` refuses an ambiguous match), `read_image` and
+`web_fetch` are new, long-running commands can be started as background jobs with
+`job_list`/`job_output`/`job_kill`, and a `ToolResult` carries the one-line
+`summary` a tool card needs, and the agent keeps a task list and a goal that are
+saved with the conversation. **32 tools.**
+**Was:** 2026-10-10, after the tab strip -- see "The tab strip" at the
+end. The title bar is a strip of tabs now: one per open chat, an X on each, a "+"
+after them, and a right-click for Rename and Close tab. Rename is refused on a
+chat with no messages, because the core names a chat from its first message.
+**Was:** 2026-10-10, after the title bar's tab -- see "The tab, and what
+deleting a chat left behind" at the end. The open chat's name is a browser tab now
+-- the bar's full height, square at the bottom -- and deleting the open chat no
+longer leaves the window on no conversation at all, which was losing every message
+typed afterwards.
+**Was:** 2026-10-10, after the folder system -- see "One folder at a
+time" at the end. One project folder at a time, chats bonded to folders, and
+changing the folder takes the open chat with it. Following the feature's own
+symptom found something much larger: **no reply from the core had ever reached
+the window** since the pywebview migration.
+**Was:** 2026-10-10, after the sidebar's foot -- see "The sidebar's foot"
+at the end. The settings button was not at the bottom of the sidebar because the
+only element that could push it there is not rendered when the conversation list
+is empty -- and Clear, a trash glyph that read as "delete this chat", is gone.
+**Was:** 2026-10-10, after the rail's mark -- see "The rail's mark is
+gone" at the end. The app's glyph was being drawn twice, 22px in the title bar's
+corner and 32px in the rail, and the rail's copy was a leftover from the move to
+the corner. The rail's own test asserted it *drew* the mark, so it was green the
+whole time the window had two logos.
+**Was:** 2026-10-10, after the app's shortcut -- see "The shortcut, and
+one window instead of two" at the end. Making a shortcut meant looking at what it
+would open, which turned out to be two windows: the app had its own console.
+The launcher starts `pythonw` now, and the host keeps its log in a file instead.
+**Was:** 2026-10-10, after the window's corners and the settings
+gear -- see "The window's corners, and the settings gear" at the end. The
+corners were square while the code that rounds them ran without complaint; the
+gear was an outline that read as a sun. Both are fixed and both were measured.
+**Was:** 2026-10-10, after the app's mark moved to the window's
+top-left corner -- see "The mark moved to the window's corner" at the end. The
+sidebar's head is the toggle alone now, and the title bar's indent is the
+mark's own width rather than a padding.
+**Was:** 2026-10-10, after the move out of Tauri -- see
+"Tauri -> pywebview: the shell is Python now" at the end. The Rust crate, the
+frozen sidecar and the Windows SDK are gone. The window is
+`python -m tonyagent.window`, the core is its child process, and the frontend
+reaches it through `window.pywebview.api` instead of `invoke`. The JSONL
+protocol, every component and all 21 stylesheets are unchanged.
+**Was:** 2026-10-05, after the modal's scrollbar — see
+"설정 모달의 스크롤바가 모서리 밖으로 나가던 것" at the end. The dialog's
+scrollbar painted 7px of its thumb outside the panel's rounded corners at
+either end of its travel; the track is now inset there. That fix costs 7.2%
+of scroll-fraction accuracy, which is stated plainly in that section.
+**Was:** 2026-10-05, after the settings panel's vertical
+rhythm — see "설정 패널: 필드 두 개가 붙어 있던 것" at the end. The Base URL
+field sat 0px under the provider dropdown, reading as one field with a rule
+across it; `.settings-row ~ .settings-row` now puts the same 10px between two
+fields that the panel already puts between a note and a field.
+**Was:** 2026-10-05, after the layout sweep — see
+"레이아웃 스윕: 읽기 칼럼 하나, 그리고 설정 패널" at the end. The composer and
+the messages now start on one text column (`--column-inset`), the settings
+panel's fields share one inset and one shape, the status bar's separators
+draw something, and the Logs strip sits in the composer's column.
+**Was:** 2026-10-04, after the screenshot tool, paste-to-queue
+and a real CSP bug that had been breaking every attachment preview — see
+"스크린샷 도구, 붙여넣기 미리보기, 그리고 깨져 있던 CSP" at the end.
+`take_screenshot` lets the model see the screen it runs on; pasting an
+image queues it; and `tauri.conf.json` had no `img-src` at all, so no
+data: preview had ever rendered.
+**Was:** 2026-10-04, after the centred project-folder button — see
+"가운데 폴더 버튼" just above section 2. The empty-chat panel now names the
+project folder in the middle and offers one Change... button; leaving it
+alone keeps the folder you had.
+**Test totals:** Python unit **919 passed / 10 skipped** (`-m "not docker"`),
+TypeScript **578 passed** (98 suites), and `scripts/e2e_all_tools.py --fast` **42
+checks, 0 failed**. `tests/unit/test_build_scripts.py` was rewritten for the
+one-stage build, and the flake it was documented as having turned out to be a
+millisecond-wide margin in its own fixture -- see the end of this file.
+PowerShell against a synthetic tree and nothing in this pass touches it.
+**Was:** 2026-10-04, after the visual design sweep — see "Pass: the
+visual design sweep" for every current value and where it came from
+**Was:** 2026-10-03, after the seventh pass — Permission and
 Thinking moved into the settings panel as one shared menu, and the conversation
 panel got the scrim that made it read as an overlay (see "The seventh pass"
 at the end)
@@ -10,17 +103,37 @@ permission bar above the composer (see "The sixth pass" near the end)
 **Was:** 2026-10-02, after the fourth UI pass — rounded window corners
 from DWM, and the conversation list turned from a docked column into an
 animated overlay panel (see "The fourth UI pass" near the end)
-**Status:** Core is UI-independent and fully tested. **The Tauri app builds,
-launches, spawns the core sidecar, and every control in it is wired to a real
-protocol method.** Everything green: **Python 609 passed, TypeScript 411 passed,
-Tauri MSI + NSIS installers produced.**
+**Status:** Core is UI-independent and fully tested. The shell is **pywebview**
+(`python -m tonyagent.window`), which starts the core as a child process and talks to
+it over the JSONL protocol; `app/` is the React page it renders. The Tauri crate and
+the Tkinter UI are both **gone from the source** — their directories are deleted in
+this working tree, not merely unused.
+Re-measured 2026-10-11: **Python unit 919 passed / 10 skipped** (`-m "not docker"`),
+**TypeScript 578 passed** (98 suites), `scripts/e2e_all_tools.py --fast` **42 checks,
+0 failed**, and **32 tools**.
 
-`pytest tests -q` reports **590 passed, 7 skipped** with Docker Desktop running.
-With the daemon stopped it is **501 passed, 1 failed, 7 skipped**, and the one
-failure is `tests/integration/test_docker_backend.py::test_start_ping_exec_stop`.
-That is the environment, not a bug: the test starts a real container, and it was
-written off as unrunnable here until the daemon was actually started. Both
-numbers are the same suite.
+**Read this before you read the diff.** The working tree is far ahead of the last
+commit, and **most of that is not from any one pass**. `git log -1` is `a2e0421`; on
+top of it sit the whole Tauri → pywebview migration, the removal of the Tkinter UI
+(`src/tonyagent/ui/` and `src/tonyagent/__main__.py` are deleted), the usage ledger,
+named API keys, the window host — and then the tool-system and planning passes
+recorded at the end of this file. `git status --short` lists 180 entries, and
+`git diff --shortstat` reports 140 files changed with roughly 12,900 insertions and
+19,700 deletions (at the time of writing — re-run it), so do not read it as
+one change: run `git log -1 --stat` first, and treat the sections below as the account
+of what each pass did. **Nothing in the last two passes is committed.**
+
+**The 590/501 figures below are from the 2026-10-03 run and were NOT re-measured
+this pass** — `pytest tests -q` needs Docker Desktop, which was not running here.
+What was re-measured is `pytest tests/unit -q`: **616 passed, 7 skipped**. Treat
+the integration numbers as historical until someone with the daemon re-runs
+them.
+
+For the record, from that earlier run: `pytest tests -q` reports **590 passed, 7
+skipped** with Docker Desktop running. With the daemon stopped it is **501 passed,
+1 failed, 7 skipped**, and the one failure is
+`tests/integration/test_docker_backend.py::test_start_ping_exec_stop`. That is the
+environment, not a bug: the test starts a real container.
 
 Ten phases of work landed since the MSVC blocker was cleared:
 
@@ -37,7 +150,8 @@ Ten phases of work landed since the MSVC blocker was cleared:
 | 9 | The thinking panel, and an effort dial chosen per model |
 | 10 | A conversation can be named, copied, and found again |
 
-The Tkinter UI is untouched throughout and still the mature path. See
+These phases were written against the Tkinter UI, which is no longer in the source:
+the shell is `tonyagent.window` (pywebview) and the Tkinter modules are gone. See
 sections 1.3-1.6 and 1.13-1.17 for what each phase changed and why.
 
 ---
@@ -48,30 +162,46 @@ sections 1.3-1.6 and 1.13-1.17 for what each phase changed and why.
 
 ```bash
 cd C:\Users\iig2y\Desktop\TONYAgent
-python -m tonyagent          # Tkinter GUI
 
-# Tauri app (needs the sidecar built once first)
-python scripts/build_sidecar.py
-cd app && npm run tauri:dev  # or: npm run tauri:build
+# The window. The core is its child process, so there is no sidecar to build.
+python -m tonyagent.window
+
+# The frontend alone, against a dev server
+cd app && npm run dev
 ```
 
-Both UIs are clients of the same core. The Tkinter one is the mature path; the
-Tauri one is new and thinner (chat, sandbox status, confirmations).
+`Start TONYAgent (Prebuilt).bat` is the entry point worth having: it rebuilds the
+frontend when it is behind, checks that `pywebview` is installed, and then opens the
+window. `TONYAgent.lnk` (or `scripts\make_shortcut.ps1`) is that same batch file.
+
+**This section used to say `python -m tonyagent` and `npm run tauri:dev`.** Neither
+is a command any more: the package has no `__main__.py` (`python -m tonyagent`
+exits with "cannot be directly executed" -- a stale `.pyc` for the deleted file is
+still in `__pycache__`), and Tauri was removed when the shell became pywebview. The
+Tkinter GUI is gone from the source entirely; the six `Tkinter` mentions left in
+`src/` are comments explaining what used to depend on its `after()` loop.
 
 ### How to verify (run all of these before trusting a change)
 
 ```bash
 python -m compileall -q src            # syntax
-python -m pytest tests -q              # 590 passed, 7 skipped (Docker up)
-                                         # 501 passed, 1 failed (Docker down), 7 skipped
-python scripts/check_all.py --fast     # 3 checks incl. GUI launch
-python scripts/e2e_all_tools.py --fast # live tool check incl. fail-closed refusals (no sandbox needed)
+python -m pytest -m "not docker" -q    # 919 passed, 10 skipped -- no Docker needed
+python -m pytest tests -q              # adds tests/integration; needs Docker Desktop
+python scripts/check_all.py --fast     # compileall + the FULL pytest run -- see the note below
+python scripts/e2e_all_tools.py --fast # 42 checks: every tool, incl. fail-closed refusals (no sandbox needed)
 python scripts/e2e_all_tools.py        # same + real Docker sandbox + browser round-trip
-python scripts/e2e_no_docker.py        # 17/17 with the daemon STOPPED: browser + files work, exec refused
 
-cd app && npm test                     # 383 passed (protocol, reducer, markdown, components, stylesheet cascade; no Rust needed)
+cd app && npm test                     # 578 passed (protocol, reducer, markdown, components, stylesheet cascade)
 cd app && npm run typecheck            # whole app, incl. React components
 ```
+
+**`scripts/check_all.py --fast` is not a no-Docker check, and it is 2 checks rather
+than 3.** It runs `compileall` and then the *whole* pytest run, integration tests
+included, so without Docker Desktop it reports `1 failed` — that is
+`tests/integration/test_docker_backend.py::test_start_ping_exec_stop`, which is the
+environment and not a regression. The GUI launch is exactly what `--fast` skips, so
+"3 checks incl. GUI launch" was never true of this invocation. Prefer the two pytest
+commands above: they differ only in whether the daemon is needed, and they say which.
 
 `npm run build` runs `tsc --noEmit && vite build`, so a type error in a
 component fails the build. `npm test` is `tsc -p tsconfig.test.json && node
@@ -94,20 +224,29 @@ same way and reads instantly — the whole suite runs in about 2s.
 
 **One test in the TypeScript suite is flaky on Windows.** The four
 `ComposerAttach` strip tests ("a text file is named rather than previewed",
-"picking one shows it before anything is sent", "it can be taken back", "the
-remove button says which file it removes") fail in roughly one full run out of
-five, with `0 !== 1` on the `.attach-item` count — the async file read has not
-landed yet. Confirmed pre-existing: it reproduces with every change of the last
-two passes stashed. Re-run before believing it, and do not chase it.
+~~`ComposerAttach` drops in roughly one full run out of five, with `0 !== 1` on
+the `.attach-item` count — the async file read has not landed yet.~~ **Fixed.**
+The cause was in the test, not the component: `click()` dispatched the event and
+returned before React had flushed the resulting state, so the assertion read the
+pre-update tree. `test-render.ts` now flushes inside `act` before handing back.
+Four consecutive full runs are 444/444.
 
-**A test that reads `styles.css` must strip the reduced-motion block too.**
+**Read the stylesheet through `stylesheet.ts`, never from `styles.css`.**
+`styles.css` is now an entry that `@import`s 21 modules out of `app/src/styles/`
+and declares no rules itself, so reading it directly finds an import list and
+nothing else. `readStylesheet()` returns the concatenation in cascade order and
+`readStylesheetSource()` the same with comments stripped — those are the only two
+readers, and all five call sites use them.
+
+**A test that reads the stylesheet must strip the reduced-motion block too.**
 `audit_reduced_motion.py` requires every animation to be cancelled under
 `@media (prefers-reduced-motion: reduce)`, so `.sidebar`'s last declaration
 *is* `animation: none`. A reader that only removes comments resolves `.sidebar`
 to its animation and fails any assertion about its `top`. Strip both; see
 `reducedMotion.test.ts` for the pattern.
 
-**Run `e2e_no_docker.py` with the daemon actually stopped.** It prints a
+**Run the suite with the daemon actually stopped** (`e2e_no_docker.py` did
+exactly this; the script is gone and its result is recorded here). It prints a
 warning and still passes if a daemon is reachable, so a green run against a
 running Docker proves nothing about the thing it exists to check.
 
@@ -128,19 +267,77 @@ command timeout. Use `--fast`, then run the launch check separately.
 ### Architecture in one picture
 
 ```
-        Tkinter UI  ----------+
-                              |
-        Tauri UI  ------------+-->  AgentSession  -->  events
-        (headless/server.py)          (core/session.py)  (core/events.py)
-                                            |
-                                            +--> LLMClient  (api/)
-                                            +--> providers  (providers/)
-                                            +--> tools      (tools/)
-                                            +--> sandbox    (sandbox/)
+        window/ (pywebview)  — owns the native window and the core child process
+              ^
+              |  window.pywebview.api  +  window.__tonyAgent.onFrames(...)
+              v
+        app/ (React page, built by Vite, rendered in the webview)
+              ^
+              |  JSONL on stdin/stdout
+              v
+        headless/server.py  ---->  AgentSession  ---->  events
+        (the RPC surface)          (core/session.py)    (core/events.py)
+                                         |
+                                         +--> LLMClient   (api/)
+                                         +--> providers   (providers/)
+                                         +--> tools       (tools/)
+                                         +--> task_state  (core/task_state.py)
+                                         +--> sandbox     (sandbox/)
 ```
 
 The core imports **no GUI toolkit**. That is enforced by a test, not by
 convention — see §6.
+
+### The tool system, as it stands
+
+**34 tools.** The invariants below are the ones that fail *silently* when broken, so
+they are worth reading before touching anything in `src/tonyagent/tools/`.
+
+* **A tool is declared once**, on its `Tool` subclass (`tools/base.py`, `describe()`).
+  `tools/schemas.py` *derives* the advertised list from the registry instead of
+  restating it; it used to be a hand-written second copy of all 23 declarations, and
+  a tool missing from it was a tool the model was never told about. Because the
+  derivation is lazy, **the import order in `tools/__init__.py` is load-bearing** —
+  reaching for `ALL_SCHEMAS` before the tool modules are imported binds an *empty*
+  list, which raises nothing anywhere and presents as a model that refuses to act.
+* **`validate_args` validates and never coerces** — type, enum and unknown keys,
+  honouring each schema's `additionalProperties`. It does **not** recurse into array
+  `items` yet, so a tool with an array argument validates its own items (see
+  `planning_tools.TodoWriteTool`).
+* **The registry is what runs a tool; `schemas.py` is what advertises it.** The
+  tripwire in `tests/unit/test_tool_wire_format.py` asserts the Build-mode count, so
+  adding a tool means changing one number on purpose rather than by accident.
+* **Mode and permission intersect** (`core/modes.py`). The orchestrator enforces it;
+  filtering the schema only advises the model.
+* **Tool cards need a *string*.** The window reads `result.summary` first (then
+  `message`, `output`, `stdout`, `error`) and only accepts a string — so a tool whose
+  `output` is a structured dict must set `summary` or it renders a blank card with no
+  error anywhere to say so.
+* **Adding a tool needs no frontend work.** Rendering is generic over the payload;
+  `test_tool_wire_format.py` and `test_tool_summary_line.py` cover the two contracts
+  that matter.
+
+**Open items, roughly in the order they are worth picking up:**
+
+1. **Five tools declare `requires_confirmation = True` with `destructive = False`,**
+   and the prompt gate is `destructive and requires_confirmation` — so `http_request`,
+   `browser_navigate`, `browser_click`, `browser_type` and `execute_js` can **never
+   prompt**. Either intended (confirmation reserved for destructive things) or inert
+   by accident; either way, fixing it starts five tools prompting.
+2. **Background jobs are host-only.** `execute_command(background=true)` is refused
+   inside the sandbox, because the container is driven by a one-shot `exec_command`
+   RPC that keeps no handle to poll. Making it work means new RPC methods inside the
+   Docker image (`docker/sandbox/rpc_server.py`) and a container rebuild.
+3. **`validate_args` does not recurse into array `items`**, so an
+   `additionalProperties: False` inside an item is advertised and unenforced.
+4. **`exit_plan_mode` is not built** — it needs an approval affordance that is not the
+   destructive-tool dialog, and `set_mode` clears the conversation, so approving a
+   plan would delete the plan. The full reasoning is at the end of this file.
+5. **The remaining phases** from the original port plan: **5** (subagents —
+   where a `ToolContext` to replace the
+   `folder_manager` / `tool_orchestrator` globals is meant to be built), **6**
+   (`workflow`), **7** (skills). Phase 4 (`ask_user_question`, `present`) is
+   done — see the last section.
 
 ---
 
@@ -681,6 +878,184 @@ unchanged, which is what made moving it safe.
 
 ---
 
+## T 로고: 단말을 각지게 다시 (2026-10-04)
+
+**요청**: "이미지로 하니 깔끔하지 않아, 그냥 알파벳 T 로고를 당신이 SVG로
+만들어." 이전 패스에서 T로 바꾸기는 했었지만, 이번에는 다시 그렸고
+**근거가 되는 방식도 다르게** 했습니다.
+
+### 무엇을 바꿨나
+
+```
+이전 (stadium)          지금 (flat)
+crossbar 729 x 132      700 x 176      x=162
+  rx 66                   rx 0
+stem     163 x 600      204 x 512      x=410
+  rx 81                   rx 0
+ground   1024 rx 139    그대로
+```
+
+색은 그대로입니다 (`#2f6feb`). 바뀐 것은 `rx`와 두 개의 치수뿐입니다.
+
+후보 여섯 개(|stadium / flat 3안 / soft corner / bold)를 cairo로 그려서
+16·20·24·32·48·96px로 래스터를 읽어 보고 골랐습니다. 눈으로 고른 것이
+아니고, **픽셀을 읽은 것입니다.**
+
+### 제가 잘못 쓴 이유 (직접 고쳤다)
+
+첫 문서에 "stem이 hairline으로 사라진다"고 적어 넣었는데, **다식이 틀렸습니다.**
+163/1024 = 2.55px는 16px에서 solid 2px core로 살아남습니다(`.tmp/taskbar.py`
+로 실측). 실제로 지운 항목은 따로였습니다: 132셀 지름이 `rx 66`을 쓰면
+**안내의 상자가 아니라 정리되어** 16px에서 bar가 lozenge로 보입니다.
+
+**`icon.svg`, `AppMark.tsx`, `AppMark.test.tsx`, `PROJECT_SUMMARY.md`의
+이유 문장을 전부 측정 결과로 고쳤습니다.** 틀린 이유는 문서에도 남기고
+싶어서, 이유 문장 자체를 "제가 틀렸던 부분"으로 남겼습니다.
+
+### `--accent`는 움직이지 않았다
+
+`tokens.css`에 "88.7%"가 적혀 있었는데 15개 래스터를 다시 세니 **99.25%**
+입니다(평평한 모서리는 2px로만 안티에일리어스하므로). **토큰 값 자체는
+그대로** — `#6393f0` 여전히 ramp 위에 있고 `--bg` `#1a1a1a` 위 5.77:1.
+
+부수적으로 문서에 적혀 있던 **3.70:1도 틀렸습니다.** 다른 `--bg`를 재서
+그린 값이었고, `--bg` `#1a1a1a` 기준으로는 3.81:1입니다. 고쳤습니다.
+
+### exe에 묵은 아이콘이 남아 있었다 (이게 진짜 버그)
+
+`npm run tauri icon`으로 15개 파일을 새로 만들고 `tauri build`까지 돌렸는데,
+**exe 안의 아이콘은 옛 것이었습니다.** exe에서 RT_GROUP_ICON/RT_ICON을 열어
+256×256 PNG를 꺼내 바인딩 파일과 픽셀 단위로 비교해서 발견했습니다.
+
+원인은 두 가지입니다:
+
+  * `target/release/build/*/out/resource.rc`의 타임스탬프가 멈춰 있고,
+  * `build.rs`의 `rerun-if`가 icon 파일을 보지 않습니다.
+
+즉 **`icon.ico`만 바꿔도 exe는 이전 생성을 계승합니다.**
+`touch src-tauri/build.rs` 후 빌드해야 합니다. 앞으로 아이콘을 그릴 때마다
+이 단계를 빼먹지 마십시오.
+
+체커: exe의 리소스를 파싱해서 256 PNG를 꺼내 `icons/`의 파일과
+`ImageChops.difference`로 비교. 스크래치로 `.tmp/exe_vs_ico.py`.
+
+### 검증
+
+```
+npm test                exit 0   462 passed / 0 failed
+npx tsc --noEmit        exit 0
+pytest tests/unit -q    exit 0   592 passed / 7 skipped
+                        (test_build_scripts.py 제외 — 매번 다른 4/24 실패,
+                         원본 HEAD worktree에서도 재현)
+tauri build             exit 0   MSI + NSIS
+exe 리소스              0 differing px vs icon.ico[256]
+레일 (CDP, 패키징드)    rx=0, x=162/410, 32px, currentColor
+```
+
+**뮤테이션 검증** 두 개: stem `y` 344 → 330(seam 어긋남), `rx` 0 → 40.
+둘 다 잡혔습니다.
+
+### 아직 손대지 않은 것
+
+* `ios/` `android/` 아이콘 폴더는 디스크에 있습니다(untracked, 이전 패스 경유).
+* 커밋하지 않았습니다.
+
+---
+
+### 가운데 폴더 버튼 (2026-10-04)
+
+**요청**: "새 채팅에서 폴더 바꾸는 버튼이 화면 가운데에 있게 새로 만듭시다.
+바꾸지 않으면 이전에 했던 프로젝트 폴더를 그대로 사용합니다."
+
+`MessageList`의 빈 화면(첫 실행 패널)이 `.empty`이고, 이 패널은 이미
+가로·세로 가운데 정렬입니다. 거기에 폴더 한 줄을 넣었습니다.
+
+```
+LiveProject  [Change...]
+```
+
+폴더가 있으면 이름 + **Change...**, 없으면 **No project folder** +
+**Choose folder...**. 전체 경로는 이름의 `title`입니다.
+
+### "바꾸지 않으면 그대로"는 이미 참이었고, 이제 보인다
+
+core는 마지막 폴더를 `config.toml`에 쓰고 기동 시 되읽습니다
+(`folder/manager.py::_restored_folder`), `state`가 그 경로를 그대로
+보내므로 `App.project`는 재시작 후에도 채워집니다. `startNewChat`도
+`project !== ""`면 아무것도 묻지 않습니다.
+
+즉 **요청의 두 번째 절반은 동작이 아니라 표시에 관한 것이었습니다.**
+폴더가 있는지도 모른 채 빈 화면이 "어디서 일하는지"를 말하지 않고 있었고,
+그 사실을 확인할 곳이 설정 패널 안에뿐이었습니다. 이제 시작 화면에 있습니다.
+
+### 규칙을 없애지 않고 좁혔다
+
+빈 화면에는 **포커스되는 것이 하나도 없다**는 규칙이 있었고, 테스트가 강제하고
+있었습니다. 요청대로 버튼을 넣으려면 깨야 했습니다. 지운 게 아니라 좁혔습니다:
+
+| | 이전 | 지금 |
+|---|---|---|
+| 포커스 가능 | 0개 | `button.btn` **정확히 1개**, 이름까지 확인 |
+| 태그 allowlist | `button` 없음 | `button` 추가 + 개수 1개까지 확인 |
+| 핸들러 스캔 | 0개 | `["onClick="]` **정확히 1개** |
+
+"0개"와 "1개, 그 하나가 폴더"는 두 번째 컨트롤이 생겼을 때 똑같이 실패합니다.
+후자는 *어느* 컨트롤인지 말할 수 있습니다.
+
+### 제가 틀린 것 두 가지 (테스트가 잡았습니다)
+
+  * 폴더 이름을 `<span>`으로 썼는데 `span`이 allowlist에 없습니다. **맞습니다.**
+    스캔의 존재 이유가 React 핸들러를 실을 수 있는 태그 catching이고 span이
+    그런 태그입니다. allowlist를 넓혀 컴포넌트에 맞추는 대신 `<p>`로 바꿔
+    **테스트의 약속을 손대지 않았습니다.**
+  * 클릭 테스트가 버튼을 눌렀는데 호출이 0번. `canChooseFolder`를 넘기지
+    않아서 **버튼이 제대로 disabled**였습니다. 컴포넌트가 맞고 테스트가 틀렸습니다.
+
+### 검증
+
+```
+npm test                exit 0   471 passed / 0 failed  (462 -> 471)
+npx tsc --noEmit        exit 0
+pytest tests/unit -q    exit 0   592 passed / 7 skipped
+tauri build             exit 0   MSI + NSIS
+
+패키징드 빌드, CDP 실측 (1200x800)
+  name          "LiveProject"
+  title         C:\Users\iig2y\Desktop\LiveProject
+  button        "Change..."   disabled=false
+  centreOffset  0             (패널 가로중심과 정확히 일치)
+  focusable     ["button.btn"]
+
+"Clear conversation"(= 새 채팅) 클릭 후
+  folder  LiveProject 그대로, 질문 없이 생성됨
+  대화 목록의 새 항목이 LiveProject 그룹 아래에 생성됨
+```
+
+**뮤테이션 6건** 전부 잡힘: 패널에 두 번째 버튼 / 워드마크에 핸들러 /
+`.empty`에 `tabIndex={-1}` / 가운데 버튼 미배선 / 골라도 미바인딩 /
+취소 시 폴더 삭제.
+
+**배선은 jsdom에서 검증했습니다.** 위에서 CDP로 못 본 것을 테스트로 막았습니다.
+`App`의 `pickProject` 주입점(원래 "New chat"용 seam)이 아무 테스트도 쓰지 않고
+남아 있었는데, 가운데 버튼이 그 다이얼로그에 도달하는지가 바로 그 지점입니다.
+
+```
+버튼이 배선 안 됨         -> 3개 실패
+골라도 sandbox.start 없음 -> "binds what comes back" 실패
+취소하면 폴더가 지워짐    -> "cancelling changes nothing" 실패
+```
+
+`picked === [FOLDER]`, `sandbox.start` 호출, 취소 시 폴더 유지까지 셉니다.
+
+**그래도 못 한 것**: 사람이 마우스로 **진짜 OS 다이얼로그를 열어** 폴더를 고르는
+것. 그건 자동화로 확인할 수 있는 종류가 아닙니다. 위 테스트는 다이얼로그를
+stub으로 대체한 것이고, 실제 창이 뜨고 선택한 경로가 샌드박스에 붙는 마지막
+한 뼘은 사람이 봐야 합니다.
+
+### 커밋하지 않았습니다
+
+---
+
 ## 2. The wire protocol (contract for the future UI)
 
 Newline-delimited JSON on the sidecar's **stdout**. Logs go to **stderr** —
@@ -797,12 +1172,14 @@ app/
     TopBar.tsx              the window's own title bar: drag region, tab, caption
     WindowControls.tsx      the three caption buttons, presentational only
     useWindowControls.ts    caption actions, the system menu, F10; null in a browser
-    styles.css              dark-only tokens sampled from the Freebuff app
+    styles.css              the entry: @imports the modules below, no rules
+    styles/                 one module per surface, in cascade order (21 files)
+    stylesheet.ts           readStylesheet / readStylesheetSource — the readers
     backend.ts              the protocol client
     test-dom.ts             installs jsdom on the globals; imported first
     test-render.ts          mount / act / type / press / query helpers
     layout.test.ts          reads the stylesheet's cascade, not its text
-    *.test.ts, *.test.tsx   341 tests, all run by `npm test`
+    *.test.ts, *.test.tsx   440 tests, all run by `npm test`
   src-tauri/
     tauri.conf.json         productName, window, CSP, externalBin, icons
     build.rs                app_manifest: the ACL name for the one app command
@@ -833,7 +1210,7 @@ pieces that have to agree:
 
 | where | what |
 | --- | --- |
-| `styles.css` | `--motion-fast` / `--motion-base` / `--ease-out` / `--ease-in`, the `@keyframes`, and one `[data-state="open"\|"closed"]` pair per surface |
+| `styles/motion.css` + `styles/reduced-motion.css` | `--motion-fast` / `--motion-base` / `--ease-out` / `--ease-in`, the `@keyframes`, and one `[data-state="open"\|"closed"]` pair per surface. Split across two modules because the cancellation block has to come last |
 | `useDelayedUnmount.ts` | keeps the node mounted after the close, so there is something to animate out of; `useLastValue` keeps what it was showing |
 | `Overlay.tsx` | wraps the three backdrop surfaces and publishes `data-state` |
 
@@ -1006,7 +1383,7 @@ a turn that looks finished is worse than a turn that looks still.
 
 The block is a hand-written list, so it is now checked rather than trusted.
 `app/src/reducedMotion.test.ts` fails if any animated selector in
-`styles.css` is not covered, and `scripts/audit_reduced_motion.py` prints the
+the stylesheet is not covered, and `scripts/audit_reduced_motion.py` prints the
 whole picture by hand. The test understands the two idioms the block is
 written in -- naming a selector outright, and naming it with the attribute
 *value* dropped (`.rowmenu[data-state]` covers
@@ -1053,7 +1430,7 @@ hover rule is asserted on its text. Four mutations were tried against the
 tests -- reverting the danger selector, restoring `--raised`, deleting the
 divider, removing the gap -- and each fails the test that names it.
 
-`scripts/observe_confirm_contract.py` covers the core half end to end against the
+`observe_confirm_contract.py` covered the core half end to end against the
 real `ToolOrchestrator` and the real `write_file`: one request per untrusted
 destructive call, the five payload keys the dialog reads, approve runs the tool
 and writes the file, deny returns CANCELLED with the filesystem untouched, and a
@@ -1085,12 +1462,15 @@ wrong, because the chromatic element was outside the captured region.
 --input    #262827          inset wells and filter fields
 --raised   #313330    2.9%  raised cards
 --chip     #3b3e3a    0.4%  the selected row, the tab pill, a selected rail item
+                            ^ the reference's chip, and what we borrowed then
 --hover    #373a35          hover
 --border   #363836          hairlines
 --fg       #dedfdd          body text          (luminance 222)
 --fg-dim   #a1a39f          secondary text     (162)
 --fg-mute  #7c807a          metadata           (116)
 --accent   #bacda9          the ONE chromatic element
+                            ^ the reference's sage; ours is #6393f0, read out of
+                              our own icon. See the sweep section.
 ```
 
 **The reference is 99.5% neutral — 0.47% of its pixels carry any chroma, and
@@ -1105,8 +1485,10 @@ is a different colour and reads as a different app beside the reference.
 towards saturation. A purple was tried first and was wrong in a way only a
 comparison could have caught.
 
-Layout, all measured at 1.75 scale: `52px | 1fr | auto` grid, **48px** top bar,
-transcript inset to **720px**.
+Layout, all measured at 1.75 scale **off the reference**: `52px | 1fr | auto`
+grid, **48px** top bar, transcript inset to **720px**. *Those are the
+reference's numbers and they are the right evidence for the decisions below;
+ours are different and live in `:root` — see the sweep section.*
 
 **The rail is `--chrome` and runs the full height of the window.** It has to be
 the *column* that is painted, with `.chatlist` painting `--bg` back over it, and
@@ -1714,7 +2096,7 @@ agree about which models exist.
 
 #### Live verification
 
-`scripts/verify_composer_pass.py` reads the packaged app's DOM over CDP. It
+`verify_composer_pass.py` read the packaged app's DOM over CDP. It
 found **462 models** in the real OpenRouter list, a filter, five budget
 presets, an enabled attach button with a real hidden input behind it, and a
 send button that is an icon labelled "Send" with no "Continue" anywhere in the
@@ -1807,7 +2189,7 @@ buttons in `TopBar`. What that required, all of it silent otherwise:
   `allow-internal-toggle-maximize`). `minimize`, `toggle_maximize`, `close` and
   `start_dragging` each need their own entry in `capabilities/default.json`, or
   the caption is three dead buttons that log to the console and a window that
-  cannot be moved. `verify_pass_b.py` proves them by toggling the window,
+  cannot be moved. `verify_pass_b.py` proved them by toggling the window,
   checking it changed, and toggling it back.
 - **`data-tauri-drag-region="deep"`**, not `"true"`. Bare and `"true"` fire only
   on a *direct* press, which in practice means the empty pixels; `"deep"` covers
@@ -1835,7 +2217,8 @@ x=0 while every other icon sat at x=16. The fix narrows the rule to
 `.rail.rail-expanded .rail-toggle { align-self: stretch }`.
 
 > **Superseded.** There is no expanded rail any more — see "The rail became a
-> strip" below. The rail is a fixed 52px column at every width, so both that rule
+> strip" below. The rail is a fixed-width column at every width (56px since the
+> density pass; it was 52px when that note was written), so both that rule
 > and `.rail.rail-expanded .rail-btn` went with it, and the toggle's fix is now
 > simply *not* declaring a cross-axis placement of its own. The test asserts the
 > absence, because any value there reintroduces the misalignment and only the
@@ -1848,7 +2231,7 @@ matching text.
 
 #### Live verification
 
-`scripts/verify_pass_b.py` — six CDP probes against the packaged app, because
+`verify_pass_b.py` — six CDP probes against the packaged app, because
 three of the four fixes are facts about the *shipped window* and no unit test can
 see them:
 
@@ -1868,11 +2251,13 @@ cmd //c ".\Build TONYAgent.bat" /q > /tmp/build.log 2>&1 &   # ~4 min; poll
 taskkill //IM tonyagent-app.exe //F && taskkill //IM msedgewebview2.exe //F
 (WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 \
   ./app/src-tauri/target/release/tonyagent-app.exe > /tmp/app.log 2>&1 &) ; sleep 28
-python scripts/verify_pass_b.py
-python scripts/verify_composer_pass.py     # reload the page first, see below
+# The two verifiers for that pass are gone; their findings are the
+# paragraphs above. To re-measure any of it now, launch the packaged app with
+# WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 and drive
+# scripts/probe_webview.py.
 ```
 
-`scripts/mutate_pass_b.py` puts each of the four defects back and requires at
+`mutate_pass_b.py` put each of the four defects back and required at
 least one test to go red, then restores every file — the only honest check on a
 regression test. Current result: all four caught (the dismissal rule by 8 tests,
 the rail and the drag region by `layout.test.ts`/`TopBar.test.tsx`, the clamped
@@ -1884,8 +2269,8 @@ budget by the refusal test).
   app is still running.** The binary is locked. `taskkill` both
   `tonyagent-app.exe` and `msedgewebview2.exe` *before* starting a build, not
   when it fails.
-- **Two of the two verifiers touch the model chip.** `verify_pass_b.py` leaves
-  the model menu open; `verify_composer_pass.py` presses the chip to toggle it,
+- **Two of the two verifiers touch the model chip.** `verify_pass_b.py` left
+  the model menu open; `verify_composer_pass.py` pressed the chip to toggle it,
   and then fails `send_is_icon`/`model_menu` for reasons that have nothing to do
   with the code under test. Run `location.reload()` in the CDP target between
   them.
@@ -2116,22 +2501,23 @@ blend and reports ~5px regardless of what the corner is doing. Measure against
 
 `.sidecol` is gone. The rail is column 1 on its own, and `.chatlist` is an
 absolutely positioned panel at `left: var(--rail-w)` and `top: var(--topbar-h)`,
-255px wide, floating over the transcript with a shadow.
+floating over the transcript with a shadow, `--list-w` wide (260px today).
 
 The animation and the layout fix are the same change, which is the whole reason
 to do it this way:
 
 - **A grid track cannot be transitioned.** The old `.app.rail-open` widened
-  column 1 from 52px to 307px. That is a *layout* change: the transcript
+  column 1 from the rail's width to the sum of the rail and the list. That is a *layout* change: the transcript
   re-wrapped on every intermediate frame and the track itself snapped, which is
   why the previous rail comment said no width transition was used — the rail
   would have slid inside a track that had already moved.
 - **Floating it means only a `transform` moves**, and a transform is the one
   property that can animate without the layout underneath being recomputed.
 
-`--rail-w-expanded: 307px` became `--list-w: 255px`. 307 is no longer a width
-anything has; it is 52 + 255 measured from the window's left edge to the panel's
-right edge, which is still the reference's own number.
+`--rail-w-expanded: 307px` became `--list-w`, so no token is the sum of two
+widths any more. **Superseded:** the panel is 260px and the rail 56px, so the
+sum from the window's left edge to the panel's right edge is 316 and no longer
+matches anything.
 
 Two consequences worth knowing:
 
@@ -2142,8 +2528,8 @@ Two consequences worth knowing:
 - **`.app.rail-open .topbar` had to go too, and deliberately.** The panel starts
   *below* the title bar — for the same reason `.sidebar` does, so the caption
   buttons and the drag region stay reachable — so the bar's left region is
-  always exactly the 52px rail. An indent that tracked the panel would put the
-  tab 255px right of the panel's own left edge with nothing underneath it.
+  always exactly the rail. An indent that tracked the panel would put the tab
+  the panel's own width right of the panel's left edge with nothing underneath it.
 
 Verified live over CDP: rail `52 × 752` at `(0,48)`, `.chatlist` `255 × 752` at
 `(52,48)`, `position: absolute`, and **`.main` still 1114px wide with the panel
@@ -2808,132 +3194,2015 @@ panel do not persist the same way. Nothing in the UI says so.
 
 ---
 
-## Pass: the accent colour (팔레트 교체 — color only)
+## Pass: the visual design sweep (6 sections)
 
-### What changed, and why the evidence decided it
 
-`--accent` 는 더 이상 빌려온 색이 아닙니다. `#bacda9`(sage)은 Freebuff의
-액센트였고, 화면 스캔에서도 Freebuff 캡처에 0.01~0.06%로 나타나고 이 앱 캡처
-에는 0.13% chroma로만 나타났습니다. 즉 "우리 색"이 아니라 **증거가 붙어 있는
-남의 색**이었습니다.
+레퍼런스 캡처에서 값을 빌려오던 상태를 끝냈습니다. 아래 수치는 **전부 이번에
+현재 트리에서 다시 읽은 값**이고, 각 값이 왜 그런지는 `app/src/styles.css`
+헤더와 각 토큰 옆 주석이 원본입니다. 문서가 숫자를 다시 적는 순간 두 번째
+소유자가 생기므로, 여기서는 값과 **어떤 종류의 근거인지**만 적습니다.
 
-레포에서 색을 정의하는 아티팩트를 순서대로 확인했습니다:
+### 값과 근거
 
-- `.freebuff/` → `project-id` 37바이트. 팔레트 없음.
-- README → 색 없음. shields.io "blue" 배지만 있음.
-- `.rail-logo` (in-app) → `--raised` 위의 회색 "TA" 텍스트. 색 없음.
-- **`app/src-tauri/icons/*.png`** → **여기가 유일하게 색을 정의합니다.**
+| 값 | 현재 | 근거 |
+|---|---|---|
+| `--bg` ~ `--border-strong` 12단계 | 무채색 램프 | **이 앱의 선택.** 예전 값은 Freebuff 캡처의 warm green-grey였고, chroma가 3~4만 있어도 두 창이 같은 창으로 읽혔습니다 |
+| `--fg-mute` | `#8a8a8a` — `--bg` 위 **5.04:1** | **대비 계산.** 옛 값 `#7c807a`는 4.21:1 — 이 토큰은 11px 이하에 쓰이는데 4.5:1 미달이었습니다 |
+| `--accent` | `#6393f0` — `--bg` 위 **5.77:1** | **아트워크에서 읽음.** `icons/*.png`의 불투명 픽셀 87%가 `#2f6feb` 본체이고, 그 안티에일리어스 램프에서 4.5:1을 넘는 가장 어두운 스텝 |
+| `--accent-bright` | `#97b7f5` — `--chip` 위 **5.38:1** | 같은 램프 한 스텝 위. 칩 위의 작은 글씨용 |
+| `--accent-fg` | `#0b1020` — `--accent` 위 **6.28:1** | 같은 PNG에 이미 있던 잉크 |
+| `--focus-ring` | `var(--accent-bright)` | 전용 이름. 링과 배지가 우연히 한 스텝을 공유하지만 요구조건이 다르므로 같이 움직이지 않습니다 |
+| 위계 | 7단, 10 → 20px | **이 앱의 선택.** 리터럴 14개를 토큰으로. `--text-2xs` 10px는 모양·배지용이고 본문 인접 최소는 `--text-xs` 11px |
+| 라디우스 | 5단, **6 / 12 / 16 / 24 / 999** (리스타일에서 한 칸씩) | **이 앱의 선택.** `calc(var(--radius-sm) - Npx)` 리터럴 10개를 규칙 이름으로 |
+| 모션 | `--motion-fast` 110ms, `--motion-base` 160ms | **이 앱의 선택.** 상태 전환(110)과 surface 도착(160)의 두 축. 미사용이던 `--motion-slow`은 삭제 |
+| 그림자 | `--shadow-1` / `--shadow-2` | **이 앱의 선택.** 1px inset 하이라인이 레퍼런스에는 없는 추가이고, `--shadow-2`는 창 모서리에 붙은 패널이므로 그림자 방향을 `--panel-cast`에서 받습니다 |
+| `--rail-w` / `.rail-btn` | 56px / 40×40 | 40px은 최소 클릭 타깃, 56은 양옆 8px를 남기기 위한 값 — **레일 폭을 버튼이 정합니다** |
+| `--topbar-h` | 44px | **내용 기준**: 13px 텍스트 한 줄 + 그 높이를 채우는 캡션 버튼 |
+| `--list-w` | 260px | 레퍼런스 255 + 5. 제목이 한 글자 덜 잘리는 문제. 레퍼런스가 아니라 이 앱의 판단 |
+| `--measure` | 680px | **이 앱의 선택.** 트랜스크립트·컴포저·힌트·배너가 공유. 예전엔 860px 트랜스크립트 위에 720px 컴포저 |
 
-네 장(32/64/128/128@2x)을 전부 분해했습니다. zlib + PNG 필터만으로 쓴
-일회용 리더였고, 이 패스가 끝나면 지웠습니다. 네 장 모두 `#2f6feb` 이
-opaque 픽셀의
-80.5~87.3%였고, 그 주위에 안티에일리어스 램프
-(`#6393f0`, `#97b7f5`, `#cbdbfa`, `#bed2f8`)가 있었습니다.
+`--ok` `#a3c48a`는 값을 바꾸지 않았습니다. 액센트가 파랑으로 바뀌자 색상환
+**125°** 떨어졌고(옛 63°), "성공"과 "이 앱의 색"이 더는 같은 이름이 아닙니다.
 
-**본체가 아니라 `#6393f0` 을 골랐습니다.** `--accent` 는 작은 색 텍스트로도
-쓰입니다(`.permchoice-gain`, `.linkish`, 설정 힌트 강조):
+### 마크
 
-- `#2f6feb` on `--bg` = **3.70:1** → 작은 텍스트에 부적합
-- `#6393f0` on `--bg` = **5.61:1** → 통과. 채움으로도 좋고 텍스트로도 읽힘
+`icon.svg`의 캐럿-위에-기준선 하나에서 17개 래스터가 나오고, 앱 안 **두 곳**
+(레일, 첫 화면)도 **같은 경로 데이터**를 씁니다 — 둘 다 `AppMark.tsx`를
+통해서요. 그 컴포넌트와 `icon.svg`를 `AppMark.test.tsx`가 바이트 단위로
+대조하므로 세 벌이 갈라질 수 없습니다.
+`viewBox 0 0 512 512`, 스트로크 72(16px에서 2.25px로 남는 값), 라운드 조인.
+miter였으면 16px에서 두 개의 끊어진 점선으로 보였습니다.
 
-`--accent-fg` 는 **같은 아이콘에 있는** `#0b1020`. 그 위에서 6.28:1. 두 값
-모두 기존 PNG의 값이라 **두 번째 팔레트를 지어내지 않았습니다** — 요청이
-명시적으로 금지한 그 일입니다.
+### 포커스 링
 
-### 적용 범위
-
-토큰은 `:root` 맨 위에 한 쌍으로만 선언되고, 나머지 참조는 전부 따라갑니다:
-
-```css
---accent: #6393f0;    /* 본체 #2f6feb 가 아니라 램프 — 작은 텍스트 대비 때문에 */
---accent-fg: #0b1020; /* 같은 아이콘의 거의 검정. 그 위에서 6.28:1 */
-```
-
-`.tsx` 의 색 리터럴은 여전히 0개입니다.
-
-### 오프 팔레트 정리 — 4곳, 한 이유
-
-모두 **토큰이 닿지 않는 값은 교환에서 살아남는다**는 같은 이유였습니다.
-
-1. `.mode.is-active` 의 `#d0d0d0` + `#141414` → `var(--chip)` + `var(--fg)`.
-   따뜻한 팔레트에 있던 순수 중성 회색이었고 팔레트에서 4단계 위라 뒤집힌
-   배지처럼 보였습니다.
-2. `::-webkit-scrollbar-thumb` 의 순수 중성 `#333` / `#454545` →
-   `var(--raised)` / `var(--hover)`. `::-webkit-scrollbar-corner` 도
-   `transparent` 로.
-3. `color-scheme: dark` 추가. 이제 없습니다 → 네이티브 위젯이 밝게 렌더되고
-   있었습니다. 앱은 dark only이므로, 이건 OS를 묻는 게 아니라 **앱이 브라우저
-   에게 말하는 것**입니다(`prefers-color-scheme` 은 여전히 미조회).
-4. `.notice` 의 손으로 적힌 `rgba(186,205,169,0.1)` → `var(--accent) 10%`.
-   **옛 액센트를 하드코딩한 바로 그 자리**였고, 그래서 감사에서 유일하게
-   실제로 남던 교환 누출자였습니다. `.warn`, `.banner` tint도 같이 접었습니다
-   (`color-mix(in srgb, <token> N%, transparent)` — Chromium 154 에서 안전).
-
-추가로 `#1a0a08` 을 **새 토큰 `--danger-fg`** 로 올렸습니다. 채움 위에 앉는
-잉크는 `--accent-fg` 와 같은 일인데 토큰이 없어 두 call site 에 각각 적혀
-있었습니다 — 알약과 정확히 같은 종류의 버그였습니다.
-
-### `--ok` 분리
-
-값은 그대로 `#a3c48a`. **쓰임만** 정리했습니다. 이전엔 액센트와 색상환
-63/765 거리로 둘 다 초록 — "성공"과 "브랜드"가 같은 색이었습니다. 이제
-**215** 거리, 휠의 반대편.
-
-### 실측 — 패키징된 빌드를 실제로 구동해서 읽은 값
-
-diff를 읽는 것으로 증명이 아니었습니다. CDP 9333으로 띄우고 계산된 색을
-읽었습니다:
+`:focus-visible` 규칙 **하나**만 있고, `outline: none`은 파일 전체에 0개입니다
+(예전엔 5개). 링 색은 `--focus-ring` 토큰이고 오프셋 2px가 함께 들어갑니다 —
+오프셋이 없으면 링이 컨트롤 자신의 채움 위에 그려져 `--accent` 대비 1.49:1이
+됩니다. 대조는 토큰 계산, 스톱 수는 패키징드 빌드를 CDP로 실제 탭해서
+2026-10-04에 다시 잰 값입니다:
 
 ```
-root tokens    --accent #6393f0   --accent-fg #0b1020   --ok #a3c48a
-               color-scheme: dark  (computed: "dark")
-.mode.is-active  bg #3b3e3a = var(--chip)   color #dedfdd = var(--fg)
-.send-btn        bg #6393f0 = var(--accent) color #0b1020 = var(--accent-fg)
-.btn.btn-accent  bg #6393f0
-.notice tint     color(srgb .388 .576 .941 / .1)  == #6393f0 @ 10%
-contrast         accent on --bg 5.61:1 | on --raised 4.23:1
-                 accent-fg on accent 6.28:1 | --ok on --bg 8.71:1
-hue              accent 220°, --ok 94°, separation 126°
+--accent-bright 대조(계산)   --bg 8.63:1   --chrome 7.50:1
+                            --raised 6.26:1   --chip 5.38:1
+기본 화면 탭 스톱(실측)      서로 다른 스톱 8개, 전부 outline 2px solid
+                            rgb(151,183,245), offset 2px, :focus-visible true
+링 뒤 실제 배경 대비 최소값  7.02:1,   링 없는 스톱 0
+포인터 클릭 시              :focus-visible 일치 0개 — 링은 키보드 전용
 ```
 
-**스크롤바는 `getComputedStyle` 로 볼 수 없습니다** — `::-webkit-scrollbar-thumb`
-는 계산값 API에 나타나지 않습니다. 그래서 페이지를 캡처해서 **픽셀을 직접
-읽었습니다**. 4x20 px 크기의 thumb가 `#313330` (= `--raised`)으로
-나왔고, 창 전체 960,000 픽셀을 훑어 **정확히 `#333333` 은 0 픽셀** —
-제거된 중성 엄지가 어디에도 남아있지 않음을 확인했습니다.
+이전 패스에서 대화 패널과 설정 대화까지 열어 잰 45스톱 walks도 전부
+링이 있었습니다. 45라는 수는 그때의 것이고, **기본 화면만 보면 8**입니다 —
+첫 화면 패널이 포커스 가능한 것을 하나도 추가하지 않는다는 사실과 같은
+결과입니다.
+
+### 첫 화면 (빈 대화)
+
+`MessageList.tsx`의 `.empty`: 마크 · 워드마크 · 한 줄 안내 · `/` `@` 힌트.
+**클릭·포커스·제출 가능한 것이 하나도 없습니다** — 버튼도 링크도 `tabindex`도
+없고, `MessageList.test.tsx`가 `.empty` 안의 포커스 가능 요소를 **0개로**
+세어 잡습니다 — 재귀자가 붙어도 통과하도록 패널 자신까지 셉니다.
+`AppMark.test.tsx`는 마크 한 개가 어느 자리에서도 포커스될 수 없음을 따로
+잡습니다. 두 테스트는 다 음성 단언이라, 무언가를 추가하면 바로 깨집니다.
+힌트는 컴포저의 placeholder에 있던 `/`와 `@`를 그대로 위로 올린 것이고,
+회전색을 `--accent`으로 그립니다 — `--bg` 위 5.77:1, 그래픽 기준 3:1을 넘습니다.
 
 ### 테스트
 
-`layout.test.ts` 에 5개 추가 (411 → 415, 파일 단독 56/56). 전부 **값이 아니라
-성질**을 잡습니다:
+```
+npx tsc --noEmit                 클린
+npm test                         451 tests / 73 suites
+                                연속 4회 444/444 (ComposerAttach flake 수정됨)
+                                451 = 분할 4개 + 리스타일 3개 + 레일 1개
+python -m pytest tests/unit -q   610 passed, 7 skipped, 0 failed
+scripts/audit_reduced_motion.py  모든 애니메이션 선택자가 취소 목록에 있음
+```
 
-1. 액센트가 자기 아이콘에서 읽힌 값인가 + 대비 근거
-2. 액센트와 `--ok` 의 색상환 각도 ≥ 60°
-3. **어떤 규칙도 토큰이 이미 소유한 색을 그대로 쓰지 않는다** — `:root` 제외,
-   scrim/backdrop 계열 제외, box-shadow 제외. 이 테스트가 `#1a0a08` 을 실제로
-   잡아냈습니다(제가 처음에 under-scope했습니다: 잉크는 채움 위에 앉는데
-   토큰이 없었던, 알약과 같은 버그).
-4. 브라우저가 이 창을 dark로 아는가
-5. 선택된 모드 알약이 밝은 상자가 아니라 팔레트의 선택 단계인가
+`npm test`의 444는 이번에 정리된 수입니다. 이전 문서의 415/426/441은
+`.tmp/`에 남아 있던 assert 없는 디버그 테스트 2개(`dbg.test.js`,
+`dbg2.test.js`)를 세고 있었고, `build:proto`가 이제 `.tmp`를 지우므로 다시
+생기지 않습니다. 440 → 444는 스타일시트 분할 테스트 4개입니다.
 
-`tcs --noEmit` 클린, `npm test` 415/415, `pytest tests/unit -q`
-**610 passed / 7 skipped / 0 failed**(이 실행에서는 `test_build_scripts.py` 도
-초록), `audit_reduced_motion.py` 클린, 빌드 "Build finished."
+`pytest tests -q`(Docker 데몬 필요)는 이번에 돌리지 않았습니다 — 이전 문서의
+590/501 수치는 재현하지 않았으므로 그대로 옮기지 않습니다.
 
-### 이 패스가 일부러 건드리지 않은 것
+---
 
-**Experience polish은 스코프 밖입니다.** 이 요청은 색만 명시했습니다
-("Scope is color: no new components, no new UI, no layout changes, no
-reorganization of the stylesheet"), 첫-run 경험이나 empty state, 반응형
-피드백을 요구한 곳이 없습니다. User-facing 컴포넌트를 하나도 새로 만들지
-않았으므로 polisher 문단대로 **아무것도 바꾸지 않고 보고합니다.**
+## Pass: the restyle (gradient, stadiums, air)
 
-### 다음 패스 후보
+디자인 스윕은 **정확성·구조 작업이었고 리스타일이 아니었습니다.** 눈에 보이는 변화가
+셋(마크, 레일 버튼 40px, measure 680)뿐이었고 나머지는 대비·스케일·포커스처럼 "틀렸을
+때만 보이는" 것들이었습니다. 이번 패스는 반대로 **보이는 것만** 건드립니다.
 
-1. **`.permchoice-warn` 대비** — `--chip` 위 `--accent` 9.5px = 3.6:1.
-   이번 교환으로 `#bacda9` 보다 낮아졌습니다. 칩 위 배지용 액센트 스텝이
-   필요합니다(색 스코프라 여기까지 안 건드렸습니다).
-2. **포커스 링** — 감사에서 측정했듯 지금도 UA 기본
-   `outline: 1px rgb(16,16,16)` = `--bg` 위 1.13:1, 사실상 보이지 않습니다.
-   9/9 포커스 대상이 포커스 시 아무것도 안 변했습니다.
-3. **187 클래스 중 174개가 단일 호출자** — 디자인 시스템이라 부르기엔 얇습니다.
+### 무엇을 빌렸고 무엇을 빌리지 않았는지
+
+가져온 것은 **문법**이고, 색은 가져오지 않았습니다. 스윕의 출발점이 "Freebuff를
+따라가지 말고 우리 디자인을 만들자"였으므로, Gemini 팔레트를 그대로 쓰면 빌려온
+디자인이 하나에서 다른 것으로 바뀔 뿐입니다. 그라디언트의 시작점은 `--accent`,
+즉 **우리 아이콘에서 읽은 파란색**입니다.
+
+가져온 문법 네 가지: 그라디언트가 액센트다 / 컨트롤은 스타디움이다 / 1px 헤어라인보다
+톤 차이 / 활성 상태는 채워진 알약이다.
+
+### 값과 근거
+
+| 값 | 현재 | 근거 |
+|---|---|---|
+| `--grad-accent` | `linear-gradient(135deg, #6393f0, #9b7cf0)` | **아트워크에서 파생.** 첫 스톱은 `--accent` 그 자체이고, 둘째 스톱은 그 색상환을 36° 돌린 것(220°→256°). 색 대비 `--bg` 위 **5.77:1 / 5.41:1** |
+| `--grad-wash` | 같은 두 색, alpha 0.18 / 0.12 | **이 앱의 선택.** 선택된 *표면*(대화 행, 탭)용. 텍스트가 그 위에 앉으므로 alpha에 상한이 있습니다 |
+| 라디우스 | 5단, **6 / 12 / 16 / 24 / 999** | **이 앱의 선택.** 이전 4/8/12/18에서 한 칸씩. 래더가 없었으면 25개 규칙을 고쳐야 했던 변경입니다 |
+| 스타디움 | 칩·탭·검색 필드·레일 활성·전송 | `--radius-pill`. 컨트롤은 스타디움, 컨테이너는 라운드 사각형 |
+| 선택 상태 | 행·탭은 wash, 모드 알약만 `--chip` | **이 앱의 선택.** `--chip`은 컨테이너 색이라 "선택됨"과 "호버"가 한 단계 차이였습니다 |
+| 레일 활성 | 40×40 타깃 안 40×32 그라디언트 인디케이터 | Material의 nav-rail 인디케이터. 클릭 타깃은 40×40 그대로 |
+| 전송·정지·Apply | 그라디언트 + 스타디움 | 표면당 그라디언트는 하나. 팝오버의 선택된 프리셋은 납작한 채움인 이유가 이것입니다 |
+| 여백 | 컴포저 106 → 115px, 행 8/10, empty 8/28 | **측정.** 520px 창에서도 컴포저가 창 안에 들어옵니다 |
+
+### 테스트
+
+```
+npx tsc --noEmit                 클린
+npm test                         451 tests / 73 suites
+python -m pytest tests/unit -q   610 passed / 7 skipped (test_build_scripts 4건은 기존 flake)
+scripts/audit_reduced_motion.py  모든 애니메이션 선택자가 취소 목록에 있음
+```
+
+새 테스트 7개: 그라디언트가 `--accent`에서 시작하고 같은 색상환을 돈다 / 두 스톱 다
+`--bg` 위 4.5:1(글자로 쓰이므로) / 그라디언트를 쓰는 규칙이 토큰을 쓴다 / 그라디언트
+글자는 `background-clip: text`로 잘린다 / wash의 alpha 상한 / 레일이 "지금 어디인지"를
+표시한다.
+
+**뒤집은 테스트 셋**: "chips are rounded rectangles, not stadiums"는 이제
+"a chip is a stadium, and a selected thing is a wash"입니다. 이전 판단이 틀렸다기보다
+다른 질문에 답한 것이고, 규칙이 바뀌었으니 단언도 바뀝니다.
+
+### 패키징된 빌드에서 확인한 것
+
+- **레일 인디케이터가 실제로 칠해짐**: 타깃 40×40, 인디케이터 40×32 radius 999px.
+  픽셀 (10,76)=(113,140,240) → (45,76)=(135,123,230) — **다른 픽셀, 즉 그라디언트**.
+  클릭은 실제 `Input.dispatchMouseEvent`로 레일 토글을 눌러 얻었습니다.
+- **그라디언트 글자가 실제로 칠해짐**: 워드마크 잉크의 색상이 왼쪽 **223.8°** →
+  오른쪽 **248.3°**. 선언한 두 스톱(220°→256°) 방향과 일치합니다.
+- **전송 버튼**: 32×32에서 좌 (79,94,159) hue 228.8° → 우 (88,89,158) hue 239.1°.
+- **패널 모서리 24px이 sticky 푸터를 실제로 자름**: 패널 bottom-left 코너 격자에서
+  바깥쪽 셀이 backdrop(8)로 읽히고 안쪽이 footer(32). 사각 노치 없음.
+- 520px 창에서 컴포저 하단 494 / 창 520. 잘림 없음. `.empty` 안 포커스 가능 요소 0개.
+- 탭 정지 14개 전부 `2px solid rgb(151,183,245)` + `:focus-visible`.
+
+### 남은 것
+
+- **`--accent` 단색 소비자는 그대로 둡니다**: 텍스트·테두리·작은 마크·체크박스
+  `accent-color`. 그라디언트는 "누르는 것", 단색은 "칠해진 것"입니다.
+- 선택된 대화 행의 wash는 이제 **실제 대화가 있는 상태에서 확인했습니다** —
+  아래 "대화 행의 wash" 절.
+
+---
+
+## 로고: 셰브론 → T (2026-10-04)
+
+사용자가 "간단한 T"를 원해서 영문 프롬프트로 새 아트워크를 받았습니다. 앞선
+셰브론 시도는 두 가지 결함이 있었습니다 — 스트로크가 7.81%(16px에서 1.25px,
+살아남는 최소값 14.06%의 56%)와 불투명 흰색 모서리. 새 T는 둘 다 통과합니다.
+
+### chroma key를 직접 한 이유
+
+사용자가 "그냥 네가 chroma key해라"고 해서 했습니다. 그게 맞았습니다 —
+`#2f6feb`로 정규화할 계획이었기 때문입니다. **형상은 모델에게, 색은 우리가.**
+그래서 `--accent`과 그 ramp가 움직이지 않습니다.
+
+작업:
+
+1. 원본에서 두 마스크를 추출 — ground는 blue-dominance(`b - max(r,g) > 40`),
+   T는 ground 안쪽의 흰색. 모서리의 흰 페이지 배경을 analytic rounded-rect로
+   제외(단순 bounding box로는 모서리가 T로 잡혔습니다).
+2. 측정값을 비율로 환산하고 1024 캔버스에 다시 그렸습니다: crossbar
+   1104×209, stem 246, corner radius 211 — 모두 `/1550` 또는 `/1624`.
+3. 4× supersample 후 LANCZOS downsample.
+
+### 측정된 사실
+
+```
+ground  1550 x 1624  ← 정사각이 아님 (74px 차이)
+radius  211px = 13.6%
+T       1104 x 1161 = 71.2% x 71.5% of the ground
+stem    246px = 15.87%  → 16px에서 2.53px   PASS (최소 14.06%)
+crossbar 209px = 12.87% → 16px에서 1.83px   (아슬아슬)
+corner   (0,0) alpha 0                      PASS
+terminals 사다리꼴: crossbar rx 104 ≈ 132/2, stem rx 123 = 246/2
+```
+
+**T는 앱이 이미 컨트롤에 쓰고 있는 모양 그대로였습니다** — 두 개 모두 full
+radius stadium. 별도의 스타일이 아니라 같은 언어였습니다.
+
+### 작업을 실제로 바꾼 것
+
+- **`AppMark.tsx`**: stroke+path → fill+rect. `MARK_PATHS` → `MARK_RECTS`.
+  viewBox 512 → 1024. stroke는 더 이상 없습니다 — T에는 blunt할 mitre도,
+  라운드할 팔도 없습니다. 두 rect의 단말이 *그 자체로* stadium입니다.
+- **`AppMark.test.tsx`**: `d` 비교 → `x/y/width/height/rx` 비교. 세 개 새로:
+  **"both terminals are half-circles, not cuts"**, **"it is painted on
+  currentColor, never on a literal"**, 그리고 stem 비율을 14.06% 이상으로
+  고정하는 floor.
+- **`IconRail.test.tsx` / `MessageList.test.tsx`**: 둘 다 path를 세고 있었습니다.
+- **`ALLOWED_TAGS`**: `path` → `rect`. 이것은 **실제 캐치**였습니다 —
+  첫 실행 패널에 포커스 가능 요소가 0개라는 기존 테스트가 `<rect>`를
+  거부했습니다. 다른 태그와 마찬가지로 handler를 달 수 없는 모양인데
+  allowlist가 artwork의 *구성*을 따라가고 있었습니다.
+- **토큰 주석**: "87% of the opaque pixels across seven raster sizes" →
+  **88.7% / fifteen**. 실제로 다시 셌습니다. ramp는 그대로 —
+  `#6393f0`과 `#97b7f5` 둘 다 여전히 존재하므로 `--accent`는 유효합니다.
+
+### XML 주석 함정 (다시)
+
+`npx tauri icon`이 실패했습니다: `comment at 2:3 contains '--'`. XML 주석은
+`--`를 못 가집니다. em dash로 교체했습니다.
+
+### 돌연변이 3개, 전부 잡힘
+
+| 변이 | 잡음 |
+|---|---|
+| stem을 4.3%로 얇게 (`width 163`→`44`) | ✔ `its two strokes are the strokes on the taskbar` |
+| 세 번째 stroke 추가 | ✔ 동일 |
+| 단말을 각지게 (`rx 81`→`8`) | ✔ 동일 |
+
+### 패키징된 빌드에서 확인
+
+```
+DOM 렌더:  crossbar 22.78 x 4.13  (기대 22.78 x 4.125)
+           stem      5.09 x 18.75  (기대  5.09 x 18.75)
+32px rail: T로 읽힘, 글리프 233,233,233 on rail 38,38,38 = 12.46:1
+15개 raster 전부 corner alpha 0
+```
+
+`tsc` 클린 · `npm test` **455/455** (73 suites, 이전 453+2) · 감사 클린 ·
+재빌드 성공.
+
+---
+
+## 대화 행의 wash: 실제 대화로 확인 (2026-10-04)
+
+### 어떻게 실제 대화를 만들었나
+
+막혔던 전제는 사실 반쯤 잘못이었습니다. 대화가 0개인 이유는 **대화를 만들 수
+없어서가 아니라 만들 방법을 몰라서**였고, 그 방법은 코어를 직접 두드리지 않는
+경로에 있었습니다.
+
+1. 패키징된 빌드를 CDP-debuggable로 띄웁니다
+   (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`).
+2. 사이드바 토글을 **실제 마우스 클릭**으로 누릅니다
+   (`Input.dispatchMouseEvent` — 합성 `.click()`은 이 WebView2에서 먹혔습니다).
+3. 패널의 **"New chat"** 을 실제 클릭합니다. 여기서 중요한 사실이 하나 있습니다:
+   **대화 생성에는 provider도 Docker도 필요 없습니다.** `conversations.create`는
+   core의 `ConversationStore.create` 한 줄이고, provider는 "메시지를 보낼 때"
+   필요합니다. `config.toml`에 프로젝트 폴더가 이미 설정돼 있어서(`WebAIAgent`)
+   `startNewChat`의 폴더 선택 대화도 뜨지 않았습니다. 결과물:
+   `~/AppData/Roaming/TONYAgent/conversations/3debfbee….json` — 215바이트짜리
+   진짜 대화 파일이 디스크에 생겼습니다.
+4. 전환 동작까지 보려면 두 개가 필요했습니다. 같은 버튼을 한 번 더 눌러 두 번째
+   대화(2d3b8d82…)를 만들고, 행 메뉴 → **Rename** 으로 한쪽에 이름을 붙여
+   어느 행인지 구분되게 했습니다(`Input.insertText` + `rawKeyDown`/`char`/
+   `keyUp` Enter — 합성 KeyboardEvent는 rename을 확정하지 않았습니다).
+
+### 확인한 것 (전부 실제 픽셀)
+
+| 항목 | 측정값 |
+| --- | --- |
+| 선택된 행의 `background-image` | `linear-gradient(135deg, rgba(99,147,240,0.18) 0%, rgba(155,124,240,0.12) 100%)` |
+| `background-color` | `rgba(0,0,0,0)` — 토큰이 wash임을 증명 |
+| `border-radius` | `16px` (`--radius-md`) |
+| hairline | `0px` — 없습니다 |
+| 그림자 | `none` |
+| 그려진 픽셀 (near → far) | `(40,47,63)` → `(40,43,58)` → `(41,40,54)` |
+| 색상환 (near → far) | **221.7° → 225.7° → 230.0° → 236.2° → 244.3°** |
+| 크로마 | 23 → 21 → 18 → 16 → 14 |
+| 패널 배경 (idle 행) | `(26,26,26)` = `--bg` |
+| 전환 후 | active가 다른 행으로 **이동**했고 wash도 함께 이동 |
+
+hover 비교도 했습니다. 포인터를 **비활성** 행 위로 올리면 그 행은
+`rgb(56,56,56)`(`--hover`), 활성 행은 그대로 wash — 두 상태가 동시에 보이는
+픽셀 증거입니다.
+
+### 여기서 나온, 코멘트가 틀렸던 것
+
+가장 중요한 발견은 **주석이 가정한 것과 반대**라는 점입니다.
+`conversation-list.css`는 선택 wash를 "hover가 될 수 없는 색조"라고 근거를 달았는데,
+실제로 compositing해서 재면:
+
+```
+wash near end over --bg = rgb(39 48 65)
+--hover                 = rgb(56 56 56)
+명도비 ≈ 1.13:1
+```
+
+**선택된 행이 hover된 행보다 더 어둡습니다.** 둘은 휘도만 보면 같은 색이고,
+그레이스케일 스크린샷으로는 구분되지 않습니다. 실제로 구분하는 것은
+**색조**입니다 — wash는 chroma 14~23을 carry하고 `--hover`는 0(무채색)입니다.
+
+그래서 이 차를 색인이 아니라 크로마로 잡는 테스트를 새로 썼습니다. 그리고 우연한
+수확: 기존 `gradStops()`는 `#[0-9a-f]{6}`만 찾으므로 `--grad-wash`에 대해 **빈
+배열을 반환하면서 아무도 모르게 통과하고 있었습니다**. wash는 `rgb(r g b / a)`
+형태로 선언되어 있어서입니다. `maskedStops()`를 추가했고, alpha만 세던 기존
+wash 테스트도 이제 `(hex, alpha)` 쌍을 봅니다.
+
+### 추가한 테스트 2개 (`layout.test.ts`, 둘 다 변이 실제로 잡힙니다)
+
+- **"the ink on a washed row clears the floor on the pixel it is painted on"** —
+  `--fg`와 `--fg-dim`을 **composite된 wash 양끝**에서 측정(4.5:1 이상). 확인된 실측:
+  `--fg` 11.34:1 / 12.51:1, `--fg-dim` 5.64:1 / 6.21:1.
+  돌연변이: near stop을 `alpha 0.55`로 → **`--fg-dim is 2.76:1 on composited wash
+  stop 0` 로 실패.**
+- **"a washed row is told from a hovered one by hue, not by lightness"** —
+  `--hover`는 chroma 0이어야 하고, composite된 wash는 chroma ≥ 12.
+  돌연변이: near stop을 `rgb(150 140 130 / 0.30)`로 → **chroma 6으로 실패.**
+
+## Start 버튼, 그리고 Full은 호스트에서 (2026-10-04)
+
+두 가지 요청이었습니다.
+
+1. **샌드박스를 여는 버튼이 없다** — "Start sandbox 버튼 만들어주실 수 있나요?"
+2. **Full 권한이면 샌드박스 말고 내 컴퓨터를 직접 조작하게** — core 쪽은
+   이전 세션에서 끝냈고, 이번에 UI를 붙였습니다.
+
+### 무엇이 실제로 고장 났는지
+
+버튼을 붙이면서 알게 된 것: **샌드박스를 시작할 방법이 폴더 선택창뿐**이었고,
+폴더는 `folder_manager`가 디스크에서 복원되므로 재실행하면 `sandbox: stopped`
+인 채로 아무것도 누를 수 없었습니다. 폴더를 고르는 동작이 "샌드박스를
+시작한다"는 사실이 UI 어디에도 쓰여 있지 않았습니다.
+
+두 번째 고장은 더 조용했습니다. `state`가 샌드박스 상태를 **전혀 보고하지
+않았습니다.** 창은 `sandbox.status` 이벤트만 듣는데, 재시작한 창은 그
+이벤트를 하나도 못 받습니다. 그래서 "Stop을 눌러도 멈추지 않는다"보다 나쁜
+상태가 가능합니다 — 이미 떠 있는 샌드박스 위에 "Start"를 그려놓는 것.
+
+### 고친 것 (core)
+
+- `AgentSession.sandbox_status()` — `sandbox.status` 이벤트가 쓰는 **같은
+  문자열**(`"running"` / `"stopped"`)을 지금 상태로 돌려줍니다.
+- `_h_state`가 `"sandbox"`를 보고합니다. 창은 "내가 마지막으로 한 일"이
+  아니라 "core가 실제로 가지고 있는 것"을 묻습니다.
+
+### 고친 것 (프런트)
+
+- `SettingsPanel`: "Project folder" 그룹에 **Start**. 폴더가 있고 `running`도
+  `starting`도 아닐 때만 보이고, 시작 중에는 `Starting...`으로 **비활성**
+  버튼이 됩니다(컨테이너가 몇 초 걸리는데 Start가 그대로 있으면 두 번 누릅니다
+  = 같은 폴더에 컨테이너 두 개).
+- `App.tsx`: `startSandbox`는 **경로 없이** `sandbox.start`를 부릅니다. core는
+  이미 그 폴더를 들고 있고, 다시 보내는 것은 창과 core가 다른 프로젝트를 말하게
+  만드는 것뿐입니다.
+
+### 여기서 진짜 버그를 하나 더 잡았습니다
+
+라이브로 Start를 눌렀더니 이렇게 떴습니다:
+
+```
+name 'folder_manager' is not defined
+```
+
+`AgentSession.start_sandbox`가 `folder_manager.current_folder`를 **쓰고
+있는데 import가 없었습니다.** 왜 지금까지 안 죽었냐면 — 모든 호출자가 경로를
+넘겼고, `project_path or ...`가 이름을 찾기 전에 short-circuit 되었기
+때문입니다. **경로 없는 호출은 이 함수를 처음 실행하는 경로**였고, 그때 이름이
+없어졌습니다. UI에 없는 기능이 dead code 안에 남아 있던 것.
+
+**그리고 이 버그를 놓친 테스트가 하나 더 있었습니다.** 처음 쓴 회귀 테스트가
+`AgentSession.start_sandbox` 자체를 stub 해서, 정확히 고장 난 그 줄을 지나쳐
+버렸습니다. 깨진 코드 위에서도 58 passed였습니다. 컨테이너만 fake로 바꾸고
+rpc → session → manager를 관통하게 고친 뒤에야 실제로 잡혔습니다. 부위보다
+**호출 경로**를 fake해야 한다는 뜻이고, 이 저장소에서 몇 번 더 배운 규칙입니다.
+
+### Full은 호스트에서 (core는 이전 세션에서 완료)
+
+`Permission.runs_on_host` — low/medium/high는 False, full만 True.
+`shell_tools`의 `ExecuteCommandTool.execute`가 런타임 조회 **전에**
+`if host_execution(): return await _execute_local(...)`로 빠지고,
+`runtime_access.check_runtime` / `isolated_backend()`도 호스트 모드를 존중합니다
+(`execute_js`를 포함한 두 번째 게이트). UI는 wire의 플래그를 그대로 씁니다:
+`permissionGain`이 **먼저** 확인해서 High 행의 한 줄이 "Runs on this computer,
+outside the sandbox"가 되고, Full의 마커는 `on this computer`로 **앞섭니다**.
+
+### 패키징된 빌드에서 실제로 확인한 것
+
+sidecar를 다시 빌드하고(`scripts/build_sidecar.py` → `tauri:build`) CDP로
+직접 열어서 재현했습니다.
+
+```
+Settings → PROJECT FOLDER, 폴더 = LiveProject (Users\iig2y\Desktop\LiveProject)
+  부팅 직후       [Change...] [Start]   statusbar: sandbox: stopped
+  Start 클릭 후   [Change...] [Stop]    statusbar: sandbox: running
+  재시작 후       [Change...] [Start]   statusbar: sandbox: stopped
+                  (컨테이너도 같이 없어져 있었음 — 창이 샌드박스 수명을 결정)
+```
+
+**가짜가 아닙니다.** Start는 실제로 컨테이너를 띄웠습니다:
+
+```
+$ docker ps
+24377b30ac12  tonyagent/sandbox:latest  tonyagent-sandbox  Up 30 seconds
+```
+
+wire도 실제 빌드된 `tonyagent-core.exe`에 직접 물어봤습니다:
+
+```
+low runs_on_host = False       state.sandbox = stopped
+medium runs_on_host = False    permission.set {"permission":"full"} ->
+high runs_on_host = False        {'name':'full', ... 'runs_on_host': True}
+full runs_on_host = True       state.permission = full
+```
+
+permission 메뉴도 live DOM으로:
+
+```
+Low      gain: —
+Medium   gain: Can run shell commands
+High     gain: Runs on this computer, outside the sandbox
+Full     markers: ON THIS COMPUTER / ANY COMMAND / NO PROMPTS
+```
+
+### 추가한 테스트 (전부 변이 확인)
+
+프런트(`App.test.tsx`, describe 추가) — `.settings-row`은 Model 그룹과 API key
+그룹도 쓰기 때문에 **"Project folder" 헤딩으로 그룹을 찾아야** 합니다. 안
+그럼 Apply와 Save key가 샌드박스 버튼으로 잡힙니다.
+
+- "a folder with no sandbox offers Start, and Start sends no path" —
+  변이: `attachProject("")` → `attachProject("D:/somewhere/else")` → 실패.
+- "a sandbox the core already has shows Stop and no Start" —
+  변이: `setSandbox("stopped")` → 실패.
+- "no folder means no Start, because there is nothing to start".
+- "while it is starting the button says so instead of inviting a second start" —
+  변이: `canStart`에서 `&& !starting` 제거 → 실패.
+- "a sandbox that will not start says so instead of failing silently".
+- "the folder note admits that Full does not run in the sandbox" — 생램
+  문이는 "tools are refused outside it" 만 있었으니, 이것이
+  Full 크리의 메뉴 앞에서가 Full을 생램하는 것을
+  문장하지 않았니다. 변이 수정된 문장:
+  “except at Full, which runs commands on this computer instead of in here”
+  (Full 을 제거하면 사부의 본로이 사용되지
+  않는 다.) 변이: 그 문장을 지우면 실패.
+
+코어(`test_headless_core.py`) — 2개:
+
+- `test_state_reports_the_sandbox_the_core_actually_has` —
+  `get_runtime_backend`만 fake라서 `is_running`이 **실제로 실행**됩니다.
+  변이: `"sandbox": "stopped"` 하드코딩 → 실패.
+- `test_sandbox_start_without_a_path_uses_the_folder_already_chosen` —
+  변이: import 한 줄 제거 → `NameError`로 실패.
+
+`SettingsMenus.test.tsx` — High 행의 gain 문장이 바뀐 만큼 기존 두 개
+테스트의 기대값이 **옳게 깨졌습니다**(고치지 않고 통과시킬 수는 없었습니다).
+Full 마커가 3개가 되어 "both of the powers"라는 이름도 "every power"로
+바꾸었습니다. 그리고 같은 문장을 단독으로 보는 테스트를 하나 더 뒀습니다.
+
+### 이번에 만난 함정
+
+- Sidecar exe는 **Oct 3 빌드**였습니다. 프런트만 바꾸고 곧바로 라이브 검증하면
+  옛 core를 talking하게 됩니다. core를 건드렸으면 sidecar부터 다시 빌드해야
+  합니다(3분).
+- `.settings-row`가 세 그룹에 있습니다. 테스트를 화면에 쓰는 코드에 맞추는 게
+  아니라 **헤딩으로 그룹을 찾게** 했습니다(`settings-group` + `h3` 텍스트).
+- 이 창은 `h3`가 CSS로 대문자화되어 있어 라이브 DOM에서 `PROJECT FOLDER`로
+  비교해야 합니다.
+
+### 아직 하지 않은 것
+
+- **`pytest tests -q`** (Docker 데몬 쓰는 변형)은 이번에도 돌리지 않았습니다.
+- Full 모드에서 **실제 턴**을 돌려 호스트 실행을 확인하지는 않았습니다.
+  `runs_on_host`가 wire에 실리고 core가 이를 따른다는 것까지는 위와 같이
+  확인했지만, 모델이 실제로 명령을 내리는 e2e는 provider 키가 필요합니다.
+
+## 스크린샷 도구, 붙여넣기 미리보기, 그리고 깨져 있던 CSP (2026-10-04)
+
+이번 패스는 요청 두 개와, 그 검증 도중 발견한 **실제 버그 하나**로
+구성됩니다. 스크린샷 도구와 붙여넣기는 코드로 끝났고, CSP 버그는 지금
+고쳐졌으며 이 문서를 쓰고 있는 브라우저에서도 고쳐진 상태를 확인했습니다.
+
+### 1. `take_screenshot` — AI가 자기 화면을 본다
+
+`src/tonyagent/tools/screen_tools.py`의 `TakeScreenshotTool`. 이름은
+**`take_screenshot`**, category는 UTILITY, `sandbox_required=False`,
+`isolation_required=False`, `requires_confirmation=False`. 즉 샌드박스 밖에서
+돌고, 그 자체로는 확인을 묻지 않습니다 — 사용자가 백그라운드로 창을
+열어놓고 "지금 화면에 뭐 보여?" 라고 물으면 샌드박스 안에서는 답할 수 없기
+때문입니다.
+
+- 인자 `x, y, width, height`는 전부 선택이며 정수입니다.
+- 전체 화면(인자 없음)과 영역 지정 모두 지원하고, **둘 다 아니거나 둘 다
+  있어야** 합니다. 절반만 주면 거절합니다.
+- 가장 긴 변을 `MAX_EDGE = 1568`로 Lanczos + round로 줄이고 PNG로 base64
+  인코딩해 `ToolResult.images = [{"mime", "data"}]`로 돌려줍니다.
+- `from PIL import ImageGrab`는 `_grab()` **안에서** 임포트합니다. Pillow는
+  이제 `pyproject.toml`에 `Pillow>=10.0.0`로 선언되어 있습니다(설치만 되어
+  있고 선언은 안 되어 있었습니다).
+- 거절 사유: `NOT_FULL`(호스트 실행이 아님), 영역이 네 인자 중 일부만 옴,
+  크기가 0 이하, x/y가 음수, 영역이 데스크톱 밖으로 나감.
+
+이미지를 함부로 반환하지 않는 경로도 있습니다. 세 군데가 함께 움직입니다.
+
+- `tools/base.py` — `ToolResult.images`가 생겼습니다. **`to_dict()`에는
+  들어가지 않습니다.** 이것이 의도된 것입니다. `to_dict()`는 저장·로그
+  경로이고, 도구 결과를 거기로 흘려보내면 안 됩니다.
+- `core/session.py` — `@staticmethod _tool_content(payload, result)`. 이미지가
+  없으면 `json.dumps(payload)` 문자열 하나, 있으면
+  `[{"type":"text",...},{"type":"image_url",...}]`. **텍스트가 그림보다 먼저**
+  나옵니다. base64 덩어리로 시작하면 사람이 읽을 수 없기 때문입니다.
+  `ChatMessage.to_dict`는 리스트 형태의 content를 그대로 통과시킵니다.
+- `core/attachments.py` — `strip_images(messages)`. 대화 저장을 할 때
+  `image_url` 파트를 텍스트 한 줄로 바꿉니다. 스크린샷은 *지금*의 화면이고
+  대화는 턴이 끝난 뒤 저장되므로, 지난 화면을 다시 보여주는 것이 오해를
+  부릅니다. 텍스트 파트와 다른 모든 필드는 손대지 않으며, 이미지가 없는
+  메시지는 바이트 단위로 그대로 나옵니다. `headless/server.py:285`에서
+  연결했습니다.
+
+**허용 모드.** `core/modes.py`의 `_HOST_SCREEN_TOOLS = frozenset({"take_screenshot"})`를
+Full과 Build의 allow-list에 붙였습니다. `ToolOrchestrator.tool_permitted`는
+두 축을 교차시키므로 실제로는 **Full**, 그리고 **Build + High 이상**에서만
+됩니다. 실측: low/medium/high는 False, full은 True, build는 True,
+plan/mission/skills는 False.
+
+**실측 검증.** 이 컴퓨터는 4800×1800 삼중 모니터입니다. 전체 화면 →
+**1568×588, 118 KB PNG**. 영역 400×300 at (10,10) → **400×300, 23 KB**.
+영역 이미지는 데스크톱 좌상단과 일치했고 눈으로도 판독 가능한 실제 크롭
+이었습니다(데스크톱이 살아 있어서 두 캡처 사이에 몇 ms 차이가 있어 평균
+`|delta|`가 60 바 bar 대비 46 — 느슨하지만 실제 화면임은 확실).
+
+**기존 테스트 세 개가 일부러 바뀌었습니다.** 숨기지 않고 이유를 남깁니다.
+
+- `test_modes_and_diffs.py::test_full_adds_no_tool_over_high` →
+  **`test_full_adds_exactly_one_tool_over_high`**로 이름을 바꾸고
+  `full.allowed_tools - high.allowed_tools == {"take_screenshot"}`를
+  검사합니다. "추가 없음"이라는 주장이 이제 거짓이 되었으므로, 이름을
+  남겨 두면 거짓인 테스트가 조용히 사는 셈입니다.
+- `test_a_tool_needs_both_a_mode_and_a_permission_to_be_offered` 추가
+  (Build+High는 거절, Build+Full은 허용, Skills+Full은 거절).
+- `test_tool_wire_format.py::test_every_tool_reaches_the_wire_intact`
+  의 개수 22 → **23**. 여행 경보(tripwire)입니다.
+
+새 파일 `tests/unit/test_screen_capture.py`는 **26개** 테스트. `ImageGrab`은
+`monkeypatch.setattr(screen_tools, "_grab", ...)`로 가립니다. 처음엔 데스크톱을
+1920×1080으로 잡았는데 두 개가 실패했고, **틀린 것은 코드가 아니라
+저 테스트**였습니다. `DESKTOP = (1440, 810)`으로 바꿔 "반환됨"과 "축소됨"을
+별개 테스트로 분리했습니다.
+
+### 2. 붙여넣기로 이미지 전송 대기
+
+- `app/src/attachments.ts` — `imagesFromClipboard(data: DataTransfer | null): File[]`.
+  `data.files`가 아니라 `data.items`를 순회하고, `kind === "file"`이고
+  타입이 `image/*`인 것만 취하며, `getAsFile()`이 null이면 건너뜁니다.
+  이름은 `pasted-<n><ext>`이고 확장자는 **mime에서** 뽑습니다
+  (`MIME_EXTENSIONS` / `extensionFor`). 클립보드가 확장자를 주지 않기
+  때문입니다.
+- `app/src/Composer.tsx` — `acceptFiles(files)`를 새로 만들어 파일 선택기와
+  붙여넣기가 **한 경로**를 씁니다(한도·검증·에러 메시지가 한 군데).
+  `onPaste`는 **이미지가 0개면 `preventDefault()` 전에 반환**합니다.
+  순서를 뒤집으면 글자 붙여넣기가 죽습니다. 그리고 `acceptFiles`는 이미
+  대기 중인 첨부와 **이름을 먼저** 비교합니다 — `removeAttachment`가 이름으로
+  지우기 때문에, `readFile` 뒤에 비교하면 이미지가 사라집니다.
+- `app/src/ComposerPaste.test.tsx` — 14개. 이미지가 대기 첨부로, 이름이
+  paste 이름으로, 두 번 붙여도 충돌 없음, 글자 paste를 삼키지 않음,
+  이미지와 글자면 그림을 가져감, 말 없이 전송 가능, 5개 한도가 공유됨.
+  **기존 reader 테스트가 빈 리스트만 검사하고 있던 구멍도 채웠습니다.**
+
+리액트 함정 하나: `FileReader.onload`은 마이크로태스크가 아니라 태스크에
+품어집니다. 그래서 붙여넣기를 디스패치하고 같은 턴에 단정하면 스트립이
+비어 있습니다. 결과(컨시퀀스)를 폴링하면서 폴링 한 번당 `act`를 하나씩
+돌립니다. `ComposerPaste.test.tsx`의 `paste()`가 바로 그 헬퍼입니다.
+그리고 jsdom에는 **`ClipboardEvent`가 없습니다.**
+`new dom.window.Event("paste", {bubbles:true, cancelable:true})`를 만들고
+`Object.defineProperty(event, "clipboardData", {value: ...})`로 붙여야
+리액트의 합성 핸들러가 봅니다.
+
+### 3. 발견한 버그: CSP가 `img-src`를 아예 말하고 있지 않았다
+
+붙여넣기를 패키징된 앱에서 라이브 검증하다가, 붙여넣기 자체는 성공했는데
+**미리보기가 깨진 그림 아이콘**이었습니다. `naturalWidth: 0`.
+
+원인은 `app/src-tauri/tauri.conf.json`의 CSP였습니다:
+
+    default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'
+
+**`img-src`가 없습니다.** 없는 지시문은 중립이 아니라 `default-src 'self'`로
+폴백하므로, 앱이 메모리에서 만들어 내는 **모든 `data:` 미리보기가 차단**됩니다.
+PNG 바이트는 유효했고(Pillow로 확인: 78바이트, 2×2 RGBA) `src`도 올바른
+`data:image/png;base64,...`(126자)였습니다.
+
+**이건 붙여넣기에만 있는 문제가 아닙니다.** 파일 선택기로 고른 첨부도
+같이 깨져 있었습니다 — 즉 이 앱의 모든 미리보기.
+
+    "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:"
+
+`http:`/`https:`는 열지 않았습니다. 미리보기가 `img-src`를 여는 이유는
+기능이지 공격면이 아니기 때문입니다.
+
+**왜 아무도 몰랐는가:** jsdom은 CSP를 강제하지 않습니다. 어떤 CSP든
+테스트는 통과합니다. 그래서 `app/src/webviewPolicy.test.ts`를 새로 썼습니다
+(`tauri.conf.json`을 직접 읽어 지시문을 파싱). 4개 테스트:
+`data:` 있음, `'self'`만 있고 http/https 없음, 네 가지 지시문 존재,
+script는 `'self'`뿐. **`img-src` 지시문을 지우는 변이 → 3개 실패**로
+확인했습니다.
+
+**수정 후 실측 (패키징 빌드, CDP):** 붙여넣기 후
+`naturalWidth: 2, naturalHeight: 2, complete: true`, 표시 크기 26×26.
+캔버스로 다시 그려 `getImageData`를 읽으니 `[255,0,0,255]` × 4 —
+깨진 그림 표시가 아니라 실제 픽셀이 디코드되었습니다.
+
+### 4. 이 패스의 체크 결과
+
+    npm test                exit 0   489 passed / 0 failed, 78 suites  (485 -> 489)
+    npx tsc --noEmit        exit 0
+    pytest tests/unit -q    exit 0   623 passed / 8 skipped  (test_build_scripts.py 제외)
+    npm.cmd run tauri:build exit 0   MSI + NSIS
+
+### 아직 하지 않은 것 / 한계
+
+- **`tests/unit/test_build_scripts.py`**: 실행할 때마다 24개 중 4개 실패하고,
+  매번 **다른** 4개입니다. `HEAD`를 그대로 꺼낸 워크트리에서도 재현되는
+  기존 문제입니다. 위 수치에서 제외했습니다.
+- **`pytest tests -q`**(Docker 데몬 쓰는 변형)는 돌리지 않았습니다.
+- **`take_screenshot`를 실제로 호출하는 에이전트 턴**은(provider 키 필요)
+  돌리지 않았습니다. 확인한 것: 플래그가 wire까지 실리고, 도구가 실제
+  픽셀을 돌려주고, 도구 메시지에 `image_url` 파트가 실리고, `to_dict`가
+  그것을 통과시킵니다.
+- 커밋하지 않았습니다.
+
+## 레이아웃 스윕: 읽기 칼럼 하나, 그리고 설정 패널 (2026-10-05)
+
+사용자 지적: "Redesign을 할 때 놓친 부분이 있는 듯합니다. 설정 부분에 레이아웃이
+깔끔하지 못합니다. 이 김에 전체 앱 레이아웃을 모두 살펴보고 깔끔하지 않은 곳이
+있으면 바로 고쳐봅시다."
+
+그래서 이번 패스는 취향 변경이 아니라 **실측한 값이 서로 어긋나는 곳**만
+고쳤습니다. 방법: 패키징 빌드를 CDP로 띄워 `getBoundingClientRect`와
+computed style을 전부 긁고, (a) 수평 오버플로, (b) 부모 콘텐츠 박스를 벗어난
+자식, (c) `align-items: center`인 행에서 중심이 1.5px 이상 어긋난 항목,
+(d) 블록 흐름에서 왼쪽 끝이 어긋난 텍스트를 스캔했습니다. 그 결과가 전부
+clean인데도 눈에 걸리는 것들이 있었고, 그건 전부 **같은 값을 두 곳에 선언한**
+자리였습니다.
+
+### 1. 읽기 칼럼이 하나가 아니었습니다 (가장 큰 것)
+
+`tokens.css`는 `--measure`(680px)를 "트랜스크립트·컴포저·힌트·배너가 함께 쓰는
+읽기 칼럼"이라고 적어 두었지만, 실제로는 아니었습니다:
+
+- `.composer-inner`는 `--measure`를 **박스**로 쓰고 그 안의 글자는 1px 테두리 +
+  18px 패딩 = 19px 들어가 있었습니다(글자 290..932).
+- `.transcript-inner`는 같은 박스에 `padding: 0 28px`를 박스 **안에서** 썼습니다
+  → 메시지 칼럼 624px 대 컴포저 680px. 컴포저가 메시지보다 왼쪽 23px, 오른쪽
+  33px 삐져나와 있었습니다. 리디자인이 트랜스크립트를 860px에서 680px로 줄이며
+  그 28px 패딩을 함께 보지 않은 결과입니다.
+- `.hint`에는 패딩이 아예 없어 271px에서 시작했습니다(컴포저 글자는 290px).
+  컴포저를 설명하는 문장만 창의 왼쪽 끝에 서 있었습니다.
+- `.transcript`는 자기 스크롤바(10px)를 자기 박스에서만 빼기 때문에, 대화가 길어져
+  스크롤바가 생기는 순간 칼럼 전체가 5px 왼쪽으로 **움직였습니다**.
+
+수정: `--column-inset: 19px` 토큰(= 컴포저의 1px + 18px, 한 곳에만 선언)을 만들고
+`.transcript-inner`·`.hint`·`.banner`·`.logbar-toggle`·`.logstrip`이 그 토큰을
+쓰게 했습니다. 컴포저 자신은 `calc(var(--column-inset) - 1px)`로 자기 테두리를
+뺍니다(그 1px이 하드코딩이므로 `.composer-inner`의 테두리가 1px인지도 테스트가
+확인합니다). `.transcript`에는 `scrollbar-gutter: stable both-edges`.
+
+실측(패키징 빌드, CDP): 박스 `271..951`(= `--measure`), 글자 `290..932`가
+트랜스크립트·메시지 행·코드블록·컴포저·모드 알약·전송 버튼·힌트·로그 스트립에서
+전부 동일합니다.
+
+`layout.test.ts`의 "the composer and the transcript share one measure"에 테스트
+3개를 추가했습니다: 토큰이 컴포저의 실제 인셋인지(그리고 그 인셋이 8~40px
+밴드 안인지 — 토큰의 오타는 모든 규칙이 충실히 따라가기 때문에), 모든 규칙이
+토큰을 쓰는지, `.transcript`가 `both-edges`인지.
+
+### 2. 설정 패널
+
+- **필드가 세 가지 인셋을 쓰고 있었습니다**: Permission/Thinking 트리거 13px,
+  provider 셀렉트 8px, 입력 9px. 같은 패널, 같은 열에서 라벨과 값과 플레이스홀더가
+  세 픽셀선에 서 있었습니다 → 패널 전체 12px(`.chip`/`.mode`가 쓰는 값).
+- **두 드롭다운의 모양이 달랐습니다**: 트리거는 알약(999px)인데 바로 아래
+  provider 셀렉트는 12px 사각형 + 네이티브 화살표. `layout.test.ts`가 원래
+  "the trigger is a field, like the settings rows beside it"라고 적어 둔 그대로
+  트리거를 12px 라운드 필드로 되돌리고, 셀렉트에는 `appearance: none` + 우리
+  `▾`(`span.settings-select-wrap::after`)를 붙였습니다. 이제 두 드롭다운이 같은
+  글리프를 같은 인셋(12px)에 그립니다.
+- 트리거에 붙어 있던 낡은 주석("...without adding a caret it does not have")도
+  고쳤습니다 — 그 캐럿은 이미 렌더링되고 있었습니다.
+- **provider 행의 두 필드 폭이 달랐습니다**: 둘 다 `flex: 1 1 0%`, `min-width: 0`
+  인데도 셀렉트 172.8px 대 모델 입력 198.8px(452px 패널). `width: 0`이나
+  `min-width: 0`을 더 줘도 바뀌지 않아, 엔진의 폼 컨트롤 사이징을 쫓는 대신 그
+  행만 `display: grid; grid-template-columns: 1fr 1fr auto`로 바꿨습니다.
+  실측 **185.8 / 185.8**. 규칙으로 고정해 두어 다음 정리 패스가 "주변과 같은
+  flex로 통일"하며 조용히 되돌리지 못하게 했습니다.
+
+### 3. 앱 전체에서 나온 나머지 두 가지
+
+- **`.sep`(상태바 구분자)**: `<span class="sep" />`에 `color`만 있고 박스가 없어
+  아무것도 그리지 않았습니다. 유일한 효과는 좌우 flex gap을 8px에서 16px로 벌리는
+  것 — 클래스 이름은 구분자, 선언은 테두리 색, 화면에는 아무것도 없음. → 1px ×
+  12px `--border` 괘선. 이제 `connected | openrouter / stealth/space-bunny-alpha |
+  sandbox: stopped`로 읽힙니다.
+- **Logs 바**: `margin: 0 28px`로 폭 1054px — 창의 어느 선과도 정렬되지 않았습니다
+  (읽기 칼럼은 680px). → 컴포저와 같은 칼럼(`padding: 0 28px` + 자식에
+  `max-width: var(--measure); margin: auto`), 글자는 같은 19px 인셋.
+- `.banner`도 자기 테두리 1px + 18px로 같은 글자선에 맞췄습니다.
+
+### 4. 이 패스의 체크 결과
+
+    npm test                exit 0   492 passed / 0 failed, 78 suites  (489 -> 492)
+    npx tsc --noEmit        exit 0
+    npm.cmd run tauri:build exit 0   MSI + NSIS
+    pytest tests/unit -q    exit 0   623 passed / 8 skipped  (test_build_scripts.py 제외)
+
+패키징 빌드를 다시 띄워(CDP 포트 9333) 실측한 것: 칼럼 인셋, provider 행
+185.8/185.8, 셀렉트 캐럿(`::after` content `▾`, right 12px), 그리고 오버플로·정렬
+스캐너 전부 clean.
+
+### 아직 하지 않은 것 / 한계
+
+- **JS 전체 스위트에서 한 번 `ComposerPaste`의 "the file limit is the same one the
+  picker obeys"가 실패**했고, 같은 명령을 다시 돌리면 통과합니다(그 스위트만
+  5회 연속 통과). 파일 리더 콜백이 병렬 부하에서 흔들리는 기존 플레이크로 보이며,
+  이 패스는 `attachments.ts`/`Composer.tsx`를 건드리지 않았습니다.
+- **좁은 창(≤760px)은 실제로 재보지 못했습니다.** `Emulation.setDeviceMetricsOverride`
+  가 이 WebView2에서는 스크린샷에도 측정에도 반영되지 않았고, Tauri 창 크기를
+  CDP로 바꿀 방법이 없습니다. 코드상으로는 폭 700px 근처에서 컴포저 행이 넘칠 수
+  있습니다(수정 전에도 같은 한계였고 이번 패스로 나빠지지 않았습니다).
+- **트랜스크립트에 툴 결과 JSON이 본문 폰트로 보이는 것**은 모델이 툴 결과를 그대로
+  에코한 출력이라(이 대화의 `stealth/space-bunny-alpha`가 그렇게 합니다) 레이아웃
+  문제가 아니라고 판단해 건드리지 않았습니다. 툴 *호출* 행(`.tool`)은
+  `thinking.css`에 스타일이 있습니다.
+- 커밋하지 않았습니다.
+## 설정 패널: 필드 두 개가 붙어 있던 것 (2026-10-05)
+
+"Settings에서 Provider URL 입력창이랑 그 위에 드롭다운 메뉴랑 너무 딱 붙어있습니다."
+스크린샷과 함께 들어온 지적이었습니다. 앞 패스가 provider 행의 **가로**(두 필드 폭,
+인셋, 모양)를 손본 그 자리에서 **세로**가 남아 있었습니다.
+
+### 무엇이 문제였나
+
+`.settings-row`에 세로 리듬이 아예 없었습니다. 선언은 `display: flex;
+align-items: center; gap: 8px` — 이 8px은 **한 행 안에서** 라벨과 컨트롤 사이의
+거리입니다. 그전까지 이 클래스 두 개가 세로로 포개진 적이 한 번도 없었기 때문에
+필요하지 않았고, 그래서 필요하다는 사실이 드러나지 않았습니다.
+
+Model 그룹은 이제 두 행이 이어집니다 — provider 드롭다운 + 모델 입력 + Apply,
+그다음 줄에 Base URL 입력. 실측(패키징 빌드, CDP): 두 행 모두 452px·30px이고
+**세로 간격 0px**. 테두리가 1px 떨어져 있을 뿐이라, 폭으로는 452px인
+"필드 하나에 가로선 하나가 긋힌 것"으로 읽힙니다. 마크업은 순진한 형제 div 두 개
+뿐이라 코드를 읽어도 드러나지 않습니다.
+
+### 무엇을 고쳤나
+
+`settings.css`에 한 규칙:
+
+    .settings-row ~ .settings-row { margin-top: 10px; }
+
+- **10은 고른 게 아니라 빌려 온 값입니다.** `.settings-note`의 `margin-bottom`이
+  이미 10px이고, 그 10이 이 패널이 이미 쓰던 "설명문 → 그 문장이 소개하는 필드"
+  간격입니다. 이제 필드 아래의 필드가 첫 필드와 노트 사이의 거리만큼 떨어집니다.
+  행 안쪽의 8px보다도 넓어서, 그래야 두 컨트롤이 하나가 아니라 둘로 읽힙니다.
+- **`+`가 아니라 `~`**입니다. `+`는 지금은 맞지만 두 행 사이에 뭔가 하나 끼면
+  조용히 0이 됩니다. 일반 형제는 그걸 버티고, 이 패널에서 포개진 행이 두 개뿐이라
+  비용도 없습니다.
+- JSX는 주석 한 단락만 늘렸습니다. Base URL이 왜 *별도 행*인지(위 행은
+  `1fr 1fr auto`이라 세 번째 필드는 Apply 버튼의 64px 트랙에 들어가게 됩니다).
+
+### 실측 (패키징 빌드 재시작, CDP)
+
+    provider 행   t=616.47  b=646.47   452px
+    Base URL 행   t=656.47  b=686.47   452px
+    두 행 사이                  10.00px    (수정 전 0)
+    note → provider 행          10.00px    <- 10이 같다는 것이 규칙의 근거
+    Base URL 행 → 힌트           7.00px    (그대로)
+    행 안쪽 gap                  8.00px
+
+두 가지 독립적인 방법으로 확인했습니다. `getBoundingClientRect`로 잰 위 값과,
+스크린샷의 픽셀을 세어 `--input`(#2b2b2b) 두 밴드 사이에 `--surface`(#202020)
+**20 device px = 10 CSS px**가 놓인 것. 그리고 `margin-top: 0px`를 런타임에 강제로
+끼워 넣으면 간격이 정확히 0으로 돌아오며, 뺐더니 10이 되돌아옵니다 — 10이 새
+규칙에서 온다는 뜻입니다.
+
+다른 행은 안 건드렸습니다(그룹별 `margin-top` 실측): Permission/Thinking은
+`.settings-row`가 아예 없고(`.permchoice`), Project folder 행은 `0px`,
+`.settings-key` 안의 키 입력도 `0px` — 그쪽은 `.settings-key` 자신의
+`margin-top: 12px` + `padding-top: 10px` + 테두리가 일을 합니다.
+
+### 테스트
+
+`layout.test.ts`의 "two fields stacked are two fields, not one with a line across
+it". 숫자가 아니라 **관계**로 고정했습니다 — 나중에 10을 바꾸고 싶을 수 있으니까:
+
+1. 간격이 0보다 크다.
+2. 간격 >= 행 안쪽 `gap` — 이게 깨지면 두 필드가 하나의 격자로 읽힙니다.
+3. 간격 == `.settings-note`의 `margin-bottom` — 위의 근거 그 자체.
+4. `~`이고 `+` 규칙이 존재하지 않는다.
+
+변이 검사로 확인했습니다. 규칙을 지우면 1번에서, `~`를 `+`로 바꾸면 4번에서
+실패합니다. (돌려놓고 바이트까지 확인했습니다.)
+
+이번에 실제로 걸린 실수 하나: 처음 쓴 테스트가 `.settings-note`의 `margin-bottom`
+을 정규식으로 찾았는데, 그 규칙은 `margin: 0 0 10px` **약식**을 씁니다. 조용히
+0을 읽어냈고 테스트가 "10 !== 0"으로 실패했습니다. 약식/정식 둘 다 읽는
+`marginBottom()` 헬퍼를 넣었습니다 — 아무것도 측정하지 않는 테스트는 테스트가
+없는 것보다 나쁩니다.
+
+### 체크 결과
+
+    npm test                exit 0   493 passed / 0 failed, 78 suites  (492 -> 493)
+    npx tsc --noEmit        exit 0
+    npm.cmd run tauri:build exit 0   MSI + NSIS
+    pytest tests/unit -q    exit 0   623 passed / 8 skipped  (test_build_scripts.py 제외)
+
+### 하지 못한 것
+
+- **스크린샷을 눈으로 확인하지 못했습니다.** 이 빌드에서 `read_files`가 이미지를
+  BLOCKED하고, preview 브라우저가 프레임을 만들지 않아(컴포지팅 실패)
+  `preview_screenshot`이 비었습니다. 그래서 위의 "픽셀을 세는" 확인으로 대신했습니다
+  — 눈으로 보는 것보다 약하지는 않고, 오히려 정량입니다. 화면을 직접 열어보시면
+  10px 간격이 보입니다.
+- 좁은 창(<=760px)은 이전과 동일하게 `Emulation`이 먹지 않아 실측하지 못했습니다.
+- 커밋하지 않았습니다.
+## 설정 모달의 스크롤바가 모서리 밖으로 나가던 것 (2026-10-05)
+
+"설정 모달에 스크롤바가 Overflow되는 느낌이 있네요"는 지적. 앞 패스가 세로 리듬을
+손본 그 자리에서, 이번엔 스크롤바 자체가 문제였습니다.
+
+### 무엇이 실제로 잘못돼 있었나
+
+`.modal`은 24px 라운드 박스인데 스크롤되는 컨테이너이고, 스크롤바는 모서리가
+직각인 상자입니다. Chromium은 스크롤바를 border box 위에 칠하면서 그라운드
+라운디우스로 자르지 않습니다. 그래서 **thumb가 이동을 끝내는 양 끝에서 마지막 몇
+픽셀이 패널이 아니라 스크림 위에 그려집니다.**
+
+실측(패키징 빌드, 1200x800). thumb는 x `841.75..845.75`의 4px 폭:
+
+    scrollTop = 0        thumb y  28.50 .. 641.00
+    -> 패널 실루엣 밖 7.0px (y 28.5..35.5), 최대 7.52px
+    scrollTop = max      thumb y 158.75 .. 771.00
+    -> 패널 실루엣 밖 7.0px (y 764.0..771.0), 최대 6.98px
+
+완전히 대칭입니다. 화면에서는 모달의 모서리가 이미 휘어진 뒤에도 그 선이 더
+이어졌다가 중간에 끊겨 보입니다.
+
+**핀 코드를 정확히 짚는 법이 두 번 필요했습니다.** 첫 판정(회색 창으로 thumb를
+찾음)은 패널 모서리의 1픽셀 안티알리어싱 — 표면과 테두리 사이의 회색 보간 — 을
+thumb로 오인해서 "thumb가 743px"고 잘못 보고했습니다. thumb는 4px 폭이므로
+**3 CSS px 이상의 연속 구간만 thumb로 세는** 것으로 바꿔서야 맞았습니다. 두
+번째는 모서리 밖으로 나간 **행 수**로 바꾸는 것. 어느 쪽이든 눈으로 볼 수 없는
+숫자를 측정하는 이상한 수정이 두 번 필요했습니다.
+
+### 무엇을 고쳤나
+
+`scrollbars.css`에 한 규칙, `.modal`에만:
+
+    .modal::-webkit-scrollbar-button:vertical:decrement,
+    .modal::-webkit-scrollbar-button:vertical:increment {
+      display: block;
+      height: 14px;
+      background: transparent;
+      border: none;
+    }
+
+thumb가 아니라 **이동 궤적을** 안쪽으로 당깁니다. 그러면 thumb의 분모도 같이
+줄어들기 때문에 thumb가 보이는 비율을 거짓말하지 않습니다. `.modal`에 한정한
+이유: 트랜스크립트는 모서리가 없는 풀블리드 스크롤러라서 비용만 보고 이득이
+없습니다.
+
+### 대가 — 추천할 때한 것보다 훨씬 컸습니다
+
+사용자에게 이 방식을 권하면서 "thumb 비율 오차 1% 미만"이라고 **추측**으로
+말씀드렸습니다. 실측은 **7.2%**입니다.
+
+    수정 전  thumb 612.2px / 750px = 81.6%   (실제 가시 82.7%)   오차 1.1%
+    수정 후  thumb 566.2px / 750px = 75.5%   (실제 가시 82.7%)   오차 7.2%
+
+구조적인 이유가 있습니다. 모서리가 가져가는 칠은 트랙이 여전히 계산하는 칭이라,
+thumb를 모서리 안에 넣는 **모든** 방법은 칠해진 길이를 트랙에 대해 줄입니다.
+오차를 0으로 만드는 유일한 방법은 모서리 자체를 줄이는 것(`.modal`의 라운드를
+`--radius-lg` 24px에서 `--radius-sm` 12px로)인데, 사용자가 선택한 것은 이 방법이
+아니었습니다. 12px면 실측 기준 thumb 최하단 열이 0.79px만 밖으로 나가 사실상
+사라집니다 — **하지만 빌드해서 측정은 하지 않았습니다.** 선택이 이쪽으로 갈
+가능성을 남겨둔 상태입니다.
+
+부수 효과로 스크롤을 끝까지 내리면 **thumb가 트랙 끝에서 32px 전에 멈춥니다.**
+7px 넘침이 "스크롤바가 끝에 못 미닿는" 다른 어색함으로 바뀐 셈이고, 이건
+같은 부류의 지적이 될 수 있습니다.
+
+### 무효임을 증명한 것 (틀린 이야기를 남기지 않으려고)
+
+- **풋터 상단 헤어라인이 10px 짧게 끊기는 것**은 별개입니다(x=839에서 멈춤).
+  음수 마진을 더 넓혀 봤는데 **배치 상자만 바뀌고 픽셀 하나도 안 바뀌는** 것을
+  주입 실험(풋터 배경을 빨강으로 칠해보는 것)으로 확인했습니다. 스크롤
+  컨테이너는 자식을 스크롤포트 — 스크롤바를 뺀 영역 — 로 잘라내기 때문입니다.
+  되돌렸습니다. 그릇된 픽셀도 없는 선언을 남기는 것보다 없는 편이 낫습니다.
+  같은 이유로 `--scrollbar-size` 토큰, `.modal`의 `scrollbar-gutter: stable`,
+  `overflow-x: hidden`도 전부 되돌렸습니다. `scrollbar-gutter: stable`은 높이
+  10px를 먹어서(clientHeight 750 -> 740) 풋터가 765로 올라가는 **새로운 결함**을
+  만들었고, `overflow-x: hidden`으로 되돌릴 수 있었지만 필요한 근거가 없어졌으므로
+  전부 걷어냈습니다.
+- **CDP로 주입한 스크롤바 의사 요소 스타일은 먹지 않습니다.** `<style>`을
+  head에 넣자마자 `getComputedStyle`은 `borderTopWidth: 40px`를 보고했는데,
+  캡처는 기준 이미지와 **픽셀 0개가 달랐습니다**. 스크롤바는 만들어질 때 스타일이
+  정해지고 나중 주입으로는 다시 칠해지지 않습니다. 그래서 변형별 비교는
+  전부 무효 판정이고, **실제 스타일시트에 넣고 `tauri:build` 해서만** 재고가
+  가능합니다. 그 과정에서 후보를 다섯 개나 해봤는데, 그 중 셋(버튼 3종)은
+  전부 기준과 픽셀 동일 — 주입이 먹지 않았기 때문입니다.
+
+### 테스트
+
+`layout.test.ts`의 "the dialog's scrollbar stays inside the dialog's corners".
+decrement/increment **양쪽** 다 존재할 것, `display: block`, `height`가 px로
+있을 것, `background: transparent`일 것(불투명하면 브라우저 화살표가 자리를
+차지하는 경로), 그리고 전역 `::-webkit-scrollbar`에는 button 규칙이 없을 것
+(트랜스크립트는 비용 없이 정확도만 깎이는 것을 막는다).
+
+변이 검사 2건 — 버튼 규칙 삭제, 버튼을 `var(--raised)`로 바꾸어 불투명화 — 둘 다
+실패 확인 후 되돌렸습니다.
+
+### 체크 결과
+
+    npm test                exit 0   494 passed / 0 failed, 79 suites  (493 -> 494)
+    npx tsc --noEmit        exit 0
+    npm.cmd run tauri:build exit 0   MSI + NSIS
+    pytest tests/unit -q    exit 0   623 passed / 8 skipped  (test_build_scripts.py 제외)
+
+### 하지 못한 것
+
+- **눈으로 확인하지 못했습니다.** 이 빌드는 이미지 읽기가 BLOCKED이고 preview
+  브라우저가 프레임을 만들지 않습니다. 위 수치는 전부 스크린샷 픽셀 계측이고,
+  그 계측기가 두 번 틀렸던 것을 교정하면서 얻은 값입니다.
+- **대안(라운드 24px -> 12px)을 빌드해서 측정하지 않았습니다.** 계산상 0.79px만
+  밖으로 나가 사실상 사라지지만, 실측 전까지는 추측입니다.
+- 커밋하지 않았습니다.
+
+---
+
+## Tauri -> pywebview: the shell is Python now (2026-10-10)
+
+The app was three moving parts: a Vite bundle, a Rust shell that embedded it, and
+a frozen Python core the shell spawned as a sidecar. It is one now. The window is
+`python -m tonyagent.window`, the core is that process's child, and the bundle is
+read off disk.
+
+**What went away:** `app/src-tauri/` (the whole crate), `cargo`, `rc.exe` and the
+Windows SDK requirement, `scripts/build_sidecar.py`, `scripts/sidecar.spec`,
+`scripts/find_windows_sdk.ps1`, `scripts/verify_system_menu.py`, the three
+`@tauri-apps/*` dependencies, `Start TONYAgent (Tauri).bat`, and two of the three
+build stages. The build is `vite build` and nothing else.
+
+**What did not change:** the JSONL protocol, `headless/server.py`, every
+component, `events.ts`, `markdown.ts`, all 21 stylesheets, and all of
+`backend.ts` above the transport -- framing, request ids, reply routing,
+`carriesSecret`. `LineTransport` was already the seam, so the shell swap landed
+underneath it.
+
+### The new shell, file by file
+
+| File | Job |
+|---|---|
+| `src/tonyagent/window/host.py` | `main()`: serve the bundle, start the core, open the window |
+| `src/tonyagent/window/core.py` | The core as a child process: stdout reader, stderr reader, and a pump that batches frames |
+| `src/tonyagent/window/assets.py` | `app/dist/` on 127.0.0.1, ephemeral port, `.woff2` mapped by hand |
+| `src/tonyagent/window/bridge.py` | `window.pywebview.api`: the page's whole view of the host |
+| `src/tonyagent/window/win32.py` | Rounded corners, the system menu, `IsZoomed` |
+| `app/src/bridge.ts` | The other side of the seam: `host()`, `whenHostReady`, `installPushHandlers` |
+
+### Three things that fail silently, all found by running it
+
+1. **`evaluate_js` before the document is ready does not fail -- it deadlocks.**
+   The script reaches the webview, the result callback never fires, and the
+   semaphore `evaluate_js` waits on is never released. The pump runs on its own
+   thread, so the symptom is a window that renders and then never speaks again,
+   with no error anywhere. `Bridge.ready()` is the gate; frames buffer until the
+   page calls it.
+2. **pywebview builds the page's API by walking `dir(js_api)`, *evaluating* every
+   public attribute and recursing into non-callables.** A public `maximized`
+   property was evaluated by that walk, off the GUI thread; reading the maximized
+   state touches the WinForms control's handle, and that deadlocked the window
+   before it loaded. A public `self.window` would also have handed the page
+   pywebview's entire Window API. `Bridge`'s state is now strictly private
+   (`_attach`, `_frames`, `_maximized`, `_hwnd`) and its public methods are
+   exactly the page's API.
+3. **Tauri's `"deep"` drag region and pywebview's are not the same thing.**
+   pywebview walks *up* from the press looking for the class, so by default a
+   press anywhere inside the title bar drags -- including on the caption buttons
+   and the model picker. The host sets `DRAG_REGION_DIRECT_TARGET_ONLY = True`,
+   narrowing it to "the pressed element carries the class itself", so the class
+   lives on the bar and its background regions and the controls stay clickable.
+   `TopBar.test.tsx` pins that exact set of four elements.
+
+### Verified, not assumed
+
+`scripts/verify_window.py` drives the real objects and probes the page from the
+host side. The check that matters most is that the *app's own* transport sent
+`state`, `tools.get` and `reasoning.list` to the real core -- `tools.get` is only
+sent after `state` returns, so a reply demonstrably came back through the bridge.
+The window then reads "connected ... sandbox: stopped".
+
+The CSP moved from `tauri.conf.json` into a `<meta>` in `index.html`, and the one
+thing that could not be reasoned out was whether it would block pywebview's
+injected bridge. It does not: WebView2's host script injection is not subject to
+the page's policy. That is a measured fact now, and `webviewPolicy.test.ts`
+follows the policy to its new home.
+
+### Still open
+
+- The `Start TONYAgent (Prebuilt).bat` name is kept, but there is one launcher
+  now, not two.
+- `scripts/probe_webview.py`, `scripts/shot_screen.ps1` and
+  `scripts/window_rect.ps1` attach to a WebView2 over CDP, which the Tauri build
+  enabled and pywebview may not. They need re-pointing or retiring.
+- `README.md` is stale well beyond this change: it still describes the Tkinter
+  UI, `core/app.py` and `ui/views/`. Only the claims this change made false were
+  corrected.
+
+---
+
+## The mark moved to the window's corner (2026-10-10)
+
+The app's "T" was in the sidebar's head, beside the wordmark. It is in the title
+bar's top-left corner now, alone.
+
+**The rail's copy did not leave with it, and that is fixed below.** This section
+used to end "and the sidebar's head is the toggle and nothing else", which was the
+*intent* rather than the result: `.rail-logo` stayed in the rail, so the window
+drew the same glyph twice -- 22px in the corner and 32px in the strip, 64px
+apart. See "The rail's mark is gone" at the end of this file.
+
+**Why the sidebar was the wrong place.** That panel is an *overlay*: it comes and
+goes with `railExpanded`. A logo that disappears when you close a panel is not the
+window's mark -- and the corner above the rail is the one place in the window
+that is always on screen.
+
+**What it cost in CSS, and why that is the interesting part.** The bar used to
+indent all of its contents past the left column with
+`padding: 0 0 0 calc(var(--rail-w) + 8px)`. That padding is gone, and the indent
+is the mark's own width now: `.topbar-mark` takes exactly `--rail-w` and the bar's
+existing 8px `gap` does the rest. The conversation tab lands on the same pixel it
+always did, which is why this is one element and one width rather than a new
+computed offset -- and `layout.test.ts` asserts the three parts separately, because
+a `padding` that came back alongside the mark would double the indent and read as
+"almost aligned" rather than as a bug.
+
+**Measured in the running window**, not inferred from the stylesheet.
+`scripts/verify_window.py` now reports the mark's box, and it answers:
+
+    box 0,0 64x51 / glyph 22px at 21
+
+-- the window's own corner, the rail's width, and a 22px glyph centred in it
+(`(64 - 22) / 2 = 21`). The same probe reports **5** drag regions rather than 4:
+the mark carries `pywebview-drag-region` like the rest of the bar's empty
+surface, because with `DRAG_REGION_DIRECT_TARGET_ONLY` a press drags only when it
+lands on an element carrying the class itself -- and 64x51 of dead title bar
+would be the one patch of the window that cannot be dragged by.
+
+The wordmark went with the mark. The tab beside it already reads "TONYAgent"
+whenever no conversation is open, so the corner is the glyph alone.
+
+---
+
+## The window's corners, and the settings gear (2026-10-10)
+
+Two things the app had claimed and did not do, plus a flake that turned out to be
+in a test rather than in what it tests.
+
+### The corners were not round, and the code that rounded them ran
+
+`win32.round_corners` sets `DWMWA_WINDOW_CORNER_PREFERENCE` to `DWMWCP_ROUND`,
+and had done since the Rust shell. It returned without raising, every time, and
+the corners were square.
+
+Two causes, both found by measuring rather than by reading:
+
+1. **`shadow=False`.** pywebview's `shadow` is what calls
+   `DwmExtendFrameIntoClientArea`, and with no DWM frame there is nothing for DWM
+   to round. Measured: with it off the window's style is `WS_CAPTION` off,
+   `WS_THICKFRAME` off, `WS_POPUP` off -- no frame at all -- and
+   `DwmGetWindowAttribute` reads the preference back as **0** (default), which is
+   the set having been accepted and discarded. The comment that argued for `False`
+   had it exactly backwards: the frame is what a shadow is cast from, not the
+   other way round.
+2. **It was applied too early.** `_startup` runs from `webview.start(func)`, which
+   is before the form is on screen, and setting the attribute then is discarded
+   the same way. Applying it on `window.events.shown` is what survives, so
+   `_startup` now does both -- and `tests/unit/test_window_host.py` pins the
+   subscription, because "it is applied" is exactly the half that was already
+   true.
+
+Verified with pixels rather than with the read-back alone:
+`scripts/verify_corners.py` attaches to the *running* app by window title, grabs
+the screen, and prints the corner as a map. It reads `value=2` and prints a
+quarter circle of non-window pixels in the top-left:
+
+```
+#.......................
+........#...............
+..#..........########.##
+.........###############
+........################
+......##################
+```
+
+### The gear was an outline, and read as a sun
+
+Both places -- the rail and the sidebar's foot -- drew a byte-identical 8-tooth
+Feather outline at 17px with a 1.7 stroke. That is about 1.2px of ink around
+teeth about 2px wide, so the teeth merge into the ring they sit on and the whole
+thing reads as a brightness control. The rail's own comment records this
+happening once already, and the fix then -- one continuous outline around the
+teeth -- was real and not enough: a thin ring around a thin hub ring is still two
+rings at that size.
+
+It is a **filled** silhouette now, which is what Windows itself uses for this
+control, with the hub as a second subpath under `evenodd` so that it is a hole
+rather than a circle drawn on top. It lives in `app/src/Gear.tsx`, because the
+two copies were identical strings in two files.
+
+That needed one small refactor: the rail wrapped every entry in a shared 17px
+`<svg>`, and a solid glyph cannot be nested inside it -- a nested `<svg
+width="17">` is sized in the parent's *user units*, so inside `viewBox="0 0 24
+24"` it comes out 17/24 of the box. `Icon` became `glyph()`, returning a node,
+and each entry carries a complete one.
+
+`IconRail.test.tsx` asserted the old outline (two paths, `stroke="currentColor"`)
+and now asserts the three things that make this a gear rather than a sun: one
+path, filled rather than stroked, hub cut out of it.
+
+### The flake was a millisecond in the fixture
+
+`test_build_scripts.py` was documented here as "4 of its 24 tests fail on any
+given run, a different 4 each time". The cause was `_make_current`: it wrote the
+output and the sources and then aged only the sources, so an "edit" written by
+`_write` landed a few milliseconds after the output's timestamp -- inside the
+range where a filesystem can report the two as *equal*, at which point `-gt` says
+the tree is current and the test that expects a rebuild fails.
+
+The output is backdated an hour now. The suite has run clean five times running,
+and the earlier note blaming the three-stage tree was wrong: that tree had
+nothing to do with it.
+
+---
+
+## The shortcut, and one window instead of two (2026-10-10)
+
+`scripts/make_shortcut.ps1` writes `TONYAgent.lnk` in the repository folder --
+pointing at `Start TONYAgent (Prebuilt).bat`, carrying `app/icons/icon.ico` and a
+description, so the app can be opened by double-clicking instead of by
+remembering a command. `-Destination "$env:USERPROFILE\Desktop"` puts it on the
+Desktop instead. The `.lnk` is gitignored: it holds an absolute path to this
+checkout, so it is a fact about one machine, and the script is the thing to carry
+to another.
+
+The shortcut targets the launcher rather than `pythonw -m tonyagent.window`,
+because the launcher is what rebuilds the frontend when it is behind and checks
+that `pywebview` is installed before it starts anything. A shortcut straight to
+the interpreter would be a second entry point that skipped both.
+
+### Making it meant looking at what it would open
+
+And what it would open was two windows. `start "" python -m tonyagent.window`
+gave the app its own console: `python` is a console-subsystem program, so `start`
+allocates a *new console* for it. Measured by enumerating the app's top-level
+windows, which found a visible `PseudoConsoleWindow` beside the form:
+
+    1 console window(s): the app does have one beside its window.
+
+`pythonw` is the same interpreter with no console. The launcher starts that now,
+and the same probe reports `0 console window(s)` with the form still there and
+still titled `TONYAgent`.
+
+### Which cost the host its stderr, so it keeps a log instead
+
+`pythonw` has no console, and the host's own `logger` lines are where a startup
+failure says why -- "a window that never appears with no message anywhere" is the
+failure worth avoiding. So `host.has_console()` asks the OS (`GetConsoleWindow`),
+and with no console the host moves its log to `window.log` beside `config.toml`.
+
+Two things were measured on the way, and both had been assumed wrong:
+
+1. **`sys.stderr` is not `None` under `pythonw`.** On Python 3.13 it is a
+   `TextIOWrapper` whose writes go nowhere -- the repr is two wrappers, not
+   `(None, None)`. The obvious check would have concluded there *was* a console
+   and left the log on a stream nobody reads.
+2. **The Windows Store Python redirects `%APPDATA%`.** Python writes
+   `%APPDATA%\TONYAgent\window.log`, `os.path.exists` returns `True`, and a shell
+   looking at that path finds nothing: the file is really under
+   `AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\Roaming\TONYAgent\`.
+   That is app-container redirection, not a bug here -- but it is why the log is
+   not where an outside process would look for it. The app sees one consistent
+   directory; only something outside the container sees two.
+
+`host.py` also never imported `sys`, so the first version of this raised a
+`NameError` inside the very function meant to make failures visible, and the app
+died before the window opened. The existing `python -m tonyagent.window --help`
+test in `tests/unit/test_window_host.py` is what caught it.
+
+### The warning that was not a failure
+
+The new log reported one straight away:
+
+    WARNING | tonyagent.window.host:apply - The window has no native handle, so
+              it cannot be styled: 'NoneType' object has no attribute 'Handle'
+
+on a launch whose corners `scripts/verify_corners.py` then read as `value=2` with
+a quarter-circle in the pixel map. It was the *first*, deliberately early
+attempt: `_startup` runs before the form exists, and the `shown` retry is the one
+that does the work. The early attempt logs at `debug` now and only the second one
+warns, because there a missing handle really is unexpected. The `shown`
+subscription is a zero-argument lambda, because pywebview's `Event.set` decides
+how to call a handler by counting its parameters -- a handler with a defaulted
+parameter would be called through the `*args` branch instead.
+
+### The fixture that stubbed a line that no longer existed
+
+Changing `python` to `pythonw` failed five tests in `test_build_scripts.py`, all
+of them the launcher fixture's own guard:
+
+    assert fragment in launcher, f"the launcher no longer contains {fragment!r}"
+
+which is that guard doing exactly what it was written for. `README.md`'s "First
+Run" was wrong in the same way and worse: it said `python -m tonyagent`, which is
+not a command at all -- `tonyagent` is a package with no `__main__`, so it exits
+with "cannot be directly executed". That section now gives the shortcut and
+`python -m tonyagent.window`.
+
+---
+
+## The rail's mark is gone (2026-10-10)
+
+The app's glyph was drawn in three places: the taskbar (`icon.svg`), the title
+bar's corner (`.topbar-mark`, 22px) and the rail's head (`.rail-logo`, 32px). The
+first two are the app's mark. The third was a leftover -- the mark moved to the
+corner and this copy did not leave with it -- so the window drew the same drawing
+twice, 64px apart, and the rail's one is what read as a second logo rather than as
+the app's.
+
+**Gone from three places, and each had to be found rather than remembered.**
+
+- `IconRail.tsx` no longer renders it, and no longer imports `AppMark`. What sits
+  where it was is a comment saying the absence is deliberate, because an empty
+  spot in a strip of icons is otherwise indistinguishable from an oversight.
+- `.rail-logo` is out of `rail.css` -- the whole rule, not just its use. A class
+  nothing renders is a class the next person reuses by accident.
+- `IconRail.test.tsx` asserted the rail *drew* the mark, positionally against
+  `MARK_RECTS`, and that is exactly the test that had to change: it was green the
+  whole time the window was drawing two logos. It is a negative assertion now --
+  no `.rail-logo`, no `rect` anywhere inside `.rail`, and the strip's first child
+  is a `.rail-btn`. A test that checked the rail drew the *right* glyph would pass
+  with the glyph in the wrong place, and the wrong place is the whole failure.
+
+The `rect` half is worth its own line: every glyph the rail does draw is a `path`
+-- the toggle, search and stop are stroked outlines and the gear is one filled
+silhouette -- so a `rect` inside the strip can only be the mark's two strokes,
+wherever someone puts them next.
+
+**Measured in the running window**, through `scripts/verify_window.py`, which has
+a check for it now:
+
+    the mark's corner: box 0,0 64x51 / glyph 22px at 21
+    the rail draws no mark: corner 2 rects, first-run 2, rail 0 rects in 0 .rail-logo box(es)
+
+The corner still draws its two rects, the first-run state still draws its two, and
+the rail draws none in no box at all.
+
+### The shortcut moved, and that is fine
+
+`TONYAgent.lnk` was made in the repository folder and then moved to the Desktop. A
+shortcut is not a relative path: it holds an absolute target and its own "Start
+in", so moving the file changes nothing about what it opens -- the target is the
+launcher by absolute path and the working directory is the repository. The
+`-Destination` parameter is for putting it where you want it in the first place.
+
+---
+
+## The sidebar's foot (2026-10-10)
+
+Two things in the panel the rail opens into. The first is a measurement rather
+than a reading, and the second is a button that did not do what it looked like.
+
+### The settings button was not at the bottom
+
+Because the only element that could push it there is not rendered when the
+conversation list is empty -- which is what a fresh window has. `ConversationList`
+swaps `.chatlist-rows` for `.chatlist-empty` when there are no conversations, and
+only the rows carried `flex: 1`. So nothing above the foot took the free height,
+and the foot sat wherever the content happened to end.
+
+**Found by measuring the real window**, and it had to be: the stylesheet reads as
+correct. The panel is `top: var(--topbar-h); bottom: 0`, the foot is its last
+child, and the rows do declare `flex: 1`. A probe that opened the panel and read
+the boxes said
+
+    chats pane : panel 0,52 288x712 | rows MISSING | foot 0,218 287x55 | acts Clear conversation@227 Search project@227 Settings@227
+
+`rows MISSING` is the whole answer -- 218px into a 712px panel. `.chatlist-empty`
+declares `flex: 1` now, so exactly one of the two grows in either state: the rows
+when there are conversations, the empty box when there are not. After:
+
+    chats pane : panel 0,52 288x712 | rows MISSING | foot 0,709 287x55 | acts Search project@718 Settings@718
+
+709 + 55 = 764, the panel's own bottom edge. `layout.test.ts` asserts both
+declarations, and `scripts/verify_window.py` measures the gap, because this is a
+fact about a rendered box and no stylesheet test can see it.
+
+### Clear is gone
+
+It was the trash glyph in the foot, beside Search and Settings, and it read as
+"delete this chat" -- which is not what it did. It emptied the transcript you were
+reading and left the conversation in the list. Deleting a conversation is the row
+menu's Delete, which names the row it acts on.
+
+So it is out of the component, out of `Props`, out of `App.tsx` -- with the
+`clear` callback it was the only caller of, and the `messageCount` prop that fed
+nothing but its disabled state -- and out of the test fixture.
+`ConversationList.test.tsx` asserts the foot is exactly
+`["Search project", "Settings"]`.
+
+**The core's `clear` method is still there, and nothing in the window calls it.**
+That is a consequence rather than a tidy-up: clearing a conversation's messages
+has no control anywhere now. Deleting one entirely does, and New chat starts a
+different one -- but if clearing belongs somewhere else, that is a decision to
+make rather than a button to quietly keep.
+
+---
+
+## One folder at a time (2026-10-10)
+
+The folder system changed shape. There is one project folder at a time, a chat
+belongs to the folder it is about, and **changing the folder takes the open chat
+with it** -- so a chat and the folder it is about cannot drift apart.
+
+**The sidebar is one flat list now.** It used to group conversations under a
+foldable header per project, active one pinned first, and that structure existed
+because several projects were in play at once. With one folder the grouping has
+nothing to group: `groupByProject` is gone, and `rowsForFolder` -- the rule,
+exported so it can be tested -- draws the current folder's chats and nothing
+else. A chat filed under another folder is **not deleted**: it is somewhere else,
+and changing back to that folder brings it back. That is the whole reason the
+filter is a filter.
+
+**With no folder open the list is everything.** There is nothing to scope by yet,
+and the alternative -- showing only the chats that have no folder -- would greet
+a first run with an empty list while the user's real chats sat behind a folder
+they had not picked.
+
+**The heading is the folder, and it is a button.** It names the list's scope and
+it opens the picker: the picker used to hang off the project group's header,
+which is gone, so without this the chats pane would have had no way to change
+folders at all. It is drawn whether or not there are rows -- measured, because
+the first version hung it off the rows, and a folder with no chats yet drew no
+heading and no picker, which the window reported as `MISSING`.
+
+**`conversations.move` is new, end to end**: `ConversationStore.move` (one field
+and one write -- a conversation is one file whatever folder it is about, so
+nothing is copied and the id does not change), a handler, and the frontend
+calling it from `chooseFolder` *after* the folder is bound. The order matters and
+is asserted: a move sent first would file the chat under the folder the pick
+never reached. When the moved chat is the open one the handler binds the core's
+own project to it, because `state` reporting the old folder over a chat filed
+under the new one is exactly the disagreement `_bind_project` exists to prevent.
+
+### The bug it found, which is much bigger than the feature
+
+**No reply from the core had ever reached the window.** `CoreProcess._read_stdout`
+strips the terminator off every line, so the host hands the page a list of
+*lines* -- and `CoreBackend.ingest` frames on newlines. Passed straight through,
+every reply was appended to the buffer and never split, so no request ever
+resolved.
+
+What that looked like: the window drew, said "connected", and stopped. The model
+picker was empty, the status bar said "no provider", the first-run panel said
+"No project folder", and the only requests it ever sent were the three whose
+effects do not await a reply (`state`, `tools.get`, `reasoning.list`). It had been
+that way since the pywebview migration, and every test passed -- because the fake
+transport in `backend.test.ts` pushes *raw stdout with its terminators*, which is
+the one thing the real host does not do.
+
+Found by following this feature's own symptom: the new heading said `All chats`
+while the core was reporting `project: ...\WebAIAgent`. The trail was the reply
+arriving at the bridge (`[core] {"id": 1, "result": {...}}`), the push path
+delivering it to the page, and the request list stopping dead after
+`reasoning.list`. One line in `backend.ts` puts the terminator back, and
+`backend.test.ts` now pushes exactly what the host pushes -- one bare line -- so
+the seam cannot rot again.
+
+After it: **eight** requests on boot instead of three, the model and the provider
+in the bar, the restored transcript on screen, and the new heading reading
+`WebAIAgent`.
+
+---
+
+## The tab, and what deleting a chat left behind (2026-10-10)
+
+### The tab is a browser tab now
+
+It was the reference's chip: a 30px stadium floating in the middle of the bar,
+which is the shape of a *control*. It is the shape a browser gives the page it is
+showing -- the height of the strip it is cut into, rounded at the top and **square
+at the bottom** -- so it reads as attached to the top of the window rather than as
+a pill that happens to be up there.
+
+Square at the bottom is the whole of it. A radius on the lower corners lifts the
+tab off the edge it is attached to, and then it is a chip again with a different
+number in it. `--radius-xs` for the top two and not a bigger step: a browser's own
+tabs are rounded by a few pixels, because the shape is doing the work and the
+radius is only taking the corners off.
+
+Measured in the running window, through the check `verify_window.py` now has:
+
+    the tab's box: tab 72,0 233x51 in bar ..52: 1px from the bottom, radius 6px 6px 0px 0px
+
+Full bar height, its bottom edge on the bar's own (the 1px is the bar's border),
+and the computed radius showing two square corners -- which is the only way to see
+that the lower pair is `0`.
+
+### Deleting a chat left the window on no conversation at all
+
+Reported from the app: delete the open chat, land on the empty state, and the bar
+goes on naming the chat that no longer exists.
+
+**The title was not the bug.** The title is read out of the list by the open
+conversation's id, so a bar naming a deleted chat means the window still holds
+that id -- and it did not. It held *nothing*: `deleteConversation` set
+`conversation` to `""` and stopped, and a lookup by `""` finds nothing, so the tab
+fell back to the application's own name.
+
+The real damage was one step further on. With no conversation id, `_persist`
+returns early (`if not self.conversations or not self.conversation_id`), so a
+message typed into that empty state was **never saved anywhere** -- and the core's
+own delete handler had been saying what should happen all along:
+
+> Deleting the conversation you are looking at leaves you looking at nothing,
+> which reads as a failure rather than as the intended result. So the window is
+> moved on to a fresh one.
+
+The moving-on was never implemented. `deleteConversation` now creates a fresh
+conversation, which is where the core's comment says it belongs: a conversation
+invented in the core would be one the window has never heard of -- there is no push
+for "you are now in a different conversation" -- so the reply would have to carry
+it and every caller would have to adopt it. `conversations.create` already exists,
+files under the folder the window knows it is in, and answers the window directly.
+The core's comment now says that instead of promising it.
+
+Two tests in `App.test.tsx` pin both halves: deleting the open chat starts a chat
+and the tab names it, and deleting a row you are **not** looking at moves nothing
+and starts nothing.
+
+---
+
+## The blue rectangle on the composer (2026-10-10)
+
+Reported as "a blue rectangle when clicked on the chatting panel". It was the
+global focus ring, and it was landing on the one control in the app that could not
+avoid it.
+
+**`tokens.css` has one rule for every focusable thing**, and it is `:focus-visible`
+on purpose -- "a ring on every click would teach people to ignore it". That works
+everywhere except a text field, because **a text input matches `:focus-visible` even
+on a mouse click**. That is the browser's heuristic, not the app's, and the composer
+is the only text field.
+
+So clicking a chat in the sidebar -- which focuses the composer, so the caret is
+where the user is about to type -- drew the ring *inside* a card that already says
+it is focused by taking its own border to `--accent`. Measured in the window: a
+758x63 rectangle at `outline-offset: 2px` in `--accent-bright`, inside a card whose
+border had gone `--accent`. Two blue boxes saying one thing.
+
+` .composer textarea:focus-visible { outline: none }` is the whole fix, and
+`layout.test.ts` has the guard that makes it safe. The old guard was
+`assert.doesNotMatch(SOURCE, /outline:\s*none/)` -- *nothing* suppresses the ring --
+which is a good rule with one legitimate exception, so it now asserts the exact set
+of suppressions instead:
+
+    [".composer textarea:focus-visible"]
+
+and that the field really does have something else to say, because a field that
+suppressed the ring and said nothing would be the original bug with the colours
+swapped.
+
+**The check for it has a `time.sleep` in the middle, and that is load bearing.**
+Focusing the field and reading the card's border in the same `evaluate_js` reported
+`rgba(255, 255, 255, 0.1)` -- the *unfocused* border -- on a card that was about to
+have the right one, because `border-color` transitions. Two calls with half a second
+between them report `rgb(99, 147, 240)`, which is `--accent`. The first version of
+this check would have said the fix was broken.
+
+---
+
+## The tab strip (2026-10-10)
+
+The title bar is a strip of tabs now, as a browser's is: one tab per chat you have
+opened, an X on each, and a `+` after them. Right-clicking a tab offers Rename and
+Close tab.
+
+**A tab is an open conversation, not a copy of one.** The core holds a single
+session, so selecting a tab is `conversations.switch` and re-reads the transcript.
+Nothing is duplicated, and two tabs cannot disagree about what a chat says,
+because there is only ever one of it. Clicking a chat that is already open
+activates the tab it has rather than adding a second -- the one place the strip
+refuses the obvious thing, because two tabs on one conversation would be two views
+of one session and the only thing they could disagree about is which of them the
+user meant.
+
+**Closing a tab is not deleting a chat.** The conversation stays in the sidebar;
+what goes away is one of the views of it. Deleting is the row menu's Delete, and
+it is a different word on purpose. Closing the tab you are in hands over to the tab
+that took its place, or the one before it, and starts a fresh chat if it was the
+only tab -- "nowhere" being the state that lost messages two sections ago.
+
+**Nothing in the strip is a drag region**, and that is the change that mattered
+most. The class was on the tab and on its title when the tab was a label; a tab is
+a control now, and the host drags only when the press lands on an element carrying
+the class *itself* -- so leaving it on would have turned every click on a tab into
+a window drag. The bar's background either side of the strip is what moves the
+window, and `TopBar.test.tsx` asserts the exact set of classes rather than a count,
+which is what caught it.
+
+**Rename is refused on a chat with no messages**, from both menus, and the row
+stays in the menu rather than disappearing: the menu is where a user finds out that
+renaming exists, and an empty chat is exactly when they would go looking. The
+reason is on its `title`. It is not a preference -- the core retitles a
+conversation from its first user message *only while the name is still "New chat"*,
+so a name typed into an empty chat is a name that chat can never outgrow.
+
+**The `title` prop is gone from `TopBar`.** With a strip there is no single title
+to fall back to: an empty strip is the mark, the `+` and nothing else, which is what
+a browser shows with no tabs open. The `"TONYAgent"` fallback was the app's name
+answering a question that is about the chat.
+
+Measured in the running window, through the check `verify_window.py` now has:
+
+    the tab strip: 1 tab(s), first 72,0 228x51 in bar ..52: 1px from the bottom, radius 6px 6px 0px 0px, 1 close(s), 1 new
+
+### The flake, which was the test's fault
+
+`ComposerPaste.test.tsx`'s paste helper broke out of its wait as soon as an
+attachment **or** an error appeared. A paste that is over the limit produces
+*both*: `acceptFiles` sets the error before it starts reading, and the attachments
+land after `readFile` resolves. So the loop could stop on the error and the caller
+would count zero files. Seen three times across this session as `0 !== 5` / "the
+paste ignored the limit", and it read as the limit being bypassed.
+
+It waits for the paste to *settle* now: two consecutive ticks with the attachment
+count and the error unchanged. One tick is not enough, because the error is exactly
+one tick ahead of the files.
+
+### Where the strip starts
+
+Measured, because "the right side of the sidebar" has three plausible answers 200px
+apart: the rail ends at **64**, the sidebar panel at **288**, and the transcript's
+text column starts at 83. The strip was at **72** -- `--rail-w` plus the bar's own
+8px gap.
+
+It starts at **288**, the panel's right edge, so the tabs sit over the transcript
+beside the sidebar rather than over the sidebar's own column: at 72 the strip ran
+across the panel and read as the panel's own header. The rule is
+`calc(var(--list-w) - var(--rail-w) - 8px)` -- two tokens and the gap the bar
+declares, with the gap taken back -- and not `--list-w` alone, which would measure
+from the window's edge and land 64px past the panel, because the mark is already
+there.
+
+It does not move when the panel opens and shuts. `:has()` could follow it open and
+closed, and a strip that slid sideways when a panel opened would move the tabs out
+from under the pointer.
+
+    the tab strip: 1 tab(s), first 288,0 228x51 in bar ..52: 1px from the bottom, radius 6px 6px 0px 0px, 1 close(s), 1 new
+
+---
+
+## The tool system: one declaration, real validation, and background jobs (2026-10-11)
+
+**What this pass was.** The tool suite was ported towards the shape the DSH harness
+uses -- its names, its semantics -- so that habits and prompt text transfer. Three
+phases landed: structural prep, the cheap ports, and background jobs. **28 tools**,
+up from 23.
+
+### A tool is declared once now
+
+`tools/schemas.py` was a second, hand-written copy of every tool's declaration: 570
+lines of dictionaries restating the name, description, parameters and four flags the
+`Tool` classes already carried. Nothing kept the two in step except a handful of
+parity tests, and drift was *silent* in both directions -- the registry is what
+**runs** a tool and `schemas.py` is what **advertises** it, so a tool missing there
+was one the model was never told about.
+
+`Tool.describe()` is the single declaration now, and `schemas.py` derives
+`ALL_SCHEMAS` from the registry: **570 lines to 125.**
+
+The derivation had to be **lazy** (module `__getattr__`, PEP 562) and the import
+order in `tools/__init__.py` had to change. Reaching for `ALL_SCHEMAS` before the
+tool modules are imported binds an *empty* list, and an empty tool list raises
+nothing anywhere -- it is a model offered no tools at all, which presents as a model
+that refuses to act. There is a test for exactly that.
+
+Four parity tests became tautologies (comparing a thing to its own derivation), so
+they were repointed at the failures still possible: a descriptor missing a field, a
+`parameters` block that is not a complete JSON Schema, a category that is a plain
+string. Each was mutation-checked by reintroducing the bug it guards.
+
+**Three dormant bugs fell out of doing this:**
+
+* **`Tool.get_schema()` wrapped an already-complete JSON Schema a second time.** It
+  advertised `properties`, `required` and `additionalProperties` as the tool's
+  *parameter names*. It never reached a model only because nothing called it. Fixed
+  rather than deleted, since it is public.
+* **`TAKE_SCREENSHOT_SCHEMA` was named in `__all__` without ever being imported**, so
+  `from tonyagent.tools import *` raised `AttributeError`.
+* A duplicated `skip_confirm = True` line in the confirmation block.
+
+### A malformed call is refused in the model's own language
+
+`validate_args` checked presence and nothing else, on the stated grounds that type
+and range were the provider's business. The provider has no way to know what a *tool*
+wants: it forwards JSON, and a wrong type then failed *inside* the tool as a
+`TypeError` -- a message about a Python line, not about the argument at fault.
+
+It now checks type, enum and unknown keys, and honours the `additionalProperties`
+every schema already advertised. **It validates and never coerces**, which is what
+keeps the original objection answered: there is still one place that decides what a
+value *means* (the provider) and one that decides whether it is acceptable (here).
+`bool` is excluded from `integer` and `number` by name, because
+`isinstance(True, int)` is `True` in Python and a count would otherwise accept
+`true`.
+
+### Independent tool calls run at the same time
+
+`_run_tool_calls` ran a batch strictly in order. It is now three phases -- plan,
+execute, refuse -- with the admitted calls gathered concurrently.
+
+Two things are load-bearing, and both are easy to get wrong:
+
+* **Results come back in declared order regardless of completion order.** The tool
+  messages after an assistant `tool_calls` array line up one for one; a batch that
+  appended as calls finished would pair every result with the wrong request.
+* **Refusals are emitted last, and each call's budget number is frozen when it is
+  admitted.** A refusal quotes the budget line the turn actually reached and the
+  window reads the final `TOOL_COMPLETED` as the failure, so emitting them during
+  planning would have both describing a turn that had not run yet.
+
+A batch containing a confirmation prompt stays fully sequential -- two dialogs at
+once is worse than a slower turn -- and `ToolOrchestrator.will_prompt` is the single
+answer to "will this ask?", asked by both the session and the orchestrator so the two
+cannot disagree. A failing call cancels its siblings and awaits them, so nothing is
+left running behind a failed turn.
+
+### The file tools are `read`, `write` and `edit`
+
+Renamed from `read_file`/`write_file`/`edit_file`, across the mode allow-lists, the
+schema aliases and the tests. `read` gained `offset`/`limit` and returns numbered
+lines with the window reported against the file total. `edit` **refuses an ambiguous
+match** instead of silently replacing the first one, and gained `replace_all`. An
+empty `old_string` is refused by name: it matches everywhere, so `replace_all` on it
+would rewrite the file while reporting success.
+
+The frontend needed **no changes at all** for any of this, and that was verified
+rather than assumed: `npm test` passes with its fixtures still naming `read_file`,
+because tool rendering is generic over the payload. What a tool *does* have to
+satisfy is five payload contracts -- `id`, `name`, `result.status`, a **string**
+detail, and a `file_change` artifact for the Files tree.
+
+### `read_image`, `web_fetch`, and a `summary` for the card
+
+* `read_image` sends pixels through `ToolResult.images`, the field deliberately
+  excluded from `to_dict` -- because `to_dict` is both the wire payload *and* the body
+  of the tool message written into every saved conversation, so a picture there would
+  cost as much disk as the rest of the chat. The downscale moved to `tools/images.py`
+  so it and `take_screenshot` cannot describe one downscale two ways; `MAX_EDGE` stays
+  patchable as a name on `screen_tools` by being passed in explicitly.
+* `web_fetch` is GET-only and shares `http_request`'s SSRF guard through one helper. A
+  test asserts the two produce *byte-identical* refusals for the same URL, which is
+  the only way to pin "one home for one rule".
+* `folder_required` became a declared flag on `Tool`. The orchestrator had
+  special-cased `!= "http_request"` by name, which could only ever describe one tool.
+* **`ToolResult.summary` is new, and it fixed a blank card.** The window draws a
+  card's detail from one string, looking for `summary` first. `execute_command` and
+  `http_request` both return a structured dict, which the window will not render -- so
+  a successful command showed a card with *nothing* on it and no error anywhere to say
+  so. `output_excerpt` and `summary` fixed both, and a test now asserts the invariant
+  the bug broke: a successful result whose `output` is not a string must carry a
+  summary.
+
+### Background jobs
+
+Long-running commands no longer block a turn. `execute_command` gained
+`background=true`, which starts a job and returns its id; `job_list`, `job_output`
+and `job_kill` read it and stop it.
+
+**Threads and `Popen`, not `asyncio` subprocesses.** An `asyncio.subprocess.Process`
+belongs to the event loop that created it: when that loop closes, its pipes go with
+it and the job can no longer be read even though its process is still running. A job
+is *defined* by outliving the thing that started it.
+
+Three more decisions worth the ink:
+
+* **The kill takes the process group, not the process.** `shell=True` makes the real
+  program a *child* of a shell, so terminating the process we hold leaves a dev server
+  alive with its port still bound -- a "stopped" job that is not. Verified against a
+  job that spawned a grandchild: the grandchild is gone, and the kill returned in
+  0.17s rather than waiting out its 120s sleep.
+* **Buffers are bounded, and they admit what they drop.** 256 KiB per stream, with
+  dropped text counted and reported, so a gap in the output is never presented as
+  continuous output. Finished jobs are pruned, on read as well as at start -- pruning
+  only at start let the history settle one above the cap, which a test caught.
+* **`atexit` stops everything.** The core is a child process; without it an exit
+  leaves every job running with nothing left that knows about them.
+
+**Jobs run on the host, and the sandbox refuses them.** That is deliberate, and it is
+a limitation. The container is driven by a one-shot `exec_command` RPC that runs a
+command and answers with its output, keeping no handle; making it host a job needs
+new RPC methods *inside the image*, so it would ship as a feature that does not work
+until the container is rebuilt. Detaching inside the container and polling a log file
+over the existing RPC was considered and rejected -- a second job mechanism with its
+own PIDs and liveness checks is the duplication this codebase argues against
+elsewhere. The refusal names the way to make it work, and a test asserts a refused
+background command starts *no* process.
+
+### What this found and did not fix
+
+**Five tools declare `requires_confirmation = True` with `destructive = False`** --
+`http_request`, `browser_navigate`, `browser_click`, `browser_type`, `execute_js`. The
+prompt gate is `destructive and requires_confirmation`, so **none of them can ever
+prompt**. That may be intended (confirmation reserved for destructive things) or the
+flags may be inert by accident. Changing it would start five tools prompting, so it
+was left alone and recorded here.
+
+`tests/unit/test_tool_orchestrator_path.py` also carried dead `("edit_file",
+"old_string")` overrides -- keys that never matched the old `old_text`/`new_text`
+parameters and silently fell back to `"x"`. They are correct now.
+
+### Verification
+
+Python unit **852 passed / 9 skipped**, TypeScript **578 passed** (98 suites), and
+`scripts/e2e_all_tools.py --fast` **35 checks, 0 failed** -- which covers all 28
+tools, including a real background kill of a still-running job.
+
+`scripts/e2e_all_tools.py` was itself broken by the rename and is fixed here: it
+imported `ReadFileTool`, which no longer exists, and named the old tools in a dozen
+places. Nothing in the test suite covers `scripts/`, so nothing failed -- which is the
+finding, not the fix.
+
+Nothing in this pass is committed.
+
+---
+
+## The plan and the goal: what the agent is working on (2026-10-11)
+
+**What this pass was.** Phase 3 of the tool port. The agent keeps a task list and a
+goal, and both persist with the conversation. **32 tools.**
+
+### They are not the transcript
+
+A transcript records what *happened*; a plan is what the agent *intends*. Kept in the
+message history, a plan becomes something the model has to hunt for among everything
+it tried and abandoned -- and it would be re-sent as though it were something either
+party had said.
+
+So `core/task_state.py` holds a `SessionState` (a list of `Todo`s and one goal) and
+the session renders it into the **system prompt** on every request. Nothing is added
+to `self.messages`, which keeps `clear()` and the history tests honest.
+
+### One object, or the feature silently does nothing
+
+The session renders `self.state`; the tools write through
+`task_state.current_state()`. If those were two objects, a `todo_write` would report
+success, the card in the transcript would show the new list, and the model would be
+sent the **old** one on the next turn -- working, visibly, and doing nothing.
+`AgentSession` therefore publishes its own state to the module (`set_state`), and
+there is a test that writes through a tool and asserts the session's prompt changed.
+
+The module global is the same shape as `folder_manager`: one open conversation at a
+time, and tools are stateless singletons with no per-call context to thread a session
+through. It is also why the tests reset it per test -- the per-conversation design
+would otherwise leak through the back door.
+
+### Saved with the conversation
+
+`Conversation` gained a `state` key, read defensively (`dict(raw) if isinstance(raw,
+dict) else {}`), so a file written before it existed opens as "no plan" and **no
+migration is needed**. That is the same rule the store already applies to message
+fields, and it is why the field is a plain dict rather than a `SessionState`: this
+module *is* the file format and must not import the thing it stores.
+
+`_persist` banks it and `_load_into_session` adopts it, both in the server, because
+the session knows nothing about storage. The test that matters switches away and back
+and asserts the plan came home; the trap is ordering -- `_new_session` publishes an
+empty state, so restoring the plan *first* is overwritten immediately.
+
+`plan.get` was added so a window can read the plan without scraping it out of a tool
+result. It is deliberately not folded into `state`, which is about mode, permission
+and sandbox: adding a key there would oblige every existing reader to know about a
+field it does not use.
+
+### The tools
+
+* **`todo_write` sends the whole list, every time.** Not a patch -- that is the only
+  shape in which *removing* a step is possible without a second verb, and a list that
+  can only grow is one nobody prunes. A step the model quietly abandoned is then read
+  on every later turn as work still outstanding.
+* **A bad item changes nothing.** Every item is validated before anything is stored,
+  so a list with a typo in its fifth entry does not leave the first four behind. The
+  refusal names the item's number.
+* **`create_goal` refuses to overwrite a live goal**, naming `update_goal` as the way
+  through. Silently replacing an objective drops work the user asked for with nothing
+  recording that it was abandoned.
+* **A blocked goal must say what it is blocked on.** "Blocked" with no reason is the
+  report that helps nobody: the next turn reads it, learns nothing, and either retries
+  the same wall or stops for no stated cause. The note is required of the *resulting*
+  state rather than of the call, so rewording an already-blocked goal does not demand
+  a restatement of the reason -- that wart was found by a test, not by reading.
+
+None of the four is destructive or confirmation-gated: they write the agent's own
+note-to-self, not the user's project, and they are offered in **every mode including
+Plan**, which is where a plan belongs most.
+
+### `exit_plan_mode` is not in this phase, and here is why
+
+This phase's objective asked for a decision rather than an implementation. The answer
+is no, for three concrete reasons:
+
+1. **It needs an approval affordance that does not exist.** The only dialog available
+   is the tool confirmation, gated on `destructive and requires_confirmation` and
+   worded "Confirm tool execution". Approving a *plan* is a question, not a
+   destructive act, and borrowing that dialog labels it wrongly.
+2. **Approving it would delete the thing being approved.** `AgentSession.set_mode`
+   clears the conversation on purpose -- "a mode change re-shapes what the agent is
+   for". An in-turn switch to Build would wipe the transcript and the plan the user had
+   just read and agreed to.
+3. **A tool cannot reach the mode.** Tools are stateless singletons; the session
+   publishes only flags to them (`_ALLOWLIST_BYPASS`, `_HOST_EXECUTION`). Publishing a
+   mode setter is a new kind of dependency, and it should arrive when something
+   actually needs it.
+
+What exists instead: the plan is in the system prompt and readable through
+`plan.get`, and the user acts on it by changing mode themselves -- which, like every
+mode change today, starts a fresh conversation, because that is what `set_mode` does.
+
+### Verification
+
+---
+
+Python unit **919 passed / 10 skipped**, TypeScript **578 passed** (98 suites), and
+`scripts/e2e_all_tools.py --fast` **42 checks, 0 failed** -- now covering all 32 tools,
+including the four planning tools and their refusals.
+
+Nothing in this pass is committed.
+
+---
+
+## `ask_user_question` and `present`: the agent asks *you* (2026-10-11)
+
+**What this pass was.** Phase 4 of the tool port. **34 tools.** The agent can put
+something in front of the user mid-turn and wait: `ask_user_question` asks one
+question and returns what they said, `present` shows something and returns whether
+they had anything to add. Everything before this pass touched the project, the
+machine or the network; these two touch the person, and they are the only ones
+that do.
+
+**The plumbing is a copy of the confirmation path, on purpose.**
+`tonyagent/core/user_io.py` is a future, a pending table and two callbacks -- the
+same triple `ConfirmationRequest` uses, for the same three reasons: the future is
+what the tool suspends on, the table is what lets a late reply find the question
+it belongs to, and the callback is what publishes the ask as an event so a window
+can draw it. A second dialog mechanism beside the confirmation would have meant
+two pending-answer tables, two timeouts and two ways to strand a turn. What
+differs is only the answer: a confirmation resolves to a bool, this resolves to
+whatever the user typed.
+
+It is a module global because **tools are stateless singletons** -- the same
+constraint `folder_manager` and `task_state` live with, and the reason there is no
+per-call session to thread through. The session installs both hooks in
+`install_question_bridge()`, called from `_attach_session` alongside the
+confirmation bridge, exactly as `test_headless_core.py` asserts.
+
+**One event pair, one dialog, one method, two tools.** `user.asked` /
+`user.resolved` and `user.respond {id, answer}` serve both, with `kind` in the
+payload saying which. The dialog (`QuestionDialog.tsx`) renders either: a question
+gets the core's options as buttons plus a box, a presentation gets the content and
+an Acknowledge. The difference the *core* cares about is what a non-answer means,
+and that is decided on the core's side rather than split across the wire.
+
+**The two tools fail differently, and that is the design.**
+
+| | answered | no answer (Escape) | no answer in 60s | nothing listening |
+|---|---|---|---|---|
+| `ask_user_question` | SUCCESS, the text | SUCCESS, "chose not to answer" | ERROR | ERROR |
+| `present` | SUCCESS, the note | SUCCESS, "read, nothing to add" | SUCCESS, "have not responded" | ERROR |
+
+A question that got nothing did not get what it needed, so the call failed and the
+model is told to state an assumption and carry on. A presentation that got nothing
+was still *delivered* -- the content is on their screen -- so reporting failure
+would teach the model that showing its work is an error. Nothing-listening is a
+failure for both, and it refuses immediately rather than paying the timeout: a
+bare session has no user, and a minute per question for a condition knowable
+before the ask was made is a minute wasted.
+
+**`asks_user` is a new flag, kept out of `describe()`.** The descriptor is the
+advertised contract -- what the model is shown and what `tools.get` reports -- and
+"this tool will interrupt you" is not part of the model's contract. It is the
+orchestrator's scheduling information, and it is read in exactly one place:
+`will_prompt` answers True for it **before** the trust and Full skip conditions,
+because two dialogs at once is worse than a slower turn, and `skips_confirmation`
+is a statement about approvals of *destructive* work -- a user who said "stop
+asking me" about file writes has not said "never ask me anything". A test pins
+that against Full plus a trusted project.
+
+Neither tool needs a project folder (`folder_required = False`), the same
+exception the network tools made: a question about what the user wants does not
+read a file, and the orchestrator's folder gate would otherwise refuse the one
+call that works perfectly well on a bare session.
+
+**Both are in every mode's allow-list, Plan most of all.** A plan is what Plan
+mode exists to hand over for approval, and a mode that could not show its plan to
+the user would have no way to end. Mission keeps them too, and that is deliberate:
+its prompt says "do not stop to ask whether to continue", which is a preference for
+the model rather than a wall built out of a missing tool name -- and a question
+about a missing credential is the one interruption a long unattended run must not
+be prevented from making. The 60s timeout bounds the wait either way.
+
+**Two bugs, both found by tests, and one of them only in a full run.**
+
+The first: the cancelled-turn path left the dialog on screen. `ask()` settled its
+round trip only `if not request.future.done()` -- and cancelling the awaiting
+task cancels the future it is waiting on, so a cancelled ask looks *done*. The
+result was exactly the failure this module exists to prevent: a modal over a turn
+that had stopped, with nothing to close it. The guard is gone, and
+`test_a_cancelled_turn_settles_the_ask_and_leaves_nothing_behind` now covers all
+three of settled, announced, and out of the table.
+
+The second is the one worth remembering, because it passed every test run alone.
+`will_prompt` answers True for a question -- it has to, or a batch containing one
+would run concurrently and put a dialog beside a streaming tool -- and
+`_execute_tool_async` used to read that same method to decide whether to raise the
+*confirmation*. A question therefore arrived as "Confirm tool execution / Allow /
+Deny", and only after Allow as the question itself: two modals for one blocked
+turn, the first about nothing. Every unit test passed, because a test with no
+confirmation callback installed takes the "nothing to ask" branch and the question
+goes straight through; it took `test_modes_and_diffs` running *first* -- which
+leaves a callback behind -- for the failure to surface in a full-suite run. The
+executor now asks `_needs_confirmation` (narrow, destructive-only, the new home of
+the conditions that used to live inline) and `will_prompt` delegates to it plus
+`asks_user`, so the two can no longer come to mean the same thing.
+`test_a_question_is_not_routed_through_the_destructive_confirmation` covers it,
+fails in 0.4s, and was checked against a deliberate reintroduction of the bug.
+
+The frontend half closes the same hole from the other side: `turn.finished` now
+clears `pendingAsk` in the reducer, because a stopped turn may settle its ask
+after the window has already ended the turn. `pendingConfirm` still has the older
+wart and was left alone.
+
+**Refusals are in the model's own words, before anything is shown.** An empty
+question, a question over 1000 characters, more than six options, an empty option,
+a duplicate option (two buttons saying the same thing make the answer ambiguous),
+an option over 200 characters, a presentation over 20000 characters. Each names
+the limit and what to send instead. `validate_args` does not recurse into array
+`items` -- still -- so the tool validates its own options, which is the same
+situation `TodoWriteTool` is in.
+
+**What this found about the window.** `App.tsx`'s `respond` pattern needed a twin
+(`respondAsk`), and the `useLastValue`+`Overlay` pairing that exists for the
+confirmation exists for questions too: a second ask can arrive while the first is
+still fading out, and the "answer exactly once" guard is keyed on the id for the
+same reason it is in `ConfirmDialog`.
+
+**Verification.**
+
+Python unit **966 passed / 10 skipped**, TypeScript **593 passed** (98 suites), and
+`scripts/e2e_all_tools.py --fast` **47 checks, 0 failed** -- now covering all 34
+tools, including both new ones answered, both refused with nobody listening, and
+the duplicate-option refusal. `scripts/audit_reduced_motion.py` passes with the new
+`question-modal.css` (22 modules now). `npm run build` clean.
+
+The turn-level guarantee has its own test:
+`test_a_question_inside_a_real_turn_is_answered_and_carries_on` runs a real turn
+through `run_turn` against a stub provider that asks once and answers once, with
+**both** bridges installed -- the wiring a real window has -- rather than calling
+the tool directly. That choice is what it pins: the question goes to the user
+*once*, with no approval dialog in front of it, the answer is stored as JSON in
+the transcript, and the turn reaches a real answer instead of stopping at the
+tool. A stalled turn is harder to ask for than a tool, so the ask is awaited on
+the event bus while the turn runs as its own task.
+
+Two things about how those numbers were produced. **One pytest process cannot
+finish this suite on this machine.** It dies without a traceback after roughly
+two minutes, at about 64% -- not at a file that fails alone, since every file in
+the suite passes on its own and the suite passes in halves (437 passed and 529
+passed / 10 skipped, summing to the total above). The split is the workaround, not
+a pass condition. **And the file's event-loop waits are bounded in seconds, not
+in yields.** `_until` counted 200 `asyncio.sleep(0)` round trips, which ran out on
+a busy machine and failed as *the ask never happened* -- the one failure mode
+`test_user_questions.py` exists to detect honestly, reported about the wrong
+thing. It now bounds on wall clock; the same one-loop pattern in
+`test_headless_core.py` was fixed the same way.
+
+**Not done here.**
+
+- The five tools that can never prompt (`http_request`, `web_fetch` and three
+  browser tools) are unchanged, and `ask_user_question` is *not* the fix for them.
+- `exit_plan_mode` is still not built, and this pass makes the reason sharper:
+  `present` can show a plan and collect a reply, but it cannot change the mode,
+  and `set_mode` clears the conversation -- so approving a plan through it would
+  still delete the plan being approved. The approval affordance has to be able to
+  act on the mode, which no tool can reach yet.
+- Nothing rate-limits a question beyond the turn's tool budget. A model that asks
+  every turn is possible; the descriptions push hard against it and the budget
+  bounds it, but nothing refuses it.
+- A headless core that is not the StdioServer gets no question bridge installed,
+  so `ask_user_question` refuses at once there. The window's core has it;
+  a client driving the core directly must install it.
+
+Nothing in this pass is committed.

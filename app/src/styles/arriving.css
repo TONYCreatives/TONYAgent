@@ -1,0 +1,38 @@
+
+/* --- arriving content ------------------------------------------------------ */
+/*
+ * Conversation rows, and only the last few.
+ *
+ * A transcript of two hundred rows replaying its own fade-in on open reads as a
+ * slideshow, and the user is waiting for the *end* of it. New messages append
+ * at the tail, so a short stagger on the last four covers what is actually
+ * watched and nothing else.
+ *
+ * These are `.row`, not bubbles, because the tool cards and thinking panel are
+ * rows too and a turn should arrive as one movement rather than as three
+ * unrelated ones.
+ *
+ * Streaming does not re-trigger this: the row is updated in place, so its
+ * animation has already played and is not restarted.
+ */
+.row:nth-last-child(-n + 4) {
+  animation: rise-in var(--motion-base) var(--ease-out) both;
+  animation-delay: 66ms;
+}
+
+/* Same specificity as the rule above, so source order decides: each narrows
+   the tail by one and wins. Deliberately not `calc()` on a custom property --
+   four explicit rules are easier to check against the intent than an
+   arithmetic expression. */
+.row:nth-last-child(-n + 3) { animation-delay: 44ms; }
+.row:nth-last-child(-n + 2) { animation-delay: 22ms; }
+.row:nth-last-child(1) { animation-delay: 0ms; }
+
+/*
+ * Every conversation row at once, with no stagger: the list mounts in a single
+ * frame, so they all animate in the same frame and the list reads as one block
+ * settling rather than as items being dealt out.
+ */
+.chatrow {
+  animation: rise-in var(--motion-base) var(--ease-out) both;
+}

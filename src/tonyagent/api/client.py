@@ -16,12 +16,13 @@ The client also owns the two checks the old layer never had:
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
 import httpx
 
-from tonyagent.api.dialects import Chunk, Completion, Dialect, ReasoningSpec
+from tonyagent.api.dialects import Chunk, Completion, Dialect, ReasoningSpec, Usage
 from tonyagent.api.errors import ErrorKind, KeyFormatError, KeyLengthError, LLMError
 
 # Fallback length floor for providers that do not declare an exact length.
@@ -134,20 +135,51 @@ class LLMClient:
         if self.key_length and len(self.api_key) != self.key_length:
             raise KeyLengthError(self.provider, len(self.api_key), self.key_length)
 
+    def _record(self, *, ok: bool, started: float, usage: Usage | None = None) -> None:
+        """Note this request in the usage ledger.
+
+        Called on every path out of `complete` and `stream`, including the
+        failing ones: a request that was refused still happened, and a dashboard
+        that only counted the ones that worked would answer "how much have I
+        used" with a number that only ever went up.
+        """
+        # Imported at the point of use, not at module scope. `config` imports
+        # this module for `normalize_key`, so a module-level import of anything
+        # that reaches `settings` closes the loop and breaks the import graph --
+        # measured, not theorised: it was a circular-import error the moment this
+        # went in at the top. The cost is one dict lookup per request.
+        from tonyagent.core.usage import fingerprint, record_request
+
+        record_request(
+            provider=self.provider,
+            key_id=fingerprint(self.provider, self.api_key),
+            model=self.model,
+            input_tokens=usage.input_tokens if usage else 0,
+            output_tokens=usage.output_tokens if usage else 0,
+            reasoning_tokens=usage.reasoning_tokens if usage else 0,
+            ok=ok,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
     # -- requests ------------------------------------------------------------
     async def complete(self, messages, tools=None, tool_choice=None, **extra) -> Completion:
         self.check_key()
         payload = self.dialect.build_request(
             self.model, messages, tools, tool_choice, stream=False, **extra
         )
+        started = time.monotonic()
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as http:
                 resp = await http.post(self._url(False), headers=self._headers(), json=payload)
         except httpx.HTTPError as exc:
+            self._record(ok=False, started=started)
             raise LLMError.network(exc, self.provider) from exc
         if resp.status_code >= 400:
+            self._record(ok=False, started=started)
             raise LLMError.from_response(resp.status_code, resp.text, self.provider)
-        return self.dialect.parse_completion(resp.json())
+        result = self.dialect.parse_completion(resp.json())
+        self._record(ok=True, started=started, usage=result.usage)
+        return result
 
     async def stream(self, messages, tools=None, tool_choice=None, **extra) -> AsyncIterator[Chunk]:
         """Yield chunks as they arrive. Always raises LLMError on failure."""
@@ -155,6 +187,8 @@ class LLMClient:
         payload = self.dialect.build_request(
             self.model, messages, tools, tool_choice, stream=True, **extra
         )
+        started = time.monotonic()
+        ok = False
         acc: dict = {}
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as http:
@@ -180,8 +214,15 @@ class LLMClient:
                             if chunk.finish_reason:
                                 break
                         event = ""
+            ok = True
         except httpx.HTTPError as exc:
             raise LLMError.network(exc, self.provider) from exc
+        finally:
+            # `finally` rather than the success path. A stream abandoned part
+            # way -- the user pressed Stop, the turn was cancelled -- still
+            # spent a request, and it is the case a ledger that only counted
+            # clean finishes would miss by the most.
+            self._record(ok=ok, started=started, usage=acc.get("usage"))
 
     # -- health --------------------------------------------------------------
     async def check(self) -> Health:

@@ -109,6 +109,13 @@ class Conversation:
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     messages: list[dict[str, Any]] = field(default_factory=list)
+    #: The plan and goal for this conversation -- see ``core.task_state``.
+    #:
+    #: A plain dict for the same reason ``messages`` are plain dicts: this module is
+    #: the file format and must not import the thing it stores. Absent in every file
+    #: written before it existed, which reads back as ``{}`` and therefore as "no
+    #: plan", so no migration is needed.
+    state: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -118,10 +125,16 @@ class Conversation:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "messages": self.messages,
+            "state": self.state,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Conversation":
+        # Read defensively: an older file has no `state` key at all and a
+        # hand-edited one may hold anything. Either way the *messages* must still
+        # open, because losing the plan costs a task list and losing the transcript
+        # costs the whole conversation.
+        raw_state = data.get("state")
         return cls(
             id=str(data.get("id") or uuid.uuid4().hex),
             title=str(data.get("title") or "New chat"),
@@ -129,6 +142,7 @@ class Conversation:
             created_at=float(data.get("created_at") or time.time()),
             updated_at=float(data.get("updated_at") or time.time()),
             messages=list(data.get("messages") or []),
+            state=dict(raw_state) if isinstance(raw_state, dict) else {},
         )
 
     def summary(self) -> dict[str, Any]:
@@ -248,6 +262,32 @@ class ConversationStore:
             logger.warning(f"Could not delete conversation {conversation_id}: {exc}")
             return False
 
+    def find_empty(self, project: str) -> Conversation | None:
+        """The untitled conversation in ``project`` that has nothing in it.
+
+        "New chat" means *an empty chat*, so pressing it twice has to land in
+        the same place. A second one is not a new conversation -- it is the
+        same nothing under a new id -- and it leaves the sidebar holding two
+        rows that both say "New chat" and neither of which has anything on it.
+
+        All three parts of the test are load-bearing. ``messages`` is what
+        "empty" actually means: a conversation earns its title from the first
+        message, but a title is also something the user can set by hand, and a
+        chat *named* "New chat" with a transcript in it is not an empty one.
+        The project matters because the sidebar shows one project at a time, so
+        an empty chat filed under another folder is not where this press should
+        land. ``list`` is newest-first, so if two ever existed the most recent
+        is the one returned.
+        """
+        for conversation in self.list():
+            if (
+                conversation.project == project
+                and conversation.title == "New chat"
+                and not conversation.messages
+            ):
+                return conversation
+        return None
+
     def most_recent(self) -> Conversation | None:
         conversations = self.list()
         return conversations[0] if conversations else None
@@ -269,6 +309,28 @@ class ConversationStore:
         if conversation is None:
             return None
         conversation.title = clean
+        self.save(conversation)
+        return conversation
+
+    def move(self, conversation_id: str, project: str) -> Conversation | None:
+        """File a conversation under a different folder.
+
+        **One field and one write.** A conversation is one file in one directory
+        whatever folder it is *about*, so moving it between folders copies
+        nothing and loses nothing -- the folder a chat belongs to is the only
+        thing that changes. That is also why this is not a new file: a chat that
+        moved would be a different chat, with a different id, and the window
+        would then have to be told which one it is looking at.
+
+        ``updated_at`` is stamped, unlike a duplicate's. Moving a chat into a
+        folder is the user saying "this one is about here now", so the row
+        belongs at the top of the list it just moved into rather than wherever
+        its last turn happened to leave it.
+        """
+        conversation = self.load(conversation_id)
+        if conversation is None:
+            return None
+        conversation.project = str(project or "")
         self.save(conversation)
         return conversation
 
@@ -300,6 +362,7 @@ class ConversationStore:
             created_at=time.time(),
             updated_at=original.updated_at,
             messages=copy.deepcopy(original.messages),
+            state=copy.deepcopy(original.state),
         )
         self.save(clone, touch=False)
         return clone

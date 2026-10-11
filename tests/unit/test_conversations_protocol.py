@@ -69,6 +69,24 @@ def store(tmp_path) -> ConversationStore:
     return ConversationStore(tmp_path / "conversations")
 
 
+@pytest.fixture
+def restore_folder():
+    """Put ``folder_manager`` back after a test points it somewhere.
+
+    It is a module-level singleton and ``set_folder`` also writes the choice to
+    config.toml, so a tmp path chosen here would otherwise leak into every later
+    test in the session and into the next real launch. The same fixture as
+    ``test_headless_core.py``'s, which is where the rest of the folder-manager
+    tests live.
+    """
+    from tonyagent.folder import folder_manager
+
+    previous = folder_manager.current_folder
+    yield folder_manager
+    if previous is not None:
+        folder_manager.set_folder(previous)
+
+
 # --- listing ---------------------------------------------------------------
 def test_listing_an_empty_store_is_empty_not_an_error(store):
     _, frames = _drive([{"id": 1, "method": "conversations.list"}], store=store)
@@ -91,6 +109,75 @@ def test_a_created_conversation_appears_in_the_list(store):
     listed = _by_id(frames)[2]["result"]["conversations"]
     assert len(listed) == 1
     assert listed[0]["title"] == "New chat"
+
+def test_a_second_new_chat_reuses_the_empty_one(store):
+    """Two presses must not leave two empty rows behind.
+
+    Both rows would say "New chat" and hold nothing, so the second is not a new
+    conversation by any reading of the button -- it is the same empty state under
+    a new id, and the sidebar is where that becomes visible.
+    """
+    _, frames = _drive([
+        {"id": 1, "method": "conversations.create"},
+        {"id": 2, "method": "conversations.create"},
+        {"id": 3, "method": "conversations.list"},
+    ], store=store)
+    replies = _by_id(frames)
+    first = replies[1]["result"]["conversation"]["id"]
+    second = replies[2]["result"]["conversation"]["id"]
+    assert second == first, "the second press created a second empty chat"
+    listed = replies[3]["result"]["conversations"]
+    assert len(listed) == 1
+    assert listed[0]["title"] == "New chat"
+
+
+def test_new_chat_creates_again_once_the_first_has_been_said_in(store):
+    """The reuse is about emptiness, not about the title.
+
+    A chat the user has typed into is a real conversation whatever it is called,
+    so the next press has to make a new one rather than reopening it.
+    """
+    pending = store.create(title="New chat")
+    pending.messages = [{"role": "user", "content": "hello"}]
+    store.save(pending)
+
+    _, frames = _drive([{"id": 1, "method": "conversations.create"}], store=store)
+    created = _by_id(frames)[1]["result"]["conversation"]["id"]
+    assert created != pending.id
+    assert len(store.list()) == 2
+
+
+def test_new_chat_leaves_an_empty_chat_the_user_named_alone(store):
+    """An empty chat is only reusable while it is still *called* "New chat".
+
+    A title is something the user can set by hand. An empty chat they named is
+    theirs to keep, and reopening it under the banner of "New chat" would look
+    like the rename had been thrown away.
+    """
+    named = store.create(title="My plans")
+
+    _, frames = _drive([{"id": 1, "method": "conversations.create"}], store=store)
+    created = _by_id(frames)[1]["result"]["conversation"]["id"]
+    assert created != named.id
+    assert len(store.list()) == 2
+
+
+def test_new_chat_does_not_reuse_an_empty_chat_from_another_project(store):
+    """The sidebar shows one project at a time, and that is the scope of "one".
+
+    An empty chat filed under a different folder is not where this press should
+    land: the button names the project it will file under, and landing somewhere
+    else would be the button lying about what it does.
+    """
+    elsewhere = store.create(title="New chat", project="D:/somewhere/else")
+
+    _, frames = _drive([
+        {"id": 1, "method": "conversations.create", "params": {"project": "D:/work"}},
+    ], store=store)
+    created = _by_id(frames)[1]["result"]["conversation"]
+    assert created["id"] != elsewhere.id
+    assert created["project"] == "D:/work"
+    assert len(store.list()) == 2
 
 
 # --- switching -------------------------------------------------------------
@@ -366,6 +453,107 @@ def test_duplicating_leaves_the_window_on_the_conversation_you_used(store):
     }], store=store, conversation_id=created.id)
 
     assert server.conversation_id == created.id
+
+
+# --- moving between folders ------------------------------------------------
+def test_moving_reports_the_new_folder_on_the_row(store):
+    created = store.create(title="About the api", project="D:/work/api")
+
+    _, frames = _drive([{
+        "id": 1,
+        "method": "conversations.move",
+        "params": {"id": created.id, "project": "D:/work/web"},
+    }], store=store)
+
+    row = _by_id(frames)[1]["result"]["conversation"]
+    assert row["project"] == "D:/work/web"
+    assert row["id"] == created.id, "a move is the same chat, not a new one"
+    assert store.load(created.id).project == "D:/work/web"
+
+
+def test_moving_the_open_conversation_moves_the_core_with_it(store, tmp_path, restore_folder):
+    """The half that the reply cannot show.
+
+    ``state`` echoes ``self.project`` and the file tools resolve their paths
+    against ``folder_manager``. A move that updated the conversation but left
+    those two behind would have the window reporting the old folder over a chat
+    filed under the new one -- the same disagreement ``_bind_project`` exists to
+    prevent, arrived at from the other direction.
+    """
+    target = tmp_path / "web"
+    target.mkdir()
+    created = store.create(title="current", project=str(tmp_path / "api"))
+
+    server, frames = _drive([{
+        "id": 1,
+        "method": "conversations.move",
+        "params": {"id": created.id, "project": str(target)},
+    }], store=store, conversation_id=created.id)
+
+    assert "error" not in _by_id(frames)[1], _by_id(frames)[1]
+    assert server.project == str(target)
+    assert str(restore_folder.current_folder) == str(target)
+
+
+def test_moving_a_row_that_is_not_open_leaves_the_folder_alone(store, tmp_path, restore_folder):
+    """Moving somebody else's chat must not drag the window's folder with it.
+
+    The condition is `conversation_id == self.conversation_id`, and this is what
+    holds it in place: a row you are not looking at is not a reason to change the
+    directory every tool resolves against.
+    """
+    mine = tmp_path / "mine"
+    mine.mkdir()
+    restore_folder.set_folder(mine)
+
+    other = store.create(title="elsewhere", project=str(tmp_path / "api"))
+    _drive([{
+        "id": 1,
+        "method": "conversations.move",
+        "params": {"id": other.id, "project": str(tmp_path / "web")},
+    }], store=store)
+
+    assert str(restore_folder.current_folder) == str(mine)
+
+
+def test_moving_without_a_folder_is_a_rejection(store):
+    """A blank path is refused rather than filed as "no folder".
+
+    `""` is a real value the store accepts, so the check has to be here: the
+    window always knows which folder it settled on, and a request that names none
+    means the caller lost track of it rather than that it wants the chat
+    unfiled.
+    """
+    created = store.create(title="x", project="D:/work/api")
+
+    _, frames = _drive([{
+        "id": 1,
+        "method": "conversations.move",
+        "params": {"id": created.id, "project": "   "},
+    }], store=store)
+
+    assert _by_id(frames)[1]["error"]["code"] == "rejected"
+    assert store.load(created.id).project == "D:/work/api"
+
+
+def test_moving_without_an_id_is_a_rejection(store):
+    _, frames = _drive([{
+        "id": 1,
+        "method": "conversations.move",
+        "params": {"project": "D:/work/web"},
+    }], store=store)
+
+    assert _by_id(frames)[1]["error"]["code"] == "rejected"
+
+
+def test_moving_a_conversation_that_is_not_there_is_a_rejection(store):
+    _, frames = _drive([{
+        "id": 1,
+        "method": "conversations.move",
+        "params": {"id": "0" * 32, "project": "D:/work/web"},
+    }], store=store)
+
+    assert _by_id(frames)[1]["error"]["code"] == "rejected"
 
 
 # --- the rule that keeps a manual name -------------------------------------

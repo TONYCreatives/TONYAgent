@@ -1,0 +1,115 @@
+
+/* --- status bar ---------------------------------------------------------- */
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  border-top: 1px solid var(--glass-edge);
+  /* The window's lower edge, the same frosted material as the top. */
+  background: var(--glass-chrome);
+  background-image: var(--glass-sheen);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+  user-select: none;
+  /*
+   * Tabular figures. The status bar is a row of changing values, and Inter's
+   * default figures are proportional, so a provider swap or a sandbox restart
+   * makes the whole line twitch sideways. Fixed-width digits remove that.
+   */
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+.dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.dot-ok {
+  background: var(--ok);
+}
+
+.dot-bad {
+  background: var(--danger);
+}
+
+/*
+ * The divider between the bar's groups -- the connection, the provider, the
+ * sandbox -- and it renders one.
+ */
+.sep {
+  width: 1px;
+  height: 10px;
+  flex: none;
+  background: var(--border-soft);
+}
+
+/*
+ * The log toggle, moved here from the log bar so the main chat column stays
+ * clean. It sits at the far end of the status bar and opens the drawer above it.
+ */
+.statusbar-logs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.statusbar-logs:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.statusbar-logs-count {
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  background: var(--raised);
+  color: var(--fg-dim);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.busy {
+  color: var(--accent);
+}
+
+/*
+ * A status-bar item that is also the way out of the state it reports. The
+ * default button chrome is far too heavy for a 26px bar, so it borrows the bar's
+ * own typography and is underlined instead -- visible as actionable without
+ * competing with the controls above it.
+ */
+.linkish {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-variant-numeric: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color var(--motion-fast) ease;
+}
+
+.linkish:hover {
+  color: var(--fg);
+}

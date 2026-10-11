@@ -1,0 +1,476 @@
+
+/* --- top bar ------------------------------------------------------------- */
+.topbar {
+  /* Spans every column: this is the title bar, so it is as wide as the window. */
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--topbar-h);
+  /*
+   * No left padding at all, and the indent is the mark's doing now rather than
+   * the bar's. The bar used to push its whole contents past the left column; the
+   * mark below occupies exactly `--rail-w`, so the tab that follows it still
+   * starts 8px past the rail's boundary -- which is where the reference puts it
+   * -- without the bar having to know about it. The caption stays hard against
+   * the right edge, where Windows puts it, so the two ends of the bar are
+   * deliberately not symmetrical.
+   */
+  padding: 0;
+  border-bottom: 1px solid var(--glass-edge);
+  /* The same frosted material as the rail and the status bar -- the window's
+     edge is one glass, not three shades. See the glass block in tokens.css. */
+  background: var(--glass-chrome);
+  background-image: var(--glass-sheen);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  /*
+   * No selection. Dragging a window by its title bar must not smear the tab
+   * pill's text across the bar, and this is the one strip of chrome where there
+   * is nothing worth selecting anyway.
+   */
+  user-select: none;
+}
+
+/*
+ * The app's mark, in the window's top-left corner.
+ *
+ * It takes exactly `--rail-w`, the column the rail occupies below it, so the
+ * logo and the rail read as one edge of the window rather than as two things
+ * that happen to be on the left. That is also what keeps the conversation tab
+ * where it has always been: `--rail-w` of mark, then the bar's own 8px gap.
+ *
+ * It was in the sidebar's head, beside the wordmark. It is here because this
+ * corner is the one place in the window that is *always* on screen -- the
+ * sidebar is an overlay that comes and goes, and a logo that disappears when you
+ * close a panel is not the window's mark. The wordmark went with it: the tab
+ * beside it already says "TONYAgent" when no conversation is open, and the
+ * corner reads as the mark alone.
+ */
+.topbar-mark {
+  display: grid;
+  place-items: center;
+  width: var(--rail-w);
+  height: 100%;
+  flex: none;
+  color: var(--fg);
+}
+
+/*
+ * The caption buttons, drawn here because `decorations: false` removed the
+ * system ones.
+ *
+ * They run the full height of the bar and sit flush to the window edge, which is
+ * what makes them read as the frame of the window rather than as three more
+ * controls in the top right. Windows puts close last; the tint on hover matches
+ * what the system caption did, because that is the one part of the old bar whose
+ * behaviour people already have in their hands.
+ *
+ * `transition`, not `animation`, so `audit_reduced_motion.py` does not apply:
+ * a hover that fills in is a state change, and the rest of this file answers
+ * hovers the same way.
+ */
+.window-controls {
+  display: flex;
+  align-self: stretch;
+  margin-left: auto;
+}
+
+.win-btn {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.win-btn:hover,
+.win-btn:focus-visible {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.win-btn.is-close:hover,
+.win-btn.is-close:focus-visible {
+  background: var(--danger);
+  color: var(--danger-fg);
+}
+
+/*
+ * The tab strip: the chats open at once, as a browser shows them.
+ *
+ * A strip rather than one tab, and that is the reference. Tabs are how several
+ * chats stay within reach without the sidebar taking a column, and each one is
+ * the shape a browser gives a page -- the bar's full height, rounded at the top
+ * and **square where it meets the bar's bottom edge**. Square at the bottom is
+ * the whole of it: a radius on the lower corners lifts the tab off the edge it
+ * is attached to, and then it is a chip again with a different number in it.
+ *
+ * `--radius-xs` for the top two and not a bigger step: a browser's own tabs are
+ * rounded by a few pixels, because the shape is doing the work and the radius is
+ * only taking the corners off. A 16px radius here is a card.
+ *
+ * **Nothing in the strip is a drag region.** A tab is a control now, and the host
+ * drags only when a press lands on an element carrying the class *itself* -- so
+ * the class would turn every click on a tab into a window drag. The bar's own
+ * background either side of the strip is what moves the window. See `TopBar`.
+ *
+ * `--wash` for the tab you are in, `--hover` for the one under the pointer, and
+ * nothing for the rest: a strip where every tab is a surface is a strip with no
+ * way to see which one you are reading.
+ */
+.tabs {
+  display: flex;
+  align-items: stretch;
+  height: 100%;
+  min-width: 0;
+  /* It never grows: a strip that took the bar's slack would push the model chip
+     and the caption along in front of it. It is as wide as its tabs, and the
+     ceiling is there so a dozen of them cannot crowd them out.
+
+     It does give way, though, and `min-width: 0` is what lets it. `flex: none`
+     held the strip at its content width however tight the bar got, so a long
+     strip pushed the caption buttons -- Close among them -- past the window's
+     right edge, where they cannot be pressed at all.
+
+     Past the ceiling it scrolls rather than crushing, and shrinking the tabs
+     first was the option that failed: a tab carries a lead slot and a close
+     glyph that cannot shrink, so at a few pixels wide the glyph escaped the tab
+     it belonged to and the strip stopped saying which tab was which. Tabs keep
+     their width (see `.tab`) and the strip scrolls. The scrollbar is hidden
+     because this strip is 52px and a scrollbar would be most of it -- the tab
+     cut off at the edge is the affordance, as it is in a browser. */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  /*
+   * **The first tab's left edge is the rail's right edge.**
+   *
+   * It used to be offset by `calc(var(--list-w) - var(--rail-w) - 8px)` -- 216px
+   * -- so that the tabs began on the conversation panel's right edge. That is
+   * only the right answer while the panel is *open*, and the panel is an overlay
+   * that starts closed: the common window was a logo, 224px of empty bar, and a
+   * lone tab floating in the middle of it. The offset was pinned to the sidebar
+   * rather than to the reading column, too -- the two coincide at 1280px and
+   * nowhere else (measured: 288 against 292 at 1280, and the messages move to
+   * 452 by 1600 while the tab had not moved at all).
+   *
+   * So the strip is anchored to the rail instead. The mark occupies exactly
+   * `--rail-w` and this bar's own 8px `gap` follows it, so the negative margin
+   * is that gap being taken back: the first tab's left edge lands on x=64, the
+   * boundary between the rail and the bar's background, rather than 8px into the
+   * bar. The strip reads as the rail's own right edge continued upward instead
+   * of as something floating beside the logo.
+   *
+   * It still does not know the sidebar panel exists. What it sits above while
+   * the panel is open is the panel's own head, because the panel opens *under*
+   * the window's chrome -- the same relationship a browser's tab strip has with
+   * its sidebar's contents.
+   */
+  margin-left: -8px;
+}
+
+/* The scrollbar the strip above would otherwise draw across its own 52px. */
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  /* It shrinks, but only to a floor; the strip scrolls rather than going
+     narrower. A tab is the thing the user is aiming at, and one squeezed to a
+     few pixels has no room for the close glyph inside it -- see `.tabs`. The
+     floor is the lead slot, a readable title and the glyph, in that order, and
+     above it shrinking lets eight tabs still fit a wide bar with no scrollbar
+     at all. */
+  flex: 0 1 auto;
+  min-width: 72px;
+  max-width: 240px;
+  /* No left padding at all: the leading slot below is 12px of the inset this
+     used to carry, so the slot and the space it occupies are the same space. An
+     idle tab's empty slot is indistinguishable from the padding it replaced,
+     and the strip did not get any wider. */
+  /*
+   * 8px on the right, not the 4 it was. The close glyph is 18px and sits at the
+   * end of the row, so 4px left it nearly touching the tab's own edge -- measured
+   * at 4px of air against 12px on the leading side, which reads as the glyph
+   * having been pushed out rather than placed. 8px matches the bar's own gap, so
+   * the glyph is inset by one rhythm instead of a number of its own.
+   */
+  padding: 0 8px 0 0;
+  border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+  color: var(--fg-mute);
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.tab:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.tab.is-active {
+  background: var(--wash);
+  color: var(--fg);
+}
+
+/*
+ * The leading slot, in every tab.
+ *
+ * It is the box the busy ring appears in, and it exists whether or not the tab
+ * is busy -- see the comment in `TopBar`. Twelve pixels either way so the title
+ * is in the same place before and during a turn, which is the whole reason it is
+ * not a conditional element.
+ */
+.tab-lead {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+
+/* A hairline between neighbours, and never at the ends: it says where one tab
+   stops and the next starts without drawing a box around either. */
+.tab + .tab::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 1px;
+  height: 18px;
+  transform: translateY(-50%);
+  background: var(--border);
+  transition: opacity var(--motion-fast) ease;
+}
+
+/*
+ * Never beside the tab you are in, or the one under the pointer.
+ *
+ * Hairlines separate neighbours, and a tab the user has chosen or is choosing is
+ * not a neighbour to be fenced off -- a browser drops both of the active tab's
+ * separators for the same reason. Faded rather than deleted so a pointer moving
+ * along the strip does not make the dividers blink in and out.
+ *
+ * Declared after the base rule because the two selectors have the same
+ * specificity and source order is what decides.
+ */
+.tab.is-active::before,
+.tab:hover::before,
+.tab.is-active + .tab::before,
+.tab:hover + .tab::before {
+  opacity: 0;
+}
+
+/*
+ * The name, which is the whole of the tab. A button rather than a label because
+ * pressing it is how you switch to the chat, and a tab whose title you cannot
+ * press is a tab you cannot use.
+ */
+.tab-open {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: var(--text-base);
+  cursor: pointer;
+}
+
+/* Ellipsised because a title can be any length, and a long one must not push the
+   "+" off the bar. */
+.tab-title {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The editor, in place of the name. The sidebar's rename box, one size down, so
+   renaming a chat looks the same wherever it was started from. */
+.tab-input {
+  min-width: 0;
+  width: 150px;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xs);
+  background: var(--input);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+/*
+ * The close glyph: on the tab you are in, and on the one under the pointer.
+ *
+ * Held back rather than always drawn, which is what a browser does -- a strip of
+ * six tabs with six Xs in it reads as a row of close buttons, and closing the
+ * wrong chat is the one mistake here that costs something.
+ */
+.tab-close {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--fg-mute);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--motion-fast) ease,
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.tab:hover .tab-close,
+.tab.is-active .tab-close,
+.tab-close:focus-visible {
+  opacity: 1;
+}
+
+.tab-close:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+/* The reference's divider: the strip is the tabs, and the "+" is not one. */
+.tabs-divider {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  align-self: center;
+  margin: 0 6px;
+  background: var(--border);
+}
+
+.tab-new {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  flex: none;
+  align-self: stretch;
+  border: 0;
+  border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+  background: none;
+  color: var(--fg-mute);
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.tab-new:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.tab-spinner {
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--fg-mute);
+  border-top-color: var(--fg);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+ * The model chip, which moved here with the selector itself.
+ *
+ * A quiet ghost control rather than a filled button: it reports what the window
+ * is bound to and opens a menu when asked, so it reads as closer to the
+ * conversation tab beside it than to the caption controls at the far end.
+ */
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  /*
+   * A model id has no spaces and no length limit. Without `nowrap` the id broke
+   * across two lines -- "stealth/space-" over "bunny-alpha" -- and the chip grew
+   * two rows tall inside a 52px bar. The ceiling is what stops the unbroken id
+   * from pushing the caption off the window instead.
+   */
+  white-space: nowrap;
+  max-width: 240px;
+  /* It had no transition at all, so the hover snapped from ghost to filled in a
+     single frame -- the one control in this bar that did. */
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.chip:hover {
+  background: var(--input);
+  color: var(--fg);
+}
+
+/*
+ * The model id, ellipsised rather than wrapped.
+ *
+ * `white-space: nowrap` on the chip stops the break; this is what keeps the
+ * `nowrap` from crowding the caption when an id is long. The caret is a sibling
+ * and keeps its width, because it is what says the text is a control rather than
+ * a label.
+ */
+.chip > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * Open, and it says so. The chip owns its menu's open state (`aria-expanded`),
+ * so the fill stays for as long as the menu is up rather than the control
+ * looking idle the moment the pointer leaves it -- which is the one moment a
+ * user needs to see which control the panel belongs to.
+ */
+.chip[aria-expanded="true"] {
+  background: var(--input);
+  color: var(--fg);
+}
+
+.chip:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.chip-caret {
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+}
+
+.topbar-spacer {
+  flex: 1;
+}

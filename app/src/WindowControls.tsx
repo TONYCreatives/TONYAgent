@@ -1,13 +1,13 @@
 /**
  * The caption buttons, drawn by the app because the window has no OS title bar.
  *
- * Presentational: every action arrives as a prop, so this file needs no Tauri
+ * Presentational: every action arrives as a prop, so this file needs no window API
  * and can be tested in jsdom. `useWindowControls` is what supplies them, and it
  * declines to supply anything outside the shell.
  *
  * Three decisions that are not visible in the markup:
  *
- * - **The glyphs are drawn, not characters.** "–", "□" and "×" are laid out by
+ * - **The glyphs are drawn, not characters.** "??, "?? and "×" are laid out by
  *   whatever font happens to be installed and sit at different baselines in
  *   each of them; the caption is the one part of a window whose alignment is
  *   judged against the OS, and it has to line up with itself.

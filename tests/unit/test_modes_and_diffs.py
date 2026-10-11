@@ -32,7 +32,7 @@ from tonyagent.headless.server import StdioServer
 from tonyagent.providers.base import ChatMessage
 from tonyagent.tools.base import ToolResultStatus
 
-MUTATING = {"write_file", "edit_file", "delete_file", "execute_command"}
+MUTATING = {"write", "edit", "delete_file", "execute_command"}
 
 
 @pytest.fixture(autouse=True)
@@ -157,7 +157,7 @@ def test_read_only_modes_hide_every_mutating_tool(mode):
     session = AgentSession(bus=EventBus())
     session.set_mode(mode)
     names = {s.name for s in session._tool_schemas()}
-    assert {"read_file", "grep", "glob", "list_dir"} <= names
+    assert {"read", "grep", "glob", "list_dir"} <= names
     assert not names & MUTATING
 
 
@@ -195,8 +195,8 @@ def test_the_permission_level_withholds_a_tool_the_mode_allows():
     names = {s.name for s in session._tool_schemas()}
     assert "execute_command" not in names
     # And it really is only the command that is withheld -- writing still works.
-    assert {"write_file", "edit_file", "delete_file"} <= names
-    assert {"read_file", "grep"} <= names
+    assert {"write", "edit", "delete_file"} <= names
+    assert {"read", "grep"} <= names
 
 
 def test_every_registered_tool_is_reachable_in_some_mode():
@@ -204,6 +204,11 @@ def test_every_registered_tool_is_reachable_in_some_mode():
 
     The allow-lists are spelled out by hand, so adding a tool and forgetting
     to add it to a mode is easy and completely silent. This is the check.
+
+    Reachable in a *mode* is only half the condition -- a tool also has to be
+    allowed by the permission level -- so a tool can be reachable here and
+    still refused at runtime, which is the intended state for
+    `take_screenshot`: Build allows it, and only Full does too.
     """
     from tonyagent.core.modes import MODES
     from tonyagent.tools import ALL_SCHEMAS
@@ -213,6 +218,32 @@ def test_every_registered_tool_is_reachable_in_some_mode():
     assert not orphans, f"no mode can call: {sorted(orphans)}"
 
 
+def test_a_tool_needs_both_a_mode_and_a_permission_to_be_offered():
+    """The two axes intersect, and this is what that means in practice.
+
+    `take_screenshot` is the tool that made this visible: it is in Build and in
+    Full and nowhere else, so Build+High cannot see it even though Build allows
+    it. Without the intersection one of the two allow-lists would be decorative.
+    """
+    from tonyagent.core.modes import PERMISSION_ORDER, PERMISSIONS, get_mode
+    from tonyagent.tools.orchestrator import ToolOrchestrator
+
+    orchestrator = ToolOrchestrator()
+    orchestrator.set_mode(get_mode("build"))
+    orchestrator.set_permission(PERMISSIONS["high"])
+    assert not orchestrator.tool_permitted("take_screenshot")
+
+    orchestrator.set_permission(PERMISSIONS["full"])
+    assert orchestrator.tool_permitted("take_screenshot")
+
+    # And the level above Build does not reach it either, so it is not Full
+    # alone that opens the screen.
+    orchestrator.set_mode(get_mode("skills"))
+    orchestrator.set_permission(PERMISSIONS["full"])
+    assert not orchestrator.tool_permitted("take_screenshot")
+    assert PERMISSION_ORDER  # the ladder itself is still the order above
+
+
 # --- mode: the guarantee (orchestrator enforcement) ------------------------
 
 
@@ -220,7 +251,7 @@ def test_the_orchestrator_refuses_a_tool_the_mode_forbids(project):
     """The load-bearing test: a hallucinated call is still refused.
 
     Filtering the schema only tells the model what it may want. A model that
-    asks for `write_file` anyway must hit a wall here -- before argument
+    asks for `write` anyway must hit a wall here -- before argument
     validation, and before any confirmation prompt.
     """
     from tonyagent.tools import ToolCall, tool_orchestrator
@@ -228,7 +259,7 @@ def test_the_orchestrator_refuses_a_tool_the_mode_forbids(project):
     AgentSession(bus=EventBus()).set_mode("plan")
     result = asyncio.run(
         tool_orchestrator.execute_tool_async(
-            ToolCall(id="t1", name="write_file",
+            ToolCall(id="t1", name="write",
                      arguments={"path": "nope.txt", "content": "x"})
         )
     )
@@ -263,15 +294,15 @@ def test_a_forbidden_tool_never_reaches_the_confirmation_prompt(project):
 def test_the_same_call_succeeds_once_the_mode_allows_it(project):
     """Proves the refusal above is the mode, not a broken tool.
 
-    Without this, "write_file was refused" would be equally consistent with
+    Without this, "write was refused" would be equally consistent with
     the tool being broken and the test above passing for the wrong reason.
     """
     from tonyagent.tools import ToolCall, tool_orchestrator
 
-    tool_orchestrator.set_mode(None)  # the Tkinter UI's unrestricted default
+    tool_orchestrator.set_mode(None)  # the unrestricted default
     result = asyncio.run(
         tool_orchestrator.execute_tool_async(
-            ToolCall(id="t3", name="write_file",
+            ToolCall(id="t3", name="write",
                      arguments={"path": "yes.txt", "content": "ok"})
         )
     )
@@ -368,7 +399,7 @@ def test_switching_mode_clears_the_conversation():
 
 
 def test_write_to_a_new_file_is_all_additions(project):
-    result = asyncio.run(tool("write_file").execute(path="new.py", content="a\nb\nc\n"))
+    result = asyncio.run(tool("write").execute(path="new.py", content="a\nb\nc\n"))
     assert change_of(result) == {"path": "new.py", "added": 3, "removed": 0}
 
 
@@ -381,27 +412,27 @@ def test_rewriting_a_file_reports_a_real_line_diff(project):
     """
     (project / "f.py").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
     result = asyncio.run(
-        tool("write_file").execute(path="f.py", content="one\nTWO\nthree\nfour\n")
+        tool("write").execute(path="f.py", content="one\nTWO\nthree\nfour\n")
     )
     assert change_of(result) == {"path": "f.py", "added": 1, "removed": 1}
 
 
 def test_appending_only_adds(project):
     (project / "f.py").write_text("a\nb\n", encoding="utf-8")
-    result = asyncio.run(tool("write_file").execute(path="f.py", content="a\nb\nc\nd\n"))
+    result = asyncio.run(tool("write").execute(path="f.py", content="a\nb\nc\nd\n"))
     assert change_of(result) == {"path": "f.py", "added": 2, "removed": 0}
 
 
 def test_truncating_only_removes(project):
     (project / "f.py").write_text("a\nb\nc\nd\n", encoding="utf-8")
-    result = asyncio.run(tool("write_file").execute(path="f.py", content="a\nb\n"))
+    result = asyncio.run(tool("write").execute(path="f.py", content="a\nb\n"))
     assert change_of(result) == {"path": "f.py", "added": 0, "removed": 2}
 
 
-def test_edit_file_reports_the_span_it_changed(project):
+def test_edit_reports_the_span_it_changed(project):
     (project / "f.py").write_text("keep\nold\nkeep2\n", encoding="utf-8")
     result = asyncio.run(
-        tool("edit_file").execute(path="f.py", old_text="old", new_text="new\nadded")
+        tool("edit").execute(path="f.py", old_string="old", new_string="new\nadded")
     )
     assert change_of(result) == {"path": "f.py", "added": 2, "removed": 1}
     assert (project / "f.py").read_text(encoding="utf-8") == "keep\nnew\nadded\nkeep2\n"
@@ -420,18 +451,18 @@ def test_an_identical_rewrite_reports_no_change(project):
     way for a diff feature to become noise nobody reads.
     """
     (project / "f.py").write_text("a\nb\n", encoding="utf-8")
-    result = asyncio.run(tool("write_file").execute(path="f.py", content="a\nb\n"))
+    result = asyncio.run(tool("write").execute(path="f.py", content="a\nb\n"))
     assert change_of(result) == {"path": "f.py", "added": 0, "removed": 0}
 
 
 def test_read_only_tools_report_no_change(project):
     """Only mutating tools produce a change.
 
-    A `file_change` from `read_file` would put a phantom badge on every file
+    A `file_change` from `read` would put a phantom badge on every file
     the agent merely looked at.
     """
     (project / "f.py").write_text("hello\n", encoding="utf-8")
-    assert change_of(asyncio.run(tool("read_file").execute(path="f.py"))) is None
+    assert change_of(asyncio.run(tool("read").execute(path="f.py"))) is None
 
 
 def test_a_failed_write_reports_no_change(project):
@@ -441,7 +472,7 @@ def test_a_failed_write_reports_no_change(project):
     nothing to show, and a badge would be a claim the filesystem contradicts.
     """
     result = asyncio.run(
-        tool("write_file").execute(path="../escape.py", content="x")
+        tool("write").execute(path="../escape.py", content="x")
     )
     assert result.status.value == "error"
     assert change_of(result) is None
@@ -453,7 +484,7 @@ def test_the_change_artifact_carries_the_relative_path(project):
     An absolute path would render as a full row of `C:\\Users\\...` in a
     425px sidebar.
     """
-    result = asyncio.run(tool("write_file").execute(path="src/deep/f.py", content="x\n"))
+    result = asyncio.run(tool("write").execute(path="src/deep/f.py", content="x\n"))
     assert change_of(result)["path"] == "src/deep/f.py"
 
 
@@ -477,7 +508,7 @@ def test_a_written_file_is_not_echoed_into_the_log(project):
     try:
         asyncio.run(
             tool_orchestrator.execute_tool_async(
-                ToolCall(id="l1", name="write_file",
+                ToolCall(id="l1", name="write",
                          arguments={"path": "cfg.py", "content": secret})
             )
         )
@@ -487,7 +518,7 @@ def test_a_written_file_is_not_echoed_into_the_log(project):
     joined = "\n".join(lines)
     assert secret not in joined
     # The useful part survives: which tool, which file.
-    assert "write_file" in joined
+    assert "write" in joined
     assert "cfg.py" in joined
 
 
@@ -504,7 +535,7 @@ def test_short_arguments_are_still_shown_in_full(project):
     try:
         asyncio.run(
             tool_orchestrator.execute_tool_async(
-                ToolCall(id="l2", name="write_file",
+                ToolCall(id="l2", name="write",
                          arguments={"path": "short.py", "content": "x"})
             )
         )
@@ -562,19 +593,200 @@ def test_only_full_skips_the_confirmation_prompt():
     assert skipping == ["full"]
 
 
-def test_full_adds_no_tool_over_high():
-    """Full removes the question. It does not remove a gate.
+def test_full_adds_exactly_one_tool_over_high():
+    """Full adds one tool, it is the screenshot, and it is named on purpose.
 
-    The distinction the whole level rests on: `Full` differs from `High` only in
-    whether the user is asked. A test asserting the *equality* of the two
-    allow-lists is what stops a later edit from quietly handing Full a tool
-    nobody reviewed -- which would make the level above it meaningless.
+    **This test's premise changed twice, and both changes are the story.**
+
+    It first read "Full removes the question. It does not remove a gate", true
+    while Full meant only "do not ask me". Then it read "Full adds no tool",
+    true after Full started running model-authored code on the host -- which
+    widened *where* a tool runs rather than *whether* it runs.
+
+    It adds one now, and the reason is the same argument in a new place.
+    `take_screenshot` observes the user's desktop rather than the workspace, so
+    there is nowhere else it could honestly go: not into the sandbox, which
+    cannot photograph a screen it is not on, and not into a lower rung, which
+    has not been told it may read the user's other windows.
+
+    So the protective intent is kept and sharpened. An allow-list is a review
+    boundary, and the original claim was right that widening it needs a human --
+    which is exactly why the assertion is now a named singleton rather than a
+    set comparison. A second tool arriving at Full would be the thing this test
+    exists to catch, and `assert <= {"take_screenshot"}` catches it by name.
     """
     from tonyagent.core.modes import PERMISSIONS
 
-    assert (
-        PERMISSIONS["full"].allowed_tools == PERMISSIONS["high"].allowed_tools
-    ), "Full gained a tool; the ladder says it should not have"
+    gained = PERMISSIONS["full"].allowed_tools - PERMISSIONS["high"].allowed_tools
+    assert gained == {"take_screenshot"}, (
+        f"Full gained {sorted(gained)} over High; the only tool that belongs "
+        "there alone is take_screenshot"
+    )
+
+
+async def test_a_command_runs_on_the_host_at_full_and_is_refused_at_high(
+    tmp_path, monkeypatch
+):
+    """The gate itself, not the flag that feeds it.
+
+    This is the behavioural half of the host-execution change, and it is
+    deliberately written as one test over two levels rather than two tests. The
+    interesting property is not "Full can run a command" -- that is a flag
+    assertion wearing a costume -- it is that **the level below it still cannot**,
+    in the same process, with the same folder, milliseconds apart. A test that
+    only proved Full works would pass just as happily against a change that had
+    also removed the check everywhere else.
+
+    The command is `python -c "print(...)"`, and the choice is load-bearing.
+    An earlier version of this test used `echo`, which passed at Full and failed
+    at High -- for the wrong reason. `echo` is not on the command allow-list, so
+    High refused it at the *allow-list* gate, which is upstream of the isolation
+    gate and unchanged by this work. The test would have gone green while
+    measuring nothing it claimed to measure. `python` is on the allow-list, so
+    at High the allow-list passes and the isolation gate is what refuses --
+    which is the gate under test.
+
+    The command also produces output that proves it *ran* rather than merely
+    being accepted, and nothing here writes to disk or touches anything outside
+    `tmp_path`.
+    """
+    from tonyagent.tools.orchestrator import ToolOrchestrator
+    from tonyagent.tools.shell_tools import (
+        ExecuteCommandTool,
+        set_allowlist_bypass,
+        set_host_execution,
+    )
+
+    monkeypatch.setattr(folder_manager, "_current_folder", tmp_path)
+    # The flag is module state, so it is restored explicitly rather than left to
+    # test ordering. A leaked True here would make every later isolation test in
+    # the suite pass for the wrong reason.
+    monkeypatch.setattr(
+        "tonyagent.tools.shell_tools._HOST_EXECUTION", False, raising=False
+    )
+    set_host_execution(False)
+    set_allowlist_bypass(False)
+
+    # An allow-listed interpreter, so the allow-list gate passes and the
+    # isolation gate is what is under test. `PRINT_CMD` rather than a literal so
+    # the marker and the assertion that checks for it cannot drift apart.
+    PRINT_CMD = "python -c \"print('{}')\"".format
+
+    try:
+        tool = ExecuteCommandTool()
+
+        # High: no container is running in a unit test, so the isolation gate
+        # must refuse. This is the pre-existing behaviour, asserted so that the
+        # change below cannot have quietly removed it.
+        set_host_execution(False)
+        refused = await tool.execute(PRINT_CMD("high-was-refused"))
+        assert refused.status is ToolResultStatus.ERROR, (
+            "High ran a command with no sandbox behind it"
+        )
+        assert "isolated sandbox" in (refused.error or "").lower() or (
+            "not running" in (refused.error or "").lower()
+        ), f"High was refused for the wrong reason: {refused.error!r}"
+
+        # Full: the same command, the same folder, now permitted to run here.
+        set_host_execution(True)
+        ran = await tool.execute(PRINT_CMD("full-ran-on-the-host"))
+        assert ran.status is ToolResultStatus.SUCCESS, (
+            f"Full did not run a command on the host: {ran.error!r}"
+        )
+        assert "full-ran-on-the-host" in str(ran.output), (
+            f"Full reported success without the output proving it ran: {ran.output!r}"
+        )
+
+        # And switching away takes the permission back. A level that grants host
+        # access and does not withdraw it on the way out is not a setting, it is
+        # a latch.
+        set_host_execution(False)
+        refused_again = await tool.execute(PRINT_CMD("high-again"))
+        assert refused_again.status is ToolResultStatus.ERROR, (
+            "leaving Full did not withdraw host execution"
+        )
+    finally:
+        set_host_execution(False)
+        set_allowlist_bypass(False)
+
+
+async def test_the_orchestrator_publishes_and_withdraws_host_execution():
+    """The flag is set by the level that owns it, so switching takes it back.
+
+    Deliberately goes through `ToolOrchestrator.set_permission` rather than
+    calling the setter directly: the question this answers is whether a user who
+    picks Full and then changes their mind gets their machine back, and only the
+    orchestrator knows a level changed.
+    """
+    from tonyagent.tools.orchestrator import ToolOrchestrator
+    from tonyagent.tools.shell_tools import host_execution
+
+    try:
+        orch = ToolOrchestrator()
+        orch.set_permission(_permission("high"))
+        assert host_execution() is False, "High published host execution"
+
+        orch.set_permission(_permission("full"))
+        assert host_execution() is True, "Full did not publish host execution"
+
+        orch.set_permission(_permission("medium"))
+        assert host_execution() is False, (
+            "dropping from Full to Medium left host execution enabled"
+        )
+    finally:
+        orch.set_permission(None)
+
+
+def test_the_wire_reports_host_execution_as_a_flag():
+    """The window must be able to mark the rung, not just print about it.
+
+    `runs_on_host` is reported beside the other two booleans for the same reason
+    they are: prose is not something to parse for a security fact, and this is
+    the fact a user most needs before *choosing* the level.
+    """
+    session = AgentSession(bus=EventBus())
+    frames = drive(
+        [{"id": "1", "method": "permission.list", "params": {}}],
+        session=session,
+    )
+    levels = {p["name"]: p for p in frames[0]["result"]["permissions"]}
+
+    assert levels["full"]["runs_on_host"] is True
+    for name in ("low", "medium", "high"):
+        assert levels[name]["runs_on_host"] is False, f"{name} reports host execution"
+
+
+def test_only_full_runs_on_the_host():
+    """Exactly one rung leaves the sandbox, and it is named in the description.
+
+    Three assertions, and each catches a different mistake:
+
+    - Only Full. If a second rung ever sets `runs_on_host`, host access is being
+      handed out by accident rather than by choice, and this says so by name.
+    - It is a distinct fact from the allow-list bypass. A level that bypassed
+      commands but still ran them in a container would be strictly safer than
+      one that does both; conflating them would remove the ability to offer
+      that middle rung later.
+    - The description says so. The window prints this string verbatim in the
+      permission menu, so it is the only place the user is told before they
+      pick -- a flag the UI never renders is a flag nobody reads.
+    """
+    from tonyagent.core.modes import PERMISSION_ORDER, PERMISSIONS
+
+    on_host = [n for n in PERMISSION_ORDER if PERMISSIONS[n].runs_on_host]
+    assert on_host == ["full"], f"these levels run on the host: {on_host}"
+
+    for name in ("low", "medium", "high"):
+        assert not PERMISSIONS[name].runs_on_host, f"{name} runs on the host"
+
+    full = PERMISSIONS["full"]
+    assert full.bypasses_command_allowlist is True
+    description = full.description.lower()
+    for phrase in ("no sandbox", "on this computer"):
+        assert phrase in description, (
+            f"Full's description never says {phrase!r}, and the window prints it "
+            f"verbatim: {full.description!r}"
+        )
 
 
 async def test_full_skips_confirmation_for_an_untrusted_project(tmp_path, monkeypatch):
@@ -597,7 +809,7 @@ async def test_full_skips_confirmation_for_an_untrusted_project(tmp_path, monkey
     orch.set_confirmation_callback(
         lambda req: (_ for _ in ()).throw(AssertionError("asked, at Full"))
     )
-    call = ToolCall(id="f1", name="write_file", arguments={"path": "n.txt", "content": "x"})
+    call = ToolCall(id="f1", name="write", arguments={"path": "n.txt", "content": "x"})
     result = await orch.execute_tool_async(call)
     assert result.status is ToolResultStatus.SUCCESS
     assert (tmp_path / "n.txt").read_text() == "x"
@@ -625,7 +837,7 @@ async def test_high_still_asks_for_an_untrusted_project(tmp_path, monkeypatch):
         asyncio.get_running_loop().create_task(approve(request.tool_call, request.tool))
 
     orch.set_confirmation_callback(on_confirm)
-    call = ToolCall(id="h1", name="write_file", arguments={"path": "m.txt", "content": "y"})
+    call = ToolCall(id="h1", name="write", arguments={"path": "m.txt", "content": "y"})
     result = await orch.execute_tool_async(call)
     assert result.status is ToolResultStatus.SUCCESS
 

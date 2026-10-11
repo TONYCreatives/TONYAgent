@@ -143,6 +143,11 @@ class Dialect:
                 payload["tool_choice"] = tool_choice
         if stream:
             payload["stream"] = True
+            # Ask for the token counts as a final chunk. Without it a streamed
+            # answer reports no usage at all -- the counts are only sent when
+            # they are asked for -- and the dashboard would record every
+            # streamed request, which is all of them, as zero tokens.
+            payload["stream_options"] = {"include_usage": True}
         payload.update(extra)
         return payload
 
@@ -160,6 +165,11 @@ class Dialect:
             obj = json.loads(data)
         except ValueError:
             return None
+        # The usage chunk arrives last and carries no choices, so it has to be
+        # read *before* the guard below drops it. It is stored rather than
+        # yielded: it is not part of the answer, it is the bill for it.
+        if obj.get("usage"):
+            acc["usage"] = read_usage(obj)
         if obj.get("error"):
             return Chunk(finish_reason="error")
         choices = obj.get("choices") or []

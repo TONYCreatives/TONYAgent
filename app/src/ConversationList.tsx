@@ -37,9 +37,12 @@
  * styles.css can tell an arriving panel from a leaving one.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount.js";
 import { useDismiss } from "./useDismiss.js";
+import { FilesPane, type TreeEntry } from "./FileSidebar.js";
+import { Gear } from "./Gear.js";
 
 export interface ConversationSummary {
   id: string;
@@ -51,30 +54,12 @@ export interface ConversationSummary {
 }
 
 /**
- * One project folder, and the conversations filed under it.
+ * A folder is shown by its name, not its path.
  *
- * Derived from the list the core reports rather than kept alongside it. A
- * project is not a thing the user creates -- it is the folder a conversation
- * was started in -- so a separate registry of them would be a second source of
- * truth about a list that changes while you are looking at it, and every way of
- * emptying a project's only conversation would leave an empty folder behind
- * that no longer corresponds to anything.
- */
-interface ProjectGroup {
-  /** The folder's full path, which is also what identifies it. */
-  path: string;
-  /** The last path segment: `TONYAgent`, not `C:\Users\...\TONYAgent`. */
-  name: string;
-  conversations: ConversationSummary[];
-}
-
-/**
- * A project is shown by its folder name, not its path.
- *
- * The path is what identifies it and is kept as the `title`, because two
- * projects called `api` in different trees are the same row otherwise -- and
- * which of the two is open is not something a user can work out from a name
- * they chose themselves.
+ * The path is what identifies it, and the full one is kept as a `title`
+ * wherever this is drawn, because two folders called `api` in different trees
+ * are the same label otherwise -- and which of the two is open is not something
+ * a user can work out from a name they chose themselves.
  */
 function projectName(path: string): string {
   const trimmed = path.replace(/[\\/]+$/, "");
@@ -83,43 +68,33 @@ function projectName(path: string): string {
 }
 
 /**
- * Group conversations under their project.
+ * The rows the sidebar shows: the current folder's chats, and nothing else.
  *
- * **The active project goes first, and the rest keep the order the core sent.**
- * The core sorts by most recently updated, so first-seen is newest-first, and
- * that ordering is worth keeping: the project someone is working in is the one
- * whose rows they are most likely scanning for. Pinning the active one keeps it
- * reachable at the top when they are in a different folder, and the rest stay
- * in recency order rather than being re-sorted by name -- alphabetical would
- * bury the project they used yesterday under projects they have not opened in
- * months.
+ * **One folder at a time.** The window works in a single project folder, so this
+ * list is that folder's conversations rather than a tree of every folder the app
+ * has ever been pointed at. A chat is bonded to the folder it is about --
+ * `Conversation.project`, which the core persists -- so another folder's chats
+ * are not gone, they are somewhere else, and changing back to that folder brings
+ * them back. That is why this is a filter and not a delete.
  *
- * Conversations with no project are grouped under `""` rather than dropped. A
- * chat saved before `project` existed, or one started with no folder, is still a
- * real conversation the user can open; hiding it would be the list quietly
- * losing rows.
+ * **No folder open is not a folder called `""`.** With nothing chosen there is
+ * nothing to scope by, so the list shows everything. The alternative -- showing
+ * only the chats that have no folder -- would greet a first run with an empty
+ * list while the user's real chats sat behind a folder they had not picked yet.
+ *
+ * **A chat with no folder shows only in that no-folder state.** It is what every
+ * conversation saved before `project` existed is; it is a real chat, it is just
+ * not about any folder yet.
+ *
+ * Exported because it is the rule the whole feature turns on, and a rule that
+ * only exists inside a render is a rule with no test.
  */
-function groupByProject(
+export function rowsForFolder(
   conversations: ConversationSummary[],
-  active: string,
-): ProjectGroup[] {
-  const byPath = new Map<string, ProjectGroup>();
-  for (const conversation of conversations) {
-    const path = conversation.project || "";
-    let group = byPath.get(path);
-    if (!group) {
-      group = { path, name: projectName(path), conversations: [] };
-      byPath.set(path, group);
-    }
-    group.conversations.push(conversation);
-  }
-  const groups = [...byPath.values()];
-  // Only reordered when the active project is actually present. Before the
-  // first conversation exists there is nothing to pin, and a group list with a
-  // hole in it would be a rendering of an absence.
-  const index = active ? groups.findIndex((g) => g.path === active) : -1;
-  if (index > 0) groups.unshift(...groups.splice(index, 1));
-  return groups;
+  project: string,
+): ConversationSummary[] {
+  if (!project) return conversations;
+  return conversations.filter((conversation) => conversation.project === project);
 }
 
 interface Props {
@@ -160,7 +135,57 @@ interface Props {
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
   onDuplicate: (id: string) => void;
+  /**
+   * The rail's own actions, because the panel covers the rail.
+   *
+   * The sidebar starts at x=0 and hides the rail when it is open (see the
+   * module comment), which would otherwise put Search and Settings out of reach.
+   * So the panel carries the same two in its foot -- same handlers, same
+   * disabled rules as `IconRail` -- because they are the same controls in the
+   * panel's own state, not a second set of them.
+   */
+  onSearch: () => void;
+  onSettings: () => void;
+  /**
+   * Which half of the sidebar is showing.
+   *
+   * The Files tree was its own panel on the other edge of the window; it is a
+   * pane of this sidebar now, and the segmented control under the head switches
+   * between them. So "which pane" is state of the sidebar, and the App owns it
+   * rather than this component, because picking a folder has to be able to
+   * switch the sidebar to Files -- which is a decision about the window.
+   */
+  pane: SidebarPane;
+  onPaneChange: (pane: SidebarPane) => void;
+  /** The Files pane's tree, filter and folder picker -- see `FilesPane`. */
+  files: TreeEntry[];
+  fileFilter: string;
+  onFileFilterChange: (value: string) => void;
+  onChooseFolder: () => void;
+  hasProject: boolean;
+  /**
+   * The Settings and Search panes, handed in rather than built here.
+   *
+   * Both are panels in their own right, with handlers that all live on the App,
+   * and this component's job is the sidebar's frame rather than what fills it.
+   * They arrive as elements so React mounts one only while its pane is showing:
+   * a Settings panel parked behind a closed pane would run its effects and read
+   * a model list nobody asked for.
+   */
+  settingsPane?: ReactNode;
+  searchPane?: ReactNode;
 }
+
+/**
+ * Which face of the sidebar is in front.
+ *
+ * Chats and Files are peers, and the segmented control under the head is how
+ * you move between them. Settings and Search are not peers of those: they are
+ * places you *enter* -- from the foot or from the rail -- so they cover the body
+ * rather than sit beside it, and they swap the control for a way back instead of
+ * lighting a tab.
+ */
+export type SidebarPane = "chats" | "files" | "settings" | "search";
 
 /**
  * Relative time, coarse on purpose.
@@ -203,11 +228,36 @@ export function ConversationList({
   onDelete,
   onRename,
   onDuplicate,
+  onSearch,
+  onSettings,
+  pane,
+  onPaneChange,
+  files,
+  fileFilter,
+  onFileFilterChange,
+  onChooseFolder,
+  hasProject,
+  settingsPane,
+  searchPane,
 }: Props) {
   /** The conversation being renamed, or null. */
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
+  /**
+ * How far below the point that opened it the row menu sits.
+ *
+ * A menu whose corner is exactly on the cursor puts the pointer on its own first
+ * item, so the click that opened it is also the click that chooses something --
+ * which is how a rename turns into a delete. Four pixels clears the arrow.
+ *
+ * One constant rather than a number at each call site, because the row's button
+ * and a right-click on the row have to agree about it: they were 4 and 0, and
+ * the same menu opened in two different places depending on how it was asked
+ * for.
+ */
+const MENU_GAP = 4;
+
+const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   // `openMenuAt` is the menu that is open *and where it was opened from*; it
   // doubles as the open flag, so dismissing it clears the row it belonged to.
@@ -222,39 +272,35 @@ export function ConversationList({
   // picker and the budget popover, which had the same unguarded listener.
   const menuNodeRef = useRef<HTMLDivElement | null>(null);
 
-  /**
-   * Which projects are folded away.
-   *
-   * A set rather than a boolean per project so a group that has not been folded
-   * needs no key here at all. Local state, not persisted: it is a view of the
-   * list in front of the user, and a fold remembered across launches would hide
-   * a project's rows behind a caret nobody can find the state of.
-   */
-  const [folded, setFolded] = useState<Set<string>>(() => new Set());
-  const toggleProject = (path: string) =>
-    setFolded((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(path)) next.add(path);
-      return next;
-    });
-
-  const groups = useMemo(
-    () => groupByProject(conversations, project),
+  const rows = useMemo(
+    () => rowsForFolder(conversations, project),
     [conversations, project],
   );
 
   /**
-   * The folder the next chat will be filed under.
+   * The folder the next chat will be filed under, and the folder this list is
+   * showing -- the same one, which is the point of the whole feature.
    *
-   * Shown from `project` rather than from the groups, for the reason given on
-   * the prop: a project can be open before it has any conversations, and a
-   * label derived from the rows would read "no project" at exactly the moment
-   * the user is deciding where to type.
+   * Read from `project` rather than derived from the rows: a folder can be open
+   * before it has any conversations, and a label taken off the rows would say
+   * "no project" at exactly the moment the user is deciding where to type.
    */
   const projectLabel = project ? projectName(project) : "";
 
   const openMenu = (id: string, x: number, y: number) => setOpenMenuAt({ id, x, y });
   const closeMenu = () => setOpenMenuAt(null);
+
+  /**
+   * Whether a conversation's name can be chosen by hand.
+   *
+   * A chat with no messages has a placeholder name, and the core replaces it with
+   * the first thing the user says -- but only while the name is still "New chat".
+   * So a name typed into an empty chat is a name that chat can never outgrow,
+   * which is worse than not being allowed to type one. The tab's own menu refuses
+   * it for the same reason, from the same field.
+   */
+  const renameable = (id: string) =>
+    (conversations.find((c) => c.id === id)?.message_count ?? 0) > 0;
 
   useEffect(() => {
     if (editing !== null) {
@@ -344,8 +390,104 @@ export function ConversationList({
       <nav
       className="chatlist"
       data-state={open ? "open" : "closed"}
+      data-pane={pane}
       aria-label="Conversations"
     >
+      {/*
+        The sidebar's cap: the way back to the rail.
+
+        This is the merge made visible -- the rail is the collapsed state of this
+        one sidebar and this panel is its expanded state, so the control that
+        puts it away sits here, at the top, exactly where the rail's toggle sits
+        when the panel is not covering it.
+
+        The app's mark used to be here too, beside the wordmark. Both moved to
+        the title bar's top-left corner when it became clear that this head is
+        the one part of the window that is only sometimes on screen: the mark is
+        the window's, and a window's mark does not come and go with a panel.
+      */}
+      <div className="chatlist-head">
+        <button
+          type="button"
+          className="chatlist-toggle"
+          onClick={onDismiss}
+          title="Close sidebar"
+          aria-label="Close sidebar"
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 4v16M15 4H3v16h12z" />
+          </svg>
+        </button>
+      </div>
+
+      {pane === "settings" || pane === "search" ? (
+        /*
+          The way back, in the tabs' place rather than above them.
+
+          Settings and Search are not two more tabs -- they are places you enter
+          and leave -- and the control that leaves one belongs where the control
+          that reached it was, so the row keeps its height and nothing below it
+          moves when the pane changes.
+        */
+        <div className="chatlist-subhead">
+          <button
+            type="button"
+            className="chatlist-back"
+            onClick={() => onPaneChange("chats")}
+            title="Back to chats"
+            aria-label="Back to chats"
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.9"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
+          </button>
+          <span className="chatlist-subhead-title">
+            {pane === "settings" ? "Settings" : "Search"}
+          </span>
+        </div>
+      ) : (
+        <div className="chatlist-tabs" role="tablist" aria-label="Sidebar">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={pane === "chats"}
+            className={`chatlist-tab${pane === "chats" ? " is-active" : ""}`}
+            onClick={() => onPaneChange("chats")}
+          >
+            Chats
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={pane === "files"}
+            className={`chatlist-tab${pane === "files" ? " is-active" : ""}`}
+            onClick={() => onPaneChange("files")}
+          >
+            Files
+          </button>
+        </div>
+      )}
+
       <button
         type="button"
         className="chatlist-new"
@@ -381,152 +523,142 @@ export function ConversationList({
         </span>
       </button>
 
-      {groups.length === 0 ? (
+      {/*
+        The folder this list is, named -- and the way to change it.
+
+        It is a button because it has to be. The list is scoped to one folder, so
+        the folder is the thing a user needs to be able to move, and the picker
+        used to hang off the project group's header, which is gone. Same control,
+        same handler, one rung up.
+
+        **Always drawn, empty list or not.** It is the scope of the list rather
+        than a property of the rows, and a folder with no chats yet is exactly
+        when someone is most likely to want a different one. Hung off the rows,
+        that state drew no heading and no way to change folders from this pane at
+        all -- measured in the window, as `MISSING`.
+
+        Its `title` is the full path: two folders called `api` in different trees
+        are the same label otherwise, and which one is open is not something a
+        user can work out from a name they chose themselves.
+      */}
+      <button
+        type="button"
+        className="chatlist-label chatlist-folder"
+        onClick={onChooseProject}
+        title={project || "Choose a project folder"}
+      >
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+        </svg>
+        <span className="chatlist-folder-name">
+          {projectLabel || "All chats"}
+        </span>
+      </button>
+
+      {rows.length === 0 ? (
         // Silent rather than a placeholder: an empty list with one button in it
         // already says what to do, and a line of text saying "no conversations"
         // just pushes the button down.
         <div className="chatlist-empty" />
       ) : (
-        <>
-          <div className="chatlist-label">Projects</div>
-          <div className="chatlist-rows">
-            {groups.map((group) => {
-              const isFolded = folded.has(group.path);
-              return (
-                <section className="chatproj" key={group.path}>
-                  <div className="chatproj-head">
-                    <button
-                      type="button"
-                      className="chatproj-toggle"
-                      onClick={() => toggleProject(group.path)}
-                      aria-expanded={!isFolded}
-                      title={group.path || "No project folder"}
+        <ul className="chatlist-rows">
+          {rows.map((conversation) => (
+            <li
+              key={conversation.id}
+              className={`chatrow${
+                conversation.id === active ? " is-active" : ""
+              }`}
+              onContextMenu={(event) => {
+                // The browser's own menu offers "search image for"
+                // and "inspect", neither of which means anything on
+                // a title.
+                event.preventDefault();
+                // Below the pointer, like the row's own button: the menu
+                // used to open with its corner on the cursor, so the click
+                // that asked for it already sat over "Rename".
+                openMenu(
+                  conversation.id,
+                  event.clientX,
+                  event.clientY + MENU_GAP,
+                );
+              }}
+            >
+              {editing === conversation.id ? (
+                <input
+                  ref={inputRef}
+                  className="chatrow-input"
+                  value={draft}
+                  aria-label="Conversation name"
+                  onChange={(event) => setDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      commitRename(true);
+                    } else if (event.key === "Escape") {
+                      event.preventDefault();
+                      commitRename(false);
+                    }
+                  }}
+                  onBlur={() => commitRename(true)}
+                />
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    className="chatrow-open"
+                    onClick={() => onOpen(conversation.id)}
+                    disabled={busy}
+                    title={conversation.title}
+                  >
+                    <span className="chatrow-title">
+                      {conversation.title}
+                    </span>
+                    <span className="chatrow-meta">
+                      {when(conversation.updated_at)}
+                      {conversation.message_count > 0 && (
+                        <> · {conversation.message_count}</>
+                      )}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="chatrow-more"
+                    onClick={(event) => {
+                      const box = event.currentTarget.getBoundingClientRect();
+                      openMenu(conversation.id, box.left, box.bottom + MENU_GAP);
+                    }}
+                    title="Rename, duplicate or delete"
+                    aria-label={`Options for ${conversation.title}`}
+                    aria-haspopup="menu"
+                    aria-expanded={menu?.id === conversation.id}
+                  >
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      aria-hidden="true"
                     >
-                      <span className="chatproj-caret" aria-hidden="true">
-                        {isFolded ? "▸" : "▾"}
-                      </span>
-                      <svg
-                        width="13"
-                        height="13"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.7"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                      </svg>
-                      <span className="chatproj-name">
-                        {group.path ? group.name : "No project"}
-                      </span>
-                    </button>
-                    {/*
-                      Only on the group new chats actually go into. On any other
-                      it would be a lie: the conversation would be created under
-                      whatever project is open, not this one.
-                    */}
-                    {group.path === project && (
-                      <button
-                        type="button"
-                        className="chatproj-add"
-                        onClick={onChooseProject}
-                        title="Choose a different project folder"
-                        aria-label="Choose a different project folder"
-                      >
-                        +
-                      </button>
-                    )}
-                  </div>
-                  {!isFolded && (
-                    <ul className="chatproj-rows">
-                      {group.conversations.map((conversation) => (
-                        <li
-                          key={conversation.id}
-                          className={`chatrow${
-                            conversation.id === active ? " is-active" : ""
-                          }`}
-                          onContextMenu={(event) => {
-                            // The browser's own menu offers "search image for"
-                            // and "inspect", neither of which means anything on
-                            // a title.
-                            event.preventDefault();
-                            openMenu(conversation.id, event.clientX, event.clientY);
-                          }}
-                        >
-                          {editing === conversation.id ? (
-                            <input
-                              ref={inputRef}
-                              className="chatrow-input"
-                              value={draft}
-                              aria-label="Conversation name"
-                              onChange={(event) => setDraft(event.target.value)}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter") {
-                                  event.preventDefault();
-                                  commitRename(true);
-                                } else if (event.key === "Escape") {
-                                  event.preventDefault();
-                                  commitRename(false);
-                                }
-                              }}
-                              onBlur={() => commitRename(true)}
-                            />
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                className="chatrow-open"
-                                onClick={() => onOpen(conversation.id)}
-                                disabled={busy}
-                                title={conversation.title}
-                              >
-                                <span className="chatrow-title">
-                                  {conversation.title}
-                                </span>
-                                <span className="chatrow-meta">
-                                  {when(conversation.updated_at)}
-                                  {conversation.message_count > 0 && (
-                                    <> · {conversation.message_count}</>
-                                  )}
-                                </span>
-                              </button>
-                              <button
-                                type="button"
-                                className="chatrow-more"
-                                onClick={(event) => {
-                                  const box = event.currentTarget.getBoundingClientRect();
-                                  openMenu(conversation.id, box.left, box.bottom + 4);
-                                }}
-                                title="Rename, duplicate or delete"
-                                aria-label={`Options for ${conversation.title}`}
-                                aria-haspopup="menu"
-                                aria-expanded={menu?.id === conversation.id}
-                              >
-                                <svg
-                                  width="13"
-                                  height="13"
-                                  viewBox="0 0 24 24"
-                                  fill="currentColor"
-                                  aria-hidden="true"
-                                >
-                                  <circle cx="5" cy="12" r="1.7" />
-                                  <circle cx="12" cy="12" r="1.7" />
-                                  <circle cx="19" cy="12" r="1.7" />
-                                </svg>
-                              </button>
-                            </>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </section>
-              );
-            })}
-          </div>
-        </>
+                      <circle cx="5" cy="12" r="1.7" />
+                      <circle cx="12" cy="12" r="1.7" />
+                      <circle cx="19" cy="12" r="1.7" />
+                    </svg>
+                  </button>
+                </>
+              )}
+            </li>
+          ))}
+        </ul>
       )}
 
       {/*
@@ -535,7 +667,25 @@ export function ConversationList({
         do it from the right place. `data-state` tells the two apart, and the
         closed state is inert -- see `.rowmenu[data-state="closed"]`.
       */}
-      {menuMounted && menu && (
+      {/*
+       * Portalled to the body, and this is load-bearing rather than tidy.
+       *
+       * `.rowmenu` is `position: fixed` and is placed from *viewport*
+       * coordinates -- `clientX/clientY` from a right-click, and a
+       * `getBoundingClientRect()` from the row's own button. But `.chatlist`
+       * carries a `transform` and a `backdrop-filter`, and either one makes it a
+       * containing block for fixed descendants, so "fixed" resolved against the
+       * panel instead of the window. The panel starts 52px down, so every menu
+       * opened 52px below where it was asked for -- measured: click at y=251,
+       * menu at y=307 -- and it would have been offset horizontally too had the
+       * panel not happened to sit on x=0.
+       *
+       * The rule's comment has always claimed it is "fixed to the window... not
+       * clipped by the sidebar's overflow". That was the intent; a portal is what
+       * makes it true, and it keeps the menu outside the panel's overflow as a
+       * side effect.
+       */}
+      {menuMounted && menu && createPortal(
         <div
           ref={menuNodeRef}
           className="rowmenu"
@@ -547,6 +697,12 @@ export function ConversationList({
           <button
             type="button"
             role="menuitem"
+            disabled={!renameable(menu.id)}
+            title={
+              renameable(menu.id)
+                ? undefined
+                : "A chat with no messages names itself from the first thing you say"
+            }
             onClick={() => {
               const target = conversations.find((c) => c.id === menu.id);
               closeMenu();
@@ -578,8 +734,60 @@ export function ConversationList({
           >
             Delete
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
+
+      {pane === "files" && (
+        <FilesPane
+          entries={files}
+          filter={fileFilter}
+          onFilterChange={onFileFilterChange}
+          onChooseFolder={onChooseFolder}
+          hasProject={hasProject}
+        />
+      )}
+
+      {pane === "settings" && settingsPane}
+
+      {pane === "search" && searchPane}
+
+      {/*
+        The sidebar's foot: the rail's remaining actions, so closing the rail to
+        open the sidebar does not put Search and Settings out of reach. Same
+        controls, same order, one rung lower.
+
+        Clear was the third, and it is gone. It was a trash glyph in the panel's
+        foot, where it read as "delete this chat" -- and that is not what it did:
+        it emptied the transcript you were looking at and left the conversation
+        in the list. Deleting a conversation is the row menu's Delete, which says
+        so and acts on the row you pointed at. The core's `clear` method is still
+        there; nothing in the window calls it now.
+      */}
+      <div className="chatlist-foot">
+        <button
+          type="button"
+          className="chatlist-act"
+          onClick={onSearch}
+          disabled={!connected}
+          title="Search project"
+          aria-label="Search project"
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16zM21 21l-4.3-4.3" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className="chatlist-act"
+          onClick={onSettings}
+          disabled={!connected}
+          title="Settings"
+          aria-label="Settings"
+        >
+          <Gear />
+        </button>
+      </div>
     </nav>
     </>
   );

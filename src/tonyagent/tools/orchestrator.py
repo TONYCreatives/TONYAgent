@@ -75,7 +75,7 @@ class ToolOrchestrator:
         self._confirmation_callback: Optional[Callable] = None
         self._log_callback: Optional[Callable] = None
         self._trusted_projects: set[str] = set()
-        #: Active mode, or None for unrestricted (the Tkinter UI's behaviour).
+        #: Active mode, or None for unrestricted (the default behaviour).
         self._mode: Any = None
         # The permission level, intersecting with the mode. See `tool_permitted`.
         self._permission: Any = None
@@ -98,7 +98,7 @@ class ToolOrchestrator:
         layer that actually runs tools, not in the layer that describes them.
         Hiding a tool from the schema is a suggestion to a model; this is the
         check that cannot be argued with. `None` means unrestricted, which is
-        what the Tkinter UI and the tests get.
+        what the tests get.
         """
         self._mode = mode
 
@@ -107,7 +107,7 @@ class ToolOrchestrator:
 
         **The intersection, not an override.** A mode and a permission level are
         two independent limits and a tool has to satisfy both: asking for Full
-        does not put `write_file` back in reach while Plan mode is on, and Plan
+        does not put `write` back in reach while Plan mode is on, and Plan
         does not withdraw `execute_command` while Full is. Each can only ever
         make the set smaller, so there is no combination of the two controls
         that widens access past what Build mode and Full together already allow.
@@ -124,7 +124,7 @@ class ToolOrchestrator:
         """Whether the active level runs commands off the allow-list.
 
         False when nothing is set, which is what an unrestricted orchestrator
-        (the Tkinter path and most tests) wants.
+        (most tests) wants.
         """
         return bool(getattr(self._permission, "bypasses_command_allowlist", False))
 
@@ -142,9 +142,100 @@ class ToolOrchestrator:
         `_ALLOWLIST_BYPASS` there for what went wrong the first time.
         """
         self._permission = permission
-        from tonyagent.tools.shell_tools import set_allowlist_bypass
+        from tonyagent.tools.shell_tools import set_allowlist_bypass, set_host_execution
 
         set_allowlist_bypass(self.allows_any_command())
+        # Published for the same reason and to the same place: the isolation
+        # gate lives in `shell_tools` and `runtime_access`, neither of which
+        # holds the permission level. Setting it here means switching away from
+        # Full takes the permission back with it, which is the whole safety
+        # property of a mode that grants host access.
+        set_host_execution(bool(getattr(permission, "runs_on_host", False)))
+
+    def _confirmation_is_skipped(self, name: str, arguments: dict) -> bool:
+        """Whether the user has already said not to be asked about this call.
+
+        Two ways to stop asking, either of which is enough.
+
+        **Trust** is the per-session statement about a folder: this code is mine,
+        stop interrupting me. It predates the permission levels and is unchanged
+        by them.
+
+        **Full** is the user choosing, for this window, not to be asked. It is the
+        *broader* of the two on purpose: trust is set in Settings and tends to
+        stay set, while Full is visible in the bar and read on every turn. That
+        makes it the answer for "I trust this one job" without going to change a
+        setting first.
+
+        What Full deliberately does not do is widen anything. The mode and
+        permission checks run before this, the allow-list still has the last word
+        on commands, and `execute_command` still refuses without an isolating
+        sandbox. It removes the question, not the gates -- which is why the ladder
+        above it still means something.
+        """
+        permission = self._permission
+        full = bool(getattr(permission, "skips_confirmation", False))
+        current = folder_manager.current_folder
+        trusted = current is not None and self.is_trusted(str(current))
+        if not (full or trusted):
+            return False
+        if name != "execute_command":
+            return True
+        from tonyagent.tools.shell_tools import _is_command_allowed
+
+        # At Full the allow-list is not consulted at all -- that is what this
+        # level now means. Below it, an off-allowlist command still asks, so High
+        # keeps a question the user can answer and Full is the rung that removes
+        # it.
+        allowed, _ = _is_command_allowed(
+            arguments.get("command", ""),
+            bypass_allowlist=self.allows_any_command(),
+        )
+        return allowed
+
+    def _needs_confirmation(self, name: str, arguments: dict) -> bool:
+        """Whether this call needs the destructive-tool confirmation dialog.
+
+        The narrow question, asked by the code that actually routes a call
+        through ``_request_confirmation``. ``will_prompt`` is the broad one --
+        "will anything stop this turn" -- and it is deliberately *not* that one:
+        an ``ask_user_question`` call stops the turn for the QuestionDialog, and
+        routing it through here would put a bogus "Confirm tool execution /
+        Allow / Deny" modal on screen first and then, after Allow, the question
+        it was actually asking. Two dialogs for one blocked turn, the first about
+        nothing. Keeping the two as separate methods with this one delegating is
+        what stops them drifting into meaning the same thing.
+        """
+        tool = tool_registry.get(name)
+        if tool is None:
+            return False
+        if not (tool.destructive and tool.requires_confirmation):
+            return False
+        return not self._confirmation_is_skipped(name, arguments)
+
+    def will_prompt(self, name: str, arguments: dict) -> bool:
+        """Whether this call stops to ask the user before it runs.
+
+        **One answer to that question.** The session reads this to decide whether
+        a batch of tool calls may run concurrently, because a prompt is the one
+        thing that must stay serial: two dialogs at once is a worse experience
+        than a slower turn, and the second would be asking about a call the user
+        has not read yet. Only this module knows whether a prompt is coming --
+        trust, the Full rung, the command allow-list and ``asks_user`` all bear
+        on it.
+
+        **Two kinds of prompt, and the caller only ever means "both".** The
+        destructive-tool confirmation and the Phase 4 tools that ask the user a
+        question. Nothing that runs a tool should read this as "show the
+        confirmation dialog" -- for that there is ``_needs_confirmation``.
+
+        Unknown or non-destructive tools answer ``False``, which is the safe
+        direction: it costs at most a serial batch.
+        """
+        if self._needs_confirmation(name, arguments):
+            return True
+        tool = tool_registry.get(name)
+        return bool(tool is not None and tool.asks_user)
 
     def set_confirmation_callback(self, callback: Callable[[ConfirmationRequest], None]) -> None:
         self._confirmation_callback = callback
@@ -156,7 +247,7 @@ class ToolOrchestrator:
         """Execute a tool call synchronously (blocking).
 
         Must be called from a thread WITHOUT a running event loop (e.g. the
-        background generation thread in MainWindow). Use
+        background generation thread). Use
         ``await execute_tool_async(...)`` from async code instead.
         """
         try:
@@ -201,52 +292,13 @@ class ToolOrchestrator:
         if not valid:
             return ToolResult(status=ToolResultStatus.ERROR, error=f"Invalid arguments: {error}")
         
-        if tool_call.name != "http_request" and not folder_manager.current_folder:
+        if tool.folder_required and not folder_manager.current_folder:
             return ToolResult(status=ToolResultStatus.ERROR, error="No project folder selected")
         
-        if tool.destructive and tool.requires_confirmation:
-            # Two ways to stop asking, either of which is enough.
-            #
-            # **Trust** is the per-session statement about a folder: this code is
-            # mine, stop interrupting me. It predates the permission levels and
-            # is unchanged by them.
-            #
-            # **Full** is the user choosing, for this window, not to be asked.
-            # It is the *broader* of the two on purpose: trust is set in
-            # Settings and tends to stay set, while Full is visible in the bar
-            # and read on every turn. That makes it the answer for "I trust this
-            # one job" without going to change a setting first.
-            #
-            # What Full deliberately does not do is widen anything. The mode and
-            # permission checks above ran already, the allow-list below still
-            # has the last word on commands, and `execute_command` still refuses
-            # without an isolating sandbox. It removes the question, not the
-            # gates -- which is why the ladder above it still means something.
-            permission = self._permission
-            full = bool(getattr(permission, "skips_confirmation", False))
-            current = folder_manager.current_folder
-            trusted = current is not None and self.is_trusted(str(current))
-            skip_confirm = False
-            if full or trusted:
-                if tool_call.name == "execute_command":
-                    from tonyagent.tools.shell_tools import _is_command_allowed
-
-                    # At Full the allow-list is not consulted at all -- that is
-                    # what this level now means. Below it, an off-allowlist
-                    # command still asks, so High keeps a question the user can
-                    # answer and Full is the rung that removes it.
-                    allowed, _ = _is_command_allowed(
-                        tool_call.arguments.get("command", ""),
-                        bypass_allowlist=self.allows_any_command(),
-                    )
-                    skip_confirm = allowed
-                else:
-                    skip_confirm = True
-                    skip_confirm = True
-            if not skip_confirm:
-                result = await self._request_confirmation(tool_call, tool)
-                if result:
-                    return result
+        if self._needs_confirmation(tool_call.name, tool_call.arguments):
+            result = await self._request_confirmation(tool_call, tool)
+            if result:
+                return result
         
         self._log(f"Executing {tool_call.name}({_summarise_args(tool_call.arguments)})", "info")
         

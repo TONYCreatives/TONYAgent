@@ -3,11 +3,11 @@ import { useRef, useState, type RefObject } from "react";
 import {
   MAX_ATTACHMENTS,
   fileSize,
+  imagesFromClipboard,
   readFile,
   rejectionReason,
   type PendingAttachment,
 } from "./attachments.js";
-import { ModelPicker, type ModelList } from "./ModelPicker.js";
 import { ToolBudgetControl } from "./ToolBudgetControl.js";
 
 /** One entry in the `mode.list` reply. */
@@ -21,7 +21,6 @@ export interface ModeInfo {
 interface Props {
   busy: boolean;
   disabled: boolean;
-  model: string;
   /** Modes from the core, in display order. Never hardcoded here. */
   modes: ModeInfo[];
   /** The mode actually in force, as the core last reported it. */
@@ -41,14 +40,6 @@ interface Props {
   onBudgetOpen: () => void;
   onBudgetClose: () => void;
   onBudgetChange: (limit: number) => void;
-  /** The provider's model list, or null while it is being read. */
-  modelList: ModelList | null;
-  /** Why the list could not be read, or null. */
-  modelListError: string | null;
-  onModelMenuOpen: () => void;
-  onModelMenuClose: () => void;
-  onModelChange: (model: string) => void;
-  onModelListLoad: () => void;
   /**
    * The textarea, so the window can move focus into it.
    *
@@ -66,7 +57,6 @@ interface Props {
 export function Composer({
   busy,
   disabled,
-  model,
   modes,
   mode,
   onModeChange,
@@ -77,12 +67,6 @@ export function Composer({
   onBudgetOpen,
   onBudgetClose,
   onBudgetChange,
-  modelList,
-  modelListError,
-  onModelMenuOpen,
-  onModelMenuClose,
-  onModelChange,
-  onModelListLoad,
   inputRef,
 }: Props) {
   const [text, setText] = useState("");
@@ -113,20 +97,43 @@ export function Composer({
     setAttachments([]);
   };
 
-  const onFilesChosen = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = [...(event.target.files ?? [])];
-    // Reset immediately. Without this the same file cannot be picked twice in
-    // a row, because the input still holds it and change does not fire.
-    event.target.value = "";
+  /**
+   * Take files into the pending strip, with the limits and the reporting.
+   *
+   * One routine for both ways in -- the file picker and a paste -- because two
+   * copies of this is two copies of the rule, and the second one is the one
+   * that forgets the limit.
+   *
+   * Names are made unique against what is already queued, which is why this
+   * takes the current list rather than reading state inside an updater: the
+   * rename has to happen before `readFile`, so that the name it reports is the
+   * name the strip shows. Two screenshots pasted one after the other are both
+   * called `pasted-1.png` by the clipboard reader, and two attachments with
+   * the same name are a bug -- `removeAttachment` deletes by name, so the
+   * first click on either one would remove both.
+   */
+  const acceptFiles = async (files: File[]) => {
     if (files.length === 0) return;
     setAttachmentError(null);
+
+    const queued = new Set(attachments.map((a) => a.name));
+    const named = files.map((file) => {
+      if (!queued.has(file.name)) return file;
+      const dot = file.name.lastIndexOf(".");
+      const stem = dot > 0 ? file.name.slice(0, dot) : file.name;
+      const ext = dot > 0 ? file.name.slice(dot) : "";
+      let n = 2;
+      while (queued.has(`${stem}-${n}${ext}`)) n += 1;
+      return new File([file], `${stem}-${n}${ext}`, { type: file.type });
+    });
+
     const room = MAX_ATTACHMENTS - attachments.length;
-    if (files.length > room) {
+    if (named.length > room) {
       setAttachmentError(
-        `Only ${MAX_ATTACHMENTS} files can go with one message. ${files.length - room} were not added.`,
+        `Only ${MAX_ATTACHMENTS} files can go with one message. ${named.length - room} were not added.`,
       );
     }
-    const wanted = files.slice(0, room);
+    const wanted = named.slice(0, room);
     const accepted: PendingAttachment[] = [];
     for (const file of wanted) {
       const reason = rejectionReason(file);
@@ -143,6 +150,33 @@ export function Composer({
     if (accepted.length > 0) setAttachments((prev) => [...prev, ...accepted]);
   };
 
+  const onFilesChosen = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = [...(event.target.files ?? [])];
+    // Reset immediately. Without this the same file cannot be picked twice in
+    // a row, because the input still holds it and change does not fire.
+    event.target.value = "";
+    await acceptFiles(files);
+  };
+
+  /**
+   * Ctrl+V with a picture on the clipboard attaches it.
+   *
+   * A pasted screenshot is the one attachment nobody has a file for, and
+   * making them reach for the file picker to send it would be the whole
+   * feature missing.
+   *
+   * **The default is only cancelled when a picture was actually taken.** A
+   * paste with no image on it is a text paste, and swallowing that would
+   * break the most ordinary thing a text field does. So the check comes first
+   * and `preventDefault` happens after, never the other way round.
+   */
+  const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const images = imagesFromClipboard(event.clipboardData);
+    if (images.length === 0) return;
+    event.preventDefault();
+    void acceptFiles(images);
+  };
+
   const removeAttachment = (name: string) => {
     setAttachments((prev) => prev.filter((a) => a.name !== name));
   };
@@ -154,6 +188,7 @@ export function Composer({
           ref={inputRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
+          onPaste={onPaste}
           className={readOnly ? "is-readonly" : undefined}
           // Enter sends, Shift+Enter inserts a newline. Matches the Tkinter UI's
           // Ctrl+Enter modifier, minus the modifier, since a web text field
@@ -233,18 +268,6 @@ export function Composer({
               </button>
             ))}
           </div>
-
-          <ModelPicker
-            model={model}
-            busy={busy}
-            disabled={disabled}
-            list={modelList}
-            error={modelListError}
-            onOpen={onModelMenuOpen}
-            onClose={onModelMenuClose}
-            onChange={onModelChange}
-            onLoad={onModelListLoad}
-          />
 
           {/*
             The tool budget sits beside the model rather than in the settings

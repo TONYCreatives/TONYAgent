@@ -3,16 +3,11 @@
 from tonyagent.utils.logging import setup_logging, get_logger, LogContext
 from tonyagent.utils.threading import (
     get_thread_pool,
-    set_ui_root,
     run_in_background,
     run_async,
     schedule_on_ui,
-    process_ui_queue,
-    start_ui_queue_processor,
-    stop_ui_queue_processor,
     run_on_ui_thread,
     run_in_executor,
-    AsyncTkinter,
     CancellationToken,
     shutdown_thread_pool,
 )
@@ -34,16 +29,11 @@ __all__ = [
     "LogContext",
     # Threading
     "get_thread_pool",
-    "set_ui_root",
     "run_in_background",
     "run_async",
     "schedule_on_ui",
-    "process_ui_queue",
-    "start_ui_queue_processor",
-    "stop_ui_queue_processor",
     "run_on_ui_thread",
     "run_in_executor",
-    "AsyncTkinter",
     "CancellationToken",
     "shutdown_thread_pool",
     # Paths

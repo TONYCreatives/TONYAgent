@@ -6,7 +6,7 @@ burns turns failing with "Command 'cat' not in allowlist" when it only wanted to
 look at a file. These give that capability back through a narrow, typed,
 read-only RPC instead of a general shell.
 
-Use the host-side tools (``read_file``/``list_dir`` in file_tools.py) for normal
+Use the host-side tools (``read``/``list_dir`` in file_tools.py) for normal
 work. These matter when you specifically need the runtime's view - a dependency
 resolved inside the container image, or a file that only exists there.
 
@@ -38,7 +38,7 @@ def _running_backend():
 class SandboxReadFileTool(Tool):
     """Read a file through the sandbox runtime, scoped to the project folder.
 
-    Prefer ``read_file`` for ordinary project files. This exists for the case
+    Prefer ``read`` for ordinary project files. This exists for the case
     where the runtime's view differs -- a dependency that exists only inside
     the container's image, for instance.
 
@@ -51,7 +51,7 @@ class SandboxReadFileTool(Tool):
         "Read a text file through the sandbox runtime, scoped to the project "
         "folder. Use this when you need the runtime's view of a file (e.g. a "
         "dependency installed only in the container image). For ordinary "
-        "project files prefer read_file, which is simpler."
+        "project files prefer read, which is simpler."
     )
     category = ToolCategory.FILE
     parameters = {

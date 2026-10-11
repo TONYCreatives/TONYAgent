@@ -25,6 +25,7 @@ import {
   PermissionMenu,
   ThinkingMenu,
   measureMenu,
+  permissionGain,
   type MenuBounds,
   type PermissionInfo,
   type PermissionList,
@@ -42,6 +43,10 @@ const level = (over: Partial<PermissionInfo> = {}): PermissionInfo => ({
   runs_commands: false,
   skips_confirmation: false,
   runs_any_command: false,
+  // Mirrors the core ladder, where only Full runs on the host. Spelled out here
+  // rather than defaulted, so a fixture that forgets the flag reads as the
+  // sandboxed level -- the safe direction to be wrong in.
+  runs_on_host: false,
   ...over,
 });
 
@@ -67,6 +72,7 @@ const LADDER: PermissionList = {
       runs_commands: true,
       skips_confirmation: true,
       runs_any_command: true,
+      runs_on_host: true,
     }),
   ],
 };
@@ -207,6 +213,10 @@ describe("the menu says what a level actually permits", () => {
     // Read per item rather than across the menu, because Low and Full gain
     // nothing from a neighbour and so render no line at all: the ends of the
     // ladder have nothing above or below them to compare against.
+    //
+    // The High row names the host, not the allow-list. Only one gain is
+    // rendered per row, and going from High to Full the boundary that moves is
+    // the machine -- so that is the sentence the row carries.
     const { container } = await renderPermission();
     await click(one(container, ".permchoice-trigger")!);
     const items = all(container, ".permchoice-item");
@@ -217,20 +227,46 @@ describe("the menu says what a level actually permits", () => {
       [
         null,
         "Can run shell commands",
-        "Can run commands outside the allow-list",
+        "Runs on this computer, outside the sandbox",
         null,
       ],
     );
   });
 
-  test("Full is marked with both of the powers it adds", async () => {
+  test("the rung below Full names the machine, not the allow-list", () => {
+    // The single most consequential sentence in the panel, asserted on its own
+    // so it cannot be bought by a change somewhere else in the row.
+    //
+    // It is checked as a pair because either one alone passes by accident: a
+    // menu that dropped every gain line would satisfy "is the host sentence
+    // there", and one that put it second would satisfy "is the host sentence
+    // absent from the headline".
+    const high = level({ name: "high", runs_commands: true });
+    const full = level({
+      name: "full",
+      runs_commands: true,
+      skips_confirmation: true,
+      runs_any_command: true,
+      runs_on_host: true,
+    });
+    assert.equal(
+      permissionGain(high, full),
+      "Runs on this computer, outside the sandbox",
+    );
+    assert.equal(high.runs_on_host, false, "the level below must stay sandboxed");
+  });
+
+  test("Full is marked with every power it adds, the machine first", async () => {
     // Spelled out rather than implied: a user who cannot see these has no way
     // to make an informed choice about handing an agent unasked access to
     // commands the project never allow-listed.
     //
-    // Two markers, not one, because they are two decisions. Being willing to
+    // Three markers, not one, because they are three decisions. Being willing to
     // have the agent run `ls` is not the same decision as being willing to have
-    // it run anything, unasked.
+    // it run anything, unasked -- and neither is the same decision as letting it
+    // run outside the sandbox on the machine it was asked to help with. The
+    // host marker leads, because that is the one that is about the user's
+    // files rather than the project's.
     const { container } = await renderPermission();
     await click(one(container, ".permchoice-trigger")!);
     const warned = all(container, ".permchoice-item").filter((item) =>
@@ -239,7 +275,7 @@ describe("the menu says what a level actually permits", () => {
     assert.equal(warned.length, 1);
     assert.match(warned[0].textContent ?? "", /Full/);
     const marks = texts(warned[0], ".permchoice-warn");
-    assert.deepEqual(marks, ["any command", "no prompts"]);
+    assert.deepEqual(marks, ["on this computer", "any command", "no prompts"]);
   });
 
   test("the menu opens upward, out of the panel's bottom edge", async () => {

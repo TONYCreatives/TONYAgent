@@ -82,10 +82,10 @@ def test_validate_credentials_rejects_truncated_key():
 
 # --- model id validation ----------------------------------------------------
 def test_widget_class_names_are_not_valid_model_ids():
-    """Regression: "CTkComboBox is not a valid model ID" came back from the API.
+    """Regression: widget class names must not be valid model IDs.
 
-    An unset customtkinter combo box reports its own class name from get(),
-    and that string was used as the model id.
+    An unset combo box reports its own class name from get(),
+    and that string must never be used as the model id.
     """
     from tonyagent.providers.factory import ProviderFactory
 
@@ -227,16 +227,57 @@ def test_completion_parsing():
 
 # --- provider wiring ----------------------------------------------------------
 
-def test_openrouter_is_the_only_registered_provider():
-    """The app is single-provider, so the registry must say so out loud.
+def test_the_registry_is_exactly_these_providers():
+    """Naming them is how one gets added without anyone deciding it should.
 
-    A test that names the providers is how a second one gets added without
-    anyone deciding that it should be.
+    This has said `["openrouter"]` (single-provider on purpose), then six, and
+    now two. The two are the point: both are aggregators that publish model
+    metadata, so the catalogue work has one shape rather than one per vendor.
+
+    An endpoint is required of every provider. A seed model list is not --
+    OpenCode Go publishes its ids only behind its own `/models`, so asserting a
+    non-empty list would be asserting that someone guessed them.
     """
     import tonyagent.providers  # noqa: F401
     from tonyagent.providers.base import provider_registry
 
-    assert provider_registry.list_providers() == ["openrouter"]
+    assert provider_registry.list_providers() == ["opencode-go", "openrouter"]
+    for name in provider_registry.list_providers():
+        cls = provider_registry.get(name)
+        assert cls.base_url.startswith("https://"), f"{name} declares no endpoint"
+
+
+def test_a_provider_added_without_a_key_asserts_no_format():
+    """A guess at a provider's format refuses a key that works.
+
+    OpenRouter checks an exact 73-character length because that length is known
+    and a truncated paste there earns an opaque 401. OpenCode Go's keys are
+    only issuable with a subscription, so nothing is known about them and the
+    refusal is left to the service.
+    """
+    import tonyagent.providers  # noqa: F401
+    from tonyagent.providers.base import provider_registry
+
+    cls = provider_registry.get("opencode-go")
+    assert cls.key_prefix == "", "opencode-go checks a prefix nobody verified"
+    assert cls.key_length is None, "opencode-go checks a length nobody verified"
+
+
+def test_a_vendor_falls_back_to_its_own_endpoint():
+    """The arguments are overrides; a bare construction picks the vendor's own."""
+    import tonyagent.providers  # noqa: F401
+    from tonyagent.providers.base import provider_registry
+
+    provider = provider_registry.get("opencode-go")(api_key="x")
+    assert provider.base_url == "https://opencode.ai/zen/go/v1"
+    # No default model: Go's ids are behind its subscription, so an empty one is
+    # the honest answer rather than a slugified display name.
+    assert provider.model == ""
+
+    overridden = provider_registry.get("opencode-go")(api_key="x", model="m",
+                                                base_url="https://example.test/v1")
+    assert overridden.base_url == "https://example.test/v1"
+    assert overridden.model == "m"
 
 
 def test_no_provider_delegates_to_an_abstract_stub():

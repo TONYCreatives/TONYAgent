@@ -6,10 +6,19 @@ import asyncio
 import re
 import shlex
 from pathlib import Path
+from typing import Any, NamedTuple
 
 from tonyagent.sandbox import get_shared_sandbox_manager
 from tonyagent.sandbox.base import SandboxStatus
-from tonyagent.tools.base import Tool, ToolResult, ToolResultStatus, ToolCategory, register_tool
+from tonyagent.tools.base import (
+    Tool,
+    ToolResult,
+    ToolResultStatus,
+    ToolCategory,
+    output_excerpt,
+    register_tool,
+)
+from tonyagent.tools.jobs import jobs_registry
 from tonyagent.folder.manager import folder_manager
 from tonyagent.config.settings import settings
 from loguru import logger
@@ -52,6 +61,36 @@ def set_allowlist_bypass(bypassed: bool) -> None:
 
 def allowlist_bypassed() -> bool:
     return _ALLOWLIST_BYPASS
+
+
+#: Whether the chosen permission level runs commands on the host.
+#:
+#: A second instance of the argument `_ALLOWLIST_BYPASS` makes, and for the same
+#: reason. `ExecuteCommandTool` is the only thing that can decide whether a
+#: command may run on the host, and it is not the thing that holds the
+#: permission level -- so the level is published to it, once, by the one place
+#: that owns the level. Reading it off the orchestrator singleton instead is
+#: what produced two authorities disagreeing about the same session once
+#: already.
+#:
+#: **What this flag does and does not authorise.** It is set by exactly one
+#: permission rung (`full`), it is the reason `ExecuteCommandTool`'s isolation
+#: gate can be passed without a container, and it is *not* a general escape
+#: hatch: `tools.fallback_to_local` remains a separate, independent opt-in, and
+#: a session at High with this False is refused exactly as before.
+#:
+#: Written only by `ToolOrchestrator.set_permission`.
+_HOST_EXECUTION = False
+
+
+def set_host_execution(enabled: bool) -> None:
+    """Record whether commands may run on the host. See `_HOST_EXECUTION`."""
+    global _HOST_EXECUTION
+    _HOST_EXECUTION = bool(enabled)
+
+
+def host_execution() -> bool:
+    return _HOST_EXECUTION
 
 
 #: Leading words that only wrap another command. Stripped before the denylist
@@ -173,9 +212,124 @@ def _resolve_sandbox_cwd(cwd: str) -> str:
     return f"/workspace/{rel}"
 
 
-async def _execute_local(command: str, cwd: str, timeout: int) -> ToolResult:
-    """Host fallback (only when settings.tools.fallback_to_local is True)."""
-    logger.warning(f"Executing on HOST (no sandbox): {command}")
+#: Shown when nothing at all can run a command, because no runtime is attached.
+#:
+#: Worded identically to ``runtime_access.NO_RUNTIME`` on purpose -- ``execute_js``
+#: gives the same answer for the same state, and two tools describing one cause
+#: differently is the failure ``runtime_access`` was created to end. It cannot be
+#: imported from there, because ``runtime_access`` imports this module, so the
+#: string is repeated rather than the dependency reversed. A test compares them.
+NO_RUNTIME = (
+    "The sandbox runtime is not running. Choose a project folder in Settings first."
+)
+
+#: Shown when a runtime exists but does not contain what a command would do.
+NO_ISOLATION = (
+    "No isolated sandbox is running. Running commands on the host is "
+    "not a substitute, so this is refused on purpose -- start Docker "
+    "and pick the project folder again (or set "
+    "tools.fallback_to_local=true to accept host execution)."
+)
+
+#: Shown when a background job is asked for where only the sandbox could run it.
+#:
+#: A job has to outlive the call that started it, and the only thing this process
+#: can hold onto afterwards is a *local* child. The container runs one command per
+#: request and answers with its output, so once that answer is in there is no
+#: handle left to poll. That is a limit of the interface rather than a missing
+#: flag, so the refusal says what would change the answer instead of just no.
+BACKGROUND_NEEDS_HOST = (
+    "This command would run in the sandbox, and the sandbox cannot host a "
+    "background job: it runs one command per request and answers with the output, "
+    "so there is no process left to poll afterwards. Run it in the foreground, or "
+    "select the Full permission level (or set tools.fallback_to_local=true) so it "
+    "runs on this computer, where a job can be started, read and stopped."
+)
+
+
+def _brief(command: str, limit: int = 120) -> str:
+    """A command on one bounded line, for a message about it."""
+    collapsed = " ".join(command.split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return collapsed[: limit - 1] + "\u2026"
+
+
+def _command_summary(returncode: int, stdout: str, stderr: str) -> str:
+    """One line for the tool card: how it exited, and what it said.
+
+    Both halves are the point. The exit code is what tells a reader at a glance
+    whether the command worked; the excerpt is what tells them *what* it did. A card
+    reading only "exit 0" is the blank card this exists to fix, one step removed.
+    """
+    excerpt = output_excerpt(stdout) or output_excerpt(stderr)
+    said = f"exit {returncode}"
+    return f"{said} \u00b7 {excerpt}" if excerpt else f"{said} \u00b7 no output"
+
+
+class _Target(NamedTuple):
+    """Where a command would run, and what to say if it can run nowhere."""
+
+    kind: str  # "host" | "sandbox" | "none"
+    why: str = ""  # the reason logged, when kind is "host"
+    refusal: str | None = None  # the message to return, when kind is "none"
+    backend: Any = None  # the isolating backend, when kind is "sandbox"
+
+
+def _resolve_target() -> _Target:
+    """The one answer to "where does this command run".
+
+    **One answer, asked by both the foreground path and the background one.** A
+    job started on the host while the permission level says sandbox is exactly the
+    failure the isolation gate exists to prevent, and two copies of this decision
+    would eventually drift into it -- which is why it is a function rather than a
+    paragraph repeated in two places.
+
+    The order of the checks *is* the order of the gates, and it matters:
+
+    1. **Full** runs on the host without needing a container at all, which is the
+       entire reason that rung exists. Checked before the runtime lookup so a
+       session at Full does not have to have Docker running.
+    2. Nothing attached and no opt-in is refused before the backend is consulted,
+       so this tool and ``execute_js`` say the same thing about one cause.
+    3. A running backend that provides isolation takes it.
+    4. ``tools.fallback_to_local`` is the *setting* accepting host execution -- a
+       different decision from the permission rung, and logged as such.
+    """
+    if host_execution():
+        return _Target("host", why="the Full permission level")
+
+    manager = get_shared_sandbox_manager()
+    if manager.get_runtime_backend() is None and not settings.tools.fallback_to_local:
+        return _Target("none", refusal=NO_RUNTIME)
+
+    backend = manager.get_backend()
+    if (
+        backend is not None
+        and backend.status is SandboxStatus.RUNNING
+        # A third-party backend without the flag reads as not isolating, so an
+        # older plugin fails closed instead of running on the host.
+        and getattr(backend, "provides_isolation", False)
+    ):
+        return _Target("sandbox", backend=backend)
+
+    if settings.tools.fallback_to_local:
+        return _Target("host", why="tools.fallback_to_local")
+
+    return _Target("none", refusal=NO_ISOLATION)
+
+
+async def _execute_local(command: str, cwd: str, timeout: int, why: str) -> ToolResult:
+    """Run a command through the user's own shell, with no container.
+
+    ``why`` is logged rather than swallowed: host execution is the one event in
+    this file that leaves no trace anywhere the user can see, because the
+    sandbox boundary is exactly what makes the sandboxed path safe to allow.
+    Two different reasons reach here -- the Full permission rung, and the
+    ``tools.fallback_to_local`` setting -- and they are not the same decision,
+    so the log says which one it was.
+    """
+    logger.warning(f"Executing on HOST (no sandbox, via {why}): {command}")
     target_cwd = _resolve_path(cwd)
 
     process = await asyncio.create_subprocess_shell(
@@ -195,6 +349,7 @@ async def _execute_local(command: str, cwd: str, timeout: int) -> ToolResult:
             status=ToolResultStatus.ERROR,
             error=f"Command timed out after {timeout}s",
             output={"stdout": "", "stderr": f"Timeout after {timeout}s", "returncode": -1},
+            summary=_command_summary(-1, "", f"Timeout after {timeout}s"),
         )
 
     stdout_str = stdout.decode("utf-8", errors="replace")
@@ -209,6 +364,7 @@ async def _execute_local(command: str, cwd: str, timeout: int) -> ToolResult:
     return ToolResult(
         status=ToolResultStatus.SUCCESS if process.returncode == 0 else ToolResultStatus.ERROR,
         output={"stdout": stdout_str, "stderr": stderr_str, "returncode": process.returncode},
+        summary=_command_summary(process.returncode, stdout_str, stderr_str),
         error=stderr_str if process.returncode != 0 else None,
     )
 
@@ -228,10 +384,21 @@ class ExecuteCommandTool(Tool):
     isolation check, then per-session confirmation. A trusted project skips the
     last of those. The first is never skipped by anything -- see
     `_is_command_allowed`.
+
+    With ``background=True`` the command becomes a job rather than a result: it is
+    started, and its id comes back so that later calls can read it and stop it.
+    That is what makes a dev server or a watch loop usable at all, because the
+    alternative is a turn that waits for something designed never to finish. A job
+    needs a host to run on, so the sandbox refuses one -- see
+    `BACKGROUND_NEEDS_HOST` for why that is the interface and not an oversight.
     """
 
     name = "execute_command"
-    description = "Execute a shell command in the sandbox environment."
+    description = (
+        "Execute a shell command. Set background=true for something long-running "
+        "such as a dev server or a watch loop, which returns a job id instead of "
+        "waiting; read it with job_output and stop it with job_kill."
+    )
     category = ToolCategory.SHELL
     parameters = {
         "type": "object",
@@ -239,6 +406,14 @@ class ExecuteCommandTool(Tool):
             "command": {"type": "string", "description": "Command to execute"},
             "cwd": {"type": "string", "description": "Working directory (relative to project root)", "default": "."},
             "timeout": {"type": "integer", "description": "Timeout in seconds", "default": 30},
+            "background": {
+                "type": "boolean",
+                "description": (
+                    "Start it as a background job and return its id immediately, "
+                    "instead of waiting for it to finish."
+                ),
+                "default": False,
+            },
         },
         "required": ["command"],
         "additionalProperties": False,
@@ -250,7 +425,8 @@ class ExecuteCommandTool(Tool):
     # needing a backend that contains it.
     isolation_required = True
 
-    async def execute(self, command: str, cwd: str = ".", timeout: int = 30) -> ToolResult:
+    async def execute(self, command: str, cwd: str = ".", timeout: int = 30,
+                      background: bool = False) -> ToolResult:
         # Validate command. The level comes from the module flag rather than
         # from an orchestrator instance -- see `_ALLOWLIST_BYPASS` for why there
         # is exactly one of those.
@@ -260,63 +436,75 @@ class ExecuteCommandTool(Tool):
         if not allowed:
             return ToolResult(status=ToolResultStatus.ERROR, error=f"Command not allowed: {reason}")
 
-        # An *isolating* backend only. get_backend() deliberately does not
-        # return the local runtime, because running a model-authored command on
-        # the host is exactly the thing that runtime must never be trusted for.
-        manager = get_shared_sandbox_manager()
-        if manager.get_runtime_backend() is None and not settings.tools.fallback_to_local:
-            # Checked first so this tool says the same thing as execute_js when
-            # nothing is attached at all. Two tools that both need isolation
-            # should not tell the user two different stories about one cause.
-            # Skipped when host execution was explicitly opted into, since that
-            # opt-in is precisely a way to run with no sandbox at all.
+        # Where this runs is decided in one place, and the background path below
+        # is given the same answer -- see `_resolve_target` for the order of the
+        # gates and why they are in that order.
+        target = _resolve_target()
+        if target.refusal is not None:
+            return ToolResult(status=ToolResultStatus.ERROR, error=target.refusal)
+
+        if background:
+            return self._start_background(command, cwd, target)
+
+        if target.kind == "host":
+            try:
+                return await _execute_local(command, cwd, timeout, why=target.why)
+            except Exception as e:
+                return ToolResult(status=ToolResultStatus.ERROR, error=f"Host execution failed: {e}")
+
+        try:
+            sandbox_cwd = _resolve_sandbox_cwd(cwd)
+        except ValueError as e:
+            return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
+        try:
+            result = await target.backend.execute_command(
+                command, cwd=sandbox_cwd, timeout=timeout
+            )
+        except Exception as e:
+            return ToolResult(status=ToolResultStatus.ERROR, error=f"Sandbox execution failed: {e}")
+        max_size = settings.tools.max_output_size
+        stdout_str, stderr_str = result.stdout, result.stderr
+        if len(stdout_str) > max_size:
+            stdout_str = stdout_str[:max_size] + "\n... (truncated)"
+        if len(stderr_str) > max_size:
+            stderr_str = stderr_str[:max_size] + "\n... (truncated)"
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS if result.returncode == 0 else ToolResultStatus.ERROR,
+            output={"stdout": stdout_str, "stderr": stderr_str, "returncode": result.returncode},
+            summary=_command_summary(result.returncode, stdout_str, stderr_str),
+            error=stderr_str if result.returncode != 0 else None,
+        )
+
+    def _start_background(self, command: str, cwd: str, target: _Target) -> ToolResult:
+        """Start the command as a job, or explain why it could not be one.
+
+        Every gate has already run by the time this is reached -- this decides
+        *where* a command runs, not whether it may. Only the host can hold a job;
+        see `BACKGROUND_NEEDS_HOST` for why the sandbox cannot.
+        """
+        if target.kind != "host":
+            return ToolResult(status=ToolResultStatus.ERROR, error=BACKGROUND_NEEDS_HOST)
+        try:
+            target_cwd = _resolve_path(cwd)
+        except ValueError as e:
+            return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
+        try:
+            job = jobs_registry.start(command, target_cwd)
+        except Exception as e:
             return ToolResult(
                 status=ToolResultStatus.ERROR,
-                error=(
-                    "The sandbox runtime is not running. Choose a project folder "
-                    "in Settings first."
-                ),
+                error=f"Could not start the background job: {e}",
             )
-        backend = manager.get_backend()
-        if (
-            backend is not None
-            and backend.status is SandboxStatus.RUNNING
-            # A third-party backend without the flag reads as not isolating,
-            # so an older plugin fails closed instead of running on the host.
-            and getattr(backend, "provides_isolation", False)
-        ):
-            try:
-                sandbox_cwd = _resolve_sandbox_cwd(cwd)
-            except ValueError as e:
-                return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
-            try:
-                result = await backend.execute_command(command, cwd=sandbox_cwd, timeout=timeout)
-            except Exception as e:
-                return ToolResult(status=ToolResultStatus.ERROR, error=f"Sandbox execution failed: {e}")
-            max_size = settings.tools.max_output_size
-            stdout_str, stderr_str = result.stdout, result.stderr
-            if len(stdout_str) > max_size:
-                stdout_str = stdout_str[:max_size] + "\n... (truncated)"
-            if len(stderr_str) > max_size:
-                stderr_str = stderr_str[:max_size] + "\n... (truncated)"
-            return ToolResult(
-                status=ToolResultStatus.SUCCESS if result.returncode == 0 else ToolResultStatus.ERROR,
-                output={"stdout": stdout_str, "stderr": stderr_str, "returncode": result.returncode},
-                error=stderr_str if result.returncode != 0 else None,
-            )
-
-        # Sandbox not running: fail closed unless fallback explicitly enabled.
-        if settings.tools.fallback_to_local:
-            try:
-                return await _execute_local(command, cwd, timeout)
-            except Exception as e:
-                return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
+        # Logged for the same reason `_execute_local` logs: a process on the host
+        # is the one thing this feature does that leaves no other trace.
+        logger.warning(
+            f"Started background job {job.id} on HOST (pid {job.pid}): {command}"
+        )
         return ToolResult(
-            status=ToolResultStatus.ERROR,
-            error=(
-                "No isolated sandbox is running. Running commands on the host is "
-                "not a substitute, so this is refused on purpose -- start Docker "
-                "and pick the project folder again (or set "
-                "tools.fallback_to_local=true to accept host execution)."
+            status=ToolResultStatus.SUCCESS,
+            output=(
+                f"Started job {job.id} (pid {job.pid}): {_brief(command)}. "
+                "Read it with job_output, list jobs with job_list, stop it with "
+                "job_kill."
             ),
         )

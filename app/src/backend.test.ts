@@ -16,7 +16,50 @@ import assert from "node:assert/strict";
 // ".js" (not ".ts") is the spec-correct specifier under NodeNext/ESM: the
 // runtime resolves the compiled file. tsc rewrites nothing here because this is
 // a plain relative import, so it must already name the emitted file.
-import { TauriBackend, carriesSecret, type LineTransport, type CoreEvent } from "./backend.js";
+import { CoreBackend, carriesSecret, type LineTransport, type CoreEvent } from "./backend.js";
+
+test("a reply the host pushed as a bare line resolves the request waiting for it", async () => {
+  // **The regression this exists for, and why it is a test rather than a note.**
+  //
+  // `CoreProcess._read_stdout` strips the terminator, so the host hands the page
+  // a list of *lines* -- and `CoreBackend.ingest` frames on newlines. Passed
+  // straight through, every reply was appended to the buffer and never split, so
+  // no request ever resolved: the window drew, said "connected", and then sat on
+  // an empty model picker with no provider, no project folder and no
+  // conversations. Measured in the real window -- the core answered `state` with
+  // the project and the window went on saying "No project folder".
+  //
+  // Nothing caught it because the fake transport below pushes *raw stdout*, with
+  // its terminators, which is the one thing the real host does not do.
+  const sent: string[] = [];
+  const api = {
+    send: async (line: string) => {
+      sent.push(line);
+      return { ok: true };
+    },
+    ready: async () => ({ ok: true }),
+  };
+  const host = globalThis as unknown as Record<string, unknown>;
+  host.window = { pywebview: { api } };
+
+  try {
+    const backend = new CoreBackend();
+    await backend.start();
+    const pending = backend.call("state");
+
+    // Exactly what the host pushes: one line, no terminator.
+    const installed = host.window as {
+      __tonyAgent: { onFrames: (lines: string[]) => void };
+    };
+    installed.__tonyAgent.onFrames(['{"id": 1, "result": {"project": "D:/x"}}']);
+
+    assert.deepEqual(await pending, { project: "D:/x" });
+    assert.equal(sent.length, 1, "the request never reached the host");
+  } finally {
+    delete host.window;
+  }
+});
+
 /** A transport that records writes and lets a test push stdout frames. */
 class FakeTransport implements LineTransport {
   written: string[] = [];
@@ -57,7 +100,7 @@ class FakeTransport implements LineTransport {
 /** Build a backend over a fresh fake transport, both returned. */
 function makeBackend() {
   const transport = new FakeTransport();
-  const backend = new TauriBackend(() => transport);
+  const backend = new CoreBackend(() => transport);
   return { transport, backend };
 }
 
@@ -254,7 +297,7 @@ test("start/stop/start leaves a working transport, not a stale one", async () =>
    * forever and the only symptom in the console was a rejected promise.
    */
   const made: FakeTransport[] = [];
-  const backend = new TauriBackend(() => {
+  const backend = new CoreBackend(() => {
     const transport = new FakeTransport();
     made.push(transport);
     return transport;
@@ -288,7 +331,7 @@ test("a replaced sidecar's late exit does not kill its replacement", async () =>
    * promise in the console.
    */
   const made: FakeTransport[] = [];
-  const backend = new TauriBackend(() => {
+  const backend = new CoreBackend(() => {
     const transport = new FakeTransport();
     made.push(transport);
     return transport;
@@ -315,7 +358,7 @@ test("the live sidecar's exit still tears the backend down", async () => {
    * hang forever.
    */
   const transport = new FakeTransport();
-  const backend = new TauriBackend(() => transport);
+  const backend = new CoreBackend(() => transport);
   await backend.start();
 
   const call = backend.call("ping");
@@ -331,7 +374,7 @@ test("a failed start does not wedge later starts", async () => {
    */
   let attempt = 0;
   const good = new FakeTransport();
-  const backend = new TauriBackend(() => {
+  const backend = new CoreBackend(() => {
     attempt += 1;
     if (attempt === 1) {
       return {

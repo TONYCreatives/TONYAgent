@@ -1,0 +1,125 @@
+
+/* --- confirmation modal -------------------------------------------------- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.62);
+  /* The dim also frosts, so the window behind a dialog reads as *behind glass*
+     rather than merely darkened -- see the glass block in tokens.css. */
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  z-index: 10;
+}
+
+.modal {
+  width: min(500px, 100%);  /* Bounded, because this one class is all three dialogs and the settings
+     panel is taller than a short window. `max-height: 100%` resolves against
+     the backdrop's content box -- the viewport less its 24px padding -- so an
+     over-tall panel scrolls inside itself instead of hanging off the top of the
+     screen. Its action row is sticky for the same reason: see `.modal-actions`.
+     The search panel caps itself lower (`.search-modal`) and scrolls its own
+     result list, so it is unaffected. */
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--glass-panel-strong);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+}
+
+.modal h2 {
+  margin: 0 0 14px;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.confirm-detail {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 14px;
+  margin: 0 0 14px;
+  font-size: var(--text-base);
+}
+
+.confirm-detail dt {
+  color: var(--fg-mute);
+}
+
+.confirm-detail dd {
+  margin: 0;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.confirm-detail code {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+
+.warn {
+  margin: 0 0 14px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  /* The three tinted surfaces below used to spell their hue out as a raw
+   * `rgba(r, g, b, a)` triple -- `rgba(186,205,169,0.1)` here, which was the
+   * *old* accent written down by hand. A token swap reaches `var(--accent)` and
+   * nothing else, so that declaration would have kept painting sage over a blue
+   * notice for as long as the file lived, and it would have looked deliberate.
+   *
+   * `color-mix` against the token instead: the alpha is still 10% of the hue, so
+   * this is the same colour it was, but it now follows whatever `--accent` is.
+   * WebView2 has supported `color-mix` since 111 and this window is Chromium
+   * 154, so there is no fallback to write.
+   */
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  color: var(--warn);
+  font-size: var(--text-sm);
+}
+
+/* Degraded-but-working, which is not the same as broken. An error style here
+   would tell the user to go fix something that is not broken. */
+.notice {
+  margin: 0 0 14px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--accent);
+  font-size: var(--text-sm);
+}
+
+/*
+ * Pinned to the bottom of the scrolling panel.
+ *
+ * `.modal` is bounded and scrolls, and the settings panel is taller than a
+ * short window -- so its own Close button was the one control that could not
+ * be reached without first finding the scrollbar. A dialog whose labelled exit
+ * scrolls away has no exit the dialog admits to: the scrim closes it, and the
+ * scrim has no name.
+ *
+ * Sticky rather than a separate footer element, so the panel's contents do not
+ * change and the short dialogs sharing this class are untouched: a bar that
+ * never reaches the threshold never moves. The side margins cancel `.modal`'s
+ * padding so the background runs to the panel's edges and the hairline spans it,
+ * and `bottom: -18px` cancels the panel's bottom padding in the other
+ * direction: a sticky child is pinned to the scroll container's *content* box,
+ * so without the negative offset the bar stops one padding-box short and the
+ * content being pinned over stays visible in the strip beneath it.
+ */
+.modal-actions {
+  position: sticky;
+  bottom: -18px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin: 12px -18px 0;
+  padding: 12px 18px 18px;
+  border-top: 1px solid var(--border-soft);
+  /* Matches the panel it is stuck to, so the footer does not read as an opaque
+     strip inside a frosted dialog. */
+  background: var(--glass-panel-strong);
+}

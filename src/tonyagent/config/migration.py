@@ -129,7 +129,11 @@ def save_max_tool_calls(limit: int) -> None:
     that live in the same section are carried through untouched.
     """
     config = load_config()
-    config.setdefault("tools", {})["max_tool_calls"] = max(1, int(limit))
+    # 0 is the no-limit sentinel -- see `AgentSession.set_max_tool_calls`. It is
+    # the one value below the floor, and it has to survive the round trip through
+    # this file or the choice would quietly become "1 per turn" on next launch.
+    stored = int(limit)
+    config.setdefault("tools", {})["max_tool_calls"] = stored if stored == 0 else max(1, stored)
     save_config(config)
 
 
@@ -153,6 +157,122 @@ def save_provider_selection(name: str, model: str = "", base_url: str = "") -> N
     provider["model"] = model
     provider["base_url"] = base_url
     save_config(config)
+
+
+def _keys_section(config: dict) -> dict:
+    """The [keys] table, created on demand and never rebuilt.
+
+    Kept apart from the accessors below because every one of them is the same
+    read-modify-write: the file is the only place these names live (the keyring
+    cannot be enumerated -- see keyring.get_all_stored_providers), so a caller
+    that assembled the table from scratch would drop every name it did not
+    happen to know about.
+    """
+    section = config.get("keys")
+    if not isinstance(section, dict):
+        section = {}
+        config["keys"] = section
+    return section
+
+
+def load_key_names(provider: str) -> list[str]:
+    """The key names recorded for one provider, in the order they were saved.
+
+    A malformed entry answers with an empty list rather than raising: this runs
+    on the load_api_key path, which every turn takes, and a hand-edited config
+    must not be able to turn a missing name into a dead provider. The order is
+    preserved because the panel draws the rows in it, and "the one I just added"
+    landing in the middle of the list would move under the cursor.
+    """
+    config = load_config()
+    section = config.get("keys")
+    entry = section.get(provider) if isinstance(section, dict) else None
+    names = entry.get("names") if isinstance(entry, dict) else None
+    if not isinstance(names, list):
+        return []
+    return [name for name in names if isinstance(name, str) and name]
+
+
+def get_active_key_name(provider: str) -> str:
+    """The key name this provider's turns are pinned to, or "" for none.
+
+    Empty is a real answer and not an error: it is what makes
+    keyring.load_api_key fall back to "default", which is how a provider with
+    one unnamed key -- every provider set up before names existed -- still
+    resolves.
+    """
+    config = load_config()
+    section = config.get("keys")
+    entry = section.get(provider) if isinstance(section, dict) else None
+    active = entry.get("active") if isinstance(entry, dict) else None
+    return active if isinstance(active, str) else ""
+
+
+def save_key_registry(provider: str, names: list[str], active: str) -> None:
+    """Write one provider's key names and active name, read-modify-write.
+
+    Same shape and same reason as save_max_tool_calls: the sidecar never loads
+    settings, so assembling a whole config dict here would write defaults over
+    the user's real settings. Only [keys.<provider>] is touched; every other
+    section and every other provider carries through.
+
+    The provider's entry is removed when it would be empty. Deleting the last
+    key of a provider otherwise left an empty table behind in the file, which
+    then answered key.list with a provider that has no keys -- and made a
+    provider with stale config look "configured" to anyone reading the file.
+    """
+    config = load_config()
+    section = _keys_section(config)
+    if not names and not active:
+        section.pop(provider, None)
+        if not section:
+            config.pop("keys", None)
+        save_config(config)
+        return
+    section[provider] = {"names": list(names), "active": active}
+    save_config(config)
+
+
+def add_key_name(provider: str, name: str) -> None:
+    """Record a saved key's name, keeping the active choice as it was.
+
+    Saving does not silently switch which key a turn uses: a user adding a
+    second key is not asking for it to take over. The one exception lives in the
+    RPC handler (first key for a provider becomes active), because only that
+    layer can tell "first ever" from "one more".
+    """
+    names = load_key_names(provider)
+    if name not in names:
+        names.append(name)
+    save_key_registry(provider, names, get_active_key_name(provider))
+
+
+def remove_key_name(provider: str, name: str) -> None:
+    """Forget a deleted key's name, and clear it as active if it was.
+
+    Clearing rather than promoting a neighbour is deliberate: the fallback in
+    load_api_key is "default", and quietly electing another named key would mean
+    a deletion changed which credential the next message spent.
+    """
+    names = [stored for stored in load_key_names(provider) if stored != name]
+    active = get_active_key_name(provider)
+    if active == name:
+        active = ""
+    save_key_registry(provider, names, active)
+
+
+def set_active_key_name(provider: str, name: str) -> None:
+    """Pin a provider's turns to one stored key.
+
+    The name is appended when the registry does not know it yet, so an active
+    pointer can never name a row the panel cannot draw. The RPC handler
+    validates against the keyring before calling this; this is the backstop for
+    a config that was hand-edited into disagreement with it.
+    """
+    names = load_key_names(provider)
+    if name not in names:
+        names.append(name)
+    save_key_registry(provider, names, name)
 
 
 def reset_config() -> None:

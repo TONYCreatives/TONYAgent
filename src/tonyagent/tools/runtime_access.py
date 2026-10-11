@@ -18,6 +18,11 @@ from __future__ import annotations
 from tonyagent.sandbox import get_shared_sandbox_manager
 from tonyagent.sandbox.base import SandboxBackend, SandboxStatus
 
+# Imported here rather than at module scope to keep the dependency pointing the
+# way it does everywhere else: `shell_tools` owns the flag, and this module asks.
+# A cycle is avoided because `shell_tools` does not import this one.
+from tonyagent.tools.shell_tools import host_execution
+
 #: Shown whenever nothing is attached at all. One sentence, because it is the
 #: single most common state in a fresh window and the fix is always the same.
 NO_RUNTIME = (
@@ -41,13 +46,20 @@ def check_runtime(needs_network: bool = False, needs_isolation: bool = False) ->
     local runtime uses the host network, so it is never gated.
 
     ``needs_isolation`` is for the tools that execute arbitrary code. They must
-    refuse the local runtime rather than run on the user's machine.
+    refuse the local runtime rather than run on the user's machine -- **unless
+    the user has chosen the Full permission level**, which exists precisely to
+    run model-authored code on this computer. That is the one condition under
+    which the local runtime is an acceptable answer to an isolation question,
+    and it is checked here rather than in each of the two tools that ask, so
+    `execute_command` and `execute_js` cannot end up disagreeing about it -- the
+    exact failure this module was created to end.
     """
     backend = get_shared_sandbox_manager().get_runtime_backend()
     if backend is None:
         return NO_RUNTIME
     if needs_isolation and not getattr(backend, "provides_isolation", False):
-        return NEEDS_ISOLATION
+        if not host_execution():
+            return NEEDS_ISOLATION
     if needs_network and not getattr(backend, "has_network", False):
         return (
             "Browser tools need network access, but the sandbox is running with "
@@ -66,7 +78,18 @@ def running_backend() -> SandboxBackend:
 
 
 def isolated_backend() -> SandboxBackend:
-    """The runtime for a tool that must not run uncontained, or raise."""
+    """The runtime for a tool that must not run uncontained, or raise.
+
+    **Full permission is the documented exception.** When the user has chosen
+    the rung that says commands run on this computer rather than in a
+    container, the local runtime *is* the backend they asked for, so it is
+    returned here instead of raising. Everything else -- no runtime at all, or
+    a runtime that does not contain -- still raises exactly as before.
+    """
+    if host_execution():
+        backend = get_shared_sandbox_manager().get_runtime_backend()
+        if backend is not None:
+            return backend
     backend = get_shared_sandbox_manager().get_backend()
     if backend is None or backend.status is not SandboxStatus.RUNNING:
         raise RuntimeError(

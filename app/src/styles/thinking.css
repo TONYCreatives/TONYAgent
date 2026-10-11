@@ -1,0 +1,597 @@
+
+/* --- thinking panel ------------------------------------------------------- */
+/*
+ * Above the answer, not below it: the model thought and then said this, so it
+ * reads in that order. Quiet on purpose -- this is a trace of the model's
+ * working, and it should never be the loudest thing in the transcript.
+ */
+.thinking {
+  margin-bottom: 10px;
+  border-left: 2px solid var(--border-soft);
+  padding-left: 10px;
+  transition: border-color var(--motion-fast) ease;
+}
+
+.thinking.is-open {
+  border-left-color: var(--fg-mute);
+}
+
+.thinking-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--fg-mute);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: color var(--motion-fast) ease;
+}
+
+.thinking-head:hover {
+  color: var(--fg);
+}
+
+.thinking-caret {
+  font-size: var(--text-2xs);
+}
+
+.thinking-live {
+  color: var(--fg-mute);
+  animation: thinking-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+.thinking-warn {
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+}
+
+.thinking-notice {
+  margin: 4px 0 0;
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+/*
+ * Not Markdown and not a code block: this is prose the model was thinking in,
+ * so it wraps like prose. Monospace would read as output it produced, which is
+ * precisely the confusion the separate channel exists to prevent.
+ */
+.thinking-body {
+  margin-top: 4px;
+  color: var(--fg-mute);
+  font-size: var(--text-base);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bubble-user .tools {
+  margin-top: 6px;
+}
+
+.tool {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-family: var(--sans);
+  font-size: var(--text-sm);
+  color: var(--fg-mute);
+}
+
+.tool-mark {
+  width: 10px;
+  text-align: center;
+  flex: none;
+}
+
+.tool-running .tool-mark {
+  color: var(--accent);
+}
+
+.tool-ok .tool-mark {
+  color: var(--ok);
+}
+
+.tool-failed .tool-mark {
+  color: var(--danger);
+}
+
+.tool-name {
+  color: var(--fg-dim);
+  flex: none;
+}
+
+.tool-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+/*
+ * The tool budget popover, anchored to the composer row rather than a dialog.
+ *
+ * The wrap is the positioning context and the popover itself is absolute
+ * within it, so the panel tracks the button without a portal and without the
+ * measure-and-place code a fixed-position version would need. The row sits at
+ * the bottom of the window, so the panel opens upward: a popover that opened
+ * down would render off-screen.
+ */
+.budget-popover-wrap {
+  position: relative;
+  flex: none;
+}
+
+/*
+ * The model menu, anchored to the chip that opens it.
+ *
+ * The wrap is the containing block and the panel is absolute within it. It
+ * opens *down* now: the selector lives in the title bar at the top of the
+ * window, so down is where the room is -- the opposite of the tool budget
+ * popover, which is still in the composer at the foot of the window and still
+ * opens upward.
+ *
+ * The list is its own scroll box with a capped height rather than an
+ * expanding one. OpenRouter answers with several hundred entries, and a menu
+ * three thousand pixels tall is a menu that pushes the transcript off the
+ * screen the user opened it from.
+ */
+.modelpicker-wrap {
+  position: relative;
+  flex: none;
+}
+
+.modelpicker {
+  position: absolute;
+  /* Down, because the selector is in the title bar now -- see above. */
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 320px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--glass-panel-strong);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow: var(--shadow-1);
+}
+
+.modelpicker-filter {
+  display: block;
+  width: 100%;
+  height: 28px;
+  margin-bottom: 6px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--input);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.modelpicker-filter::placeholder {
+  color: var(--fg-mute);
+}
+
+.modelpicker-list {
+  max-height: 264px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.modelpicker-item {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.modelpicker-item:hover,
+.modelpicker-item:focus-visible {
+  background: var(--input);
+  color: var(--fg);
+}
+
+.modelpicker-item.is-current {
+  color: var(--fg);
+}
+
+/*
+ * The vendor is dimmed rather than hidden. The id is namespaced
+ * ("anthropic/claude-sonnet-4.5"), and the prefix is what tells you whether
+ * you are about to move to a different family of model -- which is the whole
+ * risk in a one-click switch.
+ */
+.modelpicker-vendor {
+  flex: none;
+  max-width: 96px;
+  overflow: hidden;
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelpicker-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelpicker-current {
+  flex: none;
+  color: var(--accent);
+  font-size: var(--text-xs);
+}
+
+.modelpicker-note {
+  margin: 0;
+  padding: 9px 8px;
+  color: var(--fg-mute);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.modelpicker-note.is-error {
+  color: var(--danger);
+}
+
+.budget-popover {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  width: 232px;
+  /* One inset on all four sides. It was `12px 13px 11px` -- three numbers and no
+     reason, so the title, the row and the way out each sat on a different edge. */
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--glass-panel-strong);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow: var(--shadow-1);
+}
+
+.budget-popover-title {
+  margin: 0 0 4px;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.budget-popover-hint {
+  margin: 0 0 9px;
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.budget-presets {
+  display: flex;
+  gap: 4px;
+}
+
+/*
+ * "No limit" is `flex: none` and full width under a row of equal pills: it is
+ * the one answer in this popover that is not a number, so it does not share the
+ * row the numbers are counted in.
+ */
+.budget-preset-none {
+  flex: none;
+  width: 100%;
+  margin-top: 6px;
+}
+
+/*
+ * The sentinel is drawn like a preset but is not one: it is not a number of
+ * calls, so it does not carry `.budget-preset` -- the row above is asserted to
+ * hold numbers, and a word in it would make that assertion mean less.
+ */
+.budget-preset,
+.budget-preset-none {
+  flex: 1;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--raised);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease, filter var(--motion-fast) ease;
+}
+
+.budget-preset:hover:not(:disabled),
+.budget-preset-none:hover:not(:disabled) {
+  background: var(--input);
+  color: var(--fg);
+}
+
+/*
+ * The chosen preset is the wash, like every other selection in this window, and
+ * not a solid accent fill.
+ *
+ * A fill here made the chosen budget the brightest object in the popover and the
+ * only selected thing in the application wearing the accent -- so it read as a
+ * *button you could press* rather than as the value currently in force. The tint
+ * says the second thing, and the border going transparent is what keeps the row
+ * from shifting as the choice is carried across it.
+ */
+.budget-preset.is-active,
+.budget-preset-none.is-active {
+  border-color: transparent;
+  background: var(--wash);
+  color: var(--fg);
+}
+
+/*
+ * Restated rather than left to the hover above, which is more specific and would
+ * otherwise repaint a chosen preset with the plain hover tint -- the selection
+ * appearing to vanish under the pointer.
+ */
+.budget-preset.is-active:hover:not(:disabled),
+.budget-preset-none.is-active:hover:not(:disabled) {
+  background: var(--wash);
+  color: var(--fg);
+  filter: brightness(1.06);
+}
+
+.budget-custom {
+  margin: 8px 0 0;
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+}
+
+/*
+ * The typed budget, beside the presets rather than instead of them.
+ *
+ * One row: the field takes what is left and the button is its own size, so the
+ * two read as a single control. `Set` is a word and not a glyph because a lone
+ * arrow next to a number field is ambiguous about what it applies to.
+ */
+.budget-custom-row {
+  display: flex;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+/*
+ * The native number field is styled directly, for the reason the file input and
+ * the settings select are: a styled wrapper leaves the platform's own control
+ * visible on top of it, and on Windows that is a white box in a black popover.
+ *
+ * `appearance: none` is what actually removes the spinners. Hiding them instead
+ * (`::-webkit-inner-spin-button`) leaves a number field that still refuses
+ * letters on some paths, and the validation below is the thing that should be
+ * deciding what a field accepts.
+ */
+.budget-custom-input {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--input);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  appearance: none;
+  transition: border-color var(--motion-fast) ease;
+}
+
+.budget-custom-input:focus {
+  border-color: var(--accent);
+}
+
+.budget-custom-input:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.budget-custom-apply {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--raised);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.budget-custom-apply:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.budget-custom-apply:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/*
+ * Why the typed value was refused, in the popover rather than in the window's
+ * error banner.
+ *
+ * The banner sits above the transcript, several hundred pixels from the field
+ * that caused the rejection, and it persists; a person who typed 0 and pressed
+ * Enter is still looking at the field. `--danger` is the same token the row
+ * menu's Delete uses, for the same reason: the value would have refused every
+ * tool in the turn.
+ */
+.budget-problem {
+  margin: 6px 0 0;
+  color: var(--danger);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+/*
+ * The way out, full width under the field. It is a `.btn` now -- it was styled
+ * as `.linkish`, the treatment the status bar gives "Logs", which in the footer
+ * of a popover read as body text rather than as the control that closes it. The
+ * font-size is `.btn`'s rather than the 11px it carried, which was a step below
+ * every other button in the window.
+ */
+.budget-done {
+  width: 100%;
+  margin-top: 10px;
+}
+
+/*
+ * The turn's tool-call standing. Muted like the detail line, because it is
+ * context rather than an outcome -- until the turn is near its limit, at
+ * which point it is the only thing on the card warning that the next call
+ * may be refused, so it takes the warning tint rather than staying quiet.
+ */
+.tool-budget {
+  flex: none;
+  color: var(--fg-mute);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tool-budget.is-near-limit {
+  color: var(--warn);
+}
+
+/*
+ * What is about to go with the message.
+ *
+ * Sits above the composer row, not inside it: the row is a single line of
+ * controls and a strip of files would push the send button off the end of it.
+ * The strip has to be visible *before* the send, because the alternative is
+ * finding out a screenshot went out with the wrong question after the model
+ * has already answered it.
+ */
+.attach-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.attach-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 3px 4px 3px 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+}
+
+/*
+ * A thumbnail, not an icon. The point of attaching a screenshot is that it is
+ * a screenshot, and a generic page icon would not tell a user they attached
+ * the wrong window.
+ */
+.attach-thumb {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-xs);
+  object-fit: cover;
+}
+
+.attach-doc {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-xs);
+  background: var(--input);
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.04em;
+}
+
+.attach-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attach-size {
+  flex: none;
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.attach-remove {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--fg-mute);
+  font-size: var(--text-md);
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.attach-remove:hover,
+.attach-remove:focus-visible {
+  background: var(--input);
+  color: var(--fg);
+}
+
+.attach-error {
+  margin: 0 0 8px;
+  color: var(--danger);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+/*
+ * The file input is real -- it is what produces a `File` and therefore the
+ * bytes -- but it is never seen. `display: none` rather than visually hidden,
+ * because a clipped one-pixel box still takes focus and a keyboard user would
+ * tab into a control with no label.
+ */
+.file-input {
+  display: none;
+}

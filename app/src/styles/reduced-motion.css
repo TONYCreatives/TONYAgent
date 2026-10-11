@@ -1,0 +1,112 @@
+
+/* --- reduced motion -------------------------------------------------------- */
+/*
+ * One block, listing every animation in this file by name. Motion here is
+ * decoration over a state change that is already complete and already
+ * announced in the DOM, so removing it costs nothing -- there is no
+ * information carried by the movement that the `data-state` and `aria-*`
+ * attributes do not already carry. Someone who has asked their operating
+ * system to stop moving things gets a still app, not a slightly less animated
+ * one.
+ */
+@media (prefers-reduced-motion: reduce) {
+  /*
+   * The two that are not `[data-state]` rules, and both are a *progress*
+   * indicator rather than a transition.
+   *
+   * Cancelling them stops the motion without removing the information they
+   * carry, which is the whole distinction: `.thinking-live` keeps its text and
+   * `.tab-spinner` keeps its ring. Hiding a busy indicator to satisfy a motion
+   * preference would trade a real signal for a cosmetic one, and a turn that
+   * looks finished is worse than a turn that looks still.
+   *
+   * `.tab-spinner` was the one animation this block missed, which is why
+   * `scripts/audit_reduced_motion.py` exists: the list is hand-written, and a
+   * selector added to the stylesheet later is invisible here until someone
+   * remembers to add it below too. The spinner's own rule carries no
+   * `[data-state]`, so it was never in the group below.
+   */
+  .thinking-live { animation: none; }
+  .tab-spinner { animation: none; }
+  /*
+   * The first-run mark, which arrives on `rise-in`. Unlike the two above this
+   * one carries no information -- it is a drawing that fades in -- so cancelling
+   * it removes nothing but the movement, which is the easy half of this block's
+   * rule. It is here because `animation` is only ever cancelled by somebody who
+   * remembers, and `reducedMotion.test.ts` checks the list against the file on
+   * every run so that "remembers" is not the whole mechanism.
+   */
+  .empty-mark { animation: none; }
+  /*
+   * Spelled out with the `[data-state]` half so it matches the specificity of
+   * the rule it cancels. `.budget-popover` alone is one class and loses to the
+   * two-class rule above, which is the mistake `audit_reduced_motion.py`
+   * exists to catch -- and did.
+   */
+  .budget-popover[data-state="open"],
+  .budget-popover[data-state="closed"],
+  .modelpicker[data-state="open"],
+  .modelpicker[data-state="closed"] {
+    animation: none;
+  }
+
+  /*
+   * The repeated `[data-state]` halves are not noise, and `!important` was
+   * deliberately not used to avoid them. Every rule being cancelled here is
+   * written `.thing[data-state="open"]` or `.thing[data-state="closed"]`,
+   * which is two classes of specificity; a plain `.thing` here would lose to it
+   * on specificity no matter how much later in the file it is declared. The
+   * animations would then keep playing for precisely the people who asked for
+   * them not to -- a preference silently ignored, which is worse than one that
+   * was never offered. Each selector below therefore matches the specificity of
+   * the rule it overrides, and later source order does the rest.
+   */
+  .rowmenu,
+  .rowmenu[data-state],
+  .permchoice-menu,
+  .modal-backdrop,
+  .modal-backdrop[data-state],
+  .modal-backdrop > .modal,
+  .modal-backdrop[data-state] > .modal,
+  .chatlist,
+  .chatlist[data-state],
+  .chatlist-scrim,
+  .chatlist-scrim[data-state],
+  .files-pane,
+  .logstrip,
+  .logstrip[data-state],
+  .row:nth-last-child(-n + 4),
+  .chatrow {
+    animation: none;
+  }
+
+  /*
+   * The *transitions* that travel rather than recolour, which neither the test
+   * above nor `scripts/audit_reduced_motion.py` can see: both tools read
+   * `animation` declarations, and these move on `transform`. They are listed
+   * here for the same reason everything else is -- the movement is decoration
+   * over a state the DOM already carries -- even though nothing will fail if
+   * they are forgotten, which is exactly how the ones above were once missed.
+   *
+   * Each keeps its state change and drops only the travel: the segmented
+   * control's pill still lands on the chosen half (it just snaps), a hovered
+   * control still lights and lifts its colour (it just stays put), and a
+   * pressed one still darkens (it just does not shrink).
+   */
+  .chatlist-tabs::before {
+    transition: none;
+  }
+
+  .rail-btn:hover:not(:disabled),
+  .icon-btn:hover:not(:disabled),
+  .icon-btn:active:not(:disabled),
+  .btn:active:not(:disabled),
+  .chatlist-act:active:not(:disabled),
+  .chatlist-toggle:active,
+  .chatlist-new:active:not(:disabled),
+  .chatlist-tab:active,
+  .chip:active:not(:disabled),
+  .mode:active {
+    transform: none;
+  }
+}

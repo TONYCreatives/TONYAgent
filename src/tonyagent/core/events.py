@@ -46,6 +46,13 @@ class EventType(str, Enum):
     #: The core is blocked waiting for the user to approve a tool call.
     CONFIRMATION_REQUESTED = "confirmation.requested"
     CONFIRMATION_RESOLVED = "confirmation.resolved"
+    #: The core is blocked waiting for the user to answer a question, or to
+    #: read something. Same shape as the pair above and deliberately so: one
+    #: dialog lifecycle, one timeout, one way to take it down again -- see
+    #: `tonyagent.core.user_io`. `kind` in the payload says which of the two
+    #: tools is asking, because the buttons mean different things.
+    USER_ASKED = "user.asked"
+    USER_RESOLVED = "user.resolved"
 
     # Sandbox
     SANDBOX_STATUS = "sandbox.status"

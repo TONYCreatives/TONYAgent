@@ -1,0 +1,114 @@
+
+/* --- the ask modal ------------------------------------------------------- */
+/*
+ * The surface `.modal` gives is shared with the confirmation and the settings
+ * panel, so what this module adds is only what is different about a question:
+ * options, a body to read, and a box to write in. Nothing here re-declares the
+ * panel, and nothing here animates -- the entrance and exit are
+ * `.modal-backdrop[data-state] > .modal`, in `motion.css`.
+ */
+
+/* Which tool is blocking the turn.
+ *
+ * Small and dim, because it is provenance rather than the question: a user
+ * reading this wants to know what is being asked, and only notices where it
+ * came from when it is already answered. It is there at all so that a question
+ * appearing out of nowhere has a name attached to it. */
+.ask-from {
+  margin: -6px 0 12px;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+}
+
+/* The question itself.
+ *
+ * Larger than the body text and the same colour as the heading it sits under,
+ * because it is the one thing on this surface that has to be read: the whole
+ * dialog exists to put this sentence in front of someone. */
+.ask-question {
+  margin: 0 0 14px;
+  color: var(--fg);
+  font-size: var(--text-md);
+  line-height: 1.45;
+}
+
+/* A presentation's content.
+ *
+ * Capped and scrolled rather than clipped: the core refuses a presentation over
+ * 20,000 characters, but twenty thousand characters in a 500px panel is still
+ * taller than any window, and a dialog whose own scrollbar is missing cuts the
+ * end off the thing it was showing. `pre-wrap` keeps the line breaks the core
+ * wrote while still wrapping, so a long line does not run out of the panel the
+ * way a `<pre>` would. */
+.ask-body {
+  max-height: 40vh;
+  overflow-y: auto;
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  color: var(--fg);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The core's options, as buttons.
+ *
+ * One column, full width, left-aligned text: these are answers, not chips, and
+ * a grid of short words in a 500px panel reads as a tag cloud -- which makes
+ * the eye scan for the shortest rather than read them. */
+.ask-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+/* Left-aligned and full-width, against `.btn`'s centred pill. Still a `.btn`,
+ * so it keeps the hover, the press and the focus ring the rest of the app uses
+ * -- and still `flex: none`, overridden here because the column wants the
+ * button to span the row. */
+.ask-options .btn-option {
+  flex: 1 1 auto;
+  justify-content: flex-start;
+  height: auto;
+  min-height: 30px;
+  padding: 7px 14px;
+  border-radius: var(--radius-pill);
+  text-align: left;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.ask-note-label {
+  display: block;
+  margin: 0 0 6px;
+  color: var(--fg-mute);
+  font-size: var(--text-sm);
+}
+
+/* The free-text box.
+ *
+ * A `<textarea>` rather than an `<input>` for a question and a presentation
+ * alike: a question can be answered with a sentence, and a note about a
+ * presentation is a sentence by definition. Enter sends it, so the box never
+ * has to grow for a one-line answer -- see the handler in `QuestionDialog`. */
+.ask-note {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--input) 70%, var(--bg));
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-base);
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.ask-note::placeholder {
+  color: var(--fg-dim);
+}

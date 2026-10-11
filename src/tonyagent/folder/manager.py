@@ -52,7 +52,7 @@ class FolderManager:
         populates `settings` from disk. A folder chosen last week survived a
         restart in the config file and was still ignored.
 
-        The model is consulted as well, because the Tkinter path populates it,
+        The model is consulted as well, because the config path populates it,
         and either source agreeing is harmless.
         """
         if settings.folder.current:

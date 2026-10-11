@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!--
+    TONYAgent app icon: a T.
+
+    One letter, drawn flat. This replaces a mark whose two strokes were
+    stadiums: full-radius terminals, a 729-wide crossbar over a 163-wide stem.
+
+    Flat terminals, because a T has no mitre to blunt and no arm to round off.
+    The stadium was a stroke convention applied to a shape that was never a
+    stroke, and it cost real legibility: a 132-tall stroke with rx 66 spends
+    half its length tapering, so at 16px the crossbar arrived as a lozenge
+    whose middle rows were white and whose ends were two-thirds of a pixel of
+    blue, and the mark read as a smudge rather than a bar. The stem was the
+    lighter problem: 163 of 1024 is 2.55px at 16px, which survives as a solid
+    two-pixel core, but only just, and next to a bar that was bleeding away it
+    looked thinner than it measured.
+
+    What the raster does not say, and what the candidates sheet settled: six
+    geometries were drawn and read back at 16/20/24/32/48/96, and the flat one
+    won on the crossbar rather than the stem. The stem went to 204 (3.19px at
+    16px) because it was free while there, not because the old one broke.
+
+      * The stem is 204 of 1024, 3.19px at 16px and 6.4px at 32px. It is
+        centred exactly: (1024 - 204) / 2 = 410.
+      * The crossbar is 700 of 1024, about 68%, from x=162 so the side margins
+        match the bar's 700 and the mark sits on a square of air.
+      * The stem runs 512 of the 700 the bar is wide, and the two strokes meet
+        without a seam: the bar's bottom edge at y=344 is the stem's top edge.
+
+    The candidates that lost are lost for stated reasons: the stadiums (tapered
+    crossbar, above), the soft-corner variant (the same taper at a quarter the
+    radius, which is not enough of a difference to be worth the softness), and
+    two flat variants that were visibly bolder but whose crossbar met the tile
+    edge too closely at 16px.
+
+    Flat geometry, no gradients or filters, so every raster size Tauri
+    generates (.ico, .icns, .png) stays crisp and a hand-drawn diagonal can
+    never alias into a wobble that the eye reads as the letterform.
+
+    The #2f6feb ground is kept deliberately. Flat terminals did change the
+    balance of the raster: #2f6feb went from 88.7% to 99.25% of the opaque
+    non-white pixels, because a square corner antialiases across two pixels
+    and a round one over half its length. The accent token itself did not move.
+    See the accent note at the top of app/src/styles/tokens.css.
+
+    `AppMark.tsx` carries the same two rects, and `AppMark.test.tsx` compares
+    them against this file so the window and the taskbar cannot drift apart.
+
+    Regenerate the rasters with:  npm run tauri icon src-tauri/icons/icon.svg
+  -->
+  <rect width="1024" height="1024" rx="139" fill="#2f6feb"/>
+  <rect x="162" y="168" width="700" height="176" rx="0" fill="#ffffff"/>
+  <rect x="410" y="344" width="204" height="512" rx="0" fill="#ffffff"/>
+</svg>

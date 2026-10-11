@@ -1,0 +1,642 @@
+/*
+ * TONYAgent — visual design.
+ *
+ * Two kinds of value live in this file and they have different origins, which
+ * used to be blurred together and is now stated outright:
+ *
+ *   * The **colour** is this application's own, and it is derived rather than
+ *     copied: two ladders, and one accent read out of the icon this app ships.
+ *   * The **geometry** is still measured off a reference — the Freebuff
+ *     desktop app running on this machine — and says so where it is declared.
+ *     Those are the last borrowed numbers left in here.
+ *
+ * --- the neutrals: two ladders and not one colour -------------------------
+ *
+ * The surfaces form a **depth** ladder and the text forms a **legibility**
+ * ladder, and they are kept apart on purpose. "Darker than the field" and
+ * "readable at this size" are different questions; collapsing them into one
+ * scale is how a palette ends up with a surface nothing can be written on.
+ *
+ *   surface (depth)                text (legibility, on --bg)
+ *   --bg       #1a1a1a   1.00x     --fg       #ececec   14.73:1
+ *   --surface  #202020   1.40x     --fg-dim   #a8a8a8    7.32:1
+ *   --chrome   #262626   1.88x     --fg-mute  #8a8a8a    5.04:1
+ *   --input    #2b2b2b   2.34x
+ *   --raised   #333333   3.20x     borders: --border-soft / --border /
+ *   --chip     #3d3d3d   4.52x             --border-strong, one step each
+ *
+ * **Every one of those is achromatic — r === g === b, with no tint.** That is
+ * the one deliberate change of character in this file, and it is the whole
+ * reason the window stopped looking borrowed. The ladder used to be a warm
+ * green-grey (#1c1d1c, #292b2a, #3b3e3a), counted out of a capture of the
+ * reference app, and a chroma of three or four is enough to make two windows
+ * read as the same window. Here the accent is the only chroma on screen, so it
+ * means "this application" rather than "something coloured".
+ *
+ * It also closed a real defect rather than a matter of taste: --fg-mute was
+ * #7c807a, which is 4.21:1 on the old field and therefore short of the 4.5:1
+ * that small text needs — and it is used at 11px and below. #8a8a8a is 5.04:1.
+ *
+ * --- the accent: read out of this app's own icon -------------------------
+ *
+ * `app/src-tauri/icons/icon.svg` is a white prompt on a #2f6feb ground, and
+ * #2f6feb is **99.25% of the opaque, non-white pixels across the fifteen
+ * raster sizes** (77.57% of all opaque pixels, the rest being the white
+ * glyph). Around
+ * the edge of the glyph is an antialias ramp of lighter blues — #6393f0,
+ * #7da5f2, #97b7f5, #cbdbfa — and those are the icon's own values.
+ *
+ * The share was 88.7% before the mark was redrawn with flat terminals, and
+ * that is the one figure here that moves with the glyph rather than with the
+ * palette: a rounded cap antialiases over half its length, a square one across
+ * two pixels, so the ground gained ten points of pure colour and the ramp
+ * thinned out. The accent below did not move. Anyone who redraws the mark again
+ * has to re-measure this line and nothing else in the section.
+ *
+ * The ground itself is not the token. #2f6feb is 3.81:1 on --bg (#1a1a1a): fine
+ * as a fill, short of what body-sized text needs, and this accent is also small
+ * coloured text (`.permchoice-gain`, `.linkish`, the settings hints). So the
+ * token is the **darkest ramp step that still clears 4.5:1**, #6393f0, at
+ * 5.77:1 on the new field, with a near-black --accent-fg at 6.28:1 on top of
+ * it.
+ *
+ * Two things make this worth stating rather than assuming:
+ *
+ *   * Both values are already in the artwork. A palette invented beside this
+ *     one would not be this application's; this one ships on every icon the
+ *     user sees, in the taskbar and the installer and the window frame.
+ *   * The ramp is a property of the *edge* between that white and that blue,
+ *     not of the glyph. Redesigning the mark left the ramp step where it was,
+ *     which is why the accent is unchanged by the redraw; what the redraw did
+ *     change is how much of the icon is ramp rather than ground. Anyone
+ *     changing the ground must re-derive this; anyone changing the glyph only
+ *     has to re-measure the percentage above.
+ *
+ * Dark only, and declared as such. `color-scheme: dark` is what stops the
+ * browser's own scrollbars, form controls and scrollbar-corner painting
+ * themselves light inside a near-black window.
+ *
+ * --- the geometry ----------------------------------------------------------
+ *
+ * Five numbers, and they are five tokens: `--rail-w`, `--list-w`, `--topbar-h`,
+ * `--measure` and `--column-inset`. Each is declared once, in `:root`, with the
+ * reason it has the value it has; nothing is repeated here, because a comment
+ * that restates a token is a second place for the token to be wrong, and this
+ * file has now had four passes of exactly that happen to it.
+ *
+ * What no single declaration can say, and what is worth reading once:
+ *
+ *   - The rail's width is set by its buttons, not by taste: it has to hold a
+ *     40px target with air either side, and `--rail-btn` is that target's own
+ *     size rather than the rail's.
+ *   - The conversation list is an **overlay**, not a column. The reference can
+ *     afford to dock it because it always knows how wide the window is; this
+ *     app does not, and a column that is always there is transcript gone
+ *     before the user has said anything. Floating it also keeps the transcript
+ *     from re-flowing when the panel opens, which is what makes the panel
+ *     animatable at all -- see the `.chatlist` rule.
+ *   - The list's left edge is the rail's right edge, so the two stay flush
+ *     however wide either of them is.
+ *   - The transcript, the composer, the hint and the banner all take
+ *     `--measure`, so "the composer is as wide as the messages it replies to"
+ *     is true by construction rather than by two numbers happening to agree.
+ *   - `--measure` is the column's *box*; `--column-inset` is the line inside
+ *     it. Both are needed: sharing only the box left the messages 56px narrower
+ *     than the field they reply to, because the transcript's box carried the
+ *     inset as padding and the composer's did not.
+ */
+
+:root {
+  /*
+   * Declared, not merely implied. Without it the browser paints its own
+   * widgets -- scrollbars, the scrollbar corner, form-control defaults -- in
+   * light mode inside a #1a1a1a window, and every one of them is a light box
+   * the user did not ask for. `prefers-color-scheme` is still not consulted:
+   * this app is dark only, and this is the app telling the browser that rather
+   * than the OS being asked.
+   */
+  color-scheme: dark;
+
+  /*
+   * The two ladders, in the order `layout.test.ts` walks them. The numbers in
+   * the header are the whole contract; the test checks the *properties* of
+   * these two lists rather than these twelve values, so a future tweak to a
+   * step cannot quietly break the ordering or the contrast floor.
+   */
+
+  --bg: #1a1a1a;
+  --surface: #202020;
+  --chrome: #262626;
+  --input: #2b2b2b;
+  --raised: #333333;
+  /* The raised step: the fill a *small control* wears. Three rules claim it --
+     the composer's active mode pill, the selected row inside the permission
+     menu, and the warn badge -- and all three are chips rather than states.
+
+     It used to be the selected step as well, claimed by the conversation row,
+     the tab and the selected rail item. Those three are the gradient now
+     (`--grad-wash` for the two surfaces, `--grad-accent` for the rail):
+     borrowing a container's colour for a state put "selected" one step off
+     `--hover`, so "the one you are in" and "the one under the pointer" were a
+     shade apart. */
+  --chip: #3d3d3d;
+  --hover: #383838;
+
+  --border-soft: #2e2e2e;
+  --border: #3a3a3a;
+  --border-strong: #4a4a4a;
+
+  --fg: #ececec;
+  --fg-dim: #a8a8a8;
+  /* 5.04:1 on --bg, and the floor the test holds it to. It was 4.21:1 on the
+     old field, which is below what 11px text needs, and this token is used at
+     11px and below. */
+  --fg-mute: #8a8a8a;
+
+  /*
+   * The accent, read out of the shipped icon artwork -- see the header. The
+   * pair is the whole contract: `--accent` paints, `--accent-fg` is the ink on
+   * top of it. They are declared together because a fill picked without its
+   * foreground is how a palette ends up with two readable colours and a third
+   * that is neither.
+   *
+   * Every surface that takes chroma takes `--accent`. The `.notice` tint is the
+   * one that used to spell the old sage out by hand as `rgba(186,205,169,0.1)`
+   * -- a value a swap could not reach, which is exactly what it did.
+   *
+   * 5.77:1 on `--bg`, and 6.28:1 for the ink on top of it. Changing the field
+   * changed the first number and not the token: the ramp belongs to the icon.
+   */
+  --accent: #6393f0;
+  --accent-fg: #0b1020;
+  /*
+   * Flat, and one value, because the icon has one value.
+   *
+   * It used to be a two-stop gradient -- this blue rotated 36 degrees toward
+   * violet at the far end. That rotation was the one thing in this palette that
+   * was invented rather than read out of the artwork: the mark is a white prompt
+   * on a single blue, and a second hue beside it made "this application's
+   * colour" two colours that nobody could name. Flat is the honest reading of
+   * the icon, and every surface that takes chroma now takes the same one.
+   *
+   * `--accent-bright` further down is the step that keeps *text* legible; the
+   * fill and the text are deliberately not the same blue.
+   */
+  /*
+   * The selection wash: the accent at low alpha, for surfaces that carry the
+   * accent without *being* the accent -- the selected conversation, the open tab.
+   *
+   * One flat tint rather than a gradient, so a selected row is one pixel value
+   * and not two. Low alpha because these sit under text, and a container bright
+   * enough to be noticed is bright enough to cost the text on it its contrast.
+   */
+  --wash: rgb(99 147 240 / 0.16);
+  /*
+   * One step further up the same icon ramp, for accent-coloured *text* that
+   * sits on a surface the accent itself cannot survive.
+   *
+   * `--accent` is 5.77:1 on the field, which is fine, but a badge is a small
+   * label on a raised chip rather than on the field, and there the accent is
+   * 3.6:1 — under the small-text floor. #97b7f5 is the next ramp step and is
+   * 5.4:1 on `--chip`. Same artwork, same derivation, one step along; there is
+   * no second palette here either.
+   */
+  --accent-bright: #97b7f5;
+  /*
+   * The ring a keyboard user sees. Its own name because its job is its own:
+   * the permission badge's legibility and the focus ring's are different
+   * requirements that happen to land on the same ramp step, and the day one of
+   * them moves is the day they must not move together. See the focus rule.
+   */
+  --focus-ring: var(--accent-bright);
+
+  /*
+   * `--ok` was #a3c48a, a green 63/765 from the old green accent: "the agent
+   * succeeded" and "this is the application's colour" were the same hue, and a
+   * status dot next to a filled button was a distinction of degree rather than
+   * of kind. Against the blue accent the same green sits 215 away, on the
+   * other side of the wheel, so the two can no longer be mistaken for each
+   * other at any size.
+   */
+  --ok: #a3c48a;
+  --danger: #c9705f;
+  /* The ink on a --danger fill. Same job as --accent-fg and the same reason it
+   * is a token: `#1a0a08` was written out at both call sites (the close button
+   * and the danger button), so nothing tied them to `--danger` and a future
+   * change of the fill would have left two near-blacks behind. */
+  --danger-fg: #1a0a08;
+  --warn: #c9a45f;
+
+  /*
+   * Density, re-derived from what the sizes have to do rather than from a
+   * capture of another window.
+   *
+   * The rail is 56px because its buttons are 40px and the strip needs to look
+   * like a strip rather than like a column of squares: 8px either side of a
+   * 40px target is the breathing that makes it read as a rail. The buttons
+   * were 38x34, and 34px is below the 40px minimum click target -- the one
+   * number here that was wrong rather than merely borrowed.
+   *
+   * `--measure` is the reading column, shared by the transcript, the composer,
+   * the hint and the banner. It used to be two numbers that happened not to
+   * agree -- 860px of transcript behind a 720px composer -- so the input sat
+   * inboard of the messages it was replying to and nothing said why. One
+   * token cannot drift: "the composer is as wide as the transcript" is now
+   * true by construction rather than by agreement.
+   */
+  --measure: 760px;
+  /*
+   * How far in from that box the first character of a line sits.
+   *
+   * It is the composer's own geometry -- 1px of border plus 18px of field
+   * padding -- stated once so the rest of the window can hold the same edge:
+   * the messages, the hint, the log strip and the banner all take this, and a
+   * line of prose in any of them starts on the same pixel as the placeholder in
+   * the field below it. It is a token for the same reason `--measure` is one:
+   * five copies of `19` cannot be kept in step, and the day the composer's
+   * padding moves the column has to move with it.
+   *
+   * The discovery, so it does not have to be made again: the redesign gave the
+   * transcript and the composer the same `--measure` and the two still did not
+   * line up, because `.transcript-inner` spent 28px of its box on padding while
+   * `.composer-inner` spent 1. The column was never the problem; the line inside
+   * it was.
+   */
+  --column-inset: 19px;
+
+  --rail-w: 64px;
+  /*
+   * The left sidebar's width when it is open.
+   *
+   * It was `--rail-w-expanded`, the sum of the rail and the list, sized as a
+   * grid track they shared -- so opening the panel re-laid-out the transcript
+   * and there was no track left to size once that stopped. Its own width now,
+   * and it is the *expanded* state of the column the rail is the collapsed
+   * state of: the panel starts at x=0 and covers the rail rather than sitting
+   * beside it, so this is one sidebar's open width, not a second column's.
+   *
+   * Wider than the reference's 255, deliberately: the restructure put a 40px
+   * "New chat" button, a segmented control and 12px row insets inside it, and a
+   * panel that truncates a conversation title a character early is the one
+   * place here where the text *is* the content.
+   */
+  --list-w: 288px;
+  /* Sized to what it holds: one row of 13px text, the model chip and the
+     caption buttons that fill it. Taller than the reference's 44 because the
+     chip moved up here out of the composer and the bar now has to hold it. */
+  --topbar-h: 52px;
+
+  /*
+   * Radius, by what the shape is rather than by how round it looks.
+   *
+   * A thing *inside* a rounded thing gets its own step instead of the
+   * parent's radius minus a guess: seven rules were writing
+   * `calc(var(--radius-sm) - 1px)` and three more `- 2px`, which is one idea
+   * expressed five different ways and drifts the moment a parent moves.
+   *
+   * **Every step moved up one notch** (4/8/12/18 -> 6/12/16/24), and the reason
+   * is the whole point of having built this ladder: the previous four values
+   * were each one step too square for the surfaces they were on -- the selected
+   * row read as a box, the tab as a card, the composer as a panel -- and the
+   * only reason nobody had re-cut them is that 25 rules would have had to
+   * change. With the ladder in place the same correction is four numbers, which
+   * is the argument for a scale that is not obvious until the day it pays.
+   *
+   * `--radius-pill` is now used for more than badges. Chips, the conversation
+   * tab and the active rail item are stadiums too, because that is the shape
+   * this window speaks in: a control you can see the edge of is a stadium, and
+   * a corner that stops short of one is a container. The composer keeps
+   * `--radius-lg`: it carries a whole control row and grows to 220px tall with
+   * the textarea, and a pill on a box that size reads as a lozenge rather than
+   * as a field.
+   */
+  --radius-xs: 6px;
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-pill: 999px;
+
+  /*
+   * The scrollbar, in the one place its width is written down.
+   *
+   * It is needed twice: the global `::-webkit-scrollbar` rule below, and the
+   * settings pane, which reserves its gutter whether or not anything overflows.
+   * There the sticky footer has to reach *past* the gutter to span the panel --
+   * a separator stopping 10px short of the edge reads as a defect -- so the two
+   * places have to agree, and a token is how they agree without a comment
+   * asking a future edit to remember to change both.
+   */
+  --scrollbar: 10px;
+
+  /*
+   * Elevation, in two tiers because the app has two.
+   *
+   * `--shadow-1` floats above content with nothing behind it: the row menu,
+   * the model picker, the budget popover, the permission menu.
+   * `--shadow-2` is an edge-anchored panel with a scrim behind it. Both
+   * panels cast their shadow *inward*, away from the window edge they are
+   * pinned to, so `--shadow-2` takes the cast direction from `--panel-cast`
+   * and the two panels share one token instead of a mirrored pair of literals.
+   *
+   * The inset is the hairline: on a near-black surface a drop shadow alone
+   * gives an edge that is darker but not *lit*, and a 1px top line is what
+   * says the surface has a top.
+   */
+  --shadow-1: 0 12px 32px rgb(0 0 0 / 0.5), inset 0 1px 0 rgb(255 255 255 / 0.07);
+  --shadow-2: var(--panel-cast, 18px) 0 48px rgb(0 0 0 / 0.4),
+    inset 0 1px 0 rgb(255 255 255 / 0.06);
+
+  /*
+   * Motion, kept apart from the hover transitions below.
+   *
+   * The hover transitions below are about state; these are about a surface
+   * arriving and leaving. Two separate scales because they answer different
+   * questions: a hover is answered instantly, an exit needs to be seen to be
+   * understood, and sharing one value would make one of the two wrong.
+   *
+   * Short on purpose. This is a desktop tool that people keep open all day, not
+   * something to be impressed by -- anything past ~200ms reads as lag rather
+   * than as polish.
+   */
+  --motion-fast: 110ms;
+  --motion-base: 160ms;
+  /*
+   * For the one movement that is a *place change* rather than a state change:
+   * the sidebar arriving. It travels a few hundred pixels, so it needs longer
+   * than a hover's 110 or a menu's 160 to look like it is moving deliberately
+   * rather than jumping -- and it is still well under the point where a
+   * window's own chrome starts to feel slow. Exits keep the fast durations:
+   * leaving should never be something to wait for.
+   */
+  --motion-slow: 240ms;
+  /* Decelerating: entering elements arrive quickly and settle. */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Accelerating: leaving elements leave without dawdling. */
+  --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+  /*
+   * Spring-ish: `--ease-out`'s settle with a small overshoot past the resting
+   * position, so an arriving surface *lands* rather than merely stops. This is
+   * the canonical back-out curve -- about 10% overshoot, which on the sidebar's
+   * 16px travel is under 2px: felt as a bounce, not seen as one. A
+   * cubic-bezier rather than a real spring solver, because every motion here
+   * is a fixed distance over a fixed duration and a spring would add stiffness
+   * and mass that the timeline has no use for. Arrivals only -- overshoot on
+   * the way out reads as reluctance to leave.
+   */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /*
+   * Self-hosted, not `system-ui`.
+   *
+   * The system stack rendered differently on every machine, which for a
+   * desktop app means the layout someone tuned is not the layout a user sees.
+   * These ship inside the binary, so an offline first launch has no fallback
+   * gap and no CDN to wait on.
+   *
+   * Both are variable fonts covering the whole weight range in one file, so a
+   * weight change costs no extra download. The `-apple-system`/`Segoe UI`
+   * entries stay last as a safety net: if a woff2 ever fails to decode, text
+   * must still render rather than vanish.
+   */
+  /*
+   * Type, in seven steps, and every one of them has a rule that uses it.
+   *
+   * There were fourteen sizes and they were not fourteen roles. Four of them
+   * (8.5, 9, 9.5, 10px) are marks rather than reading: carets, badges, counts
+   * and inline chips. Six (11.5 to 13px) are controls. The rest are body and
+   * headings. Collapsing them by role rather than by rounding is the point --
+   * `--text-2xs` is the size you reach for when the thing is a shape with a
+   * label on it, which is a decision, where 9.5px versus 10px was noise.
+   *
+   * `--text-base` is 13px, which is what an unset `font-size` inherits here,
+   * so the composer and the transcript are at the scale's centre rather than
+   * at an arbitrary value the scale happens to contain.
+   */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+
+  /*
+   * Two faces, split by what the text *is* rather than by where it sits: prose
+   * is Inter and code is a monospace.
+   *
+   * The window is one family for everything the user reads -- paths, diff
+   * stats, log lines, tool arguments, a base URL -- because those are sentences
+   * about the work, and a monospace spent on them made the whole chrome read as
+   * a terminal. A monospace stays for the one place alignment carries meaning: a
+   * block of code, where columns have to line up and a proportional face turns
+   * indentation into decoration. So `--mono` is spent on literal code alone --
+   * `.md-code`, `.md-pre code`, `.confirm-detail code` -- and nothing else
+   * reaches for it. Everything that used to and is not code now takes `--sans`.
+   */
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+
+  /*
+   * --- the glass ------------------------------------------------------------
+   *
+   * The floating surfaces -- the conversation list, the Files panel, the dialogs
+   * and the menus -- are *frosted* rather than painted, which is the one visual
+   * change since the two ladders were settled. Nothing above moves for it: this
+   * is alpha and blur laid on top of the same neutrals, not a second palette.
+   * The surfaces stay r === g === b and the accent stays the only chroma in the
+   * window -- a frosted panel is the same window, seen through more air.
+   *
+   * A panel is the surface colour *with alpha*, so what is behind it -- the
+   * transcript, dimmed by the scrim -- still reaches the eye through the blur.
+   * That transmission is the whole effect, and an opaque fill would have none of
+   * it, which is why these are `rgb(... / a)` and not another step on the depth
+   * ladder. `--glass-panel` is for the two big edge panels over the transcript;
+   * `--glass-panel-strong` is for menus and dialogs, which sit over busier
+   * content (code, controls) and cannot afford to be as see-through.
+   *
+   * `--glass-edge` is the lit hairline. On a near-black UI an edge that is only
+   * darker reads as a seam, and a half-transparent white reads as a top and a
+   * left -- the same trick `--shadow-2` already plays with its inset highlight,
+   * stated here so an edge can be lit without a shadow under it.
+   *
+   * `--glass-blur` and `--glass-saturate` are single tokens so no panel can be
+   * frosted to a different degree than its neighbours; the saturation boost is
+   * what keeps a colour behind frosted glass from washing out to grey.
+   */
+  --glass-panel: rgb(36 36 36 / 0.75);
+  --glass-panel-strong: rgb(42 42 42 / 0.82);
+  --glass-edge: rgb(255 255 255 / 0.1);
+  --glass-blur: 22px;
+  --glass-saturate: 150%;
+  /*
+   * The texture, as opposed to the tint and the blur -- and now texture
+   * literally rather than only by implication.
+   *
+   * Two layers, grain first so it sits over the fall: a tiled SVG turbulence
+   * at 6% opacity, then the vertical gradient that was the whole sheen before.
+   * A gradient alone is a smooth ramp, and a smooth ramp on a near-black panel
+   * reads as exactly what it is -- a gradient. Grain breaks the ramp into
+   * something with tooth: the eye reads micro-variation as a *material*, which
+   * is the difference between glass and paint. 6% holds it under the point
+   * where it competes with content, the same ceiling the `--app-field` glows
+   * are held to.
+   *
+   * The tile is 160px with `stitchTiles` so it repeats seamlessly, and it is
+   * desaturated (`feColorMatrix saturate 0`) because the window is achromatic
+   * by design -- a faintly coloured grain would be chroma no token declared.
+   *
+   * Painted as a `background-image` over the fill, so a surface keeps its
+   * `background: var(--glass-*)` shorthand (and the composer's focus rule,
+   * which reaches for the field colour as a gradient stop, still gets a colour
+   * rather than an image).
+   */
+  --glass-sheen:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23g)' opacity='0.06'/%3E%3C/svg%3E"),
+    linear-gradient(180deg, rgb(255 255 255 / 0.055), transparent 48%);
+  /*
+   * The window's own chrome -- the rail, the title bar and the status bar -- as
+   * one token, so the three edges of the window are made of the same glass as
+   * each other. Denser than `--glass-panel` because they sit on the field rather
+   * than over content, and an edge that is too see-through loses its job as an
+   * edge.
+   */
+  --glass-chrome: rgb(30 30 30 / 0.78);
+  /* The composer field, a step lighter than the panels so it reads as a surface
+     you type *onto* rather than a panel that slid up. */
+  --glass-field: rgb(46 46 46 / 0.78);
+
+  /*
+   * The field the whole window sits on, and it is not a flat fill.
+   *
+   * Two very low-alpha accent glows over `--bg` -- the icon's blue top-left and
+   * the gradient's violet bottom-right -- give the frosted surfaces above them
+   * something to gather instead of a dead, even black. That gathering is what
+   * makes glass read as glass; without it a blurred panel over a flat field is
+   * just a panel.
+   *
+   * Both stops are under 6% alpha on purpose. This is depth, not decoration: the
+   * moment either glow is detectable as a colour it has stopped being a shadow
+   * of the field and started competing with the accent for the one job the
+   * accent is allowed to have.
+   */
+  --app-field:
+    radial-gradient(130% 90% at 16% -10%, rgb(99 147 240 / 0.05), transparent 58%),
+    radial-gradient(120% 100% at 104% 116%, rgb(155 124 240 / 0.045), transparent 55%),
+    var(--bg);
+}
+
+/*
+ * Inter and JetBrains Mono, latin + latin-ext only.
+ *
+ * Google splits each family into per-script files; cyrillic and greek together
+ * are larger than latin and this app has no reason to ship them. The
+ * `unicode-range` split is kept so a latin-ext character pulls in only the
+ * second file when one actually appears, rather than both up front.
+ *
+ * `font-display: block` rather than the default `swap`: swap shows a fallback
+ * frame first, and on a dark UI a flash of light Segoe before Inter arrives is
+ * more jarring than a brief blank. The fonts are local, so the block period is
+ * a disk read, not a network wait.
+ *
+ * **The `src` paths are relative to *this file*, not to the entry.** They are
+ * `../fonts/`, because `tokens.css` lives in `styles/` and the woff2 files live
+ * beside `styles/` in `app/src/fonts/`. They were `./fonts/` while the whole
+ * stylesheet was one `app/src/styles.css`, and splitting it into this directory
+ * left the URLs pointing at `app/src/styles/fonts/`, which has never existed.
+ * That is not a cosmetic slip: Vite could not resolve them, warned once, and
+ * left the URLs for the browser to 404 -- so `@font-face` never matched, the
+ * window rendered in Segoe UI, and the one thing this file exists to prevent (a
+ * desktop app whose type depends on the machine) was quietly back.
+ */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: block;
+  src: url("../fonts/inter-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: block;
+  src: url("../fonts/inter-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: block;
+  src: url("../fonts/jbmono-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: block;
+  src: url("../fonts/jbmono-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/*
+ * --- focus ---------------------------------------------------------------
+ *
+ * One rule, for every focusable thing in the app. Before this there was no
+ * rule anywhere in the file that set an `outline`, and five that set it to
+ * `none`, so keyboard focus fell back to the UA default: a 1px #101010 ring on
+ * a #1c1d1c field, measured at 1.13:1. On nine controls out of ten, focusing
+ * changed nothing a person could see.
+ *
+ * `:focus-visible` rather than `:focus` because this is a desktop tool with a
+ * mouse: the ring is for the keyboard, and a ring on every click would teach
+ * people to ignore it.
+ *
+ * `--accent-bright` and not `--accent`, which also clears 3:1 on every surface
+ * and would have been the shorter answer. `--accent` is the *fill* of the send
+ * button, the accent button and the mode pills, and a ring in the same colour
+ * as the control it is ringing disappears into it. `--accent-bright` is the
+ * next step up the same icon ramp -- 8.6:1 on the field, 5.4:1 on the selected
+ * chip -- so it is this application's colour rather than a second accent.
+ *
+ * The offset is positive and load bearing. Drawn at a negative offset the ring
+ * would sit on the control's own fill, where it measures 1.49:1 against
+ * `--accent` and vanishes on exactly the buttons that most need marking.
+ */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--app-field);
+  color: var(--fg);
+  font: 14px/1.55 var(--sans);
+  /* The reference is a desktop chrome, not a document: text selection on
+     chrome is noise, but keep it inside the transcript where it is useful. */
+  -webkit-font-smoothing: antialiased;
+}

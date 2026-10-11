@@ -22,7 +22,6 @@ import { describe, test } from "node:test";
 import { act } from "react";
 
 import { Composer, type ModeInfo } from "./Composer.js";
-import type { ModelList } from "./ModelPicker.js";
 import { all, click, one, render, setValue } from "./test-render.js";
 import { dom } from "./test-dom.js";
 
@@ -30,15 +29,12 @@ const MODES: ModeInfo[] = [
   { name: "build", label: "Build", description: "Anything goes", writes: true },
 ];
 
-const NO_LIST: ModelList | null = null;
-
 async function composer() {
   const sent: { text: string; files: number }[] = [];
   const container = await render(
     <Composer
       busy={false}
       disabled={false}
-      model="stub/model"
       modes={MODES}
       mode="build"
       onModeChange={() => {}}
@@ -49,12 +45,6 @@ async function composer() {
       onBudgetOpen={() => {}}
       onBudgetClose={() => {}}
       onBudgetChange={() => {}}
-      modelList={NO_LIST}
-      modelListError={null}
-      onModelMenuOpen={() => {}}
-      onModelMenuClose={() => {}}
-      onModelChange={() => {}}
-      onModelListLoad={() => {}}
     />,
   );
   return { container, sent };
@@ -97,11 +87,30 @@ async function pick(
     Object.defineProperty(input, "files", { value: files, configurable: true });
     input.dispatchEvent(new dom.window.Event("change", { bubbles: true }));
   });
-  // FileReader is async even for a Blob this small, and the read is what
-  // produces the base64 the core needs.
-  await act(async () => {
-    await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
-  });
+  // The read is the component's own `FileReader`, so `onload` lands on a task of
+  // its own -- not on the microtask queue `act` drains, and not reliably on the
+  // next macrotask either. Waiting a fixed number of ticks was why this suite
+  // failed about one full-suite run in three, and never once in isolation: the
+  // assertions below ran against an empty strip whenever the machine was busy
+  // enough that the reader lost the race.
+  //
+  // So wait for the consequence instead. Every caller here expects either an
+  // item or an error -- a pick that produces neither is a bug, and this says so
+  // by name rather than leaving the next assertion to report it as a count.
+  //
+  // One `act` per poll, not one for the whole loop: React flushes queued work
+  // when an `act` scope *ends*, so a loop inside a single scope would never see
+  // the DOM the read is about to produce.
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    await act(async () => {
+      await new Promise((resolve) => dom.window.setTimeout(resolve, 5));
+    });
+    if (container.querySelector(".attach-item, .attach-error")) break;
+    if (Date.now() > deadline) {
+      throw new Error(`the picked file never reached the composer: ${name}`);
+    }
+  }
 }
 
 // --- the button ------------------------------------------------------------
@@ -131,7 +140,6 @@ describe("the attach button", () => {
       <Composer
         busy={false}
         disabled
-        model="stub/model"
         modes={MODES}
         mode="build"
         onModeChange={() => {}}
@@ -142,12 +150,6 @@ describe("the attach button", () => {
         onBudgetOpen={() => {}}
         onBudgetClose={() => {}}
         onBudgetChange={() => {}}
-        modelList={NO_LIST}
-        modelListError={null}
-        onModelMenuOpen={() => {}}
-        onModelMenuClose={() => {}}
-        onModelChange={() => {}}
-        onModelListLoad={() => {}}
       />,
     );
     assert.equal(attachButton(container).disabled, true);

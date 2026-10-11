@@ -48,8 +48,38 @@ class Mode:
 
 # Everything that can only observe. Safe in every mode, including Plan.
 _READ_ONLY_TOOLS = frozenset({
-    "read_file",
+    "read",
+    "read_image",
     "list_dir",
+    # Managing jobs observes rather than changes: `job_list` and `job_output`
+    # read what a job has already produced, and a job outlives the mode that
+    # started it -- so refusing to *look* at one in Plan mode would hide state
+    # the user can see, for no gain. `job_kill` is in the mutating set below,
+    # because stopping a process is a change.
+    "job_list",
+    "job_output",
+    # The planning tools. They change the agent's own note-to-self rather than the
+    # workspace or the machine, so every rung may use them -- and Plan mode most of
+    # all, because a plan is what that mode is for. Refusing to let the agent write
+    # down what it intends would make it carry the plan in prose instead.
+    "todo_write",
+    "create_goal",
+    "get_goal",
+    "update_goal",
+    # The two tools that reach the user. Safe in every mode, and Plan most of
+    # all: a plan is exactly what Plan mode exists to hand over for approval,
+    # and a mode that could not show its plan to the user would have no way to
+    # end. Neither writes, reads or runs anything -- they put words in front of
+    # a person and wait.
+    #
+    # Mission is the mode whose prompt says "do not stop to ask whether to
+    # continue", and it keeps them anyway: that is a preference for the model,
+    # not a wall built out of a missing tool name, and `ask_user_question` for
+    # a missing credential is the one interruption a long unattended run must
+    # not be prevented from making. The 60s ask timeout bounds the wait either
+    # way, so Mission cannot be stalled by a dialog nobody is reading.
+    "ask_user_question",
+    "present",
     "glob",
     "grep",
     "sandbox_read_file",
@@ -73,17 +103,41 @@ _READ_ONLY_TOOLS = frozenset({
 
 # Observes, and can change the workspace.
 _MUTATING_TOOLS = _READ_ONLY_TOOLS | {
-    "write_file",
-    "edit_file",
+    "write",
+    "edit",
     "delete_file",
     "execute_command",
-    # `http_request` is the one network tool. It is a mutating-mode tool
-    # because fetching a URL is a side effect the user did not necessarily
-    # ask for, and because the sandbox denies egress by default -- so a model
-    # reaching for it in Build mode is a real event, and in Plan mode it is
-    # a category error.
+    # The network tools. Mutating-mode rather than read-only because fetching a
+    # URL is a side effect the user did not necessarily ask for, and because
+    # egress is off in the sandbox by default -- so a model reaching for one in
+    # Build mode is a real event, and in Plan mode it is a category error.
+    # `web_fetch` is a reader, but it reads somewhere else.
     "http_request",
+    "web_fetch",
+    # Stopping a background job is a change to the machine, so it sits with the
+    # other mutating tools rather than with the two readers above.
+    "job_kill",
 }
+
+#: Tools that observe the user's own machine rather than the workspace.
+#:
+#: Kept out of every other rung on purpose. Everything above reads files or
+#: drives a browser the agent itself opened; this reads the desktop, which is
+#: where the user's other windows, their messages and their documents are. Full
+#: is the rung whose own wording says commands run on this computer outside the
+#: project folder, so it is the only place where that is an agreement rather
+#: than an overreach.
+#:
+#: Two axes have to agree before the model is even shown a tool
+#: (`ToolOrchestrator.tool_permitted` intersects them), so this set appears
+#: twice: once in the permission ladder, and once in Build -- the mode where
+#: "look at the screen and fix what is wrong with it" is the work. It is in
+#: Build and not Mission because a long unattended run should not be able to
+#: keep photographing the desktop, and adding it there is one line whenever
+#: that is wanted on purpose.
+_HOST_SCREEN_TOOLS = frozenset({
+    "take_screenshot",
+})
 
 #: Permission levels, in order. The tuple is the order for the UI, which must
 #: not have to hardcode the list -- see `MODE_ORDER` for why that mattered once.
@@ -132,6 +186,20 @@ class Permission:
     #: extra power indistinguishable from High, and there would be nothing left
     #: above it.
     bypasses_command_allowlist: bool = False
+    #: Whether this level runs commands on the host, with no sandbox at all.
+    #:
+    #: **This is the one flag in this module that removes a boundary rather than
+    #: a restriction.** Every other rung narrows what may run; this one changes
+    #: *where* it runs. A model-authored command inside the Docker sandbox cannot
+    #: reach the user's files outside the mounted workspace, cannot see the
+    #: host's environment, and cannot outlive the container. With this set, none
+    #: of that is true: it runs as the user, in their session, on their machine.
+    #:
+    #: Kept as its own field rather than folded into `allowed_tools` for the
+    #: same reason `bypasses_command_allowlist` is: the window has to be able to
+    #: say what a level does *before* the user picks it, and a level that can be
+    #: distinguished only by reading prose is a level nobody reads.
+    runs_on_host: bool = False
 
 
 #: Read-only: observe the project, change nothing. Same set as Plan and Skills.
@@ -158,7 +226,8 @@ _MEDIUM = Permission(
 
 #: Full tool access. Still gated twice: a command must be on the allow-list, and
 #: `execute_command` refuses to run without an isolating sandbox behind it. So
-#: "High" grants the *attempt*, and the two gates decide whether it happens.
+#: "High" grants the *attempt*, and the two gates decide whether it happens. Only
+#: Full lifts the second one -- see `runs_on_host`.
 _HIGH = Permission(
     name="high",
     label="High",
@@ -169,27 +238,35 @@ _HIGH = Permission(
     allowed_tools=_MUTATING_TOOLS,
 )
 
-#: High, without the confirmation prompt.
+#: High, without the prompt, and **on your machine rather than in a container**.
 #:
 #: **What this really means, stated plainly because the UI has to say it too.**
-#: It does not add a single tool, and it does not lift the command allow-list or
-#: the sandbox requirement. It removes one thing: the question. With the project
-#: marked trusted, `python -c "<anything>"` already runs, because the allow-list
-#: is matched on the executable's name and cannot see what it is handed. This
-#: level makes that visible instead of leaving it buried in a trust toggle --
-#: the same power, chosen in the open.
+#: It adds no tools, and it lifts the command allow-list. Those two were the
+#: whole of Full until this pass. What it now also does is remove the sandbox.
+#:
+#: The three rungs below it run a model-authored command inside Docker, mounted
+#: on one folder, with the network off. Full runs it through your own shell, as
+#: you, with your environment, your credentials and your filesystem. A command
+#: the sandbox would have refused -- one that reaches `..`, one that reads
+#: `~/.ssh`, one that installs something -- succeeds here.
+#:
+#: That is not a refinement of the level above, it is a different thing, and it
+#: is why `runs_on_host` is a separate field rather than something folded into
+#: the allow-list: the window can say *this* is the rung that leaves the
+#: sandbox, in words, before the user selects it.
 _FULL = Permission(
     name="full",
     label="Full",
     description=(
-        "Everything High allows, without asking, and any command may run -- "
-        "not just the allow-listed ones. Commands still run inside the "
-        "sandbox. Choose this only when you accept responsibility for what "
-        "the agent does."
+        "Everything, without asking, any command, and no sandbox: commands "
+        "run directly on this computer as you, outside the project folder, "
+        "with your files and environment reachable. Choose this only when you "
+        "accept responsibility for what the agent does."
     ),
-    allowed_tools=_MUTATING_TOOLS,
+    allowed_tools=_MUTATING_TOOLS | _HOST_SCREEN_TOOLS,
     skips_confirmation=True,
     bypasses_command_allowlist=True,
+    runs_on_host=True,
 )
 
 PERMISSIONS: dict[str, Permission] = {
@@ -218,7 +295,7 @@ _BUILD = Mode(
         "existing file over creating a new one. When you are done, say what "
         "you changed and how you know it works."
     ),
-    allowed_tools=_MUTATING_TOOLS,
+    allowed_tools=_MUTATING_TOOLS | _HOST_SCREEN_TOOLS,
     writes=True,
 )
 

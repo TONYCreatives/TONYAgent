@@ -135,14 +135,10 @@ def main() -> int:
     checks = [
         ("compile", [py, "-m", "compileall", "-q", "src/tonyagent"], 120),
         ("pytest", [py, "-m", "pytest", "tests", "-q", "-p", "no:cacheprovider"], 300),
-        ("verify_gui", [py, "scripts/verify_gui.py"], 180),
     ]
     if args.no_docker:
         checks[1] = ("pytest", checks[1][1] + ["-m", "not docker"], 300)
 
-    # The launch smoke test must NOT run alongside pytest: both create Tk roots,
-    # and two windows competing for the window manager made the geometry
-    # assertions in test_phase4_ux fail intermittently.
     launch = None if args.fast else _smoke_launch
     total = len(checks) + (0 if launch is None else 1)
     print(f"Running {total} checks (launch runs last)...")

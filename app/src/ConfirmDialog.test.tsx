@@ -44,7 +44,6 @@
 
 import "./test-dom.js";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { render, rerender, click, press, one, all, wait } from "./test-render.js";
@@ -54,20 +53,19 @@ import { applyEvent, initialState } from "./events.js";
 import type { CoreEvent } from "./backend.js";
 import { exitDurationMs } from "./useDelayedUnmount.js";
 import { dom } from "./test-dom.js";
+import { readStylesheetSource } from "./stylesheet.js";
 
 /**
- * The real stylesheet, in the document.
+ * The real stylesheet, in the document: the modules `styles.css` imports, in
+ * cascade order, comments stripped.
  *
- * `tsc` emits the tests to `.tmp/` and copies no other file, so the stylesheet
- * is one directory up from the compiled module rather than beside it.
+ * Comments go before the rules are read, not inside the reader. The stylesheet
+ * documents each of these rules in a comment that mentions the very selector it
+ * documents -- and contains commas and brackets doing it -- so a comment left in
+ * place is parsed as part of the selector it precedes, and the rule after it
+ * becomes unfindable.
  */
-const STYLESHEET = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8")
-  // Comments go before the rules are read, not inside the reader. styles.css
-  // documents each of these rules in a comment that mentions the very selector
-  // it documents -- and contains commas and brackets doing it -- so a comment
-  // left in place is parsed as part of the selector it precedes, and the rule
-  // after it becomes unfindable.
-  .replace(/\/\*[\s\S]*?\*\//g, "");
+const STYLESHEET = readStylesheetSource();
 
 const style = dom.window.document.createElement("style");
 style.textContent = STYLESHEET;

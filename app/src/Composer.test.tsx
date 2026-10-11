@@ -20,7 +20,6 @@ import { describe, test } from "node:test";
 import { createRef, type RefObject } from "react";
 
 import { Composer, type ModeInfo } from "./Composer.js";
-import type { ModelList } from "./ModelPicker.js";
 import { click, one, press, render, setValue } from "./test-render.js";
 import { dom } from "./test-dom.js";
 
@@ -34,7 +33,6 @@ async function composer(props: {
   busy?: boolean;
   disabled?: boolean;
   maxToolCalls?: number | null;
-  modelList?: ModelList | null;
   /** Injected by the window when it needs to move the caret here. */
   inputRef?: RefObject<HTMLTextAreaElement | null>;
 }) {
@@ -44,7 +42,6 @@ async function composer(props: {
       inputRef={props.inputRef}
       busy={props.busy ?? false}
       disabled={props.disabled ?? false}
-      model="stealth/space-bunny-alpha"
       modes={MODES}
       mode="build"
       onModeChange={() => {}}
@@ -53,12 +50,6 @@ async function composer(props: {
         calls.cancelled += 1;
       }}
       maxToolCalls={props.maxToolCalls ?? 10}
-      modelList={props.modelList ?? null}
-      modelListError={null}
-      onModelMenuOpen={() => {}}
-      onModelMenuClose={() => {}}
-      onModelChange={() => {}}
-      onModelListLoad={() => {}}
       budgetOpen={false}
       onBudgetOpen={() => {}}
       onBudgetClose={() => {}}

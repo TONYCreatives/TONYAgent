@@ -1,5 +1,5 @@
 /**
- * Left icon rail: a fixed 52px strip down the window's left edge.
+ * Left icon rail: a fixed `--rail-w` strip down the window's left edge.
  *
  * It is always that width and always there. It used to widen and grow text
  * labels beside its icons, then widen again to 307px to hold the conversation
@@ -19,6 +19,8 @@
 
 import type { ReactNode } from "react";
 
+import { Gear } from "./Gear.js";
+
 interface Props {
   connected: boolean;
   busy: boolean;
@@ -30,14 +32,27 @@ interface Props {
    */
   expanded: boolean;
   onToggle: () => void;
-  onClear: () => void;
   onCancel: () => void;
   onSettings: () => void;
   onSearch: () => void;
+  /** Whether the usage dashboard currently owns the main area. */
+  dashboardOpen: boolean;
+  onDashboard: () => void;
 }
 
-/** Inline SVG so the rail needs no icon dependency or network fetch. */
-function Icon({ children }: { children: ReactNode }) {
+/**
+ * One glyph, in the rail's own frame.
+ *
+ * A function returning a node rather than a component wrapping children, and the
+ * difference is not stylistic: the gear is a *solid* silhouette and cannot be
+ * nested inside this svg. A nested `<svg width="17">` is sized in the parent's
+ * user units, so inside a `viewBox="0 0 24 24"` it would come out 17/24 of the
+ * box. So every entry carries a complete node and this is how the stroked ones
+ * are built.
+ *
+ * Inline SVG so the rail needs no icon dependency or network fetch.
+ */
+function glyph(children: ReactNode): ReactNode {
   return (
     <svg
       width="17"
@@ -56,9 +71,11 @@ function Icon({ children }: { children: ReactNode }) {
 }
 
 const PATHS = {
-  clear: "M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6",
   stop: "M6 6h12v12H6z",
   search: "M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16zM21 21l-4.3-4.3",
+  // A baseline with three bars over it, which is the whole idea of the view
+  // and is not the same shape as anything else in this strip.
+  usage: "M4 20h16M8 20v-7M12 20v-12M16 20v-4",
   terminal: "M4 17l6-5-6-5M12 19h8",
   // Panel with the divider nearer the left edge: matches the reference's
   // toggle, which shows the sidebar "attached on the left".
@@ -68,7 +85,13 @@ const PATHS = {
 
 interface Item {
   key: string;
-  /** Pre-built glyph: some icons (the gear) cannot be a single path string. */
+  /**
+   * The whole glyph, already drawn -- see `glyph`.
+   *
+   * A node rather than a path string, because the gear is not a stroked path at
+   * all: it is a filled silhouette, and it is the one entry that cannot go
+   * through the shared frame.
+   */
   icon: ReactNode;
   label: string;
   onClick: () => void;
@@ -77,36 +100,17 @@ interface Item {
   badge?: number;
 }
 
-/**
- * The settings gear, as one path.
- *
- * It was two concentric circles with eight radial ticks, which is what you get
- * by transcribing a gear as "a body and some teeth" rather than as a shape:
- * two rings and a starburst read as a sun or a brightness icon, and at 17px
- * the tick marks are far enough apart that the eye never joins them to the
- * body. This is one continuous outline instead -- the teeth are part of the
- * same silhouette as the hub -- so the shape survives being drawn small, which
- * is the only size the rail ever draws it.
- *
- * Still inline SVG rather than a dependency, for the reason `Icon` documents.
- */
-const GEAR = (
-  <>
-    <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
-    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6h.09A1.65 1.65 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-  </>
-);
-
 export function IconRail({
   connected,
   busy,
   messageCount,
   expanded,
   onToggle,
-  onClear,
   onCancel,
   onSettings,
   onSearch,
+  dashboardOpen,
+  onDashboard,
 }: Props) {
   // No Sandbox entry. It used to sit directly above Settings and open the same
   // panel, so two labels led to one destination and neither could be the obvious
@@ -115,19 +119,18 @@ export function IconRail({
   // Search keeps its own panel because it is a query with results, not a setting.
   // No "New chat" entry: the conversation panel owns that action, and two
   // controls for one action is duplication rather than choice.
-  const items: Item[] = [
-    {
-      key: "clear",
-      icon: <path d={PATHS.clear} />,
-      label: "Clear conversation",
-      onClick: onClear,
-      disabled: !connected || busy || messageCount === 0,
-    },
-  ];
+  //
+  // No "Clear" entry either. It was a trash glyph in the middle of the strip,
+  // and clearing is not a rail action: it is something you do *to a
+  // conversation*, so it belongs beside the list it acts on -- which is where
+  // the sidebar's own foot already carries it. In the rail it read as "delete",
+  // and it sat between the logo and Search, where a reach for Search could land
+  // on it.
+  const items: Item[] = [];
   if (busy) {
     items.push({
       key: "stop",
-      icon: <path d={PATHS.stop} />,
+      icon: glyph(<path d={PATHS.stop} />),
       label: "Stop generating",
       onClick: onCancel,
       disabled: false,
@@ -135,21 +138,62 @@ export function IconRail({
       badge: messageCount || 1,
     });
   }
-  items.push(
-    {
-      key: "search",
-      icon: <path d={PATHS.search} />,
-      label: "Search project",
-      onClick: onSearch,
-      disabled: !connected,
-    },
-    {
-      key: "settings",
-      icon: GEAR,
-      label: "Settings",
-      onClick: onSettings,
-      disabled: !connected,
-    },
+  items.push({
+    key: "search",
+    icon: glyph(<path d={PATHS.search} />),
+    label: "Search project",
+    onClick: onSearch,
+    disabled: !connected,
+  });
+
+  // Usage sits with the working actions rather than at the foot with Settings:
+  // it is something you look at, not something you configure, and the foot of
+  // the strip is reserved for the one entry that is always there.
+  items.push({
+    key: "usage",
+    icon: glyph(<path d={PATHS.usage} />),
+    label: "Usage dashboard",
+    onClick: onDashboard,
+    disabled: !connected,
+    active: dashboardOpen,
+  });
+
+  /**
+   * Settings, held out of the run above so it can be pinned to the foot of the
+   * strip.
+   *
+   * The rail is a full-height flex column of content-sized buttons, so with
+   * nothing claiming the free space every icon clusters under the logo and the
+   * rest of the strip stands empty -- which leaves the gear floating one row
+   * under Search, where a reach for Search can land on it instead. A `flex: 1`
+   * spacer after the working actions drops it on the floor, the same mechanism
+   * `.topbar-spacer` and `.composer-spacer` use in their own rows.
+   *
+   * Still last in the DOM, so it is still the last name in the strip: the rail
+   * test reads the entries in order, and this is the same order.
+   */
+  const settings: Item = {
+    key: "settings",
+    icon: <Gear />,
+    label: "Settings",
+    onClick: onSettings,
+    disabled: !connected,
+  };
+
+  /** One entry of the strip. Shared, so the pinned gear is drawn like the rest. */
+  const railButton = (item: Item) => (
+    <button
+      key={item.key}
+      type="button"
+      className={`rail-btn${item.active ? " is-active" : ""}`}
+      onClick={item.onClick}
+      disabled={item.disabled}
+      title={item.label}
+      aria-label={item.label}
+    >
+      {item.icon}
+      {item.badge !== undefined && <span className="rail-badge">{item.badge}</span>}
+    </button>
   );
 
   return (
@@ -163,35 +207,36 @@ export function IconRail({
     <nav className="rail" aria-label="Primary">
       <button
         type="button"
-        className="rail-btn rail-toggle"
+        className={`rail-btn rail-toggle${expanded ? " is-active" : ""}`}
         onClick={onToggle}
         title={expanded ? "Close sidebar" : "Open sidebar"}
         aria-label={expanded ? "Close sidebar" : "Open sidebar"}
         aria-expanded={expanded}
       >
-        <Icon>
-          <path d={expanded ? PATHS.toggleClosed : PATHS.toggleOpen} />
-        </Icon>
+        {glyph(<path d={expanded ? PATHS.toggleClosed : PATHS.toggleOpen} />)}
       </button>
 
-      <div className="rail-logo" title="TONYAgent">
-        TA
-      </div>
+      {/*
+        No mark here, and its absence is deliberate.
 
-      {items.map((item) => (
-        <button
-          key={item.key}
-          type="button"
-          className={`rail-btn${item.active ? " is-active" : ""}`}
-          onClick={item.onClick}
-          disabled={item.disabled}
-          title={item.label}
-          aria-label={item.label}
-        >
-          <Icon>{item.icon}</Icon>
-          {item.badge !== undefined && <span className="rail-badge">{item.badge}</span>}
-        </button>
-      ))}
+        The rail's head used to carry the app's glyph in a `--raised` box: it was
+        the plain text "TA" once, then the same drawing `icon.svg` ships. When the
+        mark moved to the title bar's corner this copy did not leave with it, so
+        the window drew the same glyph twice -- 22px in the corner and 32px here,
+        64px apart, which is what made the rail's one read as a second logo rather
+        than as the app's mark.
+
+        The corner is the one that is always on screen. This one came and went with
+        nothing. `IconRail.test.tsx` asserts the rail has no mark at all, so a
+        second copy cannot come back quietly.
+      */}
+
+      {items.map(railButton)}
+
+      {/* Takes the strip's free height, which is what puts the gear at its foot. */}
+      <div className="rail-spacer" aria-hidden="true" />
+
+      {railButton(settings)}
     </nav>
   );
 }

@@ -1,7 +1,7 @@
 """Persisting the provider the user chose.
 
 The Tauri sidecar never wrote provider settings anywhere: ``save_config`` was
-only ever called from the Tkinter app's exit handler. So every launch came back
+only ever called from the old UI's exit handler. So every launch came back
 on a default provider *name* with no provider object behind it, and the first
 message failed with "no provider configured" -- which reads, from the UI, exactly
 like a key that was never saved.

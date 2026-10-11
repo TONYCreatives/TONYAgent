@@ -3,13 +3,13 @@
  *
  * Every other test in this directory tests a piece. This one tests the wiring
  * between them -- and that wiring is exactly what had no coverage at all until
- * `App` grew a `backend` prop, because `App.tsx` constructed `TauriBackend`
+ * `App` grew a `backend` prop, because `App.tsx` constructed `CoreBackend`
  * directly and therefore always spawned a real Python sidecar. So the untested
  * part was not a detail; it was all of the composition, and it was verified only
  * by driving the packaged app over CDP and reading the DOM afterwards.
  *
  * **The fake is a transport, not a backend.** `App` takes the concrete
- * `TauriBackend` and this test builds one over a `FakeTransport`, so the real
+ * `CoreBackend` and this test builds one over a `FakeTransport`, so the real
  * framing, request ids, reply routing and failure handling all run. Handing
  * `App` a plain object instead would have required declaring an interface that
  * restates the protocol, which is a second thing to keep in sync for no gain.
@@ -27,7 +27,7 @@ import { act } from "react";
 
 import { App } from "./App.js";
 import {
-  TauriBackend,
+  CoreBackend,
   type CoreEvent,
   type CoreRequest,
   type EventType,
@@ -36,8 +36,10 @@ import {
 import {
   all,
   click,
+  contextMenu,
   one,
   render,
+  setValue,
   texts,
   wait,
 } from "./test-render.js";
@@ -179,6 +181,10 @@ const BOOT = {
         runs_commands: true,
         skips_confirmation: true,
         runs_any_command: true,
+        // The one level the core runs on the host. Present here so a test that
+        // reads the menu sees the same ladder the core sends, not one where
+        // the flag happens to be missing everywhere.
+        runs_on_host: true,
       },
     ],
   },
@@ -216,7 +222,7 @@ function pushed(
 interface Mounted {
   container: HTMLElement;
   transport: FakeTransport;
-  backend: TauriBackend;
+  backend: CoreBackend;
   /** Every path the stubbed folder picker was asked for, in order. */
   picked: (string | null)[];
 }
@@ -239,7 +245,7 @@ async function mountWithPicker(
   answer: (() => Promise<string | null>) | null,
 ): Promise<Mounted> {
   const transport = new FakeTransport({ ...BOOT, ...results });
-  const backend = new TauriBackend(() => transport);
+  const backend = new CoreBackend(() => transport);
   const picked: (string | null)[] = [];
   const container = await render(
     <App backend={backend} pickProject={async () => {
@@ -267,7 +273,7 @@ async function mountWithPicker(
  */
 async function mount(results: Record<string, unknown> = {}): Promise<Mounted> {
   const transport = new FakeTransport({ ...BOOT, ...results });
-  const backend = new TauriBackend(() => transport);
+  const backend = new CoreBackend(() => transport);
   const container = await render(<App backend={backend} />);
 
   for (let i = 0; i < 50; i++) {
@@ -480,7 +486,7 @@ describe("what the core pushes while the window is up", () => {
     // is itself deliberate, the resting cost of a log nobody is reading. Testing
     // it closed would have passed against a window that dropped every line.
     const { container, transport } = await mount();
-    await click(one(container, ".logbar-toggle")!);
+    await click(one(container, ".statusbar-logs")!);
     await push(() =>
       transport.pushStderr("Traceback: something went wrong in the core\n"),
     );
@@ -491,6 +497,68 @@ describe("what the core pushes while the window is up", () => {
 });
 
 // --- where a new chat is filed ---------------------------------------------
+describe("the folder button in the middle of a new chat", () => {
+  const FOLDER = "D:/work/api";
+
+  test("it is on the panel and it says which folder is in force", async () => {
+    // The whole point of putting it there: a new chat is about a folder, and
+    // the panel used to say nothing about which one. Read off the live DOM
+    // rather than the component, so what is checked is what was rendered.
+    const { container } = await mountWithPicker({ state: { ...BOOT.state, project: FOLDER } }, null);
+
+    const name = one(container, ".empty-folder-name");
+    assert.ok(name, "the empty chat has no folder line");
+    assert.equal(name?.textContent, "api");
+    assert.equal(name?.getAttribute("title"), FOLDER);
+    assert.equal(one(container, ".empty-folder button")?.textContent, "Change...");
+  });
+
+  test("pressing it opens the picker and binds what comes back", async () => {
+    // The wiring `MessageList`'s own test cannot see: that the callback on the
+    // panel is the one App hands it, and that App's one reaches the native
+    // dialog. The stub stands in for the dialog, exactly as it does for "New
+    // chat" -- and `sandbox.start` is what makes the pick real rather than
+    // cosmetic, so it is asserted rather than assumed.
+    const { container, transport, picked } = await mountWithPicker(
+      { "sandbox.start": { running: true, project: FOLDER } },
+      async () => FOLDER,
+    );
+
+    await click(one(container, ".empty-folder button")!);
+    await wait(80);
+
+    assert.deepEqual(picked, [FOLDER], "the centred button never reached the folder picker");
+    assert.ok(
+      transport.methods().includes("sandbox.start"),
+      "the folder was picked but never bound to the sandbox",
+    );
+  });
+
+  test("cancelling the picker changes nothing", async () => {
+    // A cancel is a normal outcome and must not be reported as an error, and it
+    // must not clear the folder that was already in force -- which is the whole
+    // of "leave it alone and keep the one you had".
+    const { container, transport, picked } = await mountWithPicker(
+      { state: { ...BOOT.state, project: FOLDER } },
+      async () => null,
+    );
+
+    await click(one(container, ".empty-folder button")!);
+    await wait(80);
+
+    assert.deepEqual(picked, [null], "the picker was not opened, or opened twice");
+    assert.ok(
+      !transport.methods().includes("sandbox.start"),
+      "a cancelled pick bound a folder anyway",
+    );
+    assert.equal(
+      one(container, ".empty-folder-name")?.textContent,
+      "api",
+      "a cancelled pick cleared the folder that was already chosen",
+    );
+  });
+});
+
 describe("New chat files the conversation under a project", () => {
   const FOLDER = "D:/work/api";
 
@@ -594,11 +662,11 @@ describe("New chat files the conversation under a project", () => {
     );
   });
 
-  test("the list groups what the core reports, active project first", async () => {
-    // The window passes the list through and lets the panel group it. This is
+  test("the list shows the folder the window is working in, and no other", async () => {
+    // The window passes the list through and lets the panel scope it. This is
     // the check that the *project* reaches the panel at all -- `state.project`
-    // is what decides which group is pinned to the top, and it arrives on a
-    // different call from the list it orders.
+    // is what decides which rows are drawn, and it arrives on a different call
+    // from the list it filters.
     const { container } = await mountWithPicker(
       {
         state: { ...BOOT.state, project: "D:/work/api" },
@@ -613,7 +681,125 @@ describe("New chat files the conversation under a project", () => {
     );
 
     await click(one(container, ".rail-toggle")!);
-    assert.deepEqual(texts(container, ".chatproj-name"), ["api", "tony"]);
+    assert.deepEqual(texts(container, ".chatrow-title"), ["Endpoint notes"]);
+    assert.deepEqual(texts(container, ".chatlist-folder-name"), ["api"]);
+  });
+
+  test("changing the folder takes the open chat with it", async () => {
+    // The whole feature in one flow: the folder is bound, and the chat you were
+    // looking at is filed under it. The order matters -- a move sent before the
+    // folder is bound would file the chat under the folder the pick never
+    // reached, which is the disagreement `_bind_project` exists to prevent.
+    const OPEN = "open-chat";
+    const { container, transport } = await mountWithPicker(
+      {
+        state: { ...BOOT.state, project: "C:/x/tony", conversation: OPEN },
+        "conversations.list": {
+          conversations: [
+            conversation({ id: OPEN, title: "Alpha work", project: "C:/x/tony" }),
+          ],
+        },
+        "sandbox.start": { running: true, project: "D:/work/api" },
+        "conversations.move": { conversation: conversation({ id: OPEN }) },
+      },
+      async () => "D:/work/api",
+    );
+
+    await click(one(container, ".rail-toggle")!);
+    await click(one(container, ".chatlist-folder")!);
+    await wait(80);
+
+    const move = transport.sent.find((r) => r.method === "conversations.move");
+    assert.ok(move, "the folder changed and the chat was left behind");
+    assert.equal(move?.params?.id, OPEN);
+    assert.equal(move?.params?.project, "D:/work/api");
+
+    const order = transport
+      .methods()
+      .filter((m) => m === "sandbox.start" || m === "conversations.move");
+    assert.deepEqual(order, ["sandbox.start", "conversations.move"]);
+  });
+});
+
+// --- the tab names the conversation you are reading ------------------------
+describe("the tab in the title bar", () => {
+  const OPEN = "open-chat";
+
+  test("deleting the open chat moves the window on to a fresh one", async () => {
+    // Reported from the running app: delete the open chat, land on the empty
+    // state, and the bar goes on naming a conversation that no longer exists.
+    //
+    // The cause was not the title. The window was left on *no* conversation --
+    // `conversation` = "" -- and the tab reads its title out of the list by that
+    // id, so it had nothing to name. The core's own delete handler says the
+    // window "is moved on to a fresh one"; this is that, and it is why the tab
+    // ends up naming the new chat rather than the deleted one.
+    const FRESH = "fresh-chat";
+    const { container, transport } = await mount({
+      state: { ...BOOT.state, conversation: OPEN },
+      "conversations.list": {
+        conversations: [
+          conversation({ id: OPEN, title: "Doomed chat" }),
+          conversation({ id: FRESH, title: "New chat" }),
+        ],
+      },
+      "conversations.delete": { id: OPEN, deleted: true },
+      "conversations.create": {
+        conversation: conversation({ id: FRESH, title: "New chat" }),
+      },
+    });
+
+    assert.equal(one(container, ".tab-title")!.textContent, "Doomed chat");
+
+    await click(one(container, ".rail-toggle")!);
+    await contextMenu(one(container, ".chatrow")!);
+    const item = all(document.body, ".rowmenu [role='menuitem']").find(
+      (n) => n.textContent === "Delete",
+    );
+    assert.ok(item, "the row menu has no Delete in it");
+    await click(item);
+    await wait(80);
+
+    assert.ok(
+      transport.methods().includes("conversations.create"),
+      "the deleted chat left the window with no conversation at all",
+    );
+    assert.equal(
+      one(container, ".tab-title")!.textContent,
+      "New chat",
+      "the bar is still naming the conversation that was deleted",
+    );
+  });
+
+  test("and a chat that is only being browsed does not move anything", async () => {
+    // The other half, and the reason this cannot be "start a chat on any
+    // delete": deleting a row you are not looking at must leave you where you
+    // are, and must not add a conversation nobody asked for.
+    const OTHER = "other-chat";
+    const { container, transport } = await mount({
+      state: { ...BOOT.state, conversation: OPEN },
+      "conversations.list": {
+        conversations: [
+          conversation({ id: OPEN, title: "What I am reading" }),
+          conversation({ id: OTHER, title: "Something else" }),
+        ],
+      },
+      "conversations.delete": { id: OTHER, deleted: true },
+    });
+
+    await click(one(container, ".rail-toggle")!);
+    await contextMenu(all(container, ".chatrow")[1]!);
+    const item = all(document.body, ".rowmenu [role='menuitem']").find(
+      (n) => n.textContent === "Delete",
+    )!;
+    await click(item);
+    await wait(80);
+
+    assert.ok(
+      !transport.methods().includes("conversations.create"),
+      "deleting somebody else's row started a chat",
+    );
+    assert.equal(one(container, ".tab-title")!.textContent, "What I am reading");
   });
 });
 
@@ -634,6 +820,37 @@ describe("the permission menu reflects the core", () => {
     await click(one(c, '.rail-btn[aria-label="Settings"]')!);
     for (let i = 0; i < 50 && !one(c, ".modal"); i++) await wait(20);
   };
+
+  test("Escape closes the sidebar, which is where settings now lives", async () => {
+    // Settings is a pane of the sidebar rather than a page over the window, so
+    // Escape has one thing to put away and one place to go: the sidebar closes
+    // and returns to the chats pane on the way out.
+    //
+    // The press also has to be *claimed* by a menu first: the permission ladder
+    // is a menu inside this pane, it answers Escape itself, and if the sidebar
+    // answered it too then closing a menu would take the whole sidebar down
+    // behind it. `useDismiss` claims the key in the capture phase, which is what
+    // makes that order possible.
+    const { container } = await mount();
+    await openSettings(container);
+    assert.ok(one(container, ".modal"), "the settings pane did not open");
+    assert.ok(
+      one(container, '.chatlist[data-pane="settings"]'),
+      "the sidebar did not switch to the settings pane",
+    );
+
+    await push(() =>
+      domWindow.document.dispatchEvent(
+        new domWindow.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      ),
+    );
+    await wait(exitDurationMs() + 60);
+    assert.equal(
+      one(container, ".modal"),
+      null,
+      "Escape left the settings pane on screen",
+    );
+  });
 
   test("it draws the level the core reported, not a local default", async () => {
     // `state` is what a reloaded window reads, so it is the level that has to
@@ -770,4 +987,336 @@ describe("the permission menu reflects the core", () => {
       "a menu appeared for a model that reports no efforts",
     );
   });
+});
+
+
+// --- starting the sandbox from the panel ------------------------------------
+describe("the sandbox has a Start button", () => {
+  const FOLDER = "D:/work/api";
+
+  /**
+   * Open Settings, and wait for the panel to be on screen.
+   * is a helper that has to keep working for both of them.
+   *
+   * The folder controls live behind the panel's Project tab now, so opening
+   * Settings is not enough to see them: choosing the tab is part of opening
+   * this group, and doing it here keeps the four tests about the sandbox.
+   */
+  const openSettings = async (c: HTMLElement) => {
+    await click(one(c, '.rail-btn[aria-label="Settings"]')!);
+    for (let i = 0; i < 50 && !one(c, ".modal"); i++) await wait(20);
+    await click(
+      all(c, ".settings-tab").find((b) => (b.textContent ?? "").trim() === "Project")!,
+    );
+  };
+  /**
+   * The buttons of the Project folder group, as labels.
+   *
+   * Found by the group's own heading rather than by `.settings-row`, which is
+   * not unique: the Model and API key groups use the same class, and a selector
+   * loose enough to match all three would report Apply and Save key as if they
+   * were sandbox controls.
+   */
+  const projectButtons = (c: HTMLElement): string[] => {
+    const group = all(c, ".settings-group").find(
+      (g) => one(g, "h3")?.textContent?.trim() === "Project folder",
+    );
+    assert.ok(group, "the Project folder group is missing from the panel");
+    return all(group!, ".settings-row button.btn").map((b) =>
+      (b.textContent ?? "").trim(),
+    );
+  };
+
+  test("a folder with no sandbox offers Start, and Start sends no path", async () => {
+    // The defect this fixes: the only thing that ever started a sandbox was the
+    // folder picker, so a project restored at launch was unusable and the
+    // panel said "stopped" with nothing to do about it.
+    const { container, transport } = await mount({
+      state: { ...BOOT.state, project: FOLDER, sandbox: "stopped" },
+      "sandbox.start": { running: true, isolated: true, project: FOLDER },
+    });
+    await openSettings(container);
+
+    assert.deepEqual(projectButtons(container), ["Change...", "Start"], "the panel offers no way to start the sandbox");
+    const start = all(container, ".settings-row button.btn").find(
+      (b) => (b.textContent ?? "").trim() === "Start",
+    );
+    assert.equal(
+      (start as HTMLButtonElement).disabled,
+      false,
+      "the only start control is disabled on a connected window",
+    );
+
+    await click(start!);
+    await wait(80);
+
+    const request = transport.sent.find((r) => r.method === "sandbox.start");
+    assert.ok(request, "Start did not reach the core");
+    // Empty, not the path. The core falls back to the folder it has registered,
+    // which is the same folder; sending it would let the two disagree about
+    // which project the window is on.
+    assert.equal(
+      request?.params?.path,
+      "",
+      "Start restated the folder, so a window and a core could name different projects",
+    );
+  });
+
+  test("a sandbox the core already has shows Stop and no Start", async () => {
+    // Read off `state`, not off anything this window did. The sandbox is
+    // shared and outlives the window, so a reload is the ordinary case where
+    // the button has to be right without the window having clicked anything.
+    const { container } = await mount({
+      state: { ...BOOT.state, project: FOLDER, sandbox: "running" },
+    });
+    await openSettings(container);
+
+    const labels = projectButtons(container);
+    assert.deepEqual(labels, ["Change...", "Stop"]);
+    assert.ok(
+      !labels.includes("Start"),
+      "the panel offered to start a sandbox that is already running",
+    );
+  });
+
+  test("no folder means no Start, because there is nothing to start", async () => {
+    const { container } = await mount({
+      state: { ...BOOT.state, project: "", sandbox: "stopped" },
+    });
+    await openSettings(container);
+
+    assert.deepEqual(projectButtons(container), ["Choose folder..."]);
+  });
+
+  test("while it is starting the button says so instead of inviting a second start", async () => {
+    // A container takes seconds to come up. A button that still reads Start
+    // for that window is a button the user clicks again, and the second start
+    // is a second container on the same folder.
+    const { container, transport } = await mount({
+      state: { ...BOOT.state, project: FOLDER, sandbox: "stopped" },
+    });
+    await openSettings(container);
+
+    await push(() =>
+      transport.emit(pushed("sandbox.status", { status: "starting" })),
+    );
+    await wait(40);
+
+    assert.deepEqual(projectButtons(container), ["Change...", "Starting..."]);
+    const starting = all(container, ".settings-row button.btn")[1] as HTMLButtonElement;
+    assert.equal(starting.disabled, true, "an in-flight start must not be clickable");
+  });
+
+  test("the folder note admits that Full does not run in the sandbox", async () => {
+    // The sentence was unconditional: "tools are refused outside it", stated
+    // one screen below a permission menu whose top rung runs commands on the
+    // user's machine. The note is the only prose on this screen that says
+    // where anything runs, so it has to carry the exception too.
+    //
+    // Asserted on the rendered text, so editing the note to be shorter or
+    // vaguer without dropping the exception fails here.
+    const { container } = await mount();
+    await openSettings(container);
+
+    const group = all(container, ".settings-group").find(
+      (g) => one(g, "h3")?.textContent?.trim() === "Project folder",
+    );
+    assert.ok(group, "the Project folder group is missing from the panel");
+    const note = one(group!, ".settings-note")?.textContent ?? "";
+    assert.match(note, /Full/, "the note no longer says when this does not apply");
+    assert.match(
+      note,
+      /on this computer/,
+      "the note does not say what Full does instead",
+    );
+  });
+
+  test("a sandbox that will not start says so instead of failing silently", async () => {
+    // The outcome that used to be unreachable: `sandbox.start` returning
+    // `running: false` on a folder that could not be mounted. A Start that
+    // vanished with no word would leave the user pressing it again.
+    const { container } = await mount({
+      state: { ...BOOT.state, project: FOLDER, sandbox: "stopped" },
+      "sandbox.start": { running: false, project: FOLDER },
+    });
+    await openSettings(container);
+
+    await click(
+      all(container, ".settings-row button.btn").find(
+        (b) => (b.textContent ?? "").trim() === "Start",
+      )!,
+    );
+    await wait(80);
+
+    assert.match(
+      texts(container, ".warn").join(" "),
+      /did not start/i,
+      "a sandbox that refused to start left no message",
+    );
+  });
+});
+
+
+// --- the usage tab -----------------------------------------------------------
+describe("the usage tab", () => {
+  const railUsage = (c: HTMLElement) =>
+    one(c, '.rail-btn[aria-label="Usage dashboard"]')!;
+  const tabTitles = (c: HTMLElement) =>
+    all(c, ".tab-title").map((t) => (t.textContent ?? "").trim());
+
+  test("the rail opens it as a tab of its own", async () => {
+    // Not a pane and no longer only a view: it is a tab beside the chats, which
+    // is what makes it something you can leave open and come back to.
+    const { container } = await mount();
+    assert.deepEqual(tabTitles(container), [], "the strip started with a tab in it");
+
+    await click(railUsage(container));
+
+    assert.deepEqual(tabTitles(container), ["Usage"]);
+    assert.ok(one(container, ".usage"), "the dashboard is not showing");
+    // The composer goes with the transcript: a text field under a chart would
+    // offer a message for a conversation that is not on screen.
+    assert.equal(one(container, ".composer"), null, "the composer is under the chart");
+  });
+
+  test("its own close button takes the tab away and brings the chat back", async () => {
+    const { container } = await mount();
+    await click(railUsage(container));
+
+    const tab = all(container, ".tab").find((t) =>
+      (t.textContent ?? "").includes("Usage"),
+    )!;
+    await click(one(tab, ".tab-close")!);
+
+    assert.deepEqual(tabTitles(container), [], "the tab outlived its close button");
+    assert.equal(one(container, ".usage"), null);
+    assert.ok(one(container, ".composer"), "the composer did not come back");
+  });
+
+  test("pressing the rail again leaves the tab open behind the chat", async () => {
+    // The same transition selecting a conversation makes: the view changes, the
+    // tab does not close. That is what every other tab in this strip does.
+    const { container } = await mount();
+    await click(railUsage(container));
+    await click(railUsage(container));
+
+    assert.deepEqual(tabTitles(container), ["Usage"], "the tab was closed, not left open");
+    assert.equal(one(container, ".usage"), null);
+    assert.ok(one(container, ".composer"));
+  });
+
+  test("it is a tab, so it is not renameable", async () => {
+    // A rename would be a name with nowhere to be stored: this tab is not a
+    // conversation and has no id in the store.
+    const { container } = await mount();
+    await click(railUsage(container));
+    const tab = all(container, ".tab").find((t) =>
+      (t.textContent ?? "").includes("Usage"),
+    )!;
+    assert.equal(
+      one(tab, ".tab-input"),
+      null,
+      "a name typed here would have nowhere to go",
+    );
+    assert.ok(one(tab, ".tab-open"), "the Usage tab is not selectable like the others");
+  });
+});
+
+
+// --- named keys over the real protocol ---------------------------------------
+describe("the keys pane over the real protocol", () => {
+  /**
+   * Open Settings and choose the Keys tab.
+   *
+   * The same two presses a person makes, because the wiring under test is what
+   * turns a press into an RPC -- a component test can only prove the callback
+   * was called, not that the window sent the name it was given.
+   */
+  const openKeys = async (c: HTMLElement) => {
+    await click(one(c, '.rail-btn[aria-label="Settings"]')!);
+    for (let i = 0; i < 50 && !one(c, ".modal"); i++) await wait(20);
+    await click(
+      all(c, ".settings-tab").find((b) => (b.textContent ?? "").trim() === "Keys")!,
+    );
+    await wait(60);
+  };
+
+  const keyGroup = (c: HTMLElement) =>
+    all(c, ".settings-group").find(
+      (g) => (one(g, "h3")?.textContent ?? "").trim() === "openrouter",
+    )!;
+
+  // The boot table's own provider entry is stale (a display name and has_key),
+  // so these tests answer providers.list with the registry shape the core
+  // actually sends -- otherwise the section is titled "OpenRouter" and every
+  // label the panel writes from the provider name is wrong.
+  const PROVIDERS = {
+    providers: [{ name: "openrouter", models: [], has_credentials: true }],
+  };
+
+  test("saving a named key sends the name, the key and the provider", async () => {
+    const { container, transport } = await mount({
+      "providers.list": PROVIDERS,
+      "key.list": [],
+      "key.save": { provider: "openrouter", name: "work", saved: true, listed: true },
+    });
+    await openKeys(container);
+    const group = keyGroup(container);
+
+    await setValue(
+      one(group, '[aria-label="Name for a new openrouter key"]') as HTMLInputElement,
+      "work",
+    );
+    await setValue(
+      one(group, '[aria-label="New API key for openrouter"]') as HTMLInputElement,
+      "sk-typed",
+    );
+    await click(one(group, ".settings-key-new .settings-key-actions .btn")!);
+    await wait(80);
+
+    const sent = transport.sent.find((r) => r.method === "key.save");
+    assert.ok(sent, "Save never reached the core");
+    assert.deepEqual(sent?.params, {
+      provider: "openrouter",
+      api_key: "sk-typed",
+      name: "work",
+    });
+  });
+
+  test("Use sends key.activate with that row's name", async () => {
+    const { container, transport } = await mount({
+      "providers.list": PROVIDERS,
+      "key.list": [
+        { provider: "openrouter", name: "default", active: true },
+        { provider: "openrouter", name: "work", active: false },
+      ],
+      "key.activate": { provider: "openrouter", name: "work", active: true },
+    });
+    await openKeys(container);
+    const group = keyGroup(container);
+
+    await click(one(group, ".settings-key-use")!);
+    await wait(80);
+
+    const sent = transport.sent.find((r) => r.method === "key.activate");
+    assert.ok(sent, "Use never reached the core");
+    assert.deepEqual(sent?.params, { provider: "openrouter", name: "work" });
+  });
+});
+
+
+// --- nothing but what the user is meant to read ------------------------------
+test("no stylesheet comment is rendered as text", async () => {
+  // A bare `/* ... */` at the JSX level is not a comment -- React renders it as
+  // a text node. One shipped inside the sidebar and sat above the Settings
+  // heading, and a full run of this suite passed with it there, because every
+  // helper queries a selector and nothing looks at what sits *between* the
+  // elements. This looks at the whole window at once, which is the only way to
+  // see a stray text node.
+  const { container } = await mount();
+  assert.doesNotMatch(
+    container.textContent ?? "",
+    /\/\*|\*\//,
+    "a comment is being rendered as text",
+  );
 });

@@ -1,0 +1,359 @@
+
+/* --- composer ------------------------------------------------------------ */
+.composer {
+  padding: 0 32px 16px;
+  /* Transparent, so the field's own glow shows through the glass under it
+     rather than being cut off by an opaque band. */
+  background: transparent;
+}
+
+/*
+ * Two rows in one field: the textarea on top, then a control row. The reference
+ * does this rather than putting buttons beside the input, which keeps the text
+ * area full width and stops the send button from stealing line length.
+ */
+.composer-inner {
+  max-width: var(--measure);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius-lg);
+  /* Glass, and the one surface that is a *field* rather than a panel -- see the
+     glass block in tokens.css. `--shadow-1` gives it the lit top edge and the
+     lift off the trailing space beneath it. */
+  background: var(--glass-field);
+  background-image: var(--glass-sheen);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow: var(--shadow-1);
+  transition: border-color var(--motion-fast) ease;
+}
+
+/*
+ * The field lights up in the accent rather than in a lighter grey.
+ *
+ * It used to be a *gradient* edge, which took two background layers and two
+ * clips to paint a gradient into a 1px border. The accent is flat now, so all of
+ * that collapses into `border-color` -- and the base rule's own transition on
+ * `border-color` is what makes it fade in instead of snapping.
+ *
+ * `var(--border-strong)` before this was a hairline two steps lighter than the
+ * resting one: measurable, and invisible. This is the state that says "typing
+ * goes here", and it should be the one thing in the window wearing the app's
+ * colour while the user is typing.
+ */
+.composer-inner:focus-within {
+  border-color: var(--accent);
+}
+
+/*
+ * The field says it is focused its own way, so the generic ring stays off it.
+ *
+ * **A text input always matches `:focus-visible`, even on a mouse click** -- that
+ * is the browser's heuristic, not the app's, and it is why the one place the
+ * global rule misbehaves is the one place with a text field. Clicking a chat in
+ * the sidebar focuses this (so the caret is where the user is about to type), and
+ * the result was a second, inset rectangle inside the card's own border: measured
+ * at 758x63, `outline-offset: 2px`, in `--accent-bright`. Two blue boxes saying
+ * one thing.
+ *
+ * The generic rule is for controls with nothing else to say. This one has
+ * something else to say, so it says it alone.
+ */
+.composer textarea:focus-visible {
+  outline: none;
+}
+
+/*
+ * The field's own inset, and the source of `--column-inset`: 1px of border on
+ * `.composer-inner` plus this 18 is the 19 the transcript, the hint and the log
+ * strip all hold their text at. Written as the token minus the border rather
+ * than as a second 19, so moving the inset moves the text and the column
+ * together instead of moving the text out of the column.
+ */
+.composer textarea {
+  width: 100%;
+  min-height: 56px;
+  max-height: 240px;
+  border: 0;
+  padding: 14px calc(var(--column-inset) - 1px) 6px;
+  resize: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  line-height: 1.55;
+}
+
+.composer textarea::placeholder {
+  color: var(--fg-mute);
+}
+
+.composer textarea:disabled {
+  cursor: default;
+}
+
+/*
+ * The control row spans the *text* column, not the field's box: its padding is
+ * the same 19 the textarea's line starts at, so the mode group's left edge
+ * lines up with the placeholder above it and the send button's right edge lines
+ * up with the last character of a wrapped line. It was `8px 10px 10px 12px`,
+ * which put the first pill 6px left of that line and the send button 8px right
+ * of it -- two numbers, neither of them the column's.
+ */
+.composer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px calc(var(--column-inset) - 1px) 8px;
+}
+
+/* Mode selector: one active pill among quiet inactive ones. */
+.mode-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--input);
+}
+
+.mode {
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.mode:hover:not(.is-active) {
+  color: var(--fg);
+}
+
+.mode:active {
+  transform: scale(0.96);
+}
+
+.mode.is-active {
+  /* `--chip` and `--fg`, and not two hand-picked greys.
+   *
+   * This was #d0d0d0 on #141414: a near-white pill in a window whose darkest
+   * surface is #1a1a1a. It was the single brightest thing in the app by an
+   * order of magnitude, no token reached it, so no palette change could have
+   * touched it -- and being off-palette it read as an import from somewhere
+   * else rather than as a selected state.
+   *
+   * `--chip` is the raised step, which is what this is: a control that other
+   * things sit on. It is now the *only* selected thing that uses it -- the
+   * conversation row and the tab take the gradient wash, because they are states
+   * rather than controls -- and the distinction is deliberate rather than
+   * leftover. `layout.test.ts` holds all three to their own rule.
+   */
+  background: var(--chip);
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.composer-spacer {
+  flex: 1;
+}
+
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+  /* It had no transition at all, so its hover snapped -- see `.chip`, which had
+     the same gap for the same reason (nobody had hovered it in a review).
+     `filter` is here for the same reason again: Send and Stop brighten by 6% on
+     hover, and `filter` was in no transition anywhere in the window, so the
+     primary buttons jumped while the discs around them faded. */
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    filter var(--motion-fast) ease,
+    transform var(--motion-fast) var(--ease-out);
+}
+
+/*
+ * The rail's lift, at one pixel rather than two: these sit in a row with the
+ * send button, which is already the loudest thing in the composer, so they pick
+ * up under the pointer rather than rising out of the row.
+ */
+.icon-btn:hover:not(:disabled) {
+  background: var(--input);
+  color: var(--fg);
+  transform: translateY(-1px);
+}
+
+/* Pressed, not lifted: the pointer is on it and pushing. */
+.icon-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/*
+ * Send is the only affirmative action in the composer, so it is the one
+ * control that gets the accent fill. Stop stays a text button: giving an
+ * interruption and a submission the same visual weight would make the row
+ * ambiguous about what clicking it does.
+ *
+ * A stadium and the accent fill, which together are the loudest thing in the
+ * window, and deliberately so: it is the one control whose whole job is "this is
+ * how you talk to the agent". The icon buttons beside it are grey and square
+ * enough to read as the second rank they are.
+ */
+.icon-btn.send-btn {
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.icon-btn.send-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--accent-fg);
+  filter: brightness(1.06);
+}
+
+/*
+ * The `background` shorthand, not `background-image`, and that is what makes the
+ * disabled state work: the shorthand resets the gradient to `none`, so a grey
+ * button is grey rather than a gradient under a grey image stack.
+ */
+.icon-btn.send-btn:disabled {
+  background: var(--raised);
+  color: var(--fg-mute);
+  opacity: 0.4;
+  filter: none;
+}
+
+/*
+ * The stop button, which replaces send while a turn runs.
+ *
+ * **Same box as send, and it gets that from `.icon-btn`.** It used to be a
+ * `.btn` -- a pill with the word "Stop" in it -- in the send button's slot, so
+ * it was wider than the icon it replaced and the control row reflowed every
+ * time a turn started, moving the model chip and the `+` sideways mid-turn.
+ *
+ * It deliberately does *not* reuse `.send-btn`. That class carries Send's
+ * accent fill, and borrowing it made "is there a send button on screen?"
+ * answer yes while Stop was up -- which is the exact question the busy-state
+ * test asks, and which the whole "replaced, not disabled" behaviour rests on.
+ *
+ * The accent fill is kept, deliberately: this is the same button in a different
+ * state, so it should look like it rather than like a different control that
+ * happened to appear. What distinguishes it is the shape inside -- a filled
+ * square against an arrow.
+ */
+.icon-btn.stop-btn {
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.icon-btn.stop-btn:hover {
+  background: var(--accent);
+  color: var(--accent-fg);
+  filter: brightness(1.06);
+}
+
+.btn {
+  flex: none;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--raised);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-base);
+  cursor: pointer;
+  /* `filter` for `.btn-accent:hover`, which brightens by 6% -- see `.icon-btn`. */
+  transition:
+    background var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    filter var(--motion-fast) ease,
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--danger-fg);
+}
+
+/*
+ * The one chromatic element in the whole app. Must stay AFTER the .btn rules
+ * above: both selectors are a single class, so the later one wins, and .btn's
+ * grey background would otherwise silently override this.
+ */
+.btn-accent {
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-fg);
+  font-weight: 500;
+}
+
+/*
+ * The accent again, brightened, rather than a different fill: a hover that
+ * swapped the colour out would read as the button losing its state on the way to
+ * being pressed.
+ */
+.btn-accent:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.06);
+}
+
+/*
+ * A read-only mode marks the composer field itself, not just the hint text.
+ * The hint is at the bottom of the window and easy to miss; the field is
+ * where the user is looking when they decide what to type.
+ */
+.composer-inner textarea.is-readonly {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--input) 70%, var(--bg));
+}
+
+/*
+ * The line under the field, on the field's own text edge. It used to sit at the
+ * column's edge with no inset at all, which made the one sentence that explains
+ * the composer the one thing in the lower half of the window that did not start
+ * where everything else did.
+ */
+.hint {
+  max-width: var(--measure);
+  margin: 7px auto 0;
+  padding: 0 var(--column-inset);
+  font-size: var(--text-xs);
+  color: var(--fg-mute);
+}

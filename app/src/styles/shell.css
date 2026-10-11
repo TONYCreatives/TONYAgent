@@ -1,0 +1,63 @@
+
+/* --- app shell ----------------------------------------------------------- */
+/*
+ * Three columns, and the first one never changes width: 56px of rail, the
+ * transcript, and `auto` for the Files panel's reopen handle. That constancy is
+ * the whole point of this layout. The conversation list used to be this grid's
+ * second state -- `.app.rail-open` widened column 1 to 307px and the transcript
+ * moved -- which meant opening the sidebar re-laid-out the transcript, and
+ * re-laying-out a column of text is exactly what cannot be animated smoothly.
+ * The list is an overlay now, so the grid has nothing to do when it opens and
+ * the transcript stays where it was.
+ *
+ * So `.app.rail-open` is gone entirely. React still sets the class name off
+ * `railExpanded` -- it is what the panel's own `data-state` animation is keyed
+ * on -- but no rule in this file reads it, and `layout.test.ts` asserts that.
+ */
+.app {
+  display: grid;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr) auto;
+  /*
+   * Two rows, because the window has no system title bar and `.topbar` is now
+   * the one. It spans all three columns (see `.topbar`) so the caption buttons
+   * sit at the right edge of the *window* rather than of the transcript column
+   * -- the Files panel overlays that column, and a caption inside it would be
+   * covered the moment the panel opened.
+   *
+   * Every in-flow child therefore names its row explicitly. With auto-placement
+   * the grid would fill row 1 first, so a build where the Files panel is not
+   * rendered at all would push the rail into the title bar's row and render the
+   * whole window 42px lower. Placement must not depend on which siblings exist.
+   */
+  grid-template-rows: var(--topbar-h) minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
+  /* Positioning context for the conversation panel, the Files overlay and its scrim. */
+  position: relative;
+}
+
+/*
+ * The rail is the window's left edge and it is always there: `--rail-w` of
+ * --chrome from below the title bar to the bottom of the window, which is what
+ * the reference measures and the single clearest thing separating the two apps at
+ * glance. It is a grid item in column 1 in its own right rather than something
+ * inside a wider sidebar column, because the conversation list no longer shares
+ * a column with it -- that panel is an overlay now. See `.chatlist`, and
+ * `.rail` in the icon-rail section for the rule that places it.
+ */
+
+.main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  /*
+   * Pinned to column 2 explicitly. Without this, removing the rail makes
+   * `.main` the first grid item, so it auto-places into column 1 -- which is
+   * the collapsed 0-width track. The transcript then disappears entirely
+   * instead of taking the freed space. Placement must not depend on which
+   * siblings happen to be rendered.
+   */
+  grid-column: 2;
+  grid-row: 2;
+}

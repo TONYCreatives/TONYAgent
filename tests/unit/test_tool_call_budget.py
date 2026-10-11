@@ -195,7 +195,7 @@ class TestTheLabel:
 
     async def test_the_budget_travels_on_the_tool_completed_event(self, executor):
         """The UI reads the same field the model does, so they cannot disagree."""
-        session = _session([[_call("read_file", "c1")], []])
+        session = _session([[_call("read", "c1")], []])
 
         seen = await _run(session)
 
@@ -389,8 +389,29 @@ class TestTheSetting:
         """
         from tonyagent.config.settings import settings
 
-        monkeypatch.setattr(settings.tools, "max_tool_calls", 0)
+        monkeypatch.setattr(settings.tools, "max_tool_calls", -5)
         assert AgentSession(bus=EventBus()).max_tool_calls == 1
+
+    def test_zero_in_the_config_means_no_limit(self, monkeypatch):
+        """The sentinel, on the path that reads it back off disk.
+
+        Zero is the one value below the floor, which is what lets it mean the
+        opposite of a budget. If this clamped to 1, choosing no-limit would
+        quietly become one call per turn the next time the window opened.
+        """
+        from tonyagent.config.settings import settings
+
+        monkeypatch.setattr(settings.tools, "max_tool_calls", 0)
+        session = AgentSession(bus=EventBus())
+        assert session.max_tool_calls == 0
+        assert "no limit" in session._tool_budget_label()
+
+    def test_a_negative_budget_is_still_corrected_after_the_sentinel(self):
+        """Zero got a meaning; nothing else below the floor did."""
+        session = AgentSession(bus=EventBus())
+        assert session.set_max_tool_calls(-3) == 1
+        assert session.set_max_tool_calls(5) == 5
+        assert session.set_max_tool_calls(0) == 0
 
     def test_the_environment_can_raise_it(self, monkeypatch):
         from tonyagent.config.settings import settings
@@ -445,17 +466,24 @@ class TestTheRpc:
         assert frames[0]["result"]["max_tool_calls"] == 25
         assert session.max_tool_calls == 25
 
-    def test_zero_is_refused_rather_than_silently_corrected(self):
-        # A limit of zero refuses every tool, which is not a small budget. A
-        # control that turned a typed 0 into a 1 would report a value the user
-        # did not ask for, so the refusal has to be an error the UI can show.
+    def test_zero_is_accepted_as_no_limit(self):
+        """The sentinel, at the one boundary that accepts or refuses it.
+
+        Zero is the only value below the floor of one, which is what lets it mean
+        the opposite of a budget. This test used to assert the reverse -- that a
+        zero was refused -- and it is the reason the change had to reach the
+        handler: `set_max_tool_calls` returns 0 happily while `_h_tools_set`
+        rejects it first, so a no-limit choice was refused by the window while
+        every session-level test passed.
+        """
         session = _session([[]])
         frames = self._drive(
             [{"id": 1, "method": "tools.set", "params": {"max_tool_calls": 0}}],
             session=session,
         )
-        assert "error" in frames[0], "zero was accepted"
-        assert session.max_tool_calls == 10, "the budget changed anyway"
+        assert frames[0]["result"]["max_tool_calls"] == 0
+        assert session.max_tool_calls == 0
+        assert "no limit" in session._tool_budget_label()
 
     def test_a_negative_budget_is_refused(self):
         session = _session([[]])

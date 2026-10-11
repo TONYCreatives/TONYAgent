@@ -31,9 +31,11 @@ from tonyagent.core.conversations import (
     title_from,
 )
 from tonyagent.core.attachments import AttachmentError
+from tonyagent.core.attachments import strip_images
 from tonyagent.core.attachments import validate as validate_attachments
 from tonyagent.core.events import Event, EventBus, EventType
 from tonyagent.core.session import AgentSession
+from tonyagent.core.task_state import SessionState
 
 #: Bump when the request/response shape changes incompatibly.
 PROTOCOL_VERSION = 1
@@ -78,6 +80,14 @@ def _permission_payload(level: Any) -> dict[str, Any]:
         # without having to read the description to find out. This is the fact a
         # user most needs before choosing Full, so it must not be prose-only.
         "runs_any_command": level.bypasses_command_allowlist,
+        # Whether this level runs model-authored code on the user's own machine
+        # rather than in the sandbox. Sent as a flag for the same reason as the
+        # one above and for a sharper reason: this is the fact a user most needs
+        # before *choosing* the level, because it is the difference between
+        # "very permissive inside a container" and "no container at all". It is
+        # also the one fact the description alone must never be the only record
+        # of, so the window can mark it rather than print it and hope it is read.
+        "runs_on_host": level.runs_on_host,
     }
 
 
@@ -133,7 +143,11 @@ class StdioServer:
             "bind_provider": self._h_bind_provider,
             "providers.list": self._h_providers_list,
             "key.save": self._h_key_save,
+            "key.list": self._h_key_list,
             "key.delete": self._h_key_delete,
+            "key.reveal": self._h_key_reveal,
+            "key.activate": self._h_key_activate,
+            "usage.summary": self._h_usage_summary,
             "state": self._h_state,
             "search": self._h_search,
             "mode.set": self._h_mode_set,
@@ -144,10 +158,12 @@ class StdioServer:
             "sandbox.stop": self._h_sandbox_stop,
             "sandbox.stats": self._h_sandbox_stats,
             "confirm.respond": self._h_confirm_respond,
+            "user.respond": self._h_user_respond,
             "trust.set": self._h_trust_set,
             "models.list": self._h_models_list,
             "tools.get": self._h_tools_get,
             "tools.set": self._h_tools_set,
+            "plan.get": self._h_plan_get,
             "permission.list": self._h_permission_list,
             "permission.set": self._h_permission_set,
             "conversations.list": self._h_conversations_list,
@@ -156,9 +172,10 @@ class StdioServer:
             "conversations.delete": self._h_conversations_delete,
             "conversations.rename": self._h_conversations_rename,
             "conversations.duplicate": self._h_conversations_duplicate,
+            "conversations.move": self._h_conversations_move,
         }
-        # Tool confirmations must reach the frontend as events, not a Tkinter
-        # callback that only an after() loop would drain.
+        # Tool confirmations must reach the frontend as events, not a
+        # callback that only a queue processor would drain.
         #
         # Through `_attach_session` rather than against the `session` argument:
         # restoring a conversation above may already have replaced it, and
@@ -186,6 +203,7 @@ class StdioServer:
             self._unsubscribe()
         self.session = session
         session.install_confirmation_bridge()
+        session.install_question_bridge()
         self._unsubscribe = session.bus.subscribe(self._on_event)
 
     def _new_session(self) -> AgentSession:
@@ -274,7 +292,7 @@ class StdioServer:
         conversation = self.conversations.load(self.conversation_id)
         if conversation is None:
             return
-        conversation.messages = [m.to_dict() for m in self.session.messages]
+        conversation.messages = strip_images(self.session.messages)
         # Retitle from the first user message, but only once. A list that
         # renames itself while you are reading it is disorienting, and a
         # conversation's opening line is the best title it will ever get.
@@ -291,6 +309,11 @@ class StdioServer:
         if first_user and conversation.title == "New chat":
             conversation.title = title_from(first_user)
         conversation.project = self.project
+        # The plan travels with the transcript. Saved here rather than from the
+        # planning tools, which have no store to write to -- and a turn is the unit
+        # this app saves on, so a plan written mid-turn is banked with the turn that
+        # wrote it.
+        conversation.state = self.session.state.to_dict()
         self.conversations.save(conversation)
 
     def _load_into_session(self, conversation_id: str) -> None:
@@ -313,6 +336,10 @@ class StdioServer:
                 session.messages.append(ChatMessage.from_dict(row))
             except Exception as exc:  # noqa: BLE001 - one bad row, not a dead chat
                 logger.warning(f"Skipping an unreadable message: {exc}")
+        # Adopted *after* the session exists: `_new_session` publishes an empty
+        # state for the session it builds, so doing this first would be immediately
+        # overwritten by that and the plan would silently not come back.
+        session.set_state(SessionState.from_dict(conversation.state))
         self.conversation_id = conversation_id
         self._attach_session(session)
 
@@ -523,11 +550,61 @@ class StdioServer:
     #     keyring's own exceptions can quote the value it was handed
     #   * nothing logs the key, and the request itself is never logged
     #
-    # There is deliberately no `key.get`. A protocol method that returns a
-    # secret is a method whose secret can end up in a screenshot.
+    # **`key.reveal` is the one exception, and it was asked for rather than
+    # assumed.** This used to be a flat refusal to have any method that returns a
+    # secret -- "a method that returns a secret is a method whose secret can end
+    # up in a screenshot" -- and that is still exactly what it costs. What the
+    # controls buy back is the *window*: the value leaves the keyring only when
+    # the user presses Reveal for one named provider, only once, and the frontend
+    # clears it on hide, on a provider change and on close.
+    #
+    # Nothing that runs on its own ever pulls a key out. `providers.list` still
+    # reports a boolean, `state` still carries no credential, so the only caller
+    # of `key.reveal` is a press. A future method that returns a key without
+    # being asked would be the thing this paragraph exists to stop.
+
+    @staticmethod
+    def _key_name(params: dict, *, required: bool) -> str | None:
+        """Canonicalise the optional name parameter, or None when it is absent.
+
+        One reader rather than five, because the difference between the RPCs is
+        exactly the difference between the parameters -- key.delete and
+        key.activate name a key, key.save and key.reveal may leave it out -- and
+        five copies of this rule is five places for them to drift.
+
+        Values are canonicalised here rather than in keyring, so the name the
+        registry records and the name the caller reads back are the same
+        string. A name with no letters or digits is refused instead of being
+        folded onto the default slot, where it would overwrite the legacy key.
+        """
+        from tonyagent.config.keyring import KeyringError, normalize_key_name
+
+        raw = params.get("name")
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            if required:
+                raise RpcError("missing name")
+            return None
+        if not isinstance(raw, str):
+            raise RpcError("name must be a string")
+        try:
+            return normalize_key_name(raw)
+        except KeyringError:
+            raise RpcError("a key name needs at least one letter or digit") from None
 
     def _h_key_save(self, params: dict) -> Any:
-        from tonyagent.config.keyring import KeyringError, save_api_key
+        """Store one key under one name, without ever echoing the value.
+
+        Saving does not make a named key active -- except the first key a
+        provider has ever had. Without that exception a user could save their
+        only key, close the panel, and come back to a provider whose active
+        name (default) resolves to nothing, which reads as a broken save.
+        """
+        from tonyagent.config.keyring import (
+            KeyringError,
+            save_api_key,
+            stored_key_names,
+        )
+        from tonyagent.config.migration import add_key_name, set_active_key_name
 
         provider = str(params.get("provider", "")).strip()
         api_key = params.get("api_key", "")
@@ -535,26 +612,199 @@ class StdioServer:
             raise RpcError("missing provider")
         if not isinstance(api_key, str) or not api_key.strip():
             raise RpcError("missing api_key")
+        name = self._key_name(params, required=False) or "default"
+
+        # Read before the save: "did this provider have any key at all" is not
+        # a question that can be asked afterwards, because the save just
+        # changed the answer.
+        first_key = not stored_key_names(provider)
+
         try:
-            save_api_key(provider, api_key)
+            save_api_key(provider, api_key, name)
         except KeyringError:
             # The cause is dropped on purpose: `KeyringError` wraps whatever
             # the keyring backend raised, and quoting it back would put the
             # rejected value in front of the user and into the log strip.
             raise RpcError("the system keyring rejected this key") from None
-        return {"provider": provider, "saved": True}
 
-    def _h_key_delete(self, params: dict) -> Any:
-        from tonyagent.config.keyring import KeyringError, delete_api_key
+        # The key is stored at this point, so a registry failure must not be
+        # reported as a failed save -- that would send the user to re-paste a
+        # key that is already there. It is not swallowed either: `listed` is
+        # the panel's only way to know the row it draws will survive a reload.
+        listed = True
+        try:
+            add_key_name(provider, name)
+            if first_key:
+                set_active_key_name(provider, name)
+        except Exception as exc:  # noqa: BLE001 - the secret is already safe
+            listed = False
+            logger.error(f"Could not record the key name for {provider}: {exc}")
+        return {"provider": provider, "name": name, "saved": True, "listed": listed}
+
+    def _h_key_list(self, params: dict) -> Any:
+        """Every stored key as a row, and never a value.
+
+        The reply is the panel's list: provider, name and which one is active.
+        Nothing here touches a secret -- get_password is not called -- so this
+        stays outside the one-method exception that key.reveal is.
+
+        Names come from the config registry (the keyring cannot be
+        enumerated), plus the default slot, which predates the registry. The
+        result is the bare list the protocol document specifies, not a wrapper
+        object, because there is exactly one thing to return.
+        """
+        from tonyagent.config.keyring import active_key_name, stored_key_names
+        from tonyagent.config.migration import load_config
+
+        provider = str(params.get("provider", "")).strip()
+        if provider:
+            wanted = [provider]
+        else:
+            from tonyagent.providers.base import provider_registry
+
+            wanted = list(provider_registry.list_providers())
+            # A key can outlive the provider it was saved for (renamed, or
+            # removed from the registry). Listing those too is what lets the
+            # panel draw the row and delete it, rather than leaving a secret
+            # in the keyring that no screen admits to.
+            try:
+                section = load_config().get("keys")
+                if isinstance(section, dict):
+                    wanted += [name for name in section if name not in wanted]
+            except Exception as exc:  # noqa: BLE001 - the registry is best effort
+                logger.warning(f"key.list could not read the key registry: {exc}")
+
+        entries: list[dict] = []
+        for name in wanted:
+            active = active_key_name(name)
+            for stored in stored_key_names(name):
+                entries.append(
+                    {"provider": name, "name": stored, "active": stored == active}
+                )
+        return entries
+
+    def _h_key_reveal(self, params: dict) -> Any:
+        """Hand back one stored key, on request.
+
+        The only method in this server that returns a secret. See the block
+        above for what that costs and what bounds it.
+
+        `load_api_key` answers ``None`` for both "nothing stored" and "the
+        keyring would not answer", because it swallows the failure and logs it.
+        That is the right trade here: the caller shows an empty field the user
+        can re-save, and a keyring error -- which can quote the value it was
+        handed -- has no path to the page through an exception.
+        """
+        from tonyagent.config.keyring import (
+            KeyringError,
+            load_api_key,
+            resolve_key_name,
+        )
 
         provider = str(params.get("provider", "")).strip()
         if not provider:
             raise RpcError("missing provider")
+        # Absent means "the key in force", so the reply carries the name it
+        # resolved as well as the value: the panel labels a row with it, and a
+        # panel that guessed would be labelling the wrong one after an
+        # activation from another window.
+        if params.get("name") is None or str(params.get("name", "")).strip() == "":
+            try:
+                name = resolve_key_name(provider)
+            except KeyringError:
+                raise RpcError("a key name needs at least one letter or digit") from None
+        else:
+            name = self._key_name(params, required=True)
+        return {"provider": provider, "name": name, "api_key": load_api_key(provider, name)}
+
+    def _h_key_delete(self, params: dict) -> Any:
+        """Remove one named key, and forget its name."""
+        from tonyagent.config.keyring import KeyringError, delete_api_key
+        from tonyagent.config.migration import remove_key_name
+
+        provider = str(params.get("provider", "")).strip()
+        if not provider:
+            raise RpcError("missing provider")
+        # name is required here, unlike save: "delete the active key" is a
+        # destructive default, and a request that forgot the name must not
+        # quietly remove a key the user did not point at.
+        name = self._key_name(params, required=True)
+        assert name is not None  # required=True either raises or answers
         try:
-            delete_api_key(provider)
+            delete_api_key(provider, name)
         except KeyringError:
             raise RpcError("the system keyring could not delete this key") from None
-        return {"provider": provider, "deleted": True}
+        try:
+            remove_key_name(provider, name)
+        except Exception as exc:  # noqa: BLE001 - the secret is already gone
+            logger.error(f"Could not forget the key name for {provider}: {exc}")
+        return {"provider": provider, "name": name, "deleted": True}
+
+    def _h_key_activate(self, params: dict) -> Any:
+        """Choose which stored key this provider's turns spend.
+
+        The name is checked against what is actually stored before it is
+        recorded. An active pointer naming an empty slot would make every
+        later turn fail with a missing credential, and the panel's press would
+        have reported success on the way there.
+        """
+        from tonyagent.config.keyring import stored_key_names
+        from tonyagent.config.migration import set_active_key_name
+
+        provider = str(params.get("provider", "")).strip()
+        if not provider:
+            raise RpcError("missing provider")
+        name = self._key_name(params, required=True)
+        assert name is not None
+        if name not in stored_key_names(provider):
+            # Safe to quote: this is a name the user typed, never a value.
+            raise RpcError(f"no key named {name!r} is stored for {provider}")
+        try:
+            set_active_key_name(provider, name)
+        except Exception as exc:  # noqa: BLE001 - a full disk must not be silent
+            logger.error(f"Could not save the active key name for {provider}: {exc}")
+            raise RpcError("the key choice could not be saved") from None
+        return {"provider": provider, "name": name, "active": True}
+
+    # -- usage ---------------------------------------------------------------
+    def _h_usage_summary(self, params: dict) -> Any:
+        """Everything the dashboard draws for one window, in one reply.
+
+        One method rather than five. The totals, the day series and the
+        per-key breakdowns are all derived from the same pass over the same
+        records and are drawn together, so five round trips would be five
+        chances for the five answers to disagree with each other.
+
+        The window is validated here rather than defaulted quietly: a typo in a
+        window name would otherwise answer with `7d` and look like it worked.
+        """
+        from tonyagent.core.usage import WINDOWS, ledger
+
+        window = str(params.get("window") or "7d")
+        if window not in WINDOWS:
+            raise RpcError(f"Unknown window: {window}")
+        try:
+            return ledger().summary(window)
+        except Exception as exc:  # noqa: BLE001 - an empty dashboard beats a dead UI
+            logger.warning(f"usage.summary failed: {exc}")
+            return {
+                "window": window,
+                "since": None,
+                "totals": {
+                    "requests": 0,
+                    "failed": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "reasoning_tokens": 0,
+                    "total_tokens": 0,
+                    "duration_ms": 0,
+                },
+                "buckets": [],
+                "by_key": [],
+                "by_provider": [],
+                "by_model": [],
+                "tracking_since": None,
+            }
 
     def _h_state(self, params: dict) -> Any:
         """Report what the session can actually do, not what it was asked for.
@@ -588,6 +838,35 @@ class StdioServer:
             "permission": self.session.permission_name,
             "conversation": self.conversation_id,
             "reasoning_effort": self.session.reasoning_effort,
+            # The runtime, read rather than remembered. A restored project path
+            # arrives here with no container behind it, so a window that only
+            # listened for sandbox.status events would show "stopped" over a
+            # core that is already serving one -- and would offer Start for a
+            # sandbox that is up.
+            "sandbox": self.session.sandbox_status(),
+        }
+
+    def _h_plan_get(self, params: dict) -> Any:
+        """The plan for the open conversation.
+
+        Here so a window can draw the task list without scraping it back out of a
+        tool result. The plan is already rendered into the system prompt and appears
+        as a card whenever it changes; this is the version something can read at any
+        time, including on the first paint after a reload.
+
+        **Not folded into ``state``.** That reply is about the session's mode,
+        permission and sandbox, and adding a key to it would oblige every existing
+        reader to know about a field it does not use. A new method costs nothing.
+
+        ``rendered`` is returned as well as the structured form so a reader can show
+        exactly what the model is being shown, rather than a second rendering of the
+        same data that could disagree with it.
+        """
+        state = self.session.state
+        return {
+            "plan": state.to_dict(),
+            "summary": state.summary(),
+            "rendered": state.render(),
         }
 
     # -- conversations --------------------------------------------------------
@@ -616,10 +895,21 @@ class StdioServer:
         Creating and switching are one action because that is what "New chat"
         means to the person pressing it: a fresh empty conversation, not a new
         row that they then have to go and click.
+
+        **The second press reuses the first one's conversation.** What the user
+        is asking for is *an empty chat*, and they already have one -- making
+        another leaves the sidebar with two rows titled "New chat", neither of
+        which has anything in it. So this switches to the empty one when there
+        is one and creates only when there is not. The reply has the same shape
+        either way, which is what lets the window stay unaware of which happened
+        -- and `showMessages([])` is right in both cases, because the
+        conversation being switched to is empty by definition.
         """
         store = self._require_store()
         project = str(params.get("project") or self.project or "")
-        conversation = store.create(title="New chat", project=project)
+        conversation = store.find_empty(project)
+        if conversation is None:
+            conversation = store.create(title="New chat", project=project)
         self._persist()  # Bank the outgoing conversation before leaving it.
         # The folder moves *before* the session is replaced, so the tools the
         # new chat will use already resolve against its own project. See
@@ -657,6 +947,15 @@ class StdioServer:
         # Deleting the conversation you are looking at leaves you looking at
         # nothing, which reads as a failure rather than as the intended result.
         # So the window is moved on to a fresh one.
+        #
+        # **The window does that, not this.** A conversation invented here would
+        # be one the window has never heard of -- there is no push for "you are
+        # now in a different conversation" -- so the reply would have to carry it
+        # and every caller would have to adopt it. `conversations.create` already
+        # exists, files under the folder the window knows it is in, and answers
+        # the window directly. What this owes the window is a cleared session, so
+        # the fresh conversation does not open holding the deleted one's
+        # transcript.
         if deleted and conversation_id == self.conversation_id:
             self.conversation_id = ""
             self.session.clear()
@@ -703,14 +1002,58 @@ class StdioServer:
             raise RpcError(f"No such conversation: {conversation_id}")
         return {"conversation": conversation.summary()}
 
+    def _h_conversations_move(self, params: dict) -> Any:
+        """File a conversation under a folder.
+
+        This is what makes a folder a *place* rather than a filter. The window
+        works in one folder at a time, so changing that folder moves the chat you
+        are looking at into it -- and a chat and the folder it is about cannot
+        drift apart, which is the whole point of the sidebar listing one folder's
+        chats.
+
+        The folder is named rather than read from ``self.project``. The caller
+        has just bound it and knows which one it settled on (a path that will not
+        open leaves the old folder in place), so taking it from here would file
+        the chat under a folder the pick never reached.
+
+        When the moved conversation is the open one, the core's own project
+        follows it. ``_bind_project`` is the one place that points the folder and
+        the file tools at the same directory, and a ``state`` still reporting the
+        old folder over a chat filed under the new one is exactly the
+        disagreement it exists to prevent.
+        """
+        conversation_id = str(params.get("id") or "")
+        if not conversation_id:
+            raise RpcError("missing conversation id")
+        # Stripped, so a path of spaces is a missing path rather than a folder
+        # named "   ". The store accepts any string, so the check has to be here.
+        project = str(params.get("project") or "").strip()
+        if not project:
+            raise RpcError("missing project path")
+        store = self._require_store()
+        conversation = store.move(conversation_id, project)
+        if conversation is None:
+            raise RpcError(f"No such conversation: {conversation_id}")
+        if conversation_id == self.conversation_id:
+            self._bind_project(project)
+        return {"conversation": conversation.summary()}
+
     # -- sandbox -------------------------------------------------------------
     async def _h_sandbox_start(self, params: dict) -> Any:
         requested = str(params.get("path", "") or "")
+        # Imported once, above the branch, because the name is read below
+        # whether or not a path came in. It used to be imported inside the
+        # `if` and again further down -- two imports for one use, and a reader
+        # had to work out which one covered which line.
+        from pathlib import Path
+
+        from tonyagent.folder import folder_manager
+
         if requested:
             # Register the folder before starting, not after.
             #
             # `start_sandbox` takes a path and mounts the container on it, but
-            # it never told `folder_manager` about it. Only the Tkinter UI
+            # it never told `folder_manager` about it. Only the old UI
             # called `set_folder`, so under the sidecar the sandbox was running
             # against one directory while every file tool -- and `search` --
             # still resolved paths against "no project folder selected". The
@@ -719,10 +1062,6 @@ class StdioServer:
             #
             # Doing it first also means a bad path fails before a container is
             # created, rather than leaving one running against nothing.
-            from pathlib import Path
-
-            from tonyagent.folder import folder_manager
-
             if not folder_manager.set_folder(Path(requested)):
                 raise RpcError(f"Not a usable folder: {requested}")
 
@@ -732,8 +1071,6 @@ class StdioServer:
         # the file tools and `search` resolve against, so tying it to container
         # success left a machine with no Docker daemon reporting "no folder"
         # while the core had a perfectly usable workspace.
-        from tonyagent.folder import folder_manager
-
         self._bind_project(
             str(folder_manager.current_folder or params.get("path", ""))
         )
@@ -763,6 +1100,20 @@ class StdioServer:
         confirmed = bool(params.get("confirmed"))
         self.session.respond_to_confirmation(call_id, confirmed)
         return {"id": call_id, "confirmed": confirmed}
+
+    # -- questions / presentations ------------------------------------------
+    def _h_user_respond(self, params: dict) -> Any:
+        question_id = params.get("id", "")
+        if not question_id:
+            raise RpcError("missing question id")
+        answer = params.get("answer", "")
+        if not isinstance(answer, str):
+            raise RpcError("answer must be a string")
+        answered = self.session.respond_to_question(question_id, answer)
+        # Reported, not raised: a reply that arrives after the ask timed out or
+        # the turn stopped is the normal end of a race, and the frontend has
+        # already closed its dialog on the way out.
+        return {"id": question_id, "answered": answered}
 
     def _h_trust_set(self, params: dict) -> Any:
         project = params.get("project", "")
@@ -856,10 +1207,15 @@ class StdioServer:
     def _h_tools_set(self, params: dict) -> Any:
         """Change how many tool calls one turn may make.
 
-        Validated rather than clamped silently: a limit of zero is not a small
-        budget, it is a refusal of every tool, and a control that turned a
-        typed 0 into a 1 would report a value the user did not ask for. One is
-        the floor, and anything below it is an error the UI can show.
+        Validated rather than clamped silently: a limit the user did not ask for
+        is worse than a refusal they can see. One is the floor for a real budget
+        -- zero is not a small budget, it is a refusal of every tool -- and
+        anything *below* zero is not a smaller budget at all, so it is an error
+        the UI can show.
+
+        **Zero is the exception: it means no limit.** It is the one value below
+        the floor, which is what makes it safe to give it the opposite meaning --
+        see `AgentSession.set_max_tool_calls`.
         """
         raw = params.get("max_tool_calls")
         if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
@@ -868,8 +1224,10 @@ class StdioServer:
             wanted = int(raw)
         except (TypeError, ValueError):
             raise RpcError("max_tool_calls must be a whole number") from None
-        if wanted < 1:
-            raise RpcError("a turn must be allowed at least one tool call")
+        # 0 is the sentinel for no limit and passes; below it is not a smaller
+        # budget but a negative one, which is a mistake rather than a choice.
+        if wanted < 0:
+            raise RpcError("a tool call budget cannot be negative")
         applied = self.session.set_max_tool_calls(wanted)
         try:
             from tonyagent.config import save_max_tool_calls

@@ -41,8 +41,20 @@ export function useDismiss(
 ): void {
   useEffect(() => {
     if (!open) return;
+    /*
+     * Capture, and it *claims* the key.
+     *
+     * Capture so this runs before any listener a parent surface has on the
+     * bubble phase: a page that closes on Escape and a menu inside that page
+     * that closes on Escape are two answers to one press, and the inner one has
+     * to be the one that gets it. `preventDefault` is what lets the outer
+     * handler see that the press was already answered, rather than closing both
+     * -- see the settings page's own listener in `App`.
+     */
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      onClose();
     };
     const onPointerDown = (event: PointerEvent) => {
       const node = surface?.current;
@@ -54,11 +66,11 @@ export function useDismiss(
     // Capture, so a press on the anchor toggles rather than being eaten by
     // this listener closing it on the way through.
     window.addEventListener("pointerdown", onPointerDown, true);
-    window.addEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
     window.addEventListener("blur", onClose);
     return () => {
       window.removeEventListener("pointerdown", onPointerDown, true);
-      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keydown", onKey, true);
       window.removeEventListener("blur", onClose);
     };
   }, [open, onClose, surface]);

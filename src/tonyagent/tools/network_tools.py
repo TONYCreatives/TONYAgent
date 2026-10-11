@@ -6,7 +6,14 @@ import asyncio
 import httpx
 from typing import Any
 
-from tonyagent.tools.base import Tool, ToolResult, ToolResultStatus, ToolCategory, register_tool
+from tonyagent.tools.base import (
+    Tool,
+    ToolResult,
+    ToolResultStatus,
+    ToolCategory,
+    output_excerpt,
+    register_tool,
+)
 from tonyagent.config.settings import settings
 
 
@@ -73,6 +80,33 @@ def _is_internal_host(hostname: str) -> bool:
     return False
 
 
+def _internal_host_refusal(url: str) -> str | None:
+    """The reason this URL must not be fetched, or ``None`` if it is fine.
+
+    One home for the guard *and* its wording. Both network tools ask, and the
+    point of sharing the check is that they cannot end up telling the user two
+    different things about the same address -- the class of failure that
+    ``runtime_access`` was created to end.
+
+    Keyed on ``tools.allow_internal_http`` and NOT on ``sandbox.enable_network``:
+    the sandbox setting governs the container's egress, not what the host can be
+    told to fetch. An earlier version inverted that, so with the network default
+    at False it *allowed* internal hosts.
+    """
+    from urllib.parse import urlparse
+
+    host = urlparse(url).hostname or ""
+    if not _is_internal_host(host):
+        return None
+    if settings.tools.allow_internal_http:
+        return None
+    return (
+        f"Blocked request to internal address '{host}'. This blocks loopback, "
+        f"private, and link-local targets (including 169.254.169.254 cloud "
+        f"metadata). Set tools.allow_internal_http=true to allow."
+    )
+
+
 @register_tool
 class HttpRequestTool(Tool):
     """Make an HTTP request.
@@ -101,6 +135,9 @@ class HttpRequestTool(Tool):
     }
     destructive = False
     requires_confirmation = True
+    # Needs no project folder: nothing here reads or writes the workspace. Was
+    # previously special-cased by name in the orchestrator.
+    folder_required = False
 
     async def execute(
         self,
@@ -114,25 +151,11 @@ class HttpRequestTool(Tool):
         if not url.startswith(("http://", "https://")):
             return ToolResult(status=ToolResultStatus.ERROR, error="URL must start with http:// or https://")
 
-        # SSRF guard. Deliberately keyed on tools.allow_internal_http, NOT on
-        # sandbox.enable_network: the sandbox setting governs the container's
-        # egress, not what the host can be told to fetch. The previous version
-        # inverted this, so with the network default now False it *allowed*
-        # internal hosts by default.
-        from urllib.parse import urlparse
-
-        parsed = urlparse(url)
-        if _is_internal_host(parsed.hostname or ""):
-            if not settings.tools.allow_internal_http:
-                return ToolResult(
-                    status=ToolResultStatus.ERROR,
-                    error=(
-                        f"Blocked request to internal address "
-                        f"'{parsed.hostname}'. This blocks loopback, private, and "
-                        f"link-local targets (including 169.254.169.254 cloud "
-                        f"metadata). Set tools.allow_internal_http=true to allow."
-                    ),
-                )
+        # The guard is shared with `web_fetch` rather than restated here, so the
+        # two cannot end up describing the same refusal two different ways.
+        refusal = _internal_host_refusal(url)
+        if refusal:
+            return ToolResult(status=ToolResultStatus.ERROR, error=refusal)
         
         try:
             async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
@@ -158,12 +181,98 @@ class HttpRequestTool(Tool):
                 status = ToolResultStatus.SUCCESS if 200 <= response.status_code < 400 else ToolResultStatus.ERROR
                 error = f"HTTP {response.status_code}" if response.status_code >= 400 else None
                 
+                # The card's one line. `output` is a status-code-and-headers
+                # envelope, which the window will not render, so the summary is
+                # what a reader actually sees.
+                excerpt = output_excerpt(content)
+                summary = f"HTTP {response.status_code}"
+                if excerpt:
+                    summary += f" \u00b7 {excerpt}"
                 return ToolResult(
                     status=status,
                     output=output,
+                    summary=summary,
                     error=error,
                 )
         except httpx.TimeoutException:
             return ToolResult(status=ToolResultStatus.ERROR, error=f"Request timed out after {timeout}s")
         except Exception as e:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
+
+
+@register_tool
+class WebFetchTool(Tool):
+    """Fetch a URL and read what it says.
+
+    Deliberately narrower than ``http_request``: GET, no body, no method to
+    choose, and the page comes back as text rather than as a status-code-and-
+    headers envelope. That is the shape the work actually has -- read this page
+    -- and keeping it separate means the common case does not have to describe an
+    HTTP method in order to get at a paragraph.
+
+    **It shares ``http_request``'s guard instead of restating it.** Refusing
+    loopback, private and link-local addresses is the difference between "fetch
+    the docs" and a one-token pivot into the user's own services, and two copies
+    of that rule would eventually disagree about which addresses it covers.
+
+    No project folder is required, for the same reason ``http_request`` needs
+    none: fetching a URL neither reads nor writes the workspace.
+    """
+
+    name = "web_fetch"
+    description = (
+        "Fetch a URL and return its text. Read-only: GET only, with no request "
+        "body, for reading a page rather than driving an API."
+    )
+    category = ToolCategory.NETWORK
+    parameters = {
+        "type": "object",
+        "properties": {
+            "url": {"type": "string", "description": "URL to fetch"},
+            "timeout": {"type": "integer", "description": "Timeout in seconds", "default": 30},
+        },
+        "required": ["url"],
+        "additionalProperties": False,
+    }
+    destructive = False
+    requires_confirmation = True
+    folder_required = False
+
+    async def execute(self, url: str, timeout: int = 30) -> ToolResult:
+        if not url.startswith(("http://", "https://")):
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                error="URL must start with http:// or https://",
+            )
+
+        refusal = _internal_host_refusal(url)
+        if refusal:
+            return ToolResult(status=ToolResultStatus.ERROR, error=refusal)
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+                response = await client.get(url)
+        except httpx.TimeoutException:
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                error=f"Request timed out after {timeout}s",
+            )
+        except Exception as e:
+            return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
+
+        if response.status_code >= 400:
+            return ToolResult(
+                status=ToolResultStatus.ERROR,
+                error=f"HTTP {response.status_code} fetching {url}",
+            )
+
+        content = response.text
+        # A truncation the model is not told about is a model that reasons about
+        # half a page as though it were the whole thing, so the marker is part of
+        # the output rather than a detail left in a log.
+        if len(content) > settings.tools.max_output_size:
+            content = content[: settings.tools.max_output_size] + "\n... (truncated)"
+        return ToolResult(
+            status=ToolResultStatus.SUCCESS,
+            output=f"{url} -> HTTP {response.status_code}\n\n{content}",
+        )
