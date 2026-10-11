@@ -150,8 +150,20 @@ class AgentSession:
         #: The plan and the goal for this conversation, rendered into the system
         #: prompt and written by the planning tools. Adopted through `set_state`
         #: so the tools and this session hold the *same* object -- see there.
+        #:
+        #: **Construction does not publish it.** That used to happen here as a
+        #: side effect (`set_current_state(self.state)`), and it read as nothing:
+        #: in the one-session-per-process world whatever session was built last
+        #: owned the global, which is what the conversation flow always wanted
+        #: anyway. A subagent is the first thing that makes it wrong -- a child
+        #: session built while the parent's turn is in flight would silently
+        #: repoint the planning tools at the child's plan, and the parent's next
+        #: turn would render a task list nobody in the conversation wrote.
+        #: Publishing is `set_state`'s one job now, called explicitly by the
+        #: host -- the same lesson `install_question_bridge` taught (publishing
+        #: to a process-global is a host act, not a consequence of building
+        #: something). ``tests/unit/test_subagent_isolation.py`` pins it.
         self.state: SessionState = SessionState()
-        set_current_state(self.state)
 
     # -- provider ------------------------------------------------------------
     def bind_provider(

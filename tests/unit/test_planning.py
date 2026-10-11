@@ -339,8 +339,14 @@ async def test_a_tool_write_is_what_the_session_then_prompts_with():
     The tool writes through `current_state()`; the session renders `self.state`. If
     those were two objects the write would report success, the card would show the
     new list, and the model would be sent the old one on the next turn.
+
+    The session adopts its state explicitly with `set_state`: construction no
+    longer repoints the global (see `test_subagent_isolation.py` -- a subagent
+    built mid-turn must not steal the parent's plan), so the act that publishes
+    is adoption, which is exactly what this test exercises.
     """
     session = AgentSession(bus=EventBus())
+    session.set_state(session.state)
 
     await tool("todo_write").execute(todos=[{"text": "from a tool"}])
 
