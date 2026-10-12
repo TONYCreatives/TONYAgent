@@ -78,9 +78,15 @@ def _run(name: str, argv: list[str], timeout: int = 300) -> dict:
 
 
 def _smoke_launch() -> dict:
-    """Start the app, confirm it survives startup, then shut it down."""
+    """Start the app, confirm it survives startup, then shut it down.
+
+    ``tonyagent.window`` and not ``tonyagent``: the package has no ``__main__``, so
+    the shorter form exits with "cannot be directly executed" and this check was
+    reporting that as a crash on startup. Measured -- and the README says the same
+    thing in the section that used to name the working command.
+    """
     started = time.time()
-    argv = [sys.executable, "-m", "tonyagent"]
+    argv = [sys.executable, "-m", "tonyagent.window"]
     try:
         proc = subprocess.Popen(
             argv,

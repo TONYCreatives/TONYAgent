@@ -40,6 +40,8 @@ async function renderRail(over: Partial<React.ComponentProps<typeof IconRail>> =
       onSearch={() => {}}
       dashboardOpen={false}
       onDashboard={() => {}}
+      petOpen={false}
+      onPet={() => {}}
       {...over}
     />,
   );
@@ -198,15 +200,30 @@ describe("the rail is a strip of icons that never changes width", () => {
       all(c, ".rail-btn:not(.rail-toggle)").map((b) => b.getAttribute("aria-label"));
 
     const idle = await renderRail({ messageCount: 0 });
-    assert.deepEqual(names(idle), ["Search project", "Usage dashboard", "Settings"]);
+    assert.deepEqual(names(idle), [
+      "Search project",
+      "Usage dashboard",
+      "Show desktop pet",
+      "Settings",
+    ]);
 
     const busy = await renderRail({ busy: true, messageCount: 4 });
     assert.deepEqual(names(busy), [
       "Stop generating",
       "Search project",
       "Usage dashboard",
+      "Show desktop pet",
       "Settings",
     ]);
+
+    // The pet is a toggle, so it says which way it goes rather than naming the
+    // thing twice: with the card up, the entry that put it there is the entry
+    // that takes it away.
+    const showing = await renderRail({ petOpen: true });
+    assert.ok(
+      names(showing).includes("Hide desktop pet"),
+      `the pet entry does not say what pressing it does; got ${JSON.stringify(names(showing))}`,
+    );
   });
 
   test("an unreachable core disables the entries that need it", async () => {
@@ -216,8 +233,13 @@ describe("the rail is a strip of icons that never changes width", () => {
     // The toggle is excluded because it does not talk to the core at all: it
     // shows and hides a panel that is already in the window, so it stays live
     // with the backend stopped -- which is the only way back to the rail.
+    // The pet is the second exception, added later and deliberately. It opens a
+    // *window*, which the shell does without a core and without asking it
+    // anything; a card that says "done" beside a stopped sandbox is the truth,
+    // and a disabled control that could do its job is the fault this whole test
+    // exists to catch. So it is excluded here and asserted live below.
     const container = await renderRail({ connected: false });
-    const needingCore = all(container, ".rail-btn:not(.rail-toggle)");
+    const needingCore = all(container, '.rail-btn:not(.rail-toggle):not([aria-label$="desktop pet"])');
     assert.ok(needingCore.length > 0, "the rail rendered nothing to check");
     for (const button of needingCore) {
       assert.equal(
@@ -226,6 +248,12 @@ describe("the rail is a strip of icons that never changes width", () => {
         `${button.getAttribute("aria-label")} is live with no core to answer it`,
       );
     }
+    assert.equal(
+      (one(container, '.rail-btn[aria-label="Show desktop pet"]') as HTMLButtonElement)
+        .disabled,
+      false,
+      "the pet needs no core to open a window",
+    );
     // And the one that must not be.
     assert.equal(
       (one(container, ".rail-toggle") as HTMLButtonElement).disabled,

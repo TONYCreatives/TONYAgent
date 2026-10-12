@@ -237,6 +237,73 @@
   color: var(--danger);
 }
 
+/*
+ * The provider's own pages, as buttons.
+ *
+ * A row rather than a column, and tight to the paragraph above it: these are
+ * one answer to one question, not a menu of three unrelated things.
+ */
+.usage-account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/*
+ * The figures read off the provider's page.
+ *
+ * A definition list rather than a grid of tiles: these are somebody else's
+ * numbers in somebody else's words, and a tile presents a value as if this app
+ * had decided what it means. A label with the figure beside it says "this is what
+ * the page said", which is exactly as much as this app knows.
+ */
+.usage-account-figures {
+  display: grid;
+  gap: 4px;
+  margin: 12px 0 0;
+}
+
+.usage-account-figure {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: var(--text-sm);
+}
+
+.usage-account-figure dt {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg-dim);
+  /* The page's own label can be a sentence. Two lines is the most a row gets
+     before the value stops being beside it, which is the only thing the pairing
+     is for. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.usage-account-figure dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/*
+ * What a press of one of them did.
+ *
+ * Its own line under the buttons rather than replacing the paragraph that
+ * explains them: the explanation is still true after the press, and a sentence
+ * that swapped itself out would read as a page that had changed its mind.
+ */
+.usage-note {
+  margin: 10px 0 0;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+}
+
 .usage-since {
   margin: 0;
   color: var(--fg-mute);

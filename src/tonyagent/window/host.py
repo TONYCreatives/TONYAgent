@@ -42,6 +42,7 @@ from tonyagent.window import win32
 from tonyagent.window.assets import AssetServer, MissingFrontendError
 from tonyagent.window.bridge import Bridge
 from tonyagent.window.core import CoreProcess, default_argv, source_env
+from tonyagent.window.pet import DeskPet
 
 #: The size the interface was designed against.
 WIDTH, HEIGHT = 1200, 800
@@ -234,6 +235,34 @@ def _log_without_a_console() -> None:
         logger.warning(f"Could not move the host's log to a file: {exc}")
 
 
+def profile_dir() -> str:
+    """The webview's own profile on disk, which is what keeps a sign-in.
+
+    **This is the whole of "you sign in once".** pywebview defaults to
+    ``private_mode``, which gives every run a fresh temporary cache directory:
+    a window that is signed in and a window that has never been anywhere look
+    identical, so the provider's page would ask for the sign-in again on every
+    launch -- the one thing that makes a browser pane not worth having.
+
+    Its own subdirectory of the config directory, beside ``config.toml`` and
+    ``window.log``, so there is one directory to look in, and named for what it
+    is rather than for the window that writes it: the account browser is not the
+    only thing that could use it.
+
+    A directory that cannot be made is not a reason to refuse to start --
+    pywebview falls back to its own default -- but it is a reason to say so.
+    """
+    try:
+        from tonyagent.config.settings import settings
+
+        path = settings.get_config_dir() / "webview"
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
+    except Exception as exc:  # noqa: BLE001 - see the docstring
+        logger.warning(f"Could not prepare the webview profile directory: {exc}")
+        return ""
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Open the window. Returns the process's exit code."""
     _log_without_a_console()
@@ -296,6 +325,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 3
     bridge._attach(core, window)
 
+    # The desktop pet, built from the same bundle as the app. It is wired here
+    # rather than inside `Bridge` because the URL it is served from is the host's
+    # to know -- and because it needs the bridge as its page's `js_api`, which is
+    # the same cycle `_attach` above describes.
+    bridge._attach_pet(DeskPet(sibling_page(page, "pet.html"), api=bridge))
+
     # Dragging is the app's own now, and pywebview's is left to find nothing.
     #
     # `pywebview-drag-region` used to be the whole mechanism: pywebview watches
@@ -311,7 +346,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     # and its walk over the pressed element's ancestors finds nothing to do.
 
     try:
-        webview.start(_startup, (window,), icon=app_icon())
+        # `private_mode=False` and a profile on disk, rather than pywebview's
+        # default of a fresh temporary cache per run. The account browser is a
+        # real browser at the provider's own site, and a browser that has signed
+        # in and a browser that has never been anywhere are the same window
+        # unless the cookies outlive the process. See `profile_dir`.
+        webview.start(
+            _startup,
+            (window,),
+            icon=app_icon(),
+            private_mode=False,
+            storage_path=profile_dir(),
+        )
     finally:
         # In a `finally` and not in a close callback: the core has to be reaped
         # whether the window was closed, the page died, or this process was
@@ -321,6 +367,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         if server is not None:
             server.stop()
     return 0
+
+
+def sibling_page(page: str, name: str) -> str:
+    """Another page beside the one the app was pointed at.
+
+    The pet and the account reader are built from the same bundle as the app, so
+    their URLs differ from the app's only in the filename -- which works for a
+    served build and for ``--url`` pointing at a Vite dev server without either
+    case knowing about the other. A page that is not there is not an error here:
+    the reader reports it cannot open, and the pet reports it cannot open.
+    """
+    head, _, _tail = page.rpartition("/")
+    return f"{head}/{name}" if head else name
 
 
 def default_dist() -> Path:

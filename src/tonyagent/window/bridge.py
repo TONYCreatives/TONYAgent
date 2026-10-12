@@ -48,6 +48,8 @@ from typing import Any
 from loguru import logger
 
 from tonyagent.window import win32
+from tonyagent.window.account import DEFAULT_VIEW, AccountBrowser
+from tonyagent.window.pet import DeskPet
 
 #: Everything ``window_control`` accepts, as a closed set rather than a
 #: passthrough: the page is not trusted with an arbitrary window command just
@@ -60,6 +62,17 @@ from tonyagent.window import win32
 #: the real ones instead of an imitation of them.
 ACTIONS = frozenset({"minimize", "toggleMaximize", "close", "drag", "resize"})
 
+#: Everything the desktop pet can be asked, as a closed set for the same reason
+#: as ``ACTIONS``.
+#:
+#: ``state`` and the two that change it are the app page's -- it draws the toggle
+#: and has to be able to ask whether the card is up. ``ready``, ``status`` and
+#: ``focus`` are the pet's own: the first two are how the card announces itself
+#: and receives what to draw, and the last is what clicking it does. Both pages
+#: share one bridge, so the closed set is what keeps one from pretending to be the
+#: other.
+PET_ACTIONS = frozenset({"state", "show", "hide", "ready", "status", "focus"})
+
 #: The JavaScript object the host pushes into. One global, installed by the
 #: frontend's own entry point, so a push cannot arrive before anything is
 #: listening and silently do nothing.
@@ -69,7 +82,18 @@ TARGET = "window.__tonyAgent"
 class Bridge:
     """The ``js_api`` object: everything the page may ask the host to do."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        account: AccountBrowser | None = None,
+        pet: DeskPet | None = None,
+    ) -> None:
+        #: The provider's own pages, in a browser window the app owns. Injected
+        #: so a test can watch what the page asked for without a GUI loop; the
+        #: default constructs nothing until the first view is opened.
+        self._account = account if account is not None else AccountBrowser()
+        #: The desktop pet. Injected by the host, which is the only thing that
+        #: knows the URL the card's page is served from -- see `_attach_pet`.
+        self._pet = pet if pet is not None else DeskPet()
         # Both are assigned rather than injected, and that is a real cycle
         # rather than a preference. The bridge pushes frames the core produces,
         # so the core needs `bridge._frames` at construction; and
@@ -238,6 +262,88 @@ class Bridge:
         """
         win32.show_system_menu(self._hwnd())
         return {"maximized": self._maximized()}
+
+    # -- the provider's own pages --------------------------------------------
+
+    def open_account_view(self, view: str = DEFAULT_VIEW) -> dict[str, Any]:
+        """Open one of the provider's account pages in a real browser window.
+
+        Nothing above this line can answer what the *account* has used. The
+        ledger counts this app's own requests, and the provider's dashboard is
+        the only place the rest of it exists -- the other keys, the other tools,
+        the credit balance -- behind the user's own sign-in, which a window the
+        app draws inside itself cannot carry.
+
+        The first press creates the window and every later one shows it, which
+        is what keeps the sign-in: it is one cookie jar on disk, not one per
+        press. The view name is checked against a closed set in
+        ``account.VIEWS`` before any URL is used.
+        """
+        return self._account.open(view)
+
+    def read_account_view(self, view: str = DEFAULT_VIEW) -> dict[str, Any]:
+        """Open one of the provider's pages and read the figures it is showing.
+
+        The same window as ``open_account_view``, doing the other half of the job:
+        that method puts the page in front of the user so they can sign in, and
+        this one asks the page what it says. Neither replaces the other, because
+        the dashboard has to be able to show the numbers *and* to say "sign in"
+        when the numbers are not there to show.
+
+        These pages are the provider's own application, so what comes back is a
+        list of the labels and values it displayed rather than this app's opinion
+        about them. See ``AccountBrowser.EXTRACT``.
+        """
+        return self._account.read(view)
+
+    # -- the desktop pet ------------------------------------------------------
+
+    def pet(self, action: str = "state", payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """The pet's whole interface, in one method.
+
+        It is one method rather than four because both pages call into it and the
+        closed set is what tells them apart: the app asks for the state and sets
+        it, the card announces itself and pushes back what to draw. Four public
+        methods would be four names on both pages' API for one relationship.
+
+        ``state`` reports two different booleans, and both are needed: ``open`` is
+        whether a window exists *now*, ``wanted`` is whether it should be up when
+        the app next starts. A toggle that drew itself from the first would come
+        back off after every restart, and one that drew itself from the second
+        would claim a window that the webview refused to make.
+        """
+        if action not in PET_ACTIONS:
+            raise ValueError(f"unknown pet action: {action!r}")
+
+        if action == "state":
+            return {"open": self._pet.is_open(), "wanted": self._pet.was_open()}
+        if action == "show":
+            return {"open": bool(self._pet.set_open(True).get("open")), "wanted": True}
+        if action == "hide":
+            self._pet.set_open(False)
+            return {"open": False, "wanted": False}
+        if action == "ready":
+            self._pet.mark_ready()
+            return {"open": self._pet.is_open(), "wanted": self._pet.was_open()}
+        if action == "focus":
+            self._pet.raise_app()
+            return {"open": self._pet.is_open(), "wanted": self._pet.was_open()}
+
+        self._pet.push(payload or {})
+        return {"open": self._pet.is_open(), "wanted": self._pet.was_open()}
+
+    def _attach_pet(self, pet: DeskPet) -> None:
+        """Give the bridge the pet, and the pet the window it raises.
+
+        Private and called by the host, for the same reason `_attach` is: the pet
+        needs the bridge as its page's ``js_api`` and the bridge needs the pet, so
+        neither can be a constructor argument for the other. The app's own window
+        is handed over at the same time -- it is what the card raises when it is
+        clicked, and it is the only side of this that knows its own handle.
+        """
+        self._pet = pet
+        if self._window is not None:
+            pet.attach_app(self._window)
 
     # -- files ---------------------------------------------------------------
 

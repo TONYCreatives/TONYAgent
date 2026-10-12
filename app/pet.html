@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      The same policy as the app's page, and for the same reason: this page is
+      served by the same host from the same bundle, and a second window with its
+      own rules is a second thing to keep right. The card loads nothing from
+      anywhere but itself -- the host injects its pushes, which this policy does
+      not govern.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:"
+    />
+    <title>TONYAgent</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/petmain.tsx"></script>
+  </body>
+</html>

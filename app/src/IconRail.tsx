@@ -38,6 +38,9 @@ interface Props {
   /** Whether the usage dashboard currently owns the main area. */
   dashboardOpen: boolean;
   onDashboard: () => void;
+  /** Whether the desktop pet's card is on screen. */
+  petOpen: boolean;
+  onPet: () => void;
 }
 
 /**
@@ -81,6 +84,11 @@ const PATHS = {
   // toggle, which shows the sidebar "attached on the left".
   toggleOpen: "M3 4v16M9 4h12v16H9z",
   toggleClosed: "M21 4v16M15 4H3v16h12z",
+  // The app's own T, with eyes: the pet is drawn from the same two strokes
+  // everywhere else, and this strip is the one place a 17px version of it is
+  // needed. The two `h.01` ticks are dots -- the round linecap turns a zero-length
+  // horizontal segment into one -- sitting above the crossbar as eyes.
+  pet: "M9 5h.01M15 5h.01M6 9h12M12 9v10",
 };
 
 interface Item {
@@ -111,6 +119,8 @@ export function IconRail({
   onSearch,
   dashboardOpen,
   onDashboard,
+  petOpen,
+  onPet,
 }: Props) {
   // No Sandbox entry. It used to sit directly above Settings and open the same
   // panel, so two labels led to one destination and neither could be the obvious
@@ -156,6 +166,23 @@ export function IconRail({
     onClick: onDashboard,
     disabled: !connected,
     active: dashboardOpen,
+  });
+
+  // The pet, beside the working actions rather than at the foot with Settings:
+  // what it shows is the work, and it is the entry you reach for while the agent
+  // is busy -- which is the moment the strip is otherwise all "Stop".
+  //
+  // Enabled without the core, unlike its neighbours. This opens a *window*, which
+  // the shell can do whether or not a core is running; a card that said "waiting"
+  // with no core is the truth, and a disabled control that could do its job is the
+  // failure this file was written to avoid.
+  items.push({
+    key: "pet",
+    icon: glyph(<path d={PATHS.pet} />),
+    label: petOpen ? "Hide desktop pet" : "Show desktop pet",
+    onClick: onPet,
+    disabled: false,
+    active: petOpen,
   });
 
   /**

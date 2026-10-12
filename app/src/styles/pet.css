@@ -1,0 +1,172 @@
+/*
+ * The desktop pet: the card, and what is drawn on it.
+ *
+ * An opaque card and not a cut-out character, and that is measured rather than
+ * chosen. `transparent=True` on this shell leaves the form opaque -- measured:
+ * `WS_EX_LAYERED` unset, `AllowTransparency` false, and the pixels beside the
+ * artwork were the control grey instead of the window behind them. Setting the
+ * form's `TransparencyKey` by hand through pythonnet hung the window. So this is
+ * a rounded card, drawn as one, with the artwork inside it.
+ *
+ * The card is the whole page: there is no window chrome to sit under, so the
+ * root fills the viewport and every corner is the card's own.
+ */
+
+.pet {
+  width: 100vw;
+  height: 100vh;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 10px;
+  padding: 14px 14px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: var(--text-sm);
+  /* Dragged by its artwork, so the artwork must not be selectable: a drag that
+     turns into a text selection leaves a highlighted line behind it. */
+  user-select: none;
+  cursor: grab;
+  overflow: hidden;
+}
+
+.pet:active {
+  cursor: grabbing;
+}
+
+.pet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* The mood, as a color. The same four the app already uses for state: accent
+   for working, a warning tone for waiting, danger for a failure, dim at rest.
+
+   The transition is the project's rule rather than a preference: a state that
+   changes a visible property with nothing to animate it is a repaint in a single
+   frame, and `layout.test.ts` fails on one. It sits on the base rule, so every
+   mood below it travels from the color it was to the color it becomes. */
+.pet-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fg-mute);
+  transition: background var(--motion-fast) ease;
+}
+
+.pet[data-mood="working"] .pet-dot {
+  background: var(--accent);
+  animation: pet-pulse 1.4s ease-in-out infinite;
+}
+
+.pet[data-mood="waiting"] .pet-dot {
+  background: var(--warn);
+}
+
+.pet[data-mood="failed"] .pet-dot {
+  background: var(--danger);
+}
+
+/* The character. It breathes when it is working and sits still otherwise --
+   a card that animates while nothing is happening is a card you stop looking
+   at, and the whole value here is that a glance is enough. */
+.pet-figure {
+  display: grid;
+  place-items: center;
+}
+
+.pet-body {
+  width: 96px;
+  height: 96px;
+  transform-origin: 50% 80%;
+}
+
+.pet[data-mood="working"] .pet-body {
+  animation: pet-breathe 2.2s ease-in-out infinite;
+}
+
+.pet[data-mood="waiting"] .pet-body {
+  animation: pet-wave 0.9s ease-in-out infinite;
+}
+
+.pet-eye {
+  transition: opacity var(--motion-fast) ease;
+}
+
+/* Asleep at rest: the glow in the eyes goes out. Cheaper and quieter than a
+   closed-eye redraw, and it reads at 96px. */
+.pet[data-mood="idle"] .pet-eye {
+  opacity: 0.25;
+}
+
+.pet-text {
+  min-width: 0;
+}
+
+.pet-label {
+  display: block;
+  font-weight: 600;
+  /* One line, always: the card's height is fixed, and a label that wrapped
+     would push the detail out of the card rather than into a second line. */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pet-detail {
+  margin-top: 2px;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  /* Two lines at most, so the card never grows. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@keyframes pet-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.06);
+  }
+}
+
+@keyframes pet-wave {
+  0%,
+  100% {
+    transform: rotate(-3deg);
+  }
+  50% {
+    transform: rotate(3deg);
+  }
+}
+
+@keyframes pet-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/*
+ * The three animations above are cancelled in `reduced-motion.css`, which is the
+ * only place in this project that asks about the preference -- one block, listing
+ * every animation by name, with the `[data-mood]` half spelled out to match the
+ * specificity of what it cancels rather than reaching for `!important`.
+ * `reducedMotion.test.ts` reads that file on every run, so a card that animates
+ * through a request to stop is caught there rather than by somebody noticing.
+ */

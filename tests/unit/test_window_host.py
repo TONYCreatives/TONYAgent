@@ -38,8 +38,11 @@ SRC = REPO / "src"
 #: non-callables, so anything public here is either an API method or a hazard.
 PAGE_API = [
     "core_alive",
+    "open_account_view",
+    "pet",
     "pick_files",
     "pick_folder",
+    "read_account_view",
     "ready",
     "send",
     "system_menu",
@@ -257,6 +260,108 @@ def test_the_window_is_created_with_a_dwm_frame(monkeypatch):
     assert captured["shadow"] is True, "the window has no DWM frame to round"
     assert captured["frameless"] is True, "the OS drew a title bar"
     assert captured["easy_drag"] is False, "the whole window became a drag handle"
+
+
+def test_a_second_page_is_the_first_one_with_a_different_name():
+    """The pet and the account reader are built from the app's own bundle.
+
+    Which means their URLs differ from the app's only in the filename, and that
+    has to work for a served build *and* for ``--url`` pointing at a Vite dev
+    server -- the same two cases the app itself runs in, without either one
+    needing to know about the other.
+    """
+    from tonyagent.window.host import sibling_page
+
+    assert sibling_page("http://127.0.0.1:51234/index.html", "pet.html") == (
+        "http://127.0.0.1:51234/pet.html"
+    )
+    assert sibling_page("http://localhost:1420/index.html", "pet.html") == (
+        "http://localhost:1420/pet.html"
+    )
+    # A bare filename has no origin to keep, so the sibling is bare too rather
+    # than starting with a slash -- a leading "/" would be resolved against the
+    # filesystem root by anything that treated it as a path.
+    assert sibling_page("index.html", "pet.html") == "pet.html"
+
+
+def test_the_host_wires_the_pet_to_the_app_window_and_the_bridge(monkeypatch, tmp_path):
+    """The cycle, resolved the way the bridge's own `_attach` resolves it.
+
+    The pet needs the bridge as its page's ``js_api``, and the bridge needs the
+    pet; the pet also needs the app's window, because that is what clicking the
+    card raises. None of the three can be a constructor argument for the others,
+    so the host does the wiring -- and this asserts it actually happens, because a
+    pet wired to nothing is a card that looks right and does nothing when pressed.
+    """
+    from tonyagent.window import host
+    from tonyagent.window.bridge import Bridge
+    from tonyagent.window.pet import DeskPet
+
+    window = object()
+    monkeypatch.setattr(host.webview, "start", lambda *a, **k: None)
+    monkeypatch.setattr(host, "build_window", lambda page, bridge: window)
+    monkeypatch.setattr(host, "profile_dir", lambda: str(tmp_path / "webview"))
+
+    seen: dict[str, object] = {}
+    real_attach = Bridge._attach_pet
+
+    def watch(self: Bridge, pet: DeskPet) -> None:
+        real_attach(self, pet)
+        seen["page"] = pet._page
+        seen["app"] = pet._app
+
+    monkeypatch.setattr(Bridge, "_attach_pet", watch)
+
+    assert host.main(["--url", "http://127.0.0.1:1/index.html", "--no-core"]) == 0
+
+    assert seen["page"] == "http://127.0.0.1:1/pet.html", "the card has no page to load"
+    assert seen["app"] is window, "clicking the card would raise nothing"
+
+
+def test_the_webview_profile_outlives_the_process(monkeypatch, tmp_path):
+    """**This is the whole of "you sign in once".**
+
+    pywebview's default is ``private_mode``, which hands every run a fresh
+    temporary cache directory: the provider's page would ask for the sign-in on
+    every launch, and the browser pane would be worth nothing. So the flags are
+    asserted where they are passed rather than left to a comment -- the failure
+    is a feature that silently does not work, which no amount of reading the
+    real window would catch, because a signed-out window looks correct.
+    """
+    from tonyagent.window import host
+
+    started: dict[str, object] = {}
+    monkeypatch.setattr(host.webview, "start", lambda *a, **k: started.update(k))
+    monkeypatch.setattr(host, "build_window", lambda page, bridge: object())
+    monkeypatch.setattr(host, "profile_dir", lambda: str(tmp_path / "webview"))
+
+    # `--url` so no build is served and `--no-core` so no child is spawned:
+    # this is about what the window is started with and nothing else.
+    assert host.main(["--url", "http://127.0.0.1:1/index.html", "--no-core"]) == 0
+
+    assert started["private_mode"] is False, "the webview forgot every cookie on exit"
+    assert started["storage_path"] == str(tmp_path / "webview")
+
+
+def test_the_profile_directory_sits_with_the_config(monkeypatch, tmp_path):
+    """Beside ``config.toml``, so there is one directory to look in.
+
+    And created, because pywebview is handed the path and does not make it -- a
+    missing directory is a webview that falls back to its own default, which is
+    the temporary one this whole arrangement exists to avoid.
+    """
+    from tonyagent.config.settings import settings
+    from tonyagent.window import host
+
+    # On the class rather than the instance: `Settings` is a pydantic model, and
+    # setting a *method* name on an instance is the one kind of attribute it
+    # refuses.
+    monkeypatch.setattr(type(settings), "get_config_dir", lambda self: tmp_path)
+
+    made = host.profile_dir()
+
+    assert Path(made) == tmp_path / "webview"
+    assert Path(made).is_dir()
 
 
 def test_the_styling_is_applied_when_the_window_is_shown(monkeypatch):
@@ -498,6 +603,7 @@ def test_the_win32_prototypes_are_declared_with_their_types():
     assert user32.TrackPopupMenu.restype is ctypes.c_uint
     assert user32.GetAncestor.restype is win32.wintypes.HWND
     assert user32.IsZoomed.restype is win32.wintypes.BOOL
+    assert user32.IsIconic.restype is win32.wintypes.BOOL
     # The frame's own two, where the same mistake is worse than a truncated
     # handle: `SetWindowLongPtrW` *returns the previous procedure*, and a
     # ctypes-defaulted `c_int` truncates it to its low 32 bits -- so every

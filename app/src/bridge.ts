@@ -55,6 +55,58 @@ export type ResizeEdge =
   | "bottom-right";
 
 /**
+ * The provider's account pages the host will open, as the host names them.
+ *
+ * A closed set rather than a URL, and the closing is the host's: the page may
+ * name a view and nothing else, so a window this program creates cannot be
+ * pointed at an arbitrary site from here.
+ */
+export type AccountView = "activity" | "credits" | "keys";
+
+/**
+ * Why a read of one of those pages did not produce figures.
+ *
+ * `no-window` is a webview that refused a window, `timeout` is a page that did
+ * not arrive, `unreadable` is a page that answered with something this side
+ * could not parse. Each is a different sentence for the user, which is why they
+ * are not collapsed into one failure.
+ */
+export type AccountReason = "no-window" | "timeout" | "unreadable";
+
+/** One label the provider's page displayed, and the value beside it. */
+export interface AccountFigure {
+  label: string;
+  value: string;
+}
+
+/**
+ * What the provider's page said.
+ *
+ * `figures` is the page's own wording, paired as it displayed it and never
+ * renamed or added up -- see `AccountBrowser.EXTRACT`. `signed_out` is the state
+ * the user has to fix, and it is not a failure: the read worked and the page is
+ * the sign-in page.
+ */
+export interface AccountRead {
+  view: string;
+  url: string;
+  ok: boolean;
+  reason?: AccountReason;
+  signed_out: boolean;
+  figures: AccountFigure[];
+  read_at: number;
+}
+
+/** Everything the desktop pet can be asked. See `Bridge.pet`. */
+export type PetAction = "state" | "show" | "hide" | "ready" | "status" | "focus";
+
+/** What the pet reports about itself: up now, and wanted at next start. */
+export interface PetStateReply {
+  open: boolean;
+  wanted: boolean;
+}
+
+/**
  * What the window host exposes as `window.pywebview.api`.
  *
  * Every method returns an object rather than a bare value, and that is a
@@ -73,6 +125,23 @@ export interface HostApi {
   system_menu(): Promise<{ maximized: boolean }>;
   pick_folder(): Promise<{ path: string | null }>;
   pick_files(multiple?: boolean): Promise<{ paths: string[] }>;
+  /**
+   * Open one of the provider's own pages in a real browser window.
+   *
+   * `opened` is not decoration: creating a second window can be refused, and a
+   * caller that assumed otherwise would claim a window had opened that had not.
+   */
+  open_account_view(view: AccountView): Promise<{ view: string; url: string; opened: boolean }>;
+  /** Show one of them and read the figures it is displaying. */
+  read_account_view(view: AccountView): Promise<AccountRead>;
+  /**
+   * The desktop pet: ask about it, show or hide it, or tell it what to draw.
+   *
+   * One method with a closed set of actions, because two pages share this bridge
+   * -- the app asks for the state and pushes statuses, the card announces itself
+   * and raises the app -- and the action is what tells them apart.
+   */
+  pet(action: PetAction, payload?: Record<string, unknown>): Promise<PetStateReply>;
 }
 
 /** What the host pushes into the page. */
@@ -125,6 +194,22 @@ export function installPushHandlers(handlers: PushHandlers): void {
     onLog: handlers.log,
     onCoreExit: handlers.exit,
   };
+}
+
+/**
+ * Install the handler the pet's card receives on.
+ *
+ * Separate from `installPushHandlers` rather than a fourth key on it, because the
+ * two pages are pushed *different* things: the app is pushed the core's frames
+ * and the card is pushed the app's conclusions about them. One object carrying
+ * both would have each page listening for what the other is sent, which is how a
+ * missing key becomes a crash in a window nobody is looking at.
+ *
+ * `onStatus` is a name the host holds too -- `pet.PUSH_TARGET` -- and the two
+ * must agree.
+ */
+export function installStatusHandler(handler: (status: unknown) => void): void {
+  (window as unknown as Record<string, unknown>)[PUSH_TARGET] = { onStatus: handler };
 }
 
 /**

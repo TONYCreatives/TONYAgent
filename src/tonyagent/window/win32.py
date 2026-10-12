@@ -104,6 +104,9 @@ SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
 SWP_FRAMECHANGED = 0x0020
+#: ``SetWindowPos``'s "put it above everything that is not topmost", for the
+#: window that is a card rather than a window.
+HWND_TOPMOST = -1
 
 #: The messages this module answers or sends. ``WM_NCCALCSIZE`` is the OS asking
 #: what the client area should be; ``WM_NCLBUTTONDOWN`` with a hit-test code is
@@ -234,6 +237,8 @@ def _bind() -> None:
     user32.PostMessageW.restype = wintypes.BOOL
     user32.IsZoomed.argtypes = [wintypes.HWND]
     user32.IsZoomed.restype = wintypes.BOOL
+    user32.IsIconic.argtypes = [wintypes.HWND]
+    user32.IsIconic.restype = wintypes.BOOL
     user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
     user32.GetAncestor.restype = wintypes.HWND
     user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
@@ -320,6 +325,100 @@ def is_maximized(hwnd: int) -> bool:
         return False
     _bind()
     return bool(ctypes.windll.user32.IsZoomed(wintypes.HWND(hwnd)))  # type: ignore[attr-defined]
+
+
+def is_minimized(hwnd: int) -> bool:
+    """Whether the window is minimized, according to the window.
+
+    Asked the same way and for the same reason as ``is_maximized``: pywebview's
+    own ``Window.state`` is the JavaScript state bridge and says nothing about
+    the window's presentation state, so a caller that needs to know whether the
+    window is down in the taskbar has to ask the window. A zero handle is not a
+    window and answers ``False``.
+    """
+    if sys.platform != "win32":
+        return False
+    _bind()
+    return bool(ctypes.windll.user32.IsIconic(wintypes.HWND(hwnd)))  # type: ignore[attr-defined]
+
+
+def foreground_window() -> int:
+    """Whatever owns the foreground right now, as a handle; 0 when nothing does.
+
+    Asked *before* a window is created, so the same value can be handed back to
+    ``give_foreground_back`` afterwards. See that function for why the card needs
+    this at all.
+    """
+    if sys.platform != "win32":
+        return 0
+    _bind()
+    return int(ctypes.windll.user32.GetForegroundWindow())  # type: ignore[attr-defined]
+
+
+def give_foreground_back(previous: int, mine: int) -> bool:
+    """Hand the foreground back to `previous` if `mine` took it. Returns whether.
+
+    **Measured, and the reason a card cannot be created politely.** Creating a
+    window takes the foreground once, and nothing available here prevents it:
+    ``focus=False`` sets ``WS_EX_NOACTIVATE`` (verified on the real window), which
+    stops *clicks* from activating it, and creating it hidden and revealing it
+    with ``SWP_NOACTIVATE`` still came back with
+    ``GetForegroundWindow() == the card``. pywebview's own hidden path shows the
+    form before hiding it, and that first show is an activation nothing on this
+    side can refuse.
+
+    So the foreground is simply taken back: the handle that owned it before the
+    card was made is restored, which is the difference between a pet that pulls
+    the keyboard out of whatever the user was typing in and one that never
+    touches it. Windows only allows this from the process that owns the current
+    foreground window -- which is why it works here and nowhere else, and why a
+    failure is reported rather than raised.
+    """
+    if sys.platform != "win32":
+        return False
+    if not previous or previous == mine:
+        return False
+    _bind()
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+    if int(user32.GetForegroundWindow()) != mine:
+        # Something else already has it, and pushing our own window back in front
+        # of *that* would be a worse intrusion than the one being undone.
+        return False
+    return bool(user32.SetForegroundWindow(wintypes.HWND(previous)))
+
+
+def raise_without_activating(hwnd: int) -> None:
+    """Put the window at the top of the z-order without giving it the foreground.
+
+    **Measured, and the reason this function exists.** pywebview's ``focus=False``
+    does set ``WS_EX_NOACTIVATE`` -- verified on the real window -- but that style
+    only stops *clicks* from activating it. The window is activated once, when it
+    is first created, and the style arrives too late to prevent it: a card created
+    with ``focus=False`` measured ``GetForegroundWindow() == its own handle``
+    immediately afterwards, which on a desktop pet means the keyboard is pulled
+    out of whatever the user was typing in at the moment the agent finished a
+    tool.
+
+    No ``SWP_SHOWWINDOW``: the window is already visible when this runs (creating
+    it hidden and showing it here was tried, and it cost the card both
+    ``WS_EX_TOPMOST`` and ``WS_EX_NOACTIVATE`` without stopping the activation).
+    ``SWP_NOACTIVATE`` plus the ``SWP_NOZORDER``-free topmost placement is what
+    keeps it above the other windows while leaving the foreground alone -- and
+    ``give_foreground_back`` is what undoes the activation creating it caused.
+    """
+    if sys.platform != "win32":
+        raise WindowsOnlyError("showing without activating is a Win32 window behaviour")
+    _bind()
+    ctypes.windll.user32.SetWindowPos(  # type: ignore[attr-defined]
+        wintypes.HWND(hwnd),
+        wintypes.HWND(HWND_TOPMOST),
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+    )
+
 
 def frameless_resizable_style(style: int) -> int:
     """The style word for a window that resizes and snaps but draws no frame.

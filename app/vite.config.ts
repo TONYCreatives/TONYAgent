@@ -36,5 +36,23 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     sourcemap: false,
+    rollupOptions: {
+      /*
+       * Two pages, one bundle.
+       *
+       * `pet.html` is the desktop pet's window. It is a second entry point rather
+       * than a second build so that the card and the app share the mark, the
+       * tokens and the host bridge -- two builds would be two copies of the same
+       * CSS waiting to drift -- and so that one `npm run build` produces
+       * everything the shell serves.
+       *
+       * Both keys are named explicitly: an entry list turns Vite's default
+       * `index.html` off, so leaving one out is a build with no app in it.
+       */
+      input: {
+        index: "index.html",
+        pet: "pet.html",
+      },
+    },
   },
 });
