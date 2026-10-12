@@ -112,6 +112,11 @@ class DeskPet:
         self._ready = False
         self._status: dict[str, Any] = dict(IDLE)
         self._lock = threading.Lock()
+        #: What had the foreground before the card was created, so it can be given
+        #: back once the card is up. See `_dress`.
+        self._previous = 0
+        #: Whether this window has been revealed and clipped yet. See `_dress`.
+        self._dressed = False
 
     # -- what the page asks ---------------------------------------------------
 
@@ -151,8 +156,11 @@ class DeskPet:
             # is ready does not fail, it deadlocks -- see `Bridge.ready` -- so the
             # first status waits for `mark_ready` rather than being sent here.
             self._ready = False
-            _reveal(window, before)
-            _clip(window)
+            # **Nothing that needs the window's handle happens here**, because
+            # there is no handle yet: see `_dress`.
+            self._previous = before
+            self._dressed = False
+            self._dress_when_up(window)
             window.events.closed += self._closed
             return True
 
@@ -173,9 +181,19 @@ class DeskPet:
         A push before this would deadlock, and a push after it has already been
         sent would be a window that renders empty until something happens. Both
         are avoided by keeping the last status rather than sending it hopefully.
+
+        Dressing happens here too, as a third chance: the page saying it is
+        listening is proof that the window is up, and it is the one signal the
+        *page* can give. See `_dress`.
         """
         with self._lock:
             self._ready = True
+        self._dress()
+        if not self._dressed and self._window is not None:
+            # The window exists and the page is talking to us, so a handle that
+            # still cannot be read is not a matter of timing any more -- and this
+            # is the warning that was missing when the card shipped as a rectangle.
+            logger.warning("The pet window could not be clipped to a circle.")
         self.push(self._status)
         return {"open": self._window is not None}
 
@@ -262,6 +280,44 @@ class DeskPet:
         """Remember which window is *the app*, so the pet can raise it."""
         self._app = window
 
+    def _dress_when_up(self, window: Any) -> None:
+        """Ask the window to say when it is really there, then dress it.
+
+        Two events because one is not enough to be sure: `shown` fires when the
+        form appears and `loaded` when the document is ready, and a backend that
+        fires neither still gets dressed by `mark_ready`, which is the page
+        telling us it is listening.
+        """
+        events = getattr(window, "events", None)
+        for name in ("shown", "loaded"):
+            event = getattr(events, name, None)
+            if event is not None:
+                event += self._dress
+
+    def _dress(self, *_args: Any) -> None:
+        """Put the card's shape on it, and give the foreground back.
+
+        **Both of these need the window's handle, and the handle does not exist
+        when the window is asked for.** Measured: `Window.native` is `None` when
+        `create_window` returns, stays `None` for about three quarters of a second,
+        and `shown` fires shortly after it appears. This used to run in `open()`,
+        so it ran with a null handle every single time and returned silently --
+        which is why the pet shipped as a rectangle with a circle drawn inside it,
+        *and* why the foreground the card steals on creation had never once been
+        given back: `_reveal` was called from the same place and did nothing.
+
+        Idempotent, and it refuses to mark itself done while there is no handle, so
+        the later event or the page's own `ready` gets another go.
+        """
+        window = self._window
+        if window is None or self._dressed:
+            return
+        if _handle(window) == 0:
+            return
+        self._dressed = True
+        _reveal(window, self._previous)
+        _clip(window)
+
     def _create_window(self, page: str, x: int, y: int) -> Any:
         return _create_window(page, x, y, self._api)
 
@@ -298,11 +354,13 @@ class DeskPet:
         """
         self._window = None
         self._ready = False
+        self._dressed = False
 
     def _forget(self) -> None:
         with self._lock:
             self._window = None
             self._ready = False
+            self._dressed = False
 
 
 def _bottom_right(area: Any, width: int, height: int) -> tuple[int, int]:
@@ -370,15 +428,24 @@ def _handle(window: Any) -> int:
 
 
 def _reveal(window: Any, previous: int = 0) -> None:
-    """Put a freshly created card on screen, and undo the activation it caused.
+    """Put a freshly created card in front without letting it keep the keyboard.
 
-    Two halves, and both are needed. The window is created hidden and revealed
-    with ``SWP_NOACTIVATE``, which is the polite version; and then the foreground
-    is *handed back* to whatever had it, because the polite version is not enough:
-    pywebview's hidden path shows the form before hiding it, and that first show
-    is an activation nothing on this side can refuse. Measured on the real
-    desktop, both before and after the hidden flag was added -- the card came back
-    as ``GetForegroundWindow()`` either way.
+    Two halves, and both are needed. The card is raised with ``SWP_NOACTIVATE``,
+    which is the polite version; and then the foreground is *handed back* to
+    whatever had it, because the polite version is not enough: pywebview's hidden
+    path shows the form before hiding it, and that first show is an activation
+    nothing on this side can refuse. Measured on the real desktop, both before and
+    after the hidden flag was added -- the card came back as
+    ``GetForegroundWindow()`` either way.
+
+    **Called from `_dress`, which is later than it looks.** The hand-back needs the
+    window's handle, and the handle does not exist until the GUI loop creates the
+    form -- about three quarters of a second after `create_window` returns. This
+    used to be called straight from `open()` with a null handle, so the hand-back
+    had never actually happened and the card did keep the keyboard. It is safe
+    later because `give_foreground_back` only gives it back if the card still has
+    it: by the time it runs, anything the user has clicked since is the answer
+    instead.
 
     Neither half is allowed to raise. The card is created *visible* -- creating it
     hidden and showing it here was measured costing it ``WS_EX_TOPMOST`` and
@@ -409,17 +476,21 @@ def _clip(window: Any) -> None:
     makes the shape real -- and it is also what makes the corners click-through,
     which is the difference between a round pet and a rectangle pretending.
 
-    Failure is logged and survived. A card that could not be clipped is a square
-    card, which is what the pet was until now; refusing to open one would be a
-    decoration failing at the thing it decorates.
+    The region is computed from the window's real box, not from `WIDTH`/`HEIGHT`;
+    see `win32.clip_to_circle`, where getting that wrong left a slab of window
+    beside the circle.
+
+    Failure is logged rather than raised. A card that could not be clipped is a
+    square card, which is what the pet was until now; refusing to open one would be
+    a decoration failing at the thing it decorates.
     """
     hwnd = _handle(window)
     if not hwnd:
         return
     try:
-        win32.clip_to_circle(hwnd, WIDTH, HEIGHT)
+        win32.clip_to_circle(hwnd)
     except Exception as exc:  # noqa: BLE001 - see the docstring
-        logger.debug(f"Could not clip the pet to a circle: {exc}")
+        logger.warning(f"The pet window could not be clipped to a circle: {exc}")
 
 
 def _foreground() -> int:
@@ -450,6 +521,14 @@ def _create_window(page: str, x: int, y: int, api: Any = None) -> Any:
         js_api=api,
         width=WIDTH,
         height=HEIGHT,
+        # **`min_size` is not optional here, and it is what made the card a
+        # rectangle.** pywebview's WinForms backend sets the form's
+        # ``MinimumSize`` from this argument, whose default is ``200x100`` -- so a
+        # card asked for at 180 came back **200x141**, and the circle cut inside it
+        # left a slab of window beside itself. Measured through ``GetWindowRect``
+        # on a real window, which is also how the region came to be computed from
+        # the window's own box rather than from these two numbers.
+        min_size=(WIDTH, HEIGHT),
         x=x,
         y=y,
         frameless=True,

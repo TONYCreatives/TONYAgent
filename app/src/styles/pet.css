@@ -54,8 +54,21 @@
    */
   --pet-origin: 50% 78%;
   position: relative;
-  width: 100vw;
-  height: 100vh;
+  /*
+   * **The biggest circle that fits the window, centred -- the same arithmetic the
+   * region does.** `win32.circle_box` cuts the ellipse out of the window's real box
+   * and this draws it, and the two have to agree: a card that drew a circle the
+   * window does not have would show the sliver of whichever is larger, and the
+   * region is the one that wins on screen.
+   *
+   * `min(100vw, 100vh)` rather than `100%` by `100%`: the window is square now (its
+   * `min_size` is passed to stop pywebview clamping it), but a square window is not
+   * something the stylesheet can assume, and a rectangle would make `border-radius:
+   * 50%` an ellipse rather than a circle.
+   */
+  width: min(100vw, 100vh);
+  height: min(100vw, 100vh);
+  margin: auto;
   box-sizing: border-box;
   display: grid;
   /*

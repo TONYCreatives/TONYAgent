@@ -313,6 +313,8 @@ def _bind() -> None:
     gdi32.DeleteObject.restype = wintypes.BOOL
     user32.SetWindowRgn.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.BOOL]
     user32.SetWindowRgn.restype = ctypes.c_int
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
 
     _bound = True
 
@@ -690,8 +692,8 @@ def on_window_thread(window: Any, work: Callable[[], None]) -> None:
     invoke(Action(work))
 
 
-def clip_to_circle(hwnd: int, width: int, height: int) -> None:
-    """Cut the window down to a circle. What is outside it is not there at all.
+def clip_to_circle(hwnd: int) -> None:
+    """Cut the window down to the biggest circle that fits it, centred.
 
     **A region and not transparency, and that is the only way this shell offers a
     round window.** `transparent=True` leaves the form opaque here -- measured: no
@@ -712,18 +714,26 @@ def clip_to_circle(hwnd: int, width: int, height: int) -> None:
       circle for one to be painted in. The card's `box-shadow` was removed rather
       than left in the stylesheet to be silently clipped.
 
-    Sized from the window's own numbers rather than from ``GetWindowRect``: the
-    window is frameless and not resizable, so its outer box is the box it was
-    created with, and asking the OS to confirm that is a call that can fail for no
-    benefit. ``CreateEllipticRgn``'s right and bottom are exclusive, so the
-    bounding box *is* the window and the region is not a pixel short of it.
+    **The window's own box is what is measured, not the size it was asked for**,
+    and that is a bug rather than a precaution. The first version cut a circle of
+    the *requested* size, and pywebview's WinForms backend sets
+    ``MinimumSize = min_size`` -- a default of ``200x100`` -- so a card asked for
+    at 180 came back **200x141** and the region left a slab of window beside the
+    circle. Asking Windows what the window is costs one call and cannot disagree
+    with it.
     """
     if sys.platform != "win32":
         raise WindowsOnlyError("a window region is Win32 behaviour")
     _bind()
     gdi32 = ctypes.windll.gdi32  # type: ignore[attr-defined]
     user32 = ctypes.windll.user32  # type: ignore[attr-defined]
-    region = gdi32.CreateEllipticRgn(0, 0, width, height)
+    box = RECT()
+    if not user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(box)):
+        raise OSError("GetWindowRect refused the window")
+    left, top, right, bottom = circle_box(
+        int(box.right - box.left), int(box.bottom - box.top)
+    )
+    region = gdi32.CreateEllipticRgn(left, top, right, bottom)
     if not region:
         raise OSError("CreateEllipticRgn returned no region")
     # `SetWindowRgn` *takes ownership* on success -- the system deletes the region,
@@ -732,6 +742,20 @@ def clip_to_circle(hwnd: int, width: int, height: int) -> None:
     if not user32.SetWindowRgn(wintypes.HWND(hwnd), region, True):
         gdi32.DeleteObject(region)
         raise OSError("SetWindowRgn refused the region")
+
+
+def circle_box(width: int, height: int) -> tuple[int, int, int, int]:
+    """The bounding box of the biggest centred circle inside a rectangle.
+
+    A pure function so it can be tested without a window, and the one place the
+    arithmetic lives: the stylesheet draws the same circle with
+    `min(100vw, 100vh)`, and the two have to agree or the rim shows a sliver of
+    whichever is larger.
+    """
+    side = min(int(width), int(height))
+    left = (int(width) - side) // 2
+    top = (int(height) - side) // 2
+    return left, top, left + side, top + side
 
 
 def show_system_menu(hwnd: int) -> None:

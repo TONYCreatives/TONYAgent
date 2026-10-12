@@ -45,10 +45,17 @@ class FakeEvent:
 
 
 class FakeEvents:
-    """pywebview's `EventContainer` for the one name the pet subscribes to."""
+    """pywebview's `EventContainer` for the names the pet subscribes to.
+
+    `shown` and `loaded` are not decoration: they are how the card finds out that
+    its window exists, which is what `_dress` waits for. A fake without them is a
+    pet that is never clipped -- which is exactly what shipped.
+    """
 
     def __init__(self) -> None:
         self.closed = FakeEvent()
+        self.shown = FakeEvent()
+        self.loaded = FakeEvent()
 
 
 class _Handle:
@@ -379,33 +386,218 @@ def test_the_window_is_cut_down_to_the_circle_it_draws(monkeypatch):
     """
     from tonyagent.window import pet as pet_module
 
-    clipped: list[tuple[int, int, int]] = []
+    clipped: list[int] = []
     monkeypatch.setattr(pet_module.win32, "root_window", lambda hwnd: hwnd)
+    monkeypatch.setattr(pet_module.win32, "clip_to_circle", clipped.append)
+
+    window = FakeWindow()
+    window.native = type("Native", (), {"Handle": _Handle})()
+    pet_module._clip(window)
+
+    assert clipped == [4242], clipped
+
+
+def test_the_region_is_cut_from_the_window_the_os_reports(monkeypatch):
+    """**Measured, not requested**, and the difference was the rectangle.
+
+    pywebview's WinForms backend sets the form's `MinimumSize` from `min_size`, and
+    its default of 200x100 overrode a card asked for at 180: the real window came
+    back 200x141 on this machine. A region built from the numbers we asked for left
+    a slab of window beside the circle -- which is what the user saw. So the cut is
+    computed from `GetWindowRect`.
+    """
+    from tonyagent.window import pet as pet_module
+
+    monkeypatch.setattr(pet_module.win32, "root_window", lambda hwnd: hwnd)
+    seen: list[int] = []
     monkeypatch.setattr(
-        pet_module.win32,
-        "clip_to_circle",
-        lambda hwnd, width, height: clipped.append((hwnd, width, height)),
+        pet_module.win32, "clip_to_circle", lambda hwnd: seen.append(hwnd)
     )
 
     window = FakeWindow()
     window.native = type("Native", (), {"Handle": _Handle})()
     pet_module._clip(window)
 
-    assert clipped == [(4242, pet_module.WIDTH, pet_module.HEIGHT)], clipped
-    assert pet_module.WIDTH == pet_module.HEIGHT, "an ellipse is not a circle"
+    assert seen == [4242], "the window's own box was not what got measured"
+
+
+def test_a_wide_window_is_cut_to_a_circle_centred_in_it():
+    """The arithmetic the stylesheet has to match, as a pure function.
+
+    A rectangle gets the *biggest circle that fits*, centred -- not an ellipse and
+    not a circle anchored in a corner. `pet.css` draws `min(100vw, 100vh)` with
+    `margin: auto`, so both halves of the shape are the same circle.
+    """
+    from tonyagent.window.win32 import circle_box
+
+    assert circle_box(180, 180) == (0, 0, 180, 180), "a square window's circle is the window"
+    # The 200x141 the card actually came back as, before `min_size` fixed it.
+    assert circle_box(200, 141) == (29, 0, 170, 141), "a wide window's circle is not centred"
+    left, top, right, bottom = circle_box(141, 200)
+    assert (left, top) == (0, 29) and right - left == bottom - top == 141
+
+
+def test_the_card_asks_for_a_window_it_can_actually_have():
+    """The `min_size` half of the same measurement.
+
+    pywebview clamps the form to `min_size`, whose default is 200x100 -- so the
+    card has to ask for a minimum equal to the size it wants, or it gets a window
+    of pywebview's choosing and the region has to be square inside it.
+    """
+    from tonyagent.window import pet as pet_module
+
+    captured: dict[str, Any] = {}
+
+    def fake_create_window(*args: Any, **kwargs: Any) -> None:
+        captured.update(kwargs)
+        return None
+
+    import webview
+
+    original = webview.create_window
+    try:
+        webview.create_window = fake_create_window  # type: ignore[assignment]
+        pet_module._create_window("/pet.html", 0, 0, api=None)
+    finally:
+        webview.create_window = original  # type: ignore[assignment]
+
+    assert captured["min_size"] == (pet_module.WIDTH, pet_module.HEIGHT)
+    assert captured["width"] == captured["min_size"][0]
+    assert captured["height"] == captured["min_size"][1]
+
+
+def _quiet_reveal(monkeypatch: Any) -> tuple[list[int], list[tuple[int, int]]]:
+    """Record what `_reveal` asks the OS for, without asking it.
+
+    `_dress` does the reveal and the clip together, so every test about one of them
+    has to account for the other.
+    """
+    from tonyagent.window import pet as pet_module
+
+    raised: list[int] = []
+    given_back: list[tuple[int, int]] = []
+    monkeypatch.setattr(pet_module.win32, "root_window", lambda hwnd: hwnd)
+    monkeypatch.setattr(pet_module.win32, "raise_without_activating", raised.append)
+    monkeypatch.setattr(
+        pet_module.win32,
+        "give_foreground_back",
+        lambda previous, mine: given_back.append((previous, mine)) or True,
+    )
+    return raised, given_back
+
+
+def _window_comes_up(p: Any) -> None:
+    """What the GUI loop does, about three quarters of a second after `open`.
+
+    Measured on the real shell: `Window.native` is `None` when `create_window`
+    returns, the form is created later, and `shown` fires just after that. Every
+    test about the card's shape or its foreground has to model it, because not
+    modelling it is the bug that shipped.
+    """
+    p._window.native = type("Native", (), {"Handle": _Handle})()
+    p._window.events.shown.fire()
 
 
 def test_opening_the_card_is_what_clips_it(monkeypatch):
-    """The wiring, so a card that opens is a card that was shaped."""
+    """The wiring: a card that opens is a card that ends up shaped.
+
+    **And this pins down the bug the card shipped with.** `Window.native` does not
+    exist when `create_window` returns -- measured: `None` for about three quarters
+    of a second, with `shown` firing just after the form appears -- so clipping from
+    `open()` ran with a null handle every time and returned silently. The pet was a
+    rectangle window with a circle drawn inside it. So: nothing is clipped while
+    there is no handle, and the moment the window says it is up, it is.
+    """
     from tonyagent.window import pet as pet_module
 
+    _quiet_reveal(monkeypatch)
     clipped: list[Any] = []
     monkeypatch.setattr(pet_module, "_clip", clipped.append)
 
     p, _created = pet()
     assert p.open() is True
+    assert clipped == [], "a window with no handle was clipped anyway"
 
-    assert len(clipped) == 1, "the window was created without being clipped"
+    _window_comes_up(p)
+    assert len(clipped) == 1, "the card came up and was never shaped"
+
+    clipped.clear()
+    p._window.events.loaded.fire()
+    p._window.events.shown.fire()
+    assert clipped == [], "the card was dressed again by a later event"
+
+
+def test_the_pages_ready_is_the_third_chance_to_get_shaped(monkeypatch):
+    """The one signal the *page* can give, and the last one to arrive.
+
+    A backend that fires neither window event still gets a circle, because the card
+    saying it is listening is proof the window is up -- and a window that never gets
+    shaped logs a warning rather than being silently rectangular, which is how the
+    first version went unnoticed.
+    """
+    from tonyagent.window import pet as pet_module
+
+    _quiet_reveal(monkeypatch)
+    clipped: list[Any] = []
+    monkeypatch.setattr(pet_module, "_clip", clipped.append)
+
+    p, _created = pet()
+    p.open()
+    p._window.native = type("Native", (), {"Handle": _Handle})()
+
+    p.mark_ready()
+
+    assert len(clipped) == 1, "the page said it was listening and nothing happened"
+
+
+def test_the_foreground_is_given_back_when_the_window_comes_up(monkeypatch):
+    """The other half of the same mistake, and it had never worked either.
+
+    `_reveal` was called from the same place as the clip, with the same null handle,
+    so the card has been keeping the keyboard it stole on creation for as long as it
+    has existed -- `give_foreground_back` matches on the handle it is given, and
+    zero matches nothing.
+    """
+    from tonyagent.window import pet as pet_module
+
+    raised, given_back = _quiet_reveal(monkeypatch)
+    monkeypatch.setattr(pet_module.win32, "clip_to_circle", lambda *args: None)
+    monkeypatch.setattr(pet_module, "_foreground", lambda: 777)
+
+    p, _created = pet()
+    assert p.open() is True
+    assert raised == [] and given_back == [], "a window with no handle was revealed anyway"
+
+    _window_comes_up(p)
+
+    assert raised == [4242], "the card was not raised when it came up"
+    assert given_back == [(777, 4242)], "the keyboard the card took was never handed back"
+
+
+def test_a_replaced_window_is_dressed_on_its_own_terms(monkeypatch):
+    """A second card is a second window, and the first one's dressing is not its.
+
+    Closing the pet and opening it again makes a new window; the flag that says
+    "already shaped" has to be about *this* window or the replacement is a
+    rectangle for the rest of its life.
+    """
+    from tonyagent.window import pet as pet_module
+
+    _quiet_reveal(monkeypatch)
+    clipped: list[Any] = []
+    monkeypatch.setattr(pet_module, "_clip", clipped.append)
+
+    p, _created = pet()
+    p.open()
+    _window_comes_up(p)
+    assert len(clipped) == 1
+
+    p.close()
+    assert p.open() is True
+    assert clipped and len(clipped) == 1, "the replacement was clipped before it had a window"
+
+    _window_comes_up(p)
+    assert len(clipped) == 2, "the replacement window was never shaped"
 
 
 def test_a_card_that_cannot_be_clipped_is_not_an_error(monkeypatch):
