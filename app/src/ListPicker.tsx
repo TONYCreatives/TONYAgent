@@ -43,6 +43,24 @@ interface Props {
   disabled: boolean;
   /** A suffix for one entry -- "(no key)" for a provider without one. */
   describe?: (value: string) => string;
+  /**
+   * What to *draw* for a value, when the value is not what a person calls it.
+   *
+   * A theme is `monokai` and is called "Monokai"; a model id is its own name
+   * and has no label. Given one, the list drops the vendor column and shows a
+   * single label per row: the column exists to separate an id's namespace from
+   * its name, and a label has no namespace to separate.
+   */
+  labelFor?: (value: string) => string;
+  /**
+   * What to draw on the *trigger*, when it has less room than the menu does.
+   *
+   * "Dark+ (default dark)" is the right label for a list of themes and 60px
+   * too wide for the chip that opens it; the short name is the same theme. Not
+   * a fallback for `labelFor` -- a control with no room for the long name is
+   * the only reason to pass it.
+   */
+  triggerLabelFor?: (value: string) => string;
   /** Whether a typed value that matches nothing may be chosen. */
   allowFreeText?: boolean;
   onChange: (value: string) => void;
@@ -55,6 +73,8 @@ export function ListPicker({
   placeholder,
   disabled,
   describe,
+  labelFor,
+  triggerLabelFor,
   allowFreeText = false,
   onChange,
 }: Props) {
@@ -105,7 +125,15 @@ export function ListPicker({
         aria-label={label}
         title={label}
       >
-        <span>{value || placeholder}</span>
+        <span>
+          {value
+            ? triggerLabelFor
+              ? triggerLabelFor(value)
+              : labelFor
+                ? labelFor(value)
+                : value
+            : placeholder}
+        </span>
         <span className="chip-caret">&#9662;</span>
       </button>
 
@@ -179,13 +207,19 @@ export function ListPicker({
                     aria-selected={option === value}
                     onClick={() => choose(option)}
                   >
-                    <span className="modelpicker-vendor">
-                      {option.includes("/") ? option.slice(0, option.indexOf("/")) : ""}
-                    </span>
-                    <span className="modelpicker-name">
-                      {option.includes("/") ? option.slice(option.indexOf("/") + 1) : option}
-                      {describe ? describe(option) : ""}
-                    </span>
+                    {labelFor ? (
+                      <span className="modelpicker-name">{labelFor(option)}</span>
+                    ) : (
+                      <>
+                        <span className="modelpicker-vendor">
+                          {option.includes("/") ? option.slice(0, option.indexOf("/")) : ""}
+                        </span>
+                        <span className="modelpicker-name">
+                          {option.includes("/") ? option.slice(option.indexOf("/") + 1) : option}
+                          {describe ? describe(option) : ""}
+                        </span>
+                      </>
+                    )}
                   </button>
                 </li>
               ))}

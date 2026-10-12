@@ -171,6 +171,25 @@ describe("the send button while the agent is working", () => {
     );
   });
 
+  test("the icon is a filled square, which is what says 'stop'", async () => {
+    // An arrow against a square is the whole distinction between the two
+    // states at a glance, and it is drawn rather than written -- so nothing in
+    // the accessibility tree carries it and no plain-text assertion can see
+    // it. A `<rect>` that is filled, and square, is the claim: the send arrow
+    // is a stroked path, so a regression to it here would be a control that
+    // looks like it sends while it interrupts.
+    const { container } = await composer({ busy: true });
+    const rect = one(stopButton(container)!, "rect");
+    assert.ok(rect, "the stop button has no square in it");
+    assert.equal(rect.getAttribute("width"), rect.getAttribute("height"));
+    assert.equal(
+      one(stopButton(container)!, "svg")!.getAttribute("fill"),
+      "currentColor",
+      "the square is an outline rather than a solid",
+    );
+    assert.equal(one(stopButton(container)!, "path"), null, "the send arrow came back");
+  });
+
   test("and it stops rather than sending", async () => {
     // The two buttons look alike on purpose -- same box, same fill -- so this is
     // the assertion that keeps "alike" from becoming "the same control".

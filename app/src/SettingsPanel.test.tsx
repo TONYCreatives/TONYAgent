@@ -40,6 +40,9 @@ interface Overrides {
   providers?: ProviderInfo[];
   keys?: KeyEntry[];
   baseUrl?: string;
+  connected?: boolean;
+  petOpen?: boolean;
+  onPet?: () => void;
   onRevealKey?: (provider: string, name: string) => Promise<string | null>;
   onDeleteKey?: (provider: string, name: string) => Promise<boolean>;
   onActivateKey?: (provider: string, name: string) => Promise<boolean>;
@@ -51,7 +54,7 @@ interface Overrides {
 function panel(overrides: Overrides = {}) {
   return (
     <SettingsPanel
-      connected
+      connected={overrides.connected ?? true}
       busy={false}
       providers={overrides.providers ?? PROVIDERS}
       provider="openrouter"
@@ -64,6 +67,8 @@ function panel(overrides: Overrides = {}) {
       reasoning={null}
       error={null}
       notice={null}
+      petOpen={overrides.petOpen ?? false}
+      onPet={overrides.onPet ?? noop}
       onClose={noop}
       onChooseFolder={noop}
       onStartSandbox={noop}
@@ -123,7 +128,9 @@ async function opened(overrides: Overrides = {}) {
 }
 
 describe("the settings tabs", () => {
-  test("it opens on Permission, which is what the panel led with", async () => {
+  test("it opens on the permission ladder, which is what the panel led with", async () => {
+    // The tab is labelled Behavior and the section inside it is Permission: the
+    // tab names the page, the heading names the control. See `SETTINGS_TABS`.
     const container = await render(panel());
 
     assert.deepEqual(headings(container), ["Permission"]);
@@ -146,6 +153,18 @@ describe("the settings tabs", () => {
     assert.equal(one(container, '[aria-label="Provider"]'), null, "the provider picker is still here");
   });
 
+  test("there are four, and the pill arithmetic is written for four", async () => {
+    // The count is the load-bearing part: the tab strip draws one sliding pill
+    // whose width and travel are an arithmetic division of the row. A fifth tab
+    // added to the list would put the pill under the wrong label while every test
+    // about which tab is *selected* went on passing.
+    const container = await render(panel());
+    const labels = all(container, ".settings-tab").map((b) =>
+      (b.textContent ?? "").trim(),
+    );
+    assert.deepEqual(labels, ["Behavior", "Project", "Keys", "Window"]);
+  });
+
   test("exactly one tab says it is the chosen one", async () => {
     const container = await render(panel());
     const selected = () =>
@@ -153,9 +172,89 @@ describe("the settings tabs", () => {
         .filter((b) => b.getAttribute("aria-selected") === "true")
         .map((b) => (b.textContent ?? "").trim());
 
-    assert.deepEqual(selected(), ["Permission"]);
+    assert.deepEqual(selected(), ["Behavior"]);
     await click(tab(container, "Keys"));
     assert.deepEqual(selected(), ["Keys"]);
+  });
+});
+
+/**
+ * The pane's shape, which is what the stylesheet's rules are actually about.
+ *
+ * These are not cosmetic assertions: each one is the markup half of a CSS rule
+ * that decides where the Close button ends up, and a stylesheet cannot pin a row
+ * that is nested inside the thing it is meant to sit below.
+ */
+describe("the pane's own shape", () => {
+  test("the foot is outside the scrolling body, so CSS can pin it to the floor", async () => {
+    // `.chatlist .settings-modal` makes the body the scroller and leaves the
+    // Close row after it in the column, which is what puts the exit on the
+    // sidebar's edge on every tab. That holds only while the row is a *sibling*
+    // of the body: nested inside it, it would scroll away with the content and
+    // the panel would be back to the mid-page Close this replaced.
+    const container = await render(panel());
+    const body = one(container, ".settings-body")!;
+    const actions = one(container, ".modal-actions")!;
+
+    assert.equal(body.contains(actions), false, "the Close row scrolls with the content");
+    assert.equal(one(container, ".modal")!.contains(body), true);
+  });
+
+  test("the tab bodies share one scroller rather than one each", async () => {
+    // A scroller per tab would take the scroll position of the last one with it,
+    // and would make the footer's height depend on whichever tab was open.
+    const container = await render(panel());
+    await click(tab(container, "Keys"));
+    assert.equal(all(container, ".settings-body").length, 1);
+    assert.ok(one(container, ".settings-body")!.textContent!.includes("Base URL"));
+  });
+});
+
+describe("the desktop pet, from the settings pane", () => {
+  const petBox = (container: HTMLElement) =>
+    one(section(container, "Desktop pet"), "input[type='checkbox']") as HTMLInputElement;
+
+  test("it has a tab of its own, away from the permissions", async () => {
+    // The pet changes nothing about the agent. Filing it under Permission would
+    // put a control on a page whose question it does not answer, and the panel
+    // reads as four clear pages only while that stays true.
+    const container = await render(panel());
+    assert.deepEqual(
+      headings(container),
+      ["Permission"],
+      "the panel stopped opening on the permissions",
+    );
+
+    await click(tab(container, "Window"));
+    assert.deepEqual(headings(container), ["Desktop pet"]);
+  });
+
+  test("it draws the card's real state, and a press asks for the other one", async () => {
+    const asked: number[] = [];
+    const container = await render(panel({ petOpen: true, onPet: () => asked.push(1) }));
+    await click(tab(container, "Window"));
+
+    assert.equal(petBox(container).checked, true, "the box does not show an open card");
+    await click(petBox(container));
+    assert.equal(asked.length, 1, "pressing it did nothing");
+    // **Still checked**, and that is the claim. The box is drawn from what the
+    // shell reports, never from the press: a checkbox that flipped itself would
+    // claim a card the webview may well have refused to make.
+    assert.equal(
+      petBox(container).checked,
+      true,
+      "the box believed the press rather than the shell",
+    );
+  });
+
+  test("it works with the core stopped, because the card is a window", async () => {
+    // Every other control on this panel is disabled without a core. This one is
+    // not: the shell can make a window whether or not anything is running, and a
+    // card that says "waiting" beside a stopped core is telling the truth.
+    const container = await render(panel({ connected: false }));
+    await click(tab(container, "Window"));
+
+    assert.equal(petBox(container).disabled, false, "a window control was refused without a core");
   });
 });
 

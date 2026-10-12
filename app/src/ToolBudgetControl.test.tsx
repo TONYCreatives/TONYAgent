@@ -139,6 +139,8 @@ const field = (container: HTMLElement) =>
 
 const problem = (container: HTMLElement) => one(container, ".budget-problem");
 
+const current = (container: HTMLElement) => one(container, ".budget-current");
+
 // --- the number ------------------------------------------------------------
 describe("the tool budget control's number", () => {
   test("it shows the budget the core is holding", async () => {
@@ -178,13 +180,15 @@ describe("the tool budget popover", () => {
 
   test("it states the unit, because a number without one is a riddle", async () => {
     // "Tool calls per turn", and the hint says a call is a call: a model
-    // asking for five tools in one message has spent five, not one.
+    // asking for five tools in one message has spent five, not one. Matched
+    // case-insensitively, because it is the two ideas that have to survive a
+    // rewording -- the count is per call, and a batch of five is five.
     const { container } = await control({ value: 10, open: true });
     assert.deepEqual(texts(container, ".budget-popover-title"), [
       "Tool calls per turn",
     ]);
     const hint = one(container, ".budget-popover-hint")!.textContent ?? "";
-    assert.match(hint, /one call at a time/);
+    assert.match(hint, /one call at a time/i);
     assert.match(hint, /five/);
   });
 
@@ -219,12 +223,37 @@ describe("the tool budget popover", () => {
     // showing a default before the core has answered.
     const { container } = await control({ value: 7, open: true });
     assert.equal(all(container, ".budget-preset.is-active").length, 0);
-    assert.match(one(container, ".budget-custom")!.textContent ?? "", /7 per turn/);
+    assert.equal(current(container)!.textContent, "7 per turn");
   });
 
-  test("a budget that is a preset says so with the preset, not a duplicate line", async () => {
+  test("the head names the budget in force, whatever the pills say", async () => {
+    // The one number a reader needs while a draft sits in the field below is
+    // the one the core is holding, and it cannot be read off the pills: a
+    // budget of 7 lights none of them, and zero is the sentinel rather than a
+    // count of none. Words, because the sentinel is not a number.
+    const preset = await control({ value: 10, open: true });
+    assert.equal(current(preset.container)!.textContent, "10 per turn");
+
+    const none = await control({ value: 0, open: true });
+    assert.equal(current(none.container)!.textContent, "no limit");
+
+    const unknown = await control({ value: null, open: true });
+    assert.match(
+      current(unknown.container)!.textContent ?? "",
+      /reading/i,
+      "the head invented a budget the core has not reported",
+    );
+  });
+
+  test("all six answers are one grid, so the sentinel is not drawn apart", async () => {
+    // "No limit" used to be a full-width button under the row of numbers,
+    // which made it read as a control that did something else rather than as
+    // the one answer here that is not a count. One grid, two rows.
     const { container } = await control({ value: 10, open: true });
-    assert.equal(one(container, ".budget-custom"), null);
+    const grid = one(container, ".budget-grid")!;
+    assert.equal(grid.querySelectorAll(".budget-preset").length, 5);
+    assert.equal(grid.querySelectorAll(".budget-preset-none").length, 1);
+    assert.equal(all(container, ".budget-preset-none").length, 1, "the sentinel escaped the grid");
   });
 
   test("the popover closes when the pointer goes down elsewhere", async () => {

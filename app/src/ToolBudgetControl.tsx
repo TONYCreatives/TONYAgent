@@ -74,6 +74,18 @@ export function parseBudget(text: string): { limit: number } | { reason: string 
   return { limit: value };
 }
 
+/**
+ * The budget in force, in words, for the heading row.
+ *
+ * Two values are not numbers and must not be drawn as one: zero is the sentinel
+ * for "no limit", and a null is the core not having answered yet. "0 per turn"
+ * would report the opposite of what the core is holding, and "null" would be a
+ * hole in the sentence.
+ */
+function budgetWords(value: number): string {
+  return value === 0 ? "no limit" : `${value} per turn`;
+}
+
 interface Props {
   /** The budget the core is holding, or null while it is being read. */
   value: number | null;
@@ -181,13 +193,34 @@ export function ToolBudgetControl({
           aria-label="Tool call budget"
           data-state={open ? "open" : "closed"}
         >
-          <p className="budget-popover-title">Tool calls per turn</p>
-          <p className="budget-popover-hint">
-            Counted one call at a time, so a model asking for five tools in one
-            message has spent five. Tools past the limit are refused and the
-            turn ends.
-          </p>
-          <div className="budget-presets" role="group" aria-label="Tool call budget">
+          {/*
+            The heading row: what this is, and what it is set to.
+
+            The value in force used to be a sentence of its own -- "Currently 7
+            per turn" -- that appeared only for a budget no preset covers, which
+            meant the one number a reader most needs (the one in force, while a
+            draft sits in the field below) was the one usually absent. It is a
+            word beside the title now, and it is always there: the head says
+            what the core is holding whether or not a pill is lit.
+          */}
+          <div className="budget-popover-head">
+            <p className="budget-popover-title">Tool calls per turn</p>
+            <span className="budget-current">
+              {value === null ? "reading…" : budgetWords(value)}
+            </span>
+          </div>
+
+          {/*
+            Every answer, one grid: the five counts and the sentinel.
+
+            "No limit" was a full-width button under the pills, which made it
+            read as a second control rather than as the sixth answer -- and at
+            six equal widths in this popover it would have been left 31px,
+            which the words do not fit in. Three columns of two gives it the
+            width it needs and the grid the row never had. Zero on the wire
+            means no limit; see `AgentSession.set_max_tool_calls`.
+          */}
+          <div className="budget-grid" role="group" aria-label="Tool call budget">
             {PRESETS.map((preset) => (
               <button
                 key={preset}
@@ -202,31 +235,16 @@ export function ToolBudgetControl({
                 {preset}
               </button>
             ))}
+            <button
+              type="button"
+              className={`budget-preset-none${value === 0 ? " is-active" : ""}`}
+              aria-pressed={value === 0}
+              disabled={disabled}
+              onClick={() => onChange(0)}
+            >
+              No limit
+            </button>
           </div>
-          {/*
-            The sentinel, on its own row rather than as a sixth pill above. The
-            row is a set of numbers and this is the one answer that is not a
-            count -- and six equal widths in a 232px popover would leave it 31px,
-            which "No limit" does not fit in. Zero on the wire means no limit;
-            see `AgentSession.set_max_tool_calls`.
-          */}
-          <button
-            type="button"
-            className={`budget-preset-none${value === 0 ? " is-active" : ""}`}
-            aria-pressed={value === 0}
-            disabled={disabled}
-            onClick={() => onChange(0)}
-          >
-            No limit
-          </button>
-          {value !== null && !PRESETS.includes(value) && (
-            // A value set from the environment, or a previous session. Shown
-            // rather than silently snapped to a preset, so the control never
-            // reports a budget the core is not holding.
-            <p className="budget-custom">
-              {value === 0 ? "Currently no limit" : `Currently ${value} per turn`}
-            </p>
-          )}
 
           <div className="budget-custom-row">
             <input
@@ -237,8 +255,8 @@ export function ToolBudgetControl({
               max={MAX_BUDGET}
               step={1}
               value={draft}
-              disabled={disabled}
               aria-label="Tool calls per turn"
+              disabled={disabled}
               // The value is not clamped on change. Typing "0" on the way to
               // "10" has to be able to pass through the field without the
               // field rewriting what was typed under the cursor.
@@ -270,6 +288,19 @@ export function ToolBudgetControl({
               {problem}
             </p>
           )}
+          {/*
+            The explanation is a footnote, not a preamble.
+
+            It was four lines of prose between the title and the choices, so
+            the thing a reader came for -- the number, and what it is set to --
+            was the second thing down and the paragraph was the first. Under
+            the controls it still answers "what does the limit do", which is a
+            question asked after the value is set rather than before.
+          */}
+          <p className="budget-popover-hint">
+            One call at a time: five tools in one message is five. Past that,
+            calls are refused and the turn ends.
+          </p>
           {/*
             A real button, not a link. It was `.linkish` -- the same treatment the
             status bar uses for "Logs" -- which in the footer of a popover read as

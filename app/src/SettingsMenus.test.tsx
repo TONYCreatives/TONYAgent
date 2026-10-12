@@ -7,13 +7,20 @@
  * that the one rung which acts without asking says so where it can be seen,
  * and that Thinking offers the provider's own efforts rather than a guess.
  *
- * **The two are tested through one file because they are one component.** They
- * share every part but the rows, so the tests that matter most -- that the
- * trigger names the value in force, that picking one asks the core, that
- * re-picking the current one does not, that Escape closes the menu without
- * closing the panel behind it -- are asserted once and would otherwise be
- * duplicated in a way that lets the two copies drift apart, which is exactly
- * what "one vocabulary" is supposed to prevent.
+ * **The two are tested through one file because they are one control.** They
+ * share every part but the framing -- Permission is four rows on screen and
+ * Thinking is a popover -- so the tests that matter most (that the control names
+ * the value in force, that picking one asks the core, that re-picking the
+ * current one does not, that Escape closes a popover without closing the panel
+ * behind it) are asserted once and would otherwise be duplicated in a way that
+ * lets the two copies drift apart, which is exactly what "one vocabulary" is
+ * supposed to prevent.
+ *
+ * **Where a test needs a press, it presses the control the user would.** The
+ * permission ladder has no trigger any more, so a test that clicks one is
+ * asserting a shape that was deliberately removed -- and `openMenu` below is
+ * named for the framing it opens rather than for the control, so a reader can
+ * see which of the two it is talking about.
  */
 
 import "./test-dom.js";
@@ -125,6 +132,10 @@ async function renderThinking(
 const steps = (c: HTMLElement) =>
   all(c, ".permchoice-step").map((e) => e.classList.contains("is-on"));
 
+/** The rungs, as they are: on screen, with nothing to open first. */
+const rungs = (c: HTMLElement) => all(c, ".permchoice-item");
+
+/** The popover's own: the thinking dial is the only control here that has one. */
 const openMenu = async (c: HTMLElement) => {
   await click(one(c, ".permchoice-trigger")!);
   return one(c, ".permchoice-menu");
@@ -173,64 +184,74 @@ describe("the permission menu draws the ladder the core sent", () => {
 
 // --- choosing a level ----------------------------------------------------
 describe("choosing a permission level", () => {
-  test("picking one reports it and closes the menu", async () => {
+  test("picking one reports it, with nothing to open and nothing to close", async () => {
+    // The absence is the claim as much as the press is: a press that then had to
+    // be dismissed would mean the ladder was still a menu.
     const { container, changed } = await renderPermission({ value: "medium" });
-    await click(one(container, ".permchoice-trigger")!);
-    assert.ok(one(container, ".permchoice-menu"), "the menu did not open");
+    assert.equal(one(container, ".permchoice-trigger"), null, "the ladder is behind a press");
+    assert.equal(one(container, ".permchoice-menu"), null, "the ladder is a popover");
 
-    await click(all(container, ".permchoice-item")[3]);
+    await click(rungs(container)[3]);
     assert.deepEqual(changed, ["full"]);
-    assert.equal(
-      one(container, ".permchoice-menu"),
-      null,
-      "the menu stayed open",
-    );
   });
 
   test("re-picking the level already in force does nothing", async () => {
     const { container, changed } = await renderPermission({ value: "medium" });
-    await click(one(container, ".permchoice-trigger")!);
-    await click(all(container, ".permchoice-item")[1]);
+    await click(rungs(container)[1]);
     assert.deepEqual(changed, [], "the core was asked to set what it already had");
   });
 
   test("it is refused while a turn is in flight", async () => {
     // Switching mid-turn would change the rules underneath a half-built answer,
     // and the reply is keyed to a model that was allowed something else.
+    //
+    // Asserted on every rung rather than on a trigger, because there is no
+    // trigger: without one the state is the rows' to carry, and a rung that
+    // forgot it would be the one control in the panel still live mid-turn.
     const { container } = await renderPermission({ busy: true });
-    const trigger = one(container, ".permchoice-trigger") as HTMLButtonElement;
-    assert.equal(trigger.disabled, true);
+    const buttons = rungs(container) as HTMLButtonElement[];
+    assert.equal(buttons.length, 4);
+    assert.ok(
+      buttons.every((rung) => rung.disabled),
+      "a permission level could be changed while a turn was running",
+    );
   });
 });
 
 // --- what a level actually permits ---------------------------------------
 describe("the menu says what a level actually permits", () => {
-  test("each rung states what the next one adds", async () => {
+  test("each rung states what stepping up to it adds", async () => {
     // The labels are names. The difference between Medium and High -- whether
     // the agent may execute code -- is the entire decision, and it has to be on
     // screen where the decision is made.
     //
-    // Read per item rather than across the menu, because Low and Full gain
-    // nothing from a neighbour and so render no line at all: the ends of the
-    // ladder have nothing above or below them to compare against.
-    //
-    // The High row names the host, not the allow-list. Only one gain is
-    // rendered per row, and going from High to Full the boundary that moves is
-    // the machine -- so that is the sentence the row carries.
+    // **On the higher row, not the lower one.** The sentence is written by
+    // `permissionGain(here, above)` -- what the step *up from here* buys -- and
+    // it used to be rendered under `here`, which is what a one-option-at-a-time
+    // menu allows. Read as a ladder it is a contradiction: measured on the real
+    // panel, Medium said "Edit files. Shell commands are refused." with "Can run
+    // shell commands" on the line directly beneath it. Moving the sentence to the
+    // row above makes it true of that row and turns the list into a scale -- each
+    // rung says what it adds over the one below, and the floor says nothing
+    // because there is nothing below it.
     const { container } = await renderPermission();
-    await click(one(container, ".permchoice-trigger")!);
-    const items = all(container, ".permchoice-item");
+    const items = rungs(container);
     const gainOf = (i: number) =>
       texts(items[i], ".permchoice-gain").join("") || null;
     assert.deepEqual(
       items.map((_, i) => gainOf(i)),
       [
         null,
+        null,
         "Can run shell commands",
         "Runs on this computer, outside the sandbox",
-        null,
       ],
     );
+
+    // And each one is a true statement about the rung it is written on: High
+    // runs commands, Medium does not.
+    assert.equal(items[2].getAttribute("aria-checked"), "false");
+    assert.match(texts(items[1], ".permchoice-desc").join(""), /refused/);
   });
 
   test("the rung below Full names the machine, not the allow-list", () => {
@@ -268,8 +289,7 @@ describe("the menu says what a level actually permits", () => {
     // host marker leads, because that is the one that is about the user's
     // files rather than the project's.
     const { container } = await renderPermission();
-    await click(one(container, ".permchoice-trigger")!);
-    const warned = all(container, ".permchoice-item").filter((item) =>
+    const warned = rungs(container).filter((item) =>
       item.querySelector(".permchoice-warn"),
     );
     assert.equal(warned.length, 1);
@@ -278,16 +298,32 @@ describe("the menu says what a level actually permits", () => {
     assert.deepEqual(marks, ["on this computer", "any command", "no prompts"]);
   });
 
-  test("the menu opens upward, out of the panel's bottom edge", async () => {
-    // These rows sit near the bottom of a modal, so a menu opening downward
-    // would render off the bottom of it.
-    const { container } = await renderPermission();
-    const menu = (await openMenu(container))!;
-    assert.match(getComputedStyle(menu).bottom || "", /px|auto/);
-    assert.equal(
-      getComputedStyle(menu).top,
-      "auto",
-      "the menu is anchored to the top",
+  test("the ladder is a radio group, so the current rung is announced as one", async () => {
+    // The framing that replaced the menu. A listbox says "pick one of four"; a
+    // ladder with one rung in force is one of four *chosen*, and only the second
+    // tells a screen reader which rung the agent is actually on.
+    const { container } = await renderPermission({ value: "medium" });
+    const group = one(container, ".permchoice-list")!;
+    assert.equal(group.getAttribute("role"), "radiogroup");
+    assert.equal(group.getAttribute("aria-label"), "Permission");
+
+    const buttons = rungs(container);
+    assert.deepEqual(
+      buttons.map((rung) => rung.getAttribute("role")),
+      ["radio", "radio", "radio", "radio"],
+    );
+    assert.deepEqual(
+      buttons.map((rung) => rung.getAttribute("aria-checked")),
+      ["false", "true", "false", "false"],
+      "the rung in force is not the one marked selected",
+    );
+    // And nothing is announced as a listbox, because it is not one: the option
+    // role belongs to the popover, and a `aria-selected` here would be an
+    // attribute a radio ignores.
+    assert.equal(one(container, "[role='listbox']"), null);
+    assert.deepEqual(
+      buttons.map((rung) => rung.getAttribute("aria-selected")),
+      [null, null, null, null],
     );
   });
 });
@@ -421,8 +457,8 @@ describe("the thinking menu", () => {
   });
 });
 
-// --- one component, two controls -----------------------------------------
-describe("both menus come from the same parts", () => {
+// --- one control, two framings -------------------------------------------
+describe("both controls come from the same parts", () => {
   test("neither is a native select, because a system dropdown does not match this window", async () => {
     // The Thinking control used to be a real `<select>`, which on Windows is a
     // light box with a system font and a system arrow on a black panel -- the
@@ -453,29 +489,38 @@ describe("both menus come from the same parts", () => {
     assert.deepEqual(texts(thinkingView.container, ".permchoice-value"), ["high"]);
   });
 
-  test("both announce themselves as menus", async () => {
-    for (const container of [
-      (await renderPermission()).container,
-      (await renderThinking()).container,
-    ]) {
-      const trigger = one(container, ".permchoice-trigger")!;
-      assert.equal(trigger.getAttribute("aria-haspopup"), "listbox");
-      assert.equal(trigger.getAttribute("aria-expanded"), "false");
-      await click(trigger);
-      assert.equal(trigger.getAttribute("aria-expanded"), "true");
-      assert.ok(
-        one(container, ".permchoice-menu[role='listbox']"),
-        "the list is not announced as a listbox",
-      );
-    }
+  test("only the popover announces itself as one", async () => {
+    // **The difference the split turns on.** A trigger that opens a list is a
+    // listbox, and a button that says `aria-haspopup` when nothing opens is a
+    // control lying about itself. So the thinking dial announces the list it
+    // has, and the ladder announces nothing -- it has no trigger at all.
+    const thinking = (await renderThinking()).container;
+    const trigger = one(thinking, ".permchoice-trigger")!;
+    assert.equal(trigger.getAttribute("aria-haspopup"), "listbox");
+    assert.equal(trigger.getAttribute("aria-expanded"), "false");
+    await click(trigger);
+    assert.equal(trigger.getAttribute("aria-expanded"), "true");
+    assert.ok(
+      one(thinking, ".permchoice-menu[role='listbox']"),
+      "the list is not announced as a listbox",
+    );
+
+    const ladder = (await renderPermission()).container;
+    assert.equal(one(ladder, ".permchoice-trigger"), null);
+    assert.equal(one(ladder, "[aria-haspopup]"), null, "something promises a popover");
+    assert.equal(one(ladder, "[role='listbox']"), null);
   });
 
-  test("escape closes the menu without reaching the panel behind it", async () => {
+  test("escape closes a popover without reaching the panel behind it", async () => {
     // The window treats Escape as "close whatever is open", and the settings
     // panel is open behind this menu. One Escape should close the menu; a user
     // who meant to leave the panel has to press it twice, which is the price of
     // not closing both at once.
-    const { container } = await renderPermission();
+    //
+    // The ladder has no such duty -- there is nothing open to close -- and the
+    // other half of that is in `App.test.tsx`: the one Escape there goes past
+    // the panel's contents and puts the sidebar away.
+    const { container } = await renderThinking();
     await click(one(container, ".permchoice-trigger")!);
     domWindow.document.dispatchEvent(
       new domWindow.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
@@ -530,7 +575,11 @@ describe("the menu opens toward the room it has", () => {
     // got a direction would render unpositioned rather than silently opening
     // the wrong way. jsdom reports every rectangle as zero, so this exercises
     // the degenerate branch -- and it still has to name a direction.
-    const { container } = await renderPermission();
+    //
+    // The thinking dial, because it is the only control here with a menu: the
+    // permission ladder has no direction to decide, which is the whole point of
+    // its being expanded.
+    const { container } = await renderThinking();
     const menu = await openMenu(container);
     assert.ok(menu, "the menu did not open");
     assert.ok(

@@ -40,20 +40,80 @@
 }
 
 /*
- * The sticky footer spans the pane, gutter included.
+ * The pane is a column: title and tabs at the top, options in the middle, Close
+ * on the floor.
  *
- * `scrollbar-gutter: stable` above takes the scrollbar's width out of the
- * panel's content box even when nothing overflows, and `.modal-actions` reaches
- * out by the panel's padding and no further -- so the Close row's rule stopped
- * 10px short of the right edge, on every tab, permanently. Measured before this
- * rule: the footer ran 0..277 against a panel of 0..287.
+ * **This replaces a sticky footer, and the sticky one was the bug.**
+ * `.modal-actions` is `position: sticky; bottom: -18px` so that it pins to the
+ * bottom of a *scrolling* panel -- which is right for a centred dialog and wrong
+ * for a pane, because a sticky element is pinned to its scroll container's
+ * content box: while the content is shorter than the pane there is nothing to
+ * scroll, so the bar simply sits after the content. Measured on a 700px pane:
+ * Close sat 181px above the foot on Permission, 34px above it on Project, and on
+ * the floor on Keys -- three different answers to "where is the exit", and none
+ * of them the sidebar's edge.
  *
- * Painting it under the scrollbar is harmless, and is why this is the right end
- * to fix: the track is transparent and the thumb is not, so when the scrollbar
- * is showing the rule runs behind it rather than stopping at it.
+ * So the pane stops scrolling and the body does it instead. `overflow: hidden`
+ * rather than `visible` because the body has to be the only thing that can move;
+ * a pane that could scroll as well would give two scrollbars and two scroll
+ * positions for one column of content.
  */
-.chatlist .modal .modal-actions {
-  margin-right: calc(-18px - var(--scrollbar));
+.chatlist .settings-modal {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* The scrollbar follows the scrolling to the body below, and the gutter goes
+     with it: reserving space on the pane as well would take 10px off this
+     column's width for a scrollbar that can no longer appear here. */
+  scrollbar-gutter: auto;
+}
+
+/*
+ * The one region that scrolls.
+ *
+ * `flex: 1` and not a height: the body takes whatever the title, the tabs and
+ * the footer leave, so the footer lands on the pane's floor whether the tab is
+ * one sentence or a page of keys. `min-height: 0` is what lets it shrink below
+ * its content in the first place -- without it a flex item refuses to be shorter
+ * than what is in it, the column overflows, and the footer is pushed off the
+ * bottom of the sidebar instead of being pinned to it.
+ */
+.chatlist .settings-modal .settings-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* Reserved on the scroller, which is where the tab-switching width change
+     used to happen: the Model tab is taller than this pane and Permission is
+     not, so moving between them shifted the content box by the width of a
+     scrollbar that came and went. `stable` keeps the box the same either way. */
+  scrollbar-gutter: stable;
+}
+
+/*
+ * Close, flush with the sidebar's floor.
+ *
+ * `position: static`, because being after the body in a column already puts it at
+ * the bottom -- and because sticky here is what put it in the middle of a short
+ * tab. The margins reach the pane's edges and cancel its bottom padding, so the
+ * hairline above the row spans the sidebar and the row's own floor is the
+ * sidebar's, rather than a padded box floating above it.
+ *
+ * `background: none`: the pane is already the frosted surface (see
+ * `.chatlist .modal`), so an opaque strip here would be a second surface inside
+ * the first. The centred dialog keeps its own, where there is a panel behind it
+ * for the strip to match.
+ *
+ * The old rule this replaces reached `-18px - var(--scrollbar)` to the right to
+ * paint under the pane's reserved gutter, which was a workaround for the footer
+ * being a sibling of the scrollbar. The footer no longer shares a scroll
+ * container with it, so the workaround is gone with the cause.
+ */
+.chatlist .settings-modal .modal-actions {
+  position: static;
+  flex: none;
+  margin: 12px -18px -18px;
+  padding: 12px 18px 18px;
+  background: none;
 }
 
 /*
@@ -79,11 +139,14 @@
  *
  * The same control the sidebar uses for Chats and Files -- one pill that slides,
  * because a fill swapping on whichever button is active is the one state change
- * in this window with no movement in it. Three tracks rather than two, so the
- * width is the same arithmetic thirded: the padding box, less the 2px at each
- * end and the two 2px gaps. The transform is one pill plus one gap per step,
- * which is why the three rules below carry `+2px` and `+4px` rather than a
- * measurement apiece.
+ * in this window with no movement in it. Four tracks, so the width is the same
+ * arithmetic quartered: the padding box, less the 2px at each end and the three
+ * 2px gaps. The transform is one pill plus one gap per step, which is why the
+ * rules below carry `+2px`, `+4px` and `+6px` rather than a measurement apiece.
+ *
+ * Four labels in a 252px row is 63px each, which is why the tab's own text is
+ * `--text-sm` and has no horizontal padding: "Permission" is the longest of the
+ * four by some way and it is the width the row was checked against.
  */
 .settings-tabs {
   position: relative;
@@ -102,7 +165,7 @@
   top: 2px;
   bottom: 2px;
   left: 2px;
-  width: calc((100% - 8px) / 3);
+  width: calc((100% - 10px) / 4);
   border-radius: var(--radius-pill);
   background: var(--chip);
   transition: transform var(--motion-base) var(--ease-out);
@@ -115,6 +178,10 @@
 
 .settings-tabs[data-tab="keys"]::before {
   transform: translateX(calc(200% + 4px));
+}
+
+.settings-tabs[data-tab="window"]::before {
+  transform: translateX(calc(300% + 6px));
 }
 
 /*
@@ -773,9 +840,20 @@
   transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
 }
 
-.permchoice-item:hover {
+/*
+ * `:not(:disabled)` because a row can now be disabled -- the expanded permission
+ * list has no trigger to carry that state, so each rung carries it. Without this
+ * a refused row still lit up under the cursor, which is the control promising a
+ * press it will then ignore.
+ */
+.permchoice-item:hover:not(:disabled) {
   background: var(--hover);
   color: var(--fg);
+}
+
+.permchoice-item:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .permchoice-item.is-active {
@@ -783,9 +861,22 @@
   color: var(--fg);
 }
 
+/*
+ * `flex-wrap: wrap` because a row can carry three markers, and "on this
+ * computer" is two words of uppercase type with letter-spacing on it. Measured
+ * in the sidebar, where a row is 231px wide: the Full row's third marker ran off
+ * the right edge and read `NO PROMPT`, which is a different and worse claim than
+ * "no prompts". Wrapped, the markers stack under the name instead.
+ *
+ * It was not visible while this list was a popover only, because the menu is
+ * 320px wide and nothing there ever wrapped. The expanded ladder is the same
+ * content in a narrower box, so the rule that never fired is the one that had to
+ * change.
+ */
 .permchoice-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 7px;
 }
 
@@ -845,4 +936,73 @@
 .permchoice-caret {
   color: var(--fg-mute);
   font-size: var(--text-2xs);
+}
+
+/* --- the permission ladder, expanded -------------------------------------- */
+
+/*
+ * The same control with nothing behind a press.
+ *
+ * One box rather than a field with a list under it: the summary is the header of
+ * the surface the options are on, so pressing a rung reads as choosing *inside*
+ * the control rather than as opening something else. `overflow: hidden` so the
+ * first and last rows are cut by the box's own radius instead of squaring off its
+ * corners.
+ */
+.permchoice-open {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--input);
+  overflow: hidden;
+}
+
+/*
+ * What is in force.
+ *
+ * The same three spans, in the same order, that the popover's trigger carries --
+ * so at rest, with nothing pressed, the two controls look like each other. What
+ * it does not have is a caret: there is nothing to disclose, and an arrow
+ * pointing at content that is already on screen is a promise the control does not
+ * keep. The hairline under it is what separates the report from the choice
+ * beneath, which is the one thing this row has to say clearly -- the summary
+ * names what the core confirmed, the rows are how a different one is picked.
+ */
+.permchoice-summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--fg-mute);
+  font-size: var(--text-sm);
+}
+
+.permchoice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+}
+
+/*
+ * A rung, as a radio.
+ *
+ * The selected one keeps the surface it had in the menu -- `.permchoice-item.
+ * is-active`, `--chip` on `--input` -- which is the same pairing `.settings-tabs`
+ * uses for its own pill, so "this is the chosen one" looks the same everywhere in
+ * this panel.
+ *
+ * A coloured left edge as well as the surface, because the surface alone is easy
+ * to lose while scrolling four rows of prose: the mark is what makes the ladder
+ * scannable rather than something you have to read to locate yourself in.
+ */
+.permchoice-list .permchoice-item {
+  border-left: 2px solid transparent;
+  border-radius: var(--radius-xs);
+}
+
+.permchoice-list .permchoice-item.is-active {
+  border-left-color: var(--accent);
 }

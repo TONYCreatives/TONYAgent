@@ -53,15 +53,32 @@ export interface KeyEntry {
 /**
  * The panel's sections, as tabs.
  *
- * Three, because there are three questions in here and they get asked at
- * different times: what may this window do, what is it working on, and what is
- * it talking to. The third tab is Keys rather than Model now that the model
- * pickers are gone -- the credential is the only thing left on it.
+ * Four, because there are four questions in here and they get asked at
+ * different times: how the agent is allowed to behave, what it is working on,
+ * what it is talking to, and what the window itself does. The third tab is Keys
+ * rather than Model now that the model pickers are gone -- the credential is the
+ * only thing left on it -- and Window is the desktop pet, which is the one
+ * setting here that changes nothing about the agent.
+ *
+ * **Window rather than a fourth row on one of the other tabs.** The pet is not a
+ * permission and not a property of the project, so filing it under either would
+ * put a control on a page whose question it does not answer -- which is how a
+ * panel that reads as four clear pages starts reading as one page with some
+ * things on it.
+ *
+ * **The first tab is Behavior and not Permission, and a measurement is why.**
+ * Four tracks in this sidebar are 60.3px each, and "Permission" measures 69px at
+ * `--text-sm` -- so it clipped, on every window size, which is the one thing a
+ * tab label may never do. The tab holds the permission ladder *and* the thinking
+ * dial, so the narrower word is also the more accurate one: it names the page
+ * rather than one control on it, and the section headings inside still say
+ * Permission and Thinking precisely.
  */
 const SETTINGS_TABS = [
-  { id: "permission", label: "Permission" },
+  { id: "permission", label: "Behavior" },
   { id: "project", label: "Project" },
   { id: "keys", label: "Keys" },
+  { id: "window", label: "Window" },
 ] as const;
 
 type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
@@ -95,6 +112,17 @@ interface Props {
   reasoning: ReasoningInfo | null;
   error: string | null;
   notice: string | null;
+  /** Whether the desktop pet's card is on screen right now. */
+  petOpen: boolean;
+  /**
+   * Show or hide the card.
+   *
+   * Deliberately not gated on `connected`. The pet is a *window* -- the shell can
+   * make one whether or not a core is running, and a card that says "waiting"
+   * beside a stopped core is telling the truth. The rail's entry is enabled for
+   * the same reason; this is the second way to reach it, not a different thing.
+   */
+  onPet: () => void;
   onClose: () => void;
   onChooseFolder: () => void;
   onStartSandbox: () => void;
@@ -209,6 +237,8 @@ export function SettingsPanel({
   reasoning,
   error,
   notice,
+  petOpen,
+  onPet,
   onClose,
   onChooseFolder,
   onStartSandbox,
@@ -385,8 +415,11 @@ export function SettingsPanel({
   const canStart = Boolean(project) && !running && !starting;
 
   return (
+    // `settings-modal` and not just `modal`: the pane's own rules -- the title
+    // and tabs fixed at the top, the body scrolling, Close on the floor -- are
+    // about *this* panel, and the search panel is a `.modal` in the same column.
     <div
-      className="modal"
+      className="modal settings-modal"
       role="dialog"
       aria-modal="true"
       aria-labelledby="settings-title"
@@ -417,306 +450,360 @@ export function SettingsPanel({
         ))}
       </div>
 
-      {tab === "permission" && (
-        <>
-          <section className="settings-group">
-            <h3>Permission</h3>
-            <p className="settings-note">
-              What the agent may do without asking. This is the ceiling the core
-              enforces on every tool call in this window, not a preference.
-            </p>
-            <PermissionMenu
-              list={permissionList}
-              value={permission}
-              busy={busy}
-              disabled={!connected}
-              onChange={onPermissionChange}
-            />
-          </section>
+      {/*
+        The only thing in the pane that moves.
 
-          {reasoning && reasoning.efforts.length > 0 && (
+        The title and the tabs stay at the top and the Close row stays on the
+        floor, so the body is the one scrolling region -- which is what makes the
+        exit reachable on every tab and at every window height. See
+        `.chatlist .settings-modal` in `settings.css`: this element is why the
+        panel's own `overflow` is off.
+
+        It is a wrapper rather than three siblings because a scroll container has
+        to be one node, and because the three tabs must *share* it: a scroller per
+        tab would take the scroll position of the last one with it when the tabs
+        changed, on top of putting the footer's height at the mercy of whichever
+        tab happened to be open.
+      */}
+      <div className="settings-body">
+        {tab === "permission" && (
+          <>
             <section className="settings-group">
-              <h3>Thinking</h3>
+              <h3>Permission</h3>
               <p className="settings-note">
-                How hard the model should think. Applies from the next message; a
-                turn already in flight keeps the effort it started with.
+                What the agent may do without asking. This is the ceiling the core
+                enforces on every tool call in this window, not a preference.
               </p>
-              <ThinkingMenu
-                info={reasoning}
+              <PermissionMenu
+                list={permissionList}
+                value={permission}
                 busy={busy}
                 disabled={!connected}
-                onChange={onReasoningChange}
+                onChange={onPermissionChange}
               />
             </section>
-          )}
-        </>
-      )}
 
-      {tab === "project" && (
-        <>
-          <section className="settings-group">
-            <h3>Project folder</h3>
-            <p className="settings-note">
-              The sandbox runs the agent against one directory. Tools are refused
-              outside it -- except at Full, which runs commands on this computer
-              instead of in here.
+            {reasoning && reasoning.efforts.length > 0 && (
+              <section className="settings-group">
+                <h3>Thinking</h3>
+                <p className="settings-note">
+                  How hard the model should think. Applies from the next message; a
+                  turn already in flight keeps the effort it started with.
+                </p>
+                <ThinkingMenu
+                  info={reasoning}
+                  busy={busy}
+                  disabled={!connected}
+                  onChange={onReasoningChange}
+                />
+              </section>
+            )}
+          </>
+        )}
+
+        {tab === "project" && (
+          <>
+            <section className="settings-group">
+              <h3>Project folder</h3>
+              <p className="settings-note">
+                The sandbox runs the agent against one directory. Tools are refused
+                outside it -- except at Full, which runs commands on this computer
+                instead of in here.
+              </p>
+              <div className="settings-row">
+                <span className="settings-value" title={project || undefined}>
+                  {project ? shortPath(project) : "none selected"}
+                </span>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={onChooseFolder}
+                  disabled={!connected || busy}
+                >
+                  {project ? "Change..." : "Choose folder..."}
+                </button>
+                {canStart && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={onStartSandbox}
+                    disabled={!connected || busy}
+                  >
+                    Start
+                  </button>
+                )}
+                {starting && (
+                  <button type="button" className="btn" disabled>
+                    Starting...
+                  </button>
+                )}
+                {running && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={onStopSandbox}
+                    disabled={!connected || busy}
+                  >
+                    Stop
+                  </button>
+                )}
+              </div>
+
+              {project && (
+                <label className="settings-check">
+                  <input
+                    type="checkbox"
+                    checked={trusted}
+                    onChange={(e) => onTrust(project, e.target.checked)}
+                    disabled={!connected}
+                  />
+                  <span>
+                    Trust this folder
+                    <em>
+                      Skips the per-command confirmation prompt for shell tools
+                      inside it.
+                    </em>
+                  </span>
+                </label>
+              )}
+            </section>
+          </>
+        )}
+
+        {tab === "keys" && (
+          <>
+            {providers.length === 0 && (
+              <p className="settings-hint">No providers are registered.</p>
+            )}
+
+            {providers.map((entry) => {
+              const rows = keys.filter((row) => row.provider === entry.name);
+              return (
+                <section className="settings-group" key={entry.name}>
+                  <h3>{entry.name}</h3>
+                  <p className="settings-note">
+                    Keys stored for this provider. The one marked Active is the key
+                    a turn spends; the others are kept but not used.
+                  </p>
+
+                  {rows.length === 0 ? (
+                    <p className="settings-hint">No keys stored for this provider yet.</p>
+                  ) : (
+                    <ul className="settings-keys">
+                      {rows.map((row) => {
+                        const open =
+                          openKey?.provider === entry.name && openKey.name === row.name
+                            ? openKey.value
+                            : null;
+                        return (
+                          <li key={row.name} className="settings-key-item">
+                            <div className="settings-key-line">
+                              <span className="settings-key-name" title={row.name}>
+                                {row.name}
+                              </span>
+                              {row.active ? (
+                                <span
+                                  className="settings-key-flag"
+                                  title={"Turns use this key"}
+                                >
+                                  Active
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="settings-key-use"
+                                  title={"Use " + row.name + " for " + entry.name}
+                                  aria-label={"Use the " + row.name + " key for " + entry.name}
+                                  disabled={!connected || keyBusy}
+                                  onClick={() => void activateRow(entry.name, row.name)}
+                                >
+                                  Use
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="settings-reveal"
+                                title={open ? "Hide this key" : "Show this key"}
+                                aria-label={
+                                  (open ? "Hide" : "Show") +
+                                  " the " +
+                                  row.name +
+                                  " key for " +
+                                  entry.name
+                                }
+                                aria-pressed={open !== null}
+                                disabled={!connected || keyBusy}
+                                onClick={() => void toggleRow(entry.name, row.name)}
+                              >
+                                <EyeIcon slashed={open !== null} />
+                              </button>
+                              <button
+                                type="button"
+                                className="settings-unkey"
+                                title={"Remove the " + row.name + " key for " + entry.name}
+                                aria-label={"Remove the " + row.name + " key for " + entry.name}
+                                disabled={!connected || keyBusy}
+                                onClick={() => void removeRow(entry.name, row.name)}
+                              >
+                                <TrashIcon />
+                              </button>
+                            </div>
+                            {open && (
+                              <code className="settings-key-value">{open}</code>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+
+                  {/*
+                    The add row. Name above key above button, because the sidebar
+                    gives this column 241px and two fields plus a button on one
+                    line is three controls fighting over it.
+                  */}
+                  <div className="settings-key settings-key-new">
+                    <div className="settings-row">
+                      <input
+                        className="settings-input"
+                        type="text"
+                        value={draftNames[entry.name] ?? ""}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setDraftNames((prev) => ({ ...prev, [entry.name]: value }));
+                          setKeyNotice(null);
+                        }}
+                        placeholder="Name (optional)"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        disabled={!connected || keyBusy}
+                        aria-label={"Name for a new " + entry.name + " key"}
+                      />
+                    </div>
+                    <div className="settings-row">
+                      <input
+                        className="settings-input"
+                        type="password"
+                        value={draftKeys[entry.name] ?? ""}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setDraftKeys((prev) => ({ ...prev, [entry.name]: value }));
+                          setKeyNotice(null);
+                        }}
+                        placeholder={"API key for " + entry.name}
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        disabled={!connected || keyBusy}
+                        aria-label={"New API key for " + entry.name}
+                      />
+                    </div>
+                    <div className="settings-row settings-key-actions">
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={
+                          !connected || keyBusy || !(draftKeys[entry.name] ?? "").trim()
+                        }
+                        onClick={() => void saveDraft(entry.name)}
+                      >
+                        {keyBusy ? "Saving..." : "Save key"}
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              );
+            })}
+
+            {keyNotice && <p className="settings-hint">{keyNotice}</p>}
+            <p className="settings-hint">
+              Stored by the OS credential manager, never in a config file. Nothing
+              here is shown until you ask for it.
             </p>
-            <div className="settings-row">
-              <span className="settings-value" title={project || undefined}>
-                {project ? shortPath(project) : "none selected"}
-              </span>
-              <button
-                type="button"
-                className="btn"
-                onClick={onChooseFolder}
-                disabled={!connected || busy}
-              >
-                {project ? "Change..." : "Choose folder..."}
-              </button>
-              {canStart && (
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={onStartSandbox}
-                  disabled={!connected || busy}
-                >
-                  Start
-                </button>
-              )}
-              {starting && (
-                <button type="button" className="btn" disabled>
-                  Starting...
-                </button>
-              )}
-              {running && (
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={onStopSandbox}
-                  disabled={!connected || busy}
-                >
-                  Stop
-                </button>
-              )}
-            </div>
 
-            {project && (
+            {/*
+              The endpoint, kept where it always was. It is not a model setting:
+              it is how a local Ollama or a proxy is reached, and no other surface
+              in this window can set it.
+            */}
+            <section className="settings-group">
+              <h3>Base URL</h3>
+              <p className="settings-note">
+                Only needed for a non-standard endpoint, such as a local
+                Ollama/LM Studio server or an OpenAI-compatible proxy. Applies to
+                the provider this window has bound.
+              </p>
+              <div className="settings-row">
+                <input
+                  className="settings-input"
+                  type="text"
+                  value={draftBaseUrl}
+                  onChange={(e) => setDraftBaseUrl(e.target.value)}
+                  disabled={!connected || busy || !provider}
+                  placeholder="https://... (optional)"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  aria-label="Base URL"
+                />
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => onApplyEndpoint(draftBaseUrl.trim())}
+                  disabled={!connected || busy || !provider}
+                >
+                  Set endpoint
+                </button>
+              </div>
+              <p className="settings-hint">
+                Include the scheme (https:// or http://), or leave it empty to use
+                the provider's own default.
+              </p>
+            </section>
+          </>
+        )}
+
+        {tab === "window" && (
+          <>
+            <section className="settings-group">
+              <h3>Desktop pet</h3>
+              <p className="settings-note">
+                A small card in the corner of the screen that says what the agent
+                is doing, and whether it needs you. It never takes the keyboard, so
+                a status update cannot pull your typing out of another window.
+              </p>
+              {/*
+                A checkbox rather than a switch, and it is the panel's only one
+                that is not a permission: it changes nothing about the agent.
+
+                Enabled while `connected` is false, unlike every control around
+                it. The card is a *window* -- the shell makes it without a core,
+                and one that says "waiting" beside a stopped core is telling the
+                truth. Disabling it would be refusing to do a job this window can
+                do.
+              */}
               <label className="settings-check">
                 <input
                   type="checkbox"
-                  checked={trusted}
-                  onChange={(e) => onTrust(project, e.target.checked)}
-                  disabled={!connected}
+                  checked={petOpen}
+                  onChange={onPet}
                 />
                 <span>
-                  Trust this folder
+                  Show the card
                   <em>
-                    Skips the per-command confirmation prompt for shell tools
-                    inside it.
+                    Drag it anywhere on the screen; press it to bring this window
+                    forward. The rail's pet button does the same thing.
                   </em>
                 </span>
               </label>
-            )}
-          </section>
-        </>
-      )}
-
-      {tab === "keys" && (
-        <>
-          {providers.length === 0 && (
-            <p className="settings-hint">No providers are registered.</p>
-          )}
-
-          {providers.map((entry) => {
-            const rows = keys.filter((row) => row.provider === entry.name);
-            return (
-              <section className="settings-group" key={entry.name}>
-                <h3>{entry.name}</h3>
-                <p className="settings-note">
-                  Keys stored for this provider. The one marked Active is the key
-                  a turn spends; the others are kept but not used.
-                </p>
-
-                {rows.length === 0 ? (
-                  <p className="settings-hint">No keys stored for this provider yet.</p>
-                ) : (
-                  <ul className="settings-keys">
-                    {rows.map((row) => {
-                      const open =
-                        openKey?.provider === entry.name && openKey.name === row.name
-                          ? openKey.value
-                          : null;
-                      return (
-                        <li key={row.name} className="settings-key-item">
-                          <div className="settings-key-line">
-                            <span className="settings-key-name" title={row.name}>
-                              {row.name}
-                            </span>
-                            {row.active ? (
-                              <span
-                                className="settings-key-flag"
-                                title={"Turns use this key"}
-                              >
-                                Active
-                              </span>
-                            ) : (
-                              <button
-                                type="button"
-                                className="settings-key-use"
-                                title={"Use " + row.name + " for " + entry.name}
-                                aria-label={"Use the " + row.name + " key for " + entry.name}
-                                disabled={!connected || keyBusy}
-                                onClick={() => void activateRow(entry.name, row.name)}
-                              >
-                                Use
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              className="settings-reveal"
-                              title={open ? "Hide this key" : "Show this key"}
-                              aria-label={
-                                (open ? "Hide" : "Show") +
-                                " the " +
-                                row.name +
-                                " key for " +
-                                entry.name
-                              }
-                              aria-pressed={open !== null}
-                              disabled={!connected || keyBusy}
-                              onClick={() => void toggleRow(entry.name, row.name)}
-                            >
-                              <EyeIcon slashed={open !== null} />
-                            </button>
-                            <button
-                              type="button"
-                              className="settings-unkey"
-                              title={"Remove the " + row.name + " key for " + entry.name}
-                              aria-label={"Remove the " + row.name + " key for " + entry.name}
-                              disabled={!connected || keyBusy}
-                              onClick={() => void removeRow(entry.name, row.name)}
-                            >
-                              <TrashIcon />
-                            </button>
-                          </div>
-                          {open && (
-                            <code className="settings-key-value">{open}</code>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-
-                {/*
-                  The add row. Name above key above button, because the sidebar
-                  gives this column 241px and two fields plus a button on one
-                  line is three controls fighting over it.
-                */}
-                <div className="settings-key settings-key-new">
-                  <div className="settings-row">
-                    <input
-                      className="settings-input"
-                      type="text"
-                      value={draftNames[entry.name] ?? ""}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setDraftNames((prev) => ({ ...prev, [entry.name]: value }));
-                        setKeyNotice(null);
-                      }}
-                      placeholder="Name (optional)"
-                      autoComplete="off"
-                      autoCorrect="off"
-                      autoCapitalize="off"
-                      spellCheck={false}
-                      disabled={!connected || keyBusy}
-                      aria-label={"Name for a new " + entry.name + " key"}
-                    />
-                  </div>
-                  <div className="settings-row">
-                    <input
-                      className="settings-input"
-                      type="password"
-                      value={draftKeys[entry.name] ?? ""}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setDraftKeys((prev) => ({ ...prev, [entry.name]: value }));
-                        setKeyNotice(null);
-                      }}
-                      placeholder={"API key for " + entry.name}
-                      autoComplete="off"
-                      autoCorrect="off"
-                      autoCapitalize="off"
-                      spellCheck={false}
-                      disabled={!connected || keyBusy}
-                      aria-label={"New API key for " + entry.name}
-                    />
-                  </div>
-                  <div className="settings-row settings-key-actions">
-                    <button
-                      type="button"
-                      className="btn"
-                      disabled={
-                        !connected || keyBusy || !(draftKeys[entry.name] ?? "").trim()
-                      }
-                      onClick={() => void saveDraft(entry.name)}
-                    >
-                      {keyBusy ? "Saving..." : "Save key"}
-                    </button>
-                  </div>
-                </div>
-              </section>
-            );
-          })}
-
-          {keyNotice && <p className="settings-hint">{keyNotice}</p>}
-          <p className="settings-hint">
-            Stored by the OS credential manager, never in a config file. Nothing
-            here is shown until you ask for it.
-          </p>
-
-          {/*
-            The endpoint, kept where it always was. It is not a model setting:
-            it is how a local Ollama or a proxy is reached, and no other surface
-            in this window can set it.
-          */}
-          <section className="settings-group">
-            <h3>Base URL</h3>
-            <p className="settings-note">
-              Only needed for a non-standard endpoint, such as a local
-              Ollama/LM Studio server or an OpenAI-compatible proxy. Applies to
-              the provider this window has bound.
-            </p>
-            <div className="settings-row">
-              <input
-                className="settings-input"
-                type="text"
-                value={draftBaseUrl}
-                onChange={(e) => setDraftBaseUrl(e.target.value)}
-                disabled={!connected || busy || !provider}
-                placeholder="https://... (optional)"
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                spellCheck={false}
-                aria-label="Base URL"
-              />
-              <button
-                type="button"
-                className="btn"
-                onClick={() => onApplyEndpoint(draftBaseUrl.trim())}
-                disabled={!connected || busy || !provider}
-              >
-                Set endpoint
-              </button>
-            </div>
-            <p className="settings-hint">
-              Include the scheme (https:// or http://), or leave it empty to use
-              the provider's own default.
-            </p>
-          </section>
-        </>
-      )}
+            </section>
+          </>
+        )}
+      </div>
 
       <div className="modal-actions">
         <button type="button" className="btn" onClick={onClose}>

@@ -1,7 +1,8 @@
 /**
  * The two controls that decide how the agent behaves: how much it may do, and
  * how hard the model may think. Both live in the settings panel, and both are
- * drawn by the one `<ChoiceMenu>` at the bottom of this file.
+ * drawn from the one set of parts at the bottom of this file -- the same
+ * summary line, the same option rows.
  *
  * **They share a vocabulary because they are one kind of decision.** A
  * permission level and a thinking effort are both "how much may this window do
@@ -10,7 +11,19 @@
  * `<select>`, which on Windows is a light box with a system font and a system
  * arrow on a black panel -- the one control in this window that visibly came
  * from somewhere else. So both are rendered from the same parts, which is why
- * there is one component here rather than two that happen to look alike.
+ * there is one set of rows here rather than two that happen to look alike.
+ *
+ * **One is a popover and one is a list, and the difference is how many options
+ * there are.** Permission is a ladder of four rungs, and the whole decision is
+ * *between* them: what High refuses and Full allows is the thing being chosen, so
+ * putting the four behind a press hides exactly the comparison the control exists
+ * to support. It is always open. Thinking is a dial whose steps belong to the
+ * model -- a provider may name five efforts or a dozen -- so it stays a popover,
+ * where the list costs nothing until it is wanted.
+ *
+ * The two are still one implementation: `ChoiceRow` is the row in both, so the
+ * names, the markers, the descriptions and the gain sentences cannot drift apart
+ * between the control you press and the control you read.
  *
  * **Neither of these is a display.** `permission.set` writes the level the
  * orchestrator enforces and `reasoning.set` writes the effort the session
@@ -190,12 +203,19 @@ interface PermissionProps {
 }
 
 /**
- * The four-rung ladder, as a menu.
+ * The four-rung ladder, expanded in place.
  *
  * Rendered nothing at all when the core has not answered. Unread, with nothing
  * to say what is in force, this would be four rows naming a choice nobody has
  * been told the terms of -- and the user cannot tell a real "Medium" from a
  * placeholder one. Absent is better than decorative.
+ *
+ * **All four rungs are on screen, which is the point of it not being a menu.**
+ * The choice here is comparative -- what does stepping up actually buy -- and
+ * four options behind a press makes the user hold three of them in their head to
+ * compare against the fourth. Expanded, the descriptions and the gain sentences
+ * sit one above the next and are read together, which is the only way the ladder
+ * is legible as a ladder.
  */
 export function PermissionMenu({
   list,
@@ -211,7 +231,7 @@ export function PermissionMenu({
   const index = levels.findIndex((level) => level.name === value);
 
   return (
-    <ChoiceMenu
+    <ChoiceList
       label="Permission"
       value={current?.label ?? ""}
       currentName={current?.name ?? ""}
@@ -240,7 +260,16 @@ export function PermissionMenu({
           ...(level.runs_any_command ? ["any command"] : []),
           ...(level.skips_confirmation ? ["no prompts"] : []),
         ],
-        gain: permissionGain(level, levels[i + 1]),
+        // **On the row it describes, which is the one above the step.**
+        // `permissionGain(here, above)` says what stepping up from `here` buys,
+        // and rendering that under `here` was legible while each option was
+        // alone in a menu and is a contradiction in a ladder: measured on the
+        // expanded list, the Medium row read "Edit files. Shell commands are
+        // refused." with "Can run shell commands" directly beneath it -- three
+        // lines that cannot all be true of one rung. On the higher row the same
+        // sentence is a true description of *that* rung, and the ladder reads
+        // top to bottom as what each step adds to the one below it.
+        gain: i > 0 ? permissionGain(levels[i - 1], level) : null,
       }))}
     />
   );
@@ -344,7 +373,15 @@ export interface ChoiceOption {
   gain: string | null;
 }
 
-interface ChoiceMenuProps {
+/**
+ * What both framings need to draw one control.
+ *
+ * The popover and the always-open list are given the same thing, and that is
+ * deliberate rather than convenient: every fact about the choice -- the names,
+ * which one is in force, the markers, the gain sentences -- is supplied here and
+ * neither framing is allowed to decide any of it.
+ */
+interface ChoiceProps {
   label: string;
   /** The current value, as a name to show. */
   value: string;
@@ -367,6 +404,35 @@ interface ChoiceMenuProps {
 }
 
 /**
+ * The line that says what is in force: the caption, the ladder, the answer.
+ *
+ * Shared so the two framings cannot disagree about it. In the popover it is
+ * inside the button that opens the list; in the expanded one it is a row of its
+ * own above the options, and it is still the only place the current value is
+ * written -- the list is where a *new* one is picked, not where the current one
+ * is reported. That split is the same one `value` and `currentName` make: what
+ * the core last confirmed, and what to compare a pick against.
+ */
+function ChoiceSummary({ label, value, steps }: Pick<ChoiceProps, "label" | "value" | "steps">) {
+  return (
+    <>
+      <span className="permchoice-label">{label}</span>
+      {steps && (
+        <span className="permchoice-steps" aria-hidden="true">
+          {steps.map((step) => (
+            <span
+              key={step.key}
+              className={`permchoice-step${step.on ? " is-on" : ""}`}
+            />
+          ))}
+        </span>
+      )}
+      <span className="permchoice-value">{value}</span>
+    </>
+  );
+}
+
+/**
  * One row that opens a list of choices, and the list itself.
  *
  * **It opens toward the room it has**, which is the one thing about its
@@ -380,7 +446,13 @@ interface ChoiceMenuProps {
  * **One node for the panel, one for the list, and the trigger is inside the
  * panel** -- so a press on the trigger is a press on the surface being used,
  * not a dismissal. That is the contract `useDismiss` is built around.
+ *
+ * Escape closes it without leaving the panel, and it is registered in the
+ * capture phase for that reason: the window treats Escape as "close whatever is
+ * open", and this menu is open inside the settings panel.
  */
+
+
 function ChoiceMenu({
   label,
   value,
@@ -391,7 +463,7 @@ function ChoiceMenu({
   disabled,
   options,
   onSelect,
-}: ChoiceMenuProps) {
+}: ChoiceProps) {
   const [open, setOpen] = useState(false);
   // Null until the menu first opens: there is nothing to place before there is
   // anything to place, and measuring on mount would read a layout the panel is
@@ -452,18 +524,7 @@ function ChoiceMenu({
         aria-expanded={open}
         title={valueTitle}
       >
-        <span className="permchoice-label">{label}</span>
-        {steps && (
-          <span className="permchoice-steps" aria-hidden="true">
-            {steps.map((step) => (
-              <span
-                key={step.key}
-                className={`permchoice-step${step.on ? " is-on" : ""}`}
-              />
-            ))}
-          </span>
-        )}
-        <span className="permchoice-value">{value}</span>
+        <ChoiceSummary label={label} value={value} steps={steps} />
         <span className="permchoice-caret" aria-hidden="true">
           ▾
         </span>
@@ -480,40 +541,147 @@ function ChoiceMenu({
           }
         >
           {options.map((option) => (
-            <button
+            <ChoiceRow
               key={option.name || "default"}
-              type="button"
+              option={option}
+              currentName={currentName}
               role="option"
-              aria-selected={option.selected}
-              className={`permchoice-item${
-                option.selected ? " is-active" : ""
-              }`}
-              onClick={() => {
-                setOpen(false);
-                // Re-picking what is already in force asks the core to set
-                // what it already has: a pointless round trip, and one that can
-                // be refused for reasons the user did not cause.
-                if (option.name !== currentName) onSelect(option.name);
-              }}
-            >
-              <span className="permchoice-head">
-                <span className="permchoice-name">{option.label}</span>
-                {option.markers.map((marker) => (
-                  <span key={marker} className="permchoice-warn">
-                    {marker}
-                  </span>
-                ))}
-              </span>
-              {option.description && (
-                <span className="permchoice-desc">{option.description}</span>
-              )}
-              {option.gain && (
-                <span className="permchoice-gain">{option.gain}</span>
-              )}
-            </button>
+              busy={busy}
+              disabled={disabled}
+              // The popover closes on any press, including on the row that is
+              // already in force: a menu left open under the cursor after a
+              // press that did nothing reads as a press that failed.
+              onPress={() => setOpen(false)}
+              onPick={onSelect}
+            />
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The same control, with every option on screen.
+ *
+ * No trigger, no `aria-haspopup`, no menu to dismiss -- there is nothing hidden,
+ * so there is nothing for Escape to close and nothing for `useDismiss` to watch.
+ * The rows are the control: a radio group, because that is what a ladder with one
+ * rung in force actually is, and because a screen reader then announces the
+ * choice as "one of four, this one selected" rather than as four buttons that
+ * happen to be near each other.
+ *
+ * The summary row above them is not decoration either. The radio group says which
+ * one is *picked*; this says which one the core *confirmed*, and the two are not
+ * always the same thing for the length of a round trip. Keeping the confirmed one
+ * on screen while the rows report a pending press is what stops the panel from
+ * claiming a level the orchestrator has not agreed to yet.
+ */
+function ChoiceList({
+  label,
+  value,
+  currentName,
+  valueTitle,
+  steps,
+  busy,
+  disabled,
+  options,
+  onSelect,
+}: ChoiceProps) {
+  return (
+    <div className="permchoice permchoice-open">
+      <div className="permchoice-summary" title={valueTitle}>
+        <ChoiceSummary label={label} value={value} steps={steps} />
+      </div>
+      <div className="permchoice-list" role="radiogroup" aria-label={label}>
+        {options.map((option) => (
+          <ChoiceRow
+            key={option.name || "default"}
+            option={option}
+            currentName={currentName}
+            role="radio"
+            busy={busy}
+            disabled={disabled}
+            onPick={onSelect}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One option, as a row.
+ *
+ * **The only place an option is drawn, in either framing.** That is the whole
+ * reason it is a component: the popover writes `role="option"` and the expanded
+ * list writes `role="radio"`, and if those two were separate markup trees then
+ * the marker order, the gain sentences and the disabled rule would be maintained
+ * twice -- and the second copy would be the one nobody looked at, because it is
+ * the one behind a press.
+ *
+ * Re-picking the row already in force does nothing, and that check lives here
+ * rather than in each caller: it is a fact about the row, not about the framing.
+ * Asking the core to set what it already has is a pointless round trip, and one
+ * it can refuse for reasons the user did not cause.
+ */
+interface ChoiceRowProps {
+  option: ChoiceOption;
+  currentName: string;
+  /** `option` inside the popover's listbox, `radio` in the expanded list. */
+  role: "option" | "radio";
+  busy: boolean;
+  disabled: boolean;
+  /** Ran on every press, before the pick is considered. The popover's dismiss. */
+  onPress?: () => void;
+  /** Ran only when the press is a change. */
+  onPick: (name: string) => void;
+}
+
+function ChoiceRow({
+  option,
+  currentName,
+  role,
+  busy,
+  disabled,
+  onPress,
+  onPick,
+}: ChoiceRowProps) {
+  return (
+    <button
+      type="button"
+      role={role}
+      // One or the other, never both, and written out rather than spread: a
+      // `role="radio"` with `aria-selected` is an attribute the user agent
+      // ignores, and an `aria-checked` on an option is one it does not expect.
+      aria-selected={role === "option" ? option.selected : undefined}
+      aria-checked={role === "radio" ? option.selected : undefined}
+      aria-disabled={busy || disabled ? true : undefined}
+      className={`permchoice-item${option.selected ? " is-active" : ""}`}
+      // Disabled while a turn is in flight or the core is unreachable, in the
+      // expanded list as well as the popover. In the popover the trigger carried
+      // this; here the rows are the control, so they carry it themselves -- and
+      // switching mid-turn would change the rules underneath a half-built
+      // answer, whose reply is keyed to the model that was allowed something
+      // else.
+      disabled={disabled || busy}
+      onClick={() => {
+        onPress?.();
+        if (option.name !== currentName) onPick(option.name);
+      }}
+    >
+      <span className="permchoice-head">
+        <span className="permchoice-name">{option.label}</span>
+        {option.markers.map((marker) => (
+          <span key={marker} className="permchoice-warn">
+            {marker}
+          </span>
+        ))}
+      </span>
+      {option.description && (
+        <span className="permchoice-desc">{option.description}</span>
+      )}
+      {option.gain && <span className="permchoice-gain">{option.gain}</span>}
+    </button>
   );
 }
