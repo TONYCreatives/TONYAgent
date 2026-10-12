@@ -281,6 +281,18 @@
    * place here where the text *is* the content.
    */
   --list-w: 288px;
+  /*
+   * The project explorer's width, in Code mode.
+   *
+   * Its own number rather than `--list-w`, because the two columns hold
+   * different things and are sized by different evidence: the conversation list
+   * is sized so a chat title does not truncate a character early, and this one
+   * so a *path* does not -- `src/tonyagent/tools/browser_tools.py` at 13px is
+   * the longest thing this project has to show, and the indentation guides eat
+   * an indent step each level. Narrower than the chat list on purpose: code
+   * needs the width more than a list of titles does.
+   */
+  --code-side-w: 268px;
   /* Sized to what it holds: one row of 13px text, the model chip and the
      caption buttons that fill it. Taller than the reference's 44 because the
      chip moved up here out of the composer and the bar now has to hold it. */

@@ -91,6 +91,29 @@ describe("what the viewer draws", () => {
     assert.deepEqual(texts(container, ".code-chip"), ["typescript", "🔒 read-only"]);
   });
 
+  test("the theme is chosen in the app's own menu, not the platform's", async () => {
+    // The `<select>` this replaces was the one control in the window the OS
+    // drew: its popup, its focus ring and its listbox colours are none of them
+    // stylable, so the viewer shipped a control that looked like a different
+    // application beside buttons that did not. What it has to be instead is the
+    // menu the composer's model chip already opens.
+    const container = await render(<CodeViewer {...props()} />);
+    assert.equal(one(container, ".code-theme select"), null, "a native select is back");
+
+    const trigger = one(container, ".code-theme .chip")!;
+    assert.equal(trigger.getAttribute("aria-haspopup"), "dialog");
+    // Short on the chip, full in the list -- the chip is 124px of a header that
+    // is holding a path, two chips and three buttons.
+    assert.match(trigger.textContent ?? "", /^Dark\+\s*▾?$/);
+
+    await click(trigger);
+    assert.deepEqual(texts(container, ".modelpicker-item"), [
+      "Dark+ (default dark)",
+      "Light+ (default light)",
+      "Monokai",
+    ]);
+  });
+
   test("the footer counts lines, size and language", async () => {
     const container = await render(<CodeViewer {...props()} />);
     const footer = one(container, ".code-footer")!.textContent ?? "";

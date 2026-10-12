@@ -35,6 +35,16 @@
    * wrong word, and nothing in a test can see it. So there is one number.
    */
   --code-gutter: 58px;
+  /*
+   * A query container, so the header can drop what it cannot afford.
+   *
+   * An `@media` rule cannot answer this question: the pane's width is the
+   * window's minus the explorer's, so at a 900px window this viewer is already
+   * narrower than the same window in Agent mode. `inline-size` containment is
+   * what makes the element measurable from inside itself, and it costs this
+   * flex column nothing -- its own width comes from the grid, not its children.
+   */
+  container-type: inline-size;
 }
 
 .code-header {
@@ -49,9 +59,15 @@
 }
 
 /* The path is chrome rather than code: this window spends `--mono` on code
-   alone, and a path is a label about a file, not the file. */
+   alone, and a path is a label about a file, not the file.
+
+   The floor is the point. Without it the path was the only child that could
+   give way -- everything else in this row is `flex: none` -- so a narrow pane
+   shrank the one thing the header exists for down to zero and drew a bar of
+   chips with no file in it. 64px is a few characters of a name and an
+   ellipsis, which is a header that still says which file you are looking at. */
 .code-path {
-  min-width: 0;
+  min-width: 64px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -126,8 +142,43 @@
   color: var(--danger-fg);
 }
 
+/*
+ * The header, in a pane too narrow to hold it.
+ *
+ * The language chip goes first, and it is the only thing that does: the path
+ * is what the bar is for, the read-only chip is why typing does nothing, and
+ * `Edit`/the theme/the close are controls. What is left fits at ~430px, which
+ * is the width below which the row was previously squeezing the path.
+ */
+@container (max-width: 440px) {
+  .code-chip-lang {
+    display: none;
+  }
+
+  .code-lock-word {
+    display: none;
+  }
+
+  /* The row's own breathing room, kept in step with the rule above: 2px a gap
+     is 12px of a bar that has none to spare. */
+  .code-header {
+    gap: 6px;
+  }
+}
+
 .code-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--fg-mute);
+}
+
+/* No wrapping, so the glyph and the word stay on one line inside the 16px
+   chip: the padlock is what is left when the word goes, and a chip whose two
+   children stacked would be two rows tall in a 38px bar. */
+.code-lock-icon,
+.code-lock-word {
+  white-space: nowrap;
 }
 
 /*
@@ -147,15 +198,37 @@
   flex: 1;
 }
 
-.code-theme select {
+/*
+ * The theme control, which is the app's own list menu.
+ *
+ * `.chip` is the composer's model chip -- the same control, so the same rules.
+ * Two things are the header's and not the chip's: it is one size down, because
+ * this bar holds a path, two chips and three buttons in the width a composer
+ * gives a chip alone; and its menu opens to the *right*-hand edge, because this
+ * chip sits at the window's edge and a 320px panel anchored to its left corner
+ * would hang off the screen.
+ */
+.code-theme {
+  flex: none;
+}
+
+.code-theme .chip {
   height: 24px;
-  padding: 0 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xs);
-  background: var(--input);
-  color: var(--fg-dim);
-  font: inherit;
+  padding: 0 9px;
+  /*
+   * A ceiling, because "Light+ (default light)" is 138px of a 352px bar at the
+   * narrow end -- and it is the *label* that gives way, not the control: the
+   * chip's own rule ellipsises its first span, so a tight header reads
+   * "Light+ (defau…" with the menu still naming the themes in full.
+   */
+  max-width: 124px;
   font-size: var(--text-xs);
+}
+
+.code-theme .modelpicker {
+  left: auto;
+  right: 0;
+  width: 232px;
 }
 
 .code-close {

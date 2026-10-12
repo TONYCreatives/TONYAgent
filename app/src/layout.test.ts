@@ -774,6 +774,48 @@ describe("the tab strip gives way instead of overflowing the window", () => {
   });
 });
 
+// --- Code mode's chrome ------------------------------------------------------
+describe("the file header gives way instead of dropping the file name", () => {
+  test("the path has a floor, because everything beside it is fixed", () => {
+    // Measured in the running window, not reasoned about: at a 620px window the
+    // code pane is 352px wide and this row overflowed by 55px. The path was the
+    // only child that could shrink -- every chip, button and the theme control
+    // is `flex: none` -- so it shrank to nothing, and the header drew
+    // `css`, `read-only`, Edit, theme and Close with no file named anywhere.
+    assert.match(body(".code-path"), /min-width:\s*64px/);
+    assert.match(body(".code-path"), /text-overflow:\s*ellipsis/);
+  });
+
+  test("what it gives up is dropped in a container query, not a media query", () => {
+    // A media query cannot answer this: the pane is the window minus the
+    // explorer, so the same window is a different pane width in each mode. The
+    // header has to be measured by the box it is drawn in.
+    assert.match(body(".code-viewer"), /container-type:\s*inline-size/);
+
+    const query = /@container \(max-width:\s*\d+px\)\s*\{([\s\S]*?)\n\}/.exec(SOURCE);
+    assert.ok(query, "nothing in the stylesheet responds to the pane's own width");
+    // The language first -- the extension already says it, and the footer
+    // repeats it -- then the lock's *word*. Never the padlock itself, which is
+    // what says the file is read-only when the word has gone.
+    assert.match(query[1], /\.code-chip-lang\s*\{\s*display:\s*none/);
+    assert.match(query[1], /\.code-lock-word\s*\{\s*display:\s*none/);
+    assert.doesNotMatch(
+      query[1],
+      /\.code-lock-icon\s*\{\s*display:\s*none/,
+      "the padlock is the half of that chip that has to survive",
+    );
+  });
+
+  test("the explorer's head is rows, not a baseline in a fixed band", () => {
+    // The complaint this answers: `align-items: baseline` inside a fixed 34px
+    // band positions a line by its baseline, so a line in a taller box sits
+    // high -- the section title and the path both drew against the band's top
+    // edge, and the header read as text that had slipped upward.
+    assert.match(body(".code-explorer-head"), /flex-direction:\s*column/);
+    assert.doesNotMatch(body(".code-explorer-head"), /align-items:\s*baseline/);
+  });
+});
+
 // --- the accent --------------------------------------------------------------
 describe("the accent is one flat blue, and it is the icon's", () => {
   test("there is no gradient left anywhere, because the icon is one colour", () => {
@@ -1523,23 +1565,53 @@ describe("permission and thinking read as one control in the settings panel", ()
     assert.match(pane, /max-width:\s*none/);
     assert.match(pane, /border-radius:\s*0/);
     assert.match(pane, /background:\s*none/);
+  });
+
+  test("and its Close button is on the sidebar's floor, on every tab", () => {
+    // **This used to be a sticky footer, and sticky was the bug.**
+    // `.modal-actions` is `position: sticky; bottom: -18px`, which pins a bar to
+    // the bottom of a *scrolling* panel -- right for a dialog whose content
+    // overflows, and wrong for a pane whose tab may be shorter than the pane:
+    // with nothing to scroll there is no scrollport to be pinned to, so the bar
+    // simply sat after the content. Measured on a 700px pane: Close was 181px
+    // above the foot on Permission, 34px above it on Project, and flush on Keys.
+    //
+    // So the pane is a column, the *body* scrolls, and the footer is the last row
+    // of that column -- which is the sidebar's edge whatever the tab holds.
+    const pane = body(".chatlist .settings-modal");
+    assert.match(pane, /display:\s*flex/);
+    assert.match(pane, /flex-direction:\s*column/);
+    // `hidden` and not `auto`: with two things that could scroll there would be
+    // two scroll positions for one column of content.
+    assert.match(pane, /overflow:\s*hidden/);
+
+    const middle = body(".chatlist .settings-modal .settings-body");
+    // `flex: 1` is what puts the footer on the floor rather than under the last
+    // row of a short tab, and `min-height: 0` is what lets the body be shorter
+    // than its content at all -- without it the column overflows and the footer
+    // is pushed off the bottom of the sidebar instead of pinned to it.
+    assert.match(middle, /flex:\s*1/);
+    assert.match(middle, /min-height:\s*0/);
+    assert.match(middle, /overflow-y:\s*auto/);
     /*
-     * And the scrollbar's gutter is reserved, because this is the pane whose
-     * height is chosen by which tab is showing. The Model tab overflows and
-     * Permission does not, so measured, the content box moved between **251px
-     * and 241px** on every switch -- while the tab pill was sliding, whose
-     * transform is a percentage of the track that had just moved underneath it.
-     * The transcript reserves its gutter for the same reason; `stable` alone,
-     * because nothing below this pane is centred against the full width.
+     * The gutter moves to the scroller with the scrolling. Still `stable`, and
+     * for the original reason: Permission is shorter than this pane and Keys is
+     * taller, so measured, the content box moved between **251px and 241px** on
+     * every switch -- while the tab pill was sliding, whose transform is a
+     * percentage of the track that had just moved underneath it.
      */
-    assert.match(pane, /scrollbar-gutter:\s*stable/);
-    // And the sticky footer reaches past that gutter, so the Close row's rule
-    // spans the panel instead of stopping at the scrollbar's edge. Measured
-    // before this rule: the footer ran 0..277 against a panel of 0..287.
-    assert.match(
-      body(".chatlist .modal .modal-actions"),
-      /margin-right:\s*calc\(-18px - var\(--scrollbar\)\)/,
-    );
+    assert.match(middle, /scrollbar-gutter:\s*stable/);
+
+    const foot = body(".chatlist .settings-modal .modal-actions");
+    assert.match(foot, /position:\s*static/);
+    // Spans the pane: `.modal`'s padding is 18px, so the margins reach past it
+    // on both sides and below, and the row's own floor is the sidebar's edge
+    // rather than a padded box floating above it.
+    assert.match(foot, /margin:\s*12px -18px -18px/);
+    // And it is not a second surface inside the first: `.chatlist .modal` is
+    // already the frosted pane, so an opaque strip here would read as a card in
+    // a card. The centred dialog keeps its own.
+    assert.match(foot, /background:\s*none/);
   });
 
   test("and its rows stack, because the sidebar is 288px wide", () => {

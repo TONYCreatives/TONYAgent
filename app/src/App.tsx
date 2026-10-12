@@ -18,10 +18,13 @@ import {
 import { pickFolder } from "./dialog.js";
 import { CodeViewer, type ViewerFile } from "./CodeViewer.js";
 import { diffLines, type LineRange } from "./diff.js";
+import { FilesPane } from "./FileSidebar.js";
 import { changesFrom, type CoreTreeEntry } from "./filetree.js";
 import { DEFAULT_PALETTE } from "./highlight.js";
 import { IconRail } from "./IconRail.js";
 import { Dashboard, type UsageSummary } from "./Dashboard.js";
+import { petDraw, petSet, petState } from "./pet.js";
+import { petStatus } from "./pet-status.js";
 import { MessageList } from "./MessageList.js";
 import {
   summaryLine,
@@ -90,6 +93,20 @@ const USAGE_TAB = "usage-tab";
  * keeps one job (which conversation), the switch keeps the other.
  */
 type MainMode = "agent" | "code";
+
+/**
+ * A folder path split into where it lives and what it is called.
+ *
+ * Both separators, because the core reports the platform's own: Windows paths
+ * arrive with backslashes and the walk in the sandbox answers with forward
+ * slashes, and an explorer that only split one of them would show the whole
+ * path in the name slot for half of its users. The cut is kept *in* the
+ * directory half so the two pieces put back together are the path again.
+ */
+function splitFolder(path: string): [string, string] {
+  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return cut === -1 ? ["", path] : [path.slice(0, cut + 1), path.slice(cut + 1)];
+}
 
 export function App({
   backend: injected,
@@ -796,6 +813,55 @@ export function App({
     treeFolderRef.current = project;
     void loadTree();
   }, [connected, project, state.busy, loadTree]);
+
+  /**
+   * The desktop pet's toggle, and whether the card is up.
+   *
+   * Two booleans, and they are not the same one. `wanted` is what the shell
+   * remembered from the last run; `petOpen` is whether a window exists now,
+   * which a webview can refuse. The button draws the second and the boot below
+   * acts on the first -- a toggle that drew the remembered value would claim a
+   * card that had never been created.
+   */
+  const [petOpen, setPetOpen] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    void petState().then(async (reply) => {
+      if (!live || !reply.wanted) return;
+      // Asked for last time, so it comes back. The reply to *this* is what the
+      // toggle shows: the shell only knows whether the window was made.
+      const now = await petSet(true);
+      if (live) setPetOpen(now.open);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  /**
+   * Tell the card what the agent is doing, when it changes.
+   *
+   * Keyed on the status rather than fired from the effect's dependencies: `state`
+   * changes on every streamed token, and a host round trip per token is a feature
+   * that costs more than the requests it is reporting on. A ref holds the last
+   * thing sent, so the pet hears about changes and nothing else.
+   */
+  const petSentRef = useRef("");
+  useEffect(() => {
+    const status = petStatus(state);
+    const key = `${status.mood}|${status.label}|${status.detail}`;
+    if (key === petSentRef.current) return;
+    petSentRef.current = key;
+    void petDraw(status);
+  }, [state]);
+
+  /** Show or hide the card, and believe the shell about the result. */
+  const togglePet = useCallback(async () => {
+    const next = !petOpen;
+    const reply = await petSet(next);
+    setPetOpen(reply.open);
+  }, [petOpen]);
 
   /**
    * The name of the open conversation, for the top bar.
@@ -1772,8 +1838,19 @@ export function App({
     });
   }, []);
 
+  /**
+   * Code mode is a different *window*, not a different pane.
+   *
+   * Agent mode is a conversation with a rail beside it; Code mode is a project
+   * with an explorer beside it. So this decides what the shell renders -- the
+   * rail, the conversation overlay and the chat tab strip are all absent from
+   * it -- and the grid it lays out is `--code-side-w` of explorer plus the
+   * editor. See `.app[data-mode="code"]`.
+   */
+  const codeMode = mainMode === "code";
+
   return (
-    <div className="app">
+    <div className="app" data-mode={mainMode}>
       {/*
         The title bar spans the window, not the transcript column.
 
@@ -1788,16 +1865,16 @@ export function App({
       */}
       <TopBar
         busy={state.busy}
-        tabs={tabStrip}
-        active={usageTab === "active" ? USAGE_TAB : conversation}
+        // The strip is the conversation's, and Code mode has no conversation in
+        // front. The bar keeps the mark, the drag region, the switch and the
+        // caption -- which is what "the whole screen changes" means at the top
+        // edge of the window as well as the middle.
+        tabs={codeMode ? [] : tabStrip}
+        active={codeMode ? "" : usageTab === "active" ? USAGE_TAB : conversation}
         mode={mainMode}
         canCode={project !== ""}
         onModeChange={(next) => {
           setMainMode(next);
-          // The code half is the file tree and the viewer together, so arriving
-          // there brings the tree forward: a viewer with no way to choose a file
-          // is a pane the user has to open the sidebar for themselves.
-          if (next === "code" && project !== "") setSidebarPane("files");
         }}
         onSelect={(id) => {
           if (id === USAGE_TAB) {
@@ -1819,53 +1896,65 @@ export function App({
           }
           void closeTab(id);
         }}
-        onNewTab={() => void startNewChat()}
+        // The "+" is part of the strip, so it goes with the strip. It used to
+        // stay, and Code mode drew a lone "+" beside the app's mark with
+        // nothing to be a "+" *of* -- a button that starts a chat in a window
+        // whose whole point is that it is not showing chats. Starting one is a
+        // click on Agent away, which is the same door the tabs use.
+        onNewTab={codeMode ? undefined : () => void startNewChat()}
         onRename={(id, title) => void renameConversation(id, title)}
         controls={windowControls}
         // Built here and placed by the bar, so `TopBar` stays presentational
-        // and knows nothing about models -- see its `modelSelector` prop.
+        // and knows nothing about models -- see its `modelSelector` prop. The
+        // picker is the *conversation's* setting, so it goes with the tab strip.
         modelSelector={
-          <ModelPicker
-            model={model}
-            busy={state.busy}
-            disabled={!connected}
-            list={modelList}
-            error={modelListError}
-            onOpen={() => {}}
-            onClose={() => {}}
-            onChange={(next) => void changeModel(next)}
-            onLoad={() => void loadModelList()}
-          />
+          codeMode ? undefined : (
+            <ModelPicker
+              model={model}
+              busy={state.busy}
+              disabled={!connected}
+              list={modelList}
+              error={modelListError}
+              onOpen={() => {}}
+              onClose={() => {}}
+              onChange={(next) => void changeModel(next)}
+              onLoad={() => void loadModelList()}
+            />
+          )
         }
       />
 
       {/*
-        The rail, alone in the shell's first column.
+        Agent mode's left edge: the rail, and the conversation panel it opens.
 
-        It used to wrap the rail and the conversation list together as one
-        sidebar column, which meant the column changed width when the panel
-        opened and the transcript re-laid-out to make room. The list is an
-        overlay now (see `.chatlist`), so the rail is the whole of column 1 and
-        its width never changes -- which is also what lets the panel animate,
-        since nothing underneath it moves.
+        Neither is rendered in Code mode. The rail is a column of chat actions
+        and the panel is a list of conversations: beside a file tree they are a
+        second sidebar, and floating over an editor they are a panel with
+        nothing to say. Code mode replaces this whole column with the explorer
+        below -- which is the difference between "a pane changed" and "the
+        window changed".
       */}
-      <IconRail
-        connected={connected}
-        busy={state.busy}
-        messageCount={state.messages.length}
-        expanded={railExpanded}
-        onToggle={() => setRailExpanded((open) => !open)}
-        onCancel={cancel}
-        dashboardOpen={usageTab === "active"}
-        onDashboard={() =>
-          setUsageTab((open) => (open === "active" ? "open" : "active"))
-        }
-        onSettings={() => {
-          setSettingsError(null);
-          openSidebarPane("settings");
-        }}
-        onSearch={() => openSidebarPane("search")}
-      />
+      {!codeMode && (
+        <IconRail
+          connected={connected}
+          busy={state.busy}
+          messageCount={state.messages.length}
+          expanded={railExpanded}
+          onToggle={() => setRailExpanded((open) => !open)}
+          onCancel={cancel}
+          dashboardOpen={usageTab === "active"}
+          onDashboard={() =>
+            setUsageTab((open) => (open === "active" ? "open" : "active"))
+          }
+          petOpen={petOpen}
+          onPet={() => void togglePet()}
+          onSettings={() => {
+            setSettingsError(null);
+            openSidebarPane("settings");
+          }}
+          onSearch={() => openSidebarPane("search")}
+        />
+      )}
 
       {/*
         The conversation panel, floating over the transcript beside the rail.
@@ -1876,7 +1965,7 @@ export function App({
         what tells the two apart, and the closed state is inert -- see
         `.chatlist[data-state="closed"]`.
       */}
-      {conversationsMounted && (
+      {!codeMode && conversationsMounted && (
         <ConversationList
           open={railExpanded}
           conversations={conversations}
@@ -1923,6 +2012,11 @@ export function App({
               reasoning={reasoning}
               error={settingsError}
               notice={settingsNotice}
+              // The same state and the same handler the rail's pet button is
+              // given. Two ways to reach one action, and neither is allowed its
+              // own idea of whether the card is up -- see `togglePet`.
+              petOpen={petOpen}
+              onPet={() => void togglePet()}
               // "Close" means back to the conversations now. The panel is a pane
               // of the sidebar rather than a dialog over the window, so there is
               // nothing to close -- there is somewhere to go back to.
@@ -1959,8 +2053,100 @@ export function App({
         />
       )}
 
+      {/*
+        Code mode's left column: the current project, as a tree.
+
+        The same `FilesPane` the sidebar shows, in a column of its own rather
+        than in an overlay -- which is the whole difference the mode makes. It
+        is fed by the same tree state, so the two places a file can be opened
+        from cannot disagree about what the project contains.
+      */}
+      {codeMode && (
+        <aside className="code-explorer" aria-label="Project files">
+          {/*
+            Two rows, and each one is a row.
+
+            It was one: the section title and the path side by side on a shared
+            baseline inside a fixed 34px band, which drew both of them against
+            the band's *top* edge -- `align-items: baseline` positions a line by
+            its baseline, and a baseline-anchored line in a taller box sits
+            high. So the header read as text that had slipped upward, with the
+            path crammed against the title.
+
+            VSCode's explorer answers the same two questions in the same two
+            rows: what is this list (a section title), and which folder is it
+            (the folder row, with the name carrying the emphasis). Splitting
+            them also gives the path the whole width to be long in.
+          */}
+          <div className="code-explorer-head">
+            <span className="code-explorer-title">Explorer</span>
+            {project === "" ? (
+              <span className="code-explorer-project code-explorer-none">
+                no folder
+              </span>
+            ) : (
+              <span className="code-explorer-project" title={project}>
+                <svg
+                  className="code-explorer-folder"
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                </svg>
+                {/*
+                  The path is one run of text, in one child, for two reasons.
+
+                  It has to be: the two spans put back together *are* the path
+                  `title` promises -- the test reads this element's text as the
+                  folder it names -- so there is no whitespace between them
+                  (JSX drops whitespace containing a newline, which is what
+                  makes that true rather than accidental).
+
+                  And it is one element so the row's `gap` does not fall
+                  between the directory and the name: `C:/work/ tonyagent` is
+                  not a path anybody has. The gap belongs between the folder
+                  glyph and the path, which is where it is now.
+                */}
+                <span className="code-explorer-path">
+                  <span className="code-explorer-dir">{splitFolder(project)[0]}</span>
+                  <span className="code-explorer-name">{splitFolder(project)[1]}</span>
+                </span>
+              </span>
+            )}
+          </div>
+          <FilesPane
+            entries={treeEntries}
+            changes={fileChanges}
+            filter={fileFilter}
+            onFilterChange={setFileFilter}
+            onChooseFolder={() => void chooseFolder()}
+            onOpenFile={(path) => void openFile(path)}
+            truncated={treeTruncated}
+            loading={treeLoading}
+            hasProject={project !== ""}
+          />
+        </aside>
+      )}
+
       <div className="main">
         {/*
+          Three faces of one column, in precedence order: the file the user
+          opened, then the usage dashboard, then the conversation.
+
+          Which mode the *window* is in decides the first -- `codeMode`, not
+          `mode`, and the distinction is the whole bug this replaces: `mode` is
+          the **core's** agent mode (`build`, `plan`, `mission`, `skills`), a
+          different question with its own picker, and no core mode is called
+          `code`. Gating the viewer on it meant the pane could never render: the
+          file was read, the state was set, and the frame went on drawing the
+          conversation, so a click in the tree looked like it did nothing.
+
           The Usage tab replaces the transcript and the composer together.
 
           The composer goes with the transcript because a text field under a
@@ -1969,13 +2155,13 @@ export function App({
           which is what selecting another tab does everywhere else in this
           window -- see `openConversation`, `createConversation` and `TopBar`.
         */}
-        {mode === "code" ? (
+        {codeMode ? (
           /*
             The code half: the viewer, and nothing else. The composer goes with
             the transcript for the same reason the dashboard takes it -- a text
             field under a file would offer a message for a conversation that is
-            not on screen -- and the tree is the sidebar's Files pane, which the
-            mode switch brings forward.
+            not on screen -- and the tree is the explorer column beside this
+            pane, the same `FilesPane` the sidebar shows.
 
             With no file open this is a signpost rather than a blank pane: the
             project is there, the tree is one click away, and an empty surface
@@ -1986,15 +2172,17 @@ export function App({
               <p>
                 {project === ""
                   ? "Choose a project folder to browse its files."
-                  : "Pick a file in the sidebar to read it here."}
+                  : "Pick a file from the explorer to read it here."}
               </p>
-              {project === "" ? (
+              {/*
+                No "open the tree" button any more: the tree *is* the column
+                beside this pane, so a button that revealed it would be a
+                control for something already on screen. What is left is the
+                one thing the mode cannot do on its own -- choose a folder.
+              */}
+              {project === "" && (
                 <button type="button" className="btn" onClick={() => void chooseFolder()}>
                   Choose folder...
-                </button>
-              ) : (
-                <button type="button" className="btn" onClick={() => setSidebarPane("files")}>
-                  Open the file tree
                 </button>
               )}
             </div>

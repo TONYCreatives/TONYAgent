@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Code mode preview</title>
+  </head>
+  <body>
+    <!--
+      A design-review page, not part of the app: `index.html` is the only entry
+      Vite builds, and this exists so the Agent/Code switch can be looked at as
+      pixels. What it shows is the real `App` with the real stylesheets; the
+      only thing it fakes is the core, because a page open in a browser has no
+      window host to talk to. Run `npm run dev` in `app/` and open
+      `/code-preview.html`.
+    -->
+    <!--
+      `root`, not a page-specific id: `tokens.css` sizes `html, body, #root` to
+      100% height, and a page that skipped that rule would draw the window at
+      its content height with a strip of background beneath it -- which reads as
+      a layout bug in the app rather than in the preview.
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/code-preview.tsx"></script>
+  </body>
+</html>

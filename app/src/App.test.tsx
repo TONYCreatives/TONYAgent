@@ -22,7 +22,7 @@
 
 import "./test-dom.js";
 import assert from "node:assert/strict";
-import { describe, test } from "node:test";
+import { afterEach, describe, test } from "node:test";
 import { act } from "react";
 
 import { App } from "./App.js";
@@ -826,11 +826,16 @@ describe("the permission menu reflects the core", () => {
     // Escape has one thing to put away and one place to go: the sidebar closes
     // and returns to the chats pane on the way out.
     //
-    // The press also has to be *claimed* by a menu first: the permission ladder
-    // is a menu inside this pane, it answers Escape itself, and if the sidebar
-    // answered it too then closing a menu would take the whole sidebar down
-    // behind it. `useDismiss` claims the key in the capture phase, which is what
-    // makes that order possible.
+    // And a menu inside this pane still claims Escape first: the thinking dial is
+    // a popover, it answers the key itself, and if the sidebar answered it too
+    // then closing a menu would take the whole sidebar down behind it.
+    // `useDismiss` claims it in the capture phase, which is what makes that
+    // order possible -- see `SettingsMenus.test.tsx` for the other half.
+    //
+    // The permission ladder no longer needs that protection, and its absence is
+    // the other half of this test: it is four rows on screen, with nothing to
+    // dismiss, so there is no menu here for Escape to reach first even when the
+    // ladder is showing.
     const { container } = await mount();
     await openSettings(container);
     assert.ok(one(container, ".modal"), "the settings pane did not open");
@@ -888,7 +893,11 @@ describe("the permission menu reflects the core", () => {
     });
 
     await openSettings(container);
-    await click(one(container, ".permchoice-trigger")!);
+    assert.equal(
+      one(container, ".permchoice-trigger"),
+      null,
+      "the ladder is behind a press again",
+    );
     await click(all(container, ".permchoice-item")[3]);
     await wait(80);
 
@@ -907,14 +916,13 @@ describe("the permission menu reflects the core", () => {
     });
 
     await openSettings(container);
-    await click(one(container, ".permchoice-trigger")!);
     await click(all(container, ".permchoice-item")[3]);
     await wait(80);
 
     assert.deepEqual(
       texts(container, ".permchoice-value"),
       ["Low"],
-      "the menu kept showing a level the core had resolved away",
+      "the ladder kept showing a level the core had resolved away",
     );
     assert.deepEqual(steps(container), [true, false, false, false]);
   });
@@ -929,17 +937,20 @@ describe("the permission menu reflects the core", () => {
     // be asserting on the fake's shape.
     const { container, transport } = await mount();
     await openSettings(container);
-    const trigger = one(container, ".permchoice-trigger") as HTMLButtonElement;
-    assert.equal(trigger.disabled, false, "the menu starts enabled");
+    // Every rung, because there is no trigger to carry the state: without one,
+    // the rows are the control and a rung left enabled is a rung that can be
+    // pressed mid-turn.
+    const rungs = () => all(container, ".permchoice-item") as HTMLButtonElement[];
+    assert.equal(rungs().length, 4, "the ladder did not render");
+    assert.ok(rungs().every((rung) => !rung.disabled), "the ladder starts refused");
 
     await push(() => {
       transport.emit(pushed("turn.started", { model: "m" }, "t9"));
     });
     await wait(60);
 
-    assert.equal(
-      (one(container, ".permchoice-trigger") as HTMLButtonElement).disabled,
-      true,
+    assert.ok(
+      rungs().every((rung) => rung.disabled),
       "the permission could be changed while a turn was running",
     );
   });
@@ -1301,6 +1312,378 @@ describe("the keys pane over the real protocol", () => {
     const sent = transport.sent.find((r) => r.method === "key.activate");
     assert.ok(sent, "Use never reached the core");
     assert.deepEqual(sent?.params, { provider: "openrouter", name: "work" });
+  });
+});
+
+
+// --- Code mode: a different window, not a different pane ---------------------
+describe("Code mode takes over the window", () => {
+  const FOLDER = "D:/work/api";
+  const TREE = {
+    entries: [
+      { path: "src", kind: "dir" },
+      { path: "src/app.ts", kind: "file" },
+      { path: "README.md", kind: "file" },
+    ],
+    truncated: false,
+  };
+  const SOURCE = {
+    kind: "text",
+    path: "src/app.ts",
+    content: "const a = 1;\n",
+    total_lines: 2,
+    language: "typescript",
+    size: 13,
+  };
+
+  // A chat is open, because the point of the first test is that the things
+  // Agent mode has -- the rail, the composer, the tab strip -- *stop being
+  // there* in Code mode. With no conversation at all the strip is empty in both
+  // modes, so the assertion would pass for a window that never had a tab and
+  // prove nothing about the switch.
+  const OPEN = "open-chat";
+
+  const mountCode = () =>
+    mount({
+      state: { ...BOOT.state, project: FOLDER, conversation: OPEN },
+      "conversations.list": {
+        conversations: [
+          conversation({ id: OPEN, title: "Alpha work", project: FOLDER }),
+        ],
+      },
+      "files.tree": TREE,
+      "files.read": SOURCE,
+    });
+
+  const modeButton = (c: HTMLElement, label: string) =>
+    all(c, ".topbar-mode").find((b) => b.textContent === label)!;
+
+  const rowNamed = (c: HTMLElement, name: string) =>
+    all(c, ".tree-row").find((row) => one(row, ".tree-name")?.textContent === name)!;
+
+  test("entering it replaces the chat window with the project", async () => {
+    // What "mode" means here, and the reason it is not a pane swap: the rail,
+    // the tab strip and the composer all belong to the conversation, and a
+    // conversation is not part of an editor. Each one is asserted *absent*
+    // rather than merely unused, because leaving them mounted is the cheap
+    // way to get this wrong and it looks almost right.
+    const { container } = await mountCode();
+
+    // Agent mode first, so the assertions below are about a change that
+    // happened rather than about a window that never had these things.
+    assert.ok(one(container, ".rail"), "no rail in agent mode");
+    assert.ok(one(container, ".composer-inner textarea"), "no composer in agent mode");
+    assert.ok(all(container, ".tab-title").length > 0, "no chat tabs in agent mode");
+    assert.ok(one(container, ".tab-new"), "the strip has no new-chat button in agent mode");
+
+    await click(modeButton(container, "Code"));
+    await wait(40);
+
+    assert.equal(container.querySelector(".app")!.getAttribute("data-mode"), "code");
+    assert.equal(one(container, ".rail"), null, "the chat rail is still on screen");
+    assert.equal(one(container, ".composer-inner"), null, "the composer has no chat to write to");
+    assert.equal(all(container, ".tab-title").length, 0, "the chat tabs are still there");
+    // The "+" belongs to the strip, and a strip that is gone leaves a lone "+"
+    // beside the app's mark with nothing to be a "+" of.
+    assert.equal(one(container, ".tab-new"), null, "a new-chat button in an editor");
+    assert.ok(one(container, ".code-explorer"), "no project explorer");
+    assert.ok(one(container, ".main"), "the editor column is missing");
+  });
+
+  test("the explorer lists the current project", async () => {
+    const { container } = await mountCode();
+    await click(modeButton(container, "Code"));
+    await wait(40);
+
+    assert.deepEqual(texts(container, ".code-explorer .tree-name"), [
+      "README.md",
+      "src",
+      "app.ts",
+    ]);
+    assert.equal(
+      one(container, ".code-explorer-project")!.textContent,
+      FOLDER,
+      "the explorer must say which project it is showing",
+    );
+  });
+
+  test("a file opens beside the tree, which stays put", async () => {
+    const { container } = await mountCode();
+    await click(modeButton(container, "Code"));
+    await wait(40);
+
+    await click(rowNamed(container, "app.ts"));
+    for (let i = 0; i < 50 && !one(container, ".code-viewer"); i++) await wait(20);
+
+    assert.ok(one(container, ".code-viewer"), "the file did not open");
+    assert.ok(one(container, ".code-explorer"), "opening a file must not replace the explorer");
+    assert.match(one(container, ".code-body")!.textContent ?? "", /const a = 1;/);
+  });
+
+  test("going back brings the conversation, the rail and the tabs", async () => {
+    const { container } = await mountCode();
+    await click(modeButton(container, "Code"));
+    await wait(40);
+
+    await click(modeButton(container, "Agent"));
+    await wait(40);
+
+    assert.equal(container.querySelector(".app")!.getAttribute("data-mode"), "agent");
+    assert.ok(one(container, ".rail"), "the rail did not come back");
+    assert.ok(one(container, ".composer-inner textarea"), "the composer did not come back");
+    assert.equal(one(container, ".code-explorer"), null, "the explorer outlived the mode");
+  });
+
+  test("with no folder open there is no code half to enter", async () => {
+    // The switch is on the bar in both modes, so the disabled state is what
+    // says why nothing happens -- and its tooltip is the only explanation.
+    const { container } = await mount();
+    const code = modeButton(container, "Code");
+
+    assert.equal((code as HTMLButtonElement).disabled, true);
+    assert.match(code.getAttribute("title") ?? "", /project folder/i);
+  });
+});
+
+
+// --- the pet, from the app's side of the wire --------------------------------
+
+/**
+ * A host that records what the app said to the card, and nothing else.
+ *
+ * **This is the one link in the pet's chain nothing else covers.** The card's
+ * drawing is `petcard.test.tsx`, the words are `pet-status.test.ts`, and the
+ * window is `tests/unit/test_pet.py` -- all three verified on their own. What was
+ * not is the wiring between them: `App` reading the reducer and pushing a status
+ * is a call into another process, and this feature has already failed once in
+ * exactly the way that reading cannot catch -- an effect that pushed nothing
+ * because the bridge was not there yet, which looks identical to an effect that
+ * was never written.
+ *
+ * `window.pywebview.api` is the whole surface the window can reach, so recording
+ * `pet` here records precisely what the host would have been told.
+ *
+ * **What it records is not only this window, so nothing below asserts a total.**
+ * Every other test in this file mounts a window with no host at all, and each of
+ * those leaves a `whenHostReady` timer running -- it is what lets a `vite dev`
+ * page conclude there is no host -- which settles three seconds later against
+ * whatever host is installed *then*, which is one of the ones below. Measured:
+ * the same four tests report `['state', 'status']` alone and
+ * `['state', 'status', 'state', 'status']` in a whole-file run. The calls are
+ * harmless (an unmounted page asking a read-only question), but a count of them
+ * is not a fact about this window, so the assertions are about what was said and
+ * about the difference across an action.
+ */
+let pet: { action: string; payload?: Record<string, unknown> }[] = [];
+
+function insideHost(card: { open: boolean; wanted: boolean }): void {
+  pet = [];
+  // The card's state, and it *changes*: `show` and `hide` are the two actions
+  // that move it, exactly as `Bridge.pet` moves it. A fake that answered the same
+  // shape for every action could not tell a press that worked from one that did
+  // nothing, which is the whole of what the test below is asking.
+  let open = card.open;
+  let wanted = card.wanted;
+  (window as unknown as Record<string, unknown>).pywebview = {
+    api: {
+      pet: (action: string, payload?: Record<string, unknown>) => {
+        pet.push({ action, payload });
+        if (action === "show") {
+          open = true;
+          wanted = true;
+        }
+        if (action === "hide") {
+          open = false;
+          wanted = false;
+        }
+        return Promise.resolve({ open, wanted });
+      },
+      // Not the pet's, and it is here because it is the app's: `useWindowControls`
+      // reads the maximized state on mount, and a host that answers everything
+      // except this one prints a warning that has nothing to do with the test
+      // that caused it.
+      window_state: () => Promise.resolve({ maximized: false }),
+    },
+  };
+}
+
+afterEach(() => {
+  delete (window as unknown as Record<string, unknown>).pywebview;
+});
+
+/** What the app has said to the card, in order. */
+const said = () => pet.map((call) => call.action);
+
+/** Every status pushed, which is what the card would have drawn, in order. */
+const statuses = () =>
+  pet.filter((call) => call.action === "status").map((call) => call.payload);
+
+/**
+ * The labels of every status pushed, in order.
+ *
+ * The tests below are written against this rather than against a count, and the
+ * reason is the note on `insideHost`: a late reply from an earlier test's window
+ * can land in the middle of one of these tests, so a count is not a fact about
+ * this window. A *label* is -- `Running <tool>` carries the tool's own name and
+ * the waiting row carries the confirmation's description, and no other window in
+ * this file produces either. Filtering to them is what makes an ordering or a
+ * duplication claim attributable rather than merely likely.
+ */
+const labels = () =>
+  statuses().map((status) => (status as { label?: string }).label ?? "");
+
+/** The labels pushed, narrowed to the ones only this test's window can write. */
+const only = (...wanted: string[]) => labels().filter((label) => wanted.includes(label));
+
+describe("the app's side of the desktop pet", () => {
+  test("a card the user left open comes back when the app does", async () => {
+    // `wanted` is the shell's memory of the last run and `open` is what happened
+    // when it was asked again. This is the pair that makes the pet survive a
+    // restart -- a card that went away with the app is a card nobody turns on
+    // twice.
+    insideHost({ open: true, wanted: true });
+    await mount();
+    await wait(40);
+
+    // Asked first, then created: `wanted` is what the shell remembered, and the
+    // window is only made if it says so.
+    assert.ok(said().includes("state"), "the app never asked whether a card was wanted");
+    assert.ok(said().includes("show"), "a card the user left open did not come back");
+    assert.ok(!said().includes("hide"), "the card was closed at boot");
+  });
+
+  test("no card is made for a user who never asked for one", async () => {
+    // The remembered value is consulted before the card is created, so a default
+    // of `true` here would put a window on the desktop of everyone who launched
+    // the app, and the boot would be the thing that did it.
+    insideHost({ open: false, wanted: false });
+    await mount();
+    await wait(40);
+
+    assert.ok(
+      !said().includes("show"),
+      "a card was created for a user who never asked for one",
+    );
+  });
+
+  test("a card that comes up mid-turn is told what is happening straight away", async () => {
+    // The host keeps the last status and sends it when the card says it is
+    // listening, so a card opened while the agent is working draws the work --
+    // this is the app's half of that: a status is pushed at boot rather than
+    // waiting for the first change, which for a fresh idle window might be never.
+    insideHost({ open: true, wanted: true });
+    await mount();
+    await wait(40);
+
+    assert.deepEqual(statuses()[0], { mood: "idle", label: "Ready when you are", detail: "" });
+  });
+
+  test("the rail's button turns the card on and off, and believes the shell", async () => {
+    // **The one place the on/off switch is wired.** The rail and the settings
+    // pane's checkbox are two controls for one action -- both call `togglePet`,
+    // and `SettingsPanel.test.tsx` proves the checkbox reaches `onPet` -- so what
+    // is asserted here is the half neither of them owns: that the press becomes a
+    // host call, and that the label follows the *shell's* answer rather than the
+    // press.
+    insideHost({ open: false, wanted: false });
+    const { container } = await mount();
+    await wait(40);
+
+    const button = () =>
+      one(container, '.rail-btn[aria-label$="desktop pet"]') as HTMLButtonElement;
+    assert.match(button().getAttribute("aria-label") ?? "", /^Show/);
+
+    await click(button());
+    await wait(40);
+    assert.ok(said().includes("show"), "pressing it did not ask the shell for a card");
+    // The fake answers `open: true`, so the button now offers to hide it: the
+    // label is read back from the shell, which is the only thing that knows
+    // whether a window was actually made.
+    assert.match(button().getAttribute("aria-label") ?? "", /^Hide/);
+
+    await click(button());
+    await wait(40);
+    assert.ok(said().includes("hide"), "pressing it again did not close the card");
+    assert.match(button().getAttribute("aria-label") ?? "", /^Show/);
+  });
+
+  test("the agent's work reaches the card, and once per change rather than per token", async () => {
+    // Two claims in one test on purpose: what is sent, and how often. The dedupe
+    // is a ref compared against a key, and `state` changes on every streamed
+    // token -- so a key that stopped matching would not drop a status, it would
+    // send one per word the model writes, which is a host round trip each. No
+    // other test in this suite can see that, because the only thing it changes
+    // is how many times a call was made.
+    insideHost({ open: true, wanted: true });
+    const { transport } = await mount();
+    await wait(40);
+
+    await push(() => transport.emit(pushed("turn.started", { model: "m" }, "t1")));
+    await push(() => transport.emit(pushed("tool.started", { id: "c1", name: "grep" }, "t1", 2)));
+    await wait(40);
+
+    assert.deepEqual(
+      statuses().filter((status) => (status as { label?: string }).label === "Running grep"),
+      [{ mood: "working", label: "Running grep", detail: "" }],
+      "the card was not told about the running tool, or was told twice",
+    );
+
+    // The words of the answer: they change the transcript, not the status. Counted
+    // on the label this window owns, so a stray from a later test cannot make this
+    // look like a second push -- see `labels`.
+    const sent = only("Running grep").length;
+    await push(() =>
+      transport.emit(pushed("message.delta", { text: "Looking at the file" }, "t1", 3)),
+    );
+    await wait(40);
+
+    assert.equal(
+      only("Running grep").length,
+      sent,
+      "a token of the answer was pushed to the card as a change of status",
+    );
+  });
+
+  test("a turn that stops to ask is the card's 'waiting', not its 'working'", async () => {
+    // The ordering `pet-status.ts` argues for, asserted through the wire rather
+    // than in the reducer. A turn blocked on the user is still `busy`, so the
+    // order is the only thing between the card and a spinner that spins while
+    // nothing at all is happening -- the one thing it exists to say.
+    insideHost({ open: true, wanted: true });
+    const { transport } = await mount();
+    await wait(40);
+
+    // A tool first, and then the confirmation, so both statuses are ones only
+    // this window can write: `Running grep` carries the tool's own name and
+    // `Waiting for you` carries nothing else here. That is what makes the
+    // sequence below a fact about this window rather than about whichever late
+    // reply from an earlier test happened to land in the middle of it.
+    await push(() => transport.emit(pushed("turn.started", { model: "m" }, "t1")));
+    await push(() => transport.emit(pushed("tool.started", { id: "c1", name: "grep" }, "t1", 2)));
+    await wait(40);
+    await push(() =>
+      transport.emit(
+        pushed(
+          "confirmation.requested",
+          {
+            id: "c1",
+            name: "write_file",
+            arguments: { path: "src/app.py" },
+            description: "Write src/app.py",
+            destructive: false,
+          },
+          "t1",
+          3,
+        ),
+      ),
+    );
+    await wait(40);
+
+    assert.deepEqual(
+      only("Running grep", "Waiting for you"),
+      ["Running grep", "Waiting for you"],
+      "the card did not go from working to waiting, in that order",
+    );
   });
 });
 

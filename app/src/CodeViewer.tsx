@@ -34,6 +34,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { colorFor, paletteFor, PALETTES, tokenize, type Palette, type Token } from "./highlight.js";
+import { ListPicker } from "./ListPicker.js";
 import { MarkdownText } from "./MarkdownText.js";
 import { parseTable, delimiterFor, MAX_TABLE_ROWS } from "./table.js";
 import { visibleRange } from "./virtual.js";
@@ -421,9 +422,22 @@ export function CodeViewer({
           {dirty && <span className="code-dirty" title="Unsaved changes">•</span>}
         </span>
 
-        {file?.kind === "text" && <span className="code-chip">{file.language}</span>}
-        {file?.kind === "image" && <span className="code-chip">image</span>}
-        {file?.kind === "binary" && <span className="code-chip">no preview</span>}
+        {/*
+          The language, named rather than derived from the extension.
+
+          `code-chip-lang` is not decoration: it is the first thing a narrow
+          pane gives up (see the container query in `code-viewer.css`), because
+          it is the one chip on this bar that says something the header already
+          says another way -- `FileSidebar.tsx` is TypeScript, and the footer
+          repeats it -- while the path and the read-only state do not.
+        */}
+        {file?.kind === "text" && (
+          <span className="code-chip code-chip-lang">{file.language}</span>
+        )}
+        {file?.kind === "image" && <span className="code-chip code-chip-lang">image</span>}
+        {file?.kind === "binary" && (
+          <span className="code-chip code-chip-lang">no preview</span>
+        )}
         {file?.kind === "text" && file.truncated && (
           <span className="code-chip code-chip-warn">truncated</span>
         )}
@@ -449,6 +463,14 @@ export function CodeViewer({
           </span>
         )}
 
+        {/*
+          The lock: a glyph and a word, in two elements.
+
+          The word is what a narrow pane drops (see the container query in
+          `code-viewer.css`) -- not the glyph: a padlock still says read-only at
+          13px, and the `title` carries the sentence either way, so trimming it
+          to its icon loses none of the meaning this chip exists for.
+        */}
         <span
           className={locked ? "code-chip code-lock locked" : "code-chip code-lock"}
           title={
@@ -459,7 +481,17 @@ export function CodeViewer({
                 : "Editable. Changes are saved by you, and the agent is told what changed."
           }
         >
-          {locked ? "🔒 agent working" : readOnly ? "🔒 read-only" : "🔓 editable"}
+          {/*
+            The space between them is in the markup and not only in the CSS
+            `gap`, so the chip *reads* as `🔒 read-only` to anything that reads
+            the DOM -- a screen reader, and the test that pins this chip's
+            text. A whitespace-only text node is not a flex item, so it costs
+            the layout nothing.
+          */}
+          <span className="code-lock-icon">{locked || readOnly ? "🔒" : "🔓"}</span>{" "}
+          <span className="code-lock-word">
+            {locked ? "agent working" : readOnly ? "read-only" : "editable"}
+          </span>
         </span>
 
         <span className="code-spacer" />
@@ -511,20 +543,29 @@ export function CodeViewer({
           </>
         )}
 
-        <label className="code-theme">
-          <select
+        {/*
+          The theme, in the app's own menu rather than a native `<select>`.
+
+          The select was the one control in the window the platform drew: its
+          popup, its focus ring, its `Dark+ (default dark)` in the OS's listbox
+          colours, none of which this app can style -- so the viewer shipped a
+          control that looked like a different application, next to buttons that
+          did not. `ListPicker` is the menu the composer's model chip and the
+          settings panel already use; `labelFor` is what lets it show the
+          palette's name while carrying its id.
+        */}
+        <span className="code-theme">
+          <ListPicker
+            label="Colour theme"
             value={palette}
-            onChange={(event) => onPalette(event.target.value)}
-            aria-label="Colour theme"
-            title="Colour theme"
-          >
-            {PALETTES.map((option) => (
-              <option key={option.name} value={option.name}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
+            options={PALETTES.map((option) => option.name)}
+            labelFor={(name) => paletteFor(name).label}
+            triggerLabelFor={(name) => paletteFor(name).short}
+            placeholder="Theme"
+            disabled={false}
+            onChange={onPalette}
+          />
+        </span>
 
         <button
           type="button"

@@ -61,3 +61,119 @@
   grid-column: 2;
   grid-row: 2;
 }
+
+/*
+ * --- Code mode: the window becomes an editor ------------------------------
+ *
+ * The mode switch is not a pane swap. Agent mode is a conversation with a rail
+ * beside it; Code mode is a project with an explorer beside it, and the two
+ * want different *columns* -- which is the point of doing it here rather than
+ * inside `.main`.
+ *
+ * The template is rewritten rather than the rail hidden, because column 1 is
+ * `--rail-w` wide (64px) and a file tree in a 64px track is not a file tree.
+ * Two tracks: the explorer, then everything else. `.main` keeps its explicit
+ * `grid-column: 2`, which is what makes the swap safe -- the same reason the
+ * rule above exists, and the failure it prevents (a viewer auto-placed into
+ * the collapsed track and therefore invisible) is exactly what happens if
+ * somebody "simplifies" this by deleting the rail instead.
+ *
+ * The rail and the conversation panel are not rendered at all in this mode
+ * (see `App`): an overlay floating over an editor is a panel with nothing to
+ * say, and a rail of chat actions beside a file tree is two sidebars.
+ */
+.app[data-mode="code"] {
+  grid-template-columns: var(--code-side-w) minmax(0, 1fr);
+}
+
+.code-explorer {
+  grid-column: 1;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--border-soft);
+  background: var(--surface);
+}
+
+/*
+ * The explorer's head: a section title over the folder it is showing.
+ *
+ * A column, and *not* a fixed height with the two on a shared baseline. That
+ * version centred nothing: `align-items: baseline` puts a line where its
+ * baseline falls, so inside a 34px band both the title and the path drew
+ * against the top edge and the header read as text that had slipped up. Rows
+ * are laid out by their own line boxes now, so there is nothing to slip.
+ */
+.code-explorer-head {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: none;
+  padding: 8px 12px 9px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--chrome);
+}
+
+.code-explorer-title {
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+/* The folder row: glyph, where it lives, then what it is called -- the last
+   of which is the part a reader is looking for, so it is the part that is not
+   greyed out. */
+.code-explorer-project {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--fg);
+  font-size: var(--text-xs);
+  line-height: 1.3;
+}
+
+.code-explorer-folder {
+  flex: none;
+  color: var(--fg-mute);
+}
+
+/* The two halves of the path, in a box of their own so the row's `gap` falls
+   between the glyph and the path rather than inside it. The directory is the
+   half that gives way when the window is narrow: the folder's name is what the
+   row is for. */
+.code-explorer-path {
+  display: flex;
+  min-width: 0;
+}
+
+.code-explorer-dir {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-mute);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code-explorer-name {
+  flex: none;
+  color: var(--fg);
+  font-weight: 600;
+}
+
+/* No folder: one muted line where the folder row would be, so the filter and
+   the tree below it do not move when a project is chosen. */
+.code-explorer-none {
+  color: var(--fg-mute);
+}
+
+/* The explorer's tree fills it and scrolls on its own; `.files-pane` already
+   knows how, so this only has to stop it from being a fixed-height child. */
+.code-explorer .files-pane {
+  flex: 1;
+  min-height: 0;
+}
