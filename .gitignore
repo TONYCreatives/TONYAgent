@@ -73,3 +73,7 @@ scripts/build/
 app/src-tauri/icons/android/
 app/src-tauri/icons/ios/
 .shots/
+
+# Probe outputs: the research scripts write these next to the repo, and they are
+# readings rather than sources.
+/.tmp-*
