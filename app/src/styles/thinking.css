@@ -281,46 +281,75 @@
   box-shadow: var(--shadow-1);
 }
 
+/*
+ * The heading row: the unit on the left, the value in force on the right.
+ *
+ * `baseline` rather than `center` so the two sit on one line of type rather
+ * than one being nudged to the box of the other, and `space-between` so the
+ * value is against the same edge as the `Done` button and the `Set` row below
+ * it -- a popover of one column reads as a stack of rows, and a value floating
+ * in the middle of its row reads as a stray word.
+ */
+.budget-popover-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+
 .budget-popover-title {
-  margin: 0 0 4px;
+  margin: 0;
   color: var(--fg);
   font-size: var(--text-sm);
   font-weight: 500;
 }
 
+.budget-current {
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  /* One line, always: the row it is in is what tells a reader where the set
+     value is, and a wrapped "200 per turn" would move the title. */
+  white-space: nowrap;
+}
+
+/*
+ * The footnote. Quiet, and below the controls rather than above them: the
+ * question it answers is asked after a value is chosen, not before.
+ */
 .budget-popover-hint {
-  margin: 0 0 9px;
+  margin: 10px 0 0;
   color: var(--fg-mute);
   font-size: var(--text-xs);
   line-height: 1.45;
 }
 
-.budget-presets {
-  display: flex;
+/*
+ * Six answers, three across. A grid rather than a row of pills with the
+ * sentinel on a line of its own: "No limit" is one of the choices, and drawn
+ * full width under the row it read as a control that did something else. Three
+ * columns give each cell 66px of this popover's 208px inset, which the words
+ * fit in -- measured on the running window, because six equal widths would have
+ * left 31px and a wrapped label. The numbers and the sentinel take the same
+ * cell size, so the two rows are two rows of one set.
+ */
+.budget-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 4px;
 }
 
 /*
- * "No limit" is `flex: none` and full width under a row of equal pills: it is
- * the one answer in this popover that is not a number, so it does not share the
- * row the numbers are counted in.
- */
-.budget-preset-none {
-  flex: none;
-  width: 100%;
-  margin-top: 6px;
-}
-
-/*
  * The sentinel is drawn like a preset but is not one: it is not a number of
- * calls, so it does not carry `.budget-preset` -- the row above is asserted to
- * hold numbers, and a word in it would make that assertion mean less.
+ * calls, so it does not carry `.budget-preset` -- the rest of the grid is
+ * asserted to hold numbers, and a word among them would make that assertion
+ * mean less.
  */
 .budget-preset,
 .budget-preset-none {
-  flex: 1;
   height: 26px;
-  padding: 0;
+  padding: 0 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
   background: var(--raised);
@@ -365,12 +394,6 @@
   background: var(--wash);
   color: var(--fg);
   filter: brightness(1.06);
-}
-
-.budget-custom {
-  margin: 8px 0 0;
-  color: var(--fg-mute);
-  font-size: var(--text-xs);
 }
 
 /*

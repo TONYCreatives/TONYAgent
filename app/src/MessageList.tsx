@@ -109,6 +109,66 @@ function SubagentWork({ child }: { child: SubagentChild }) {
   );
 }
 
+/**
+ * One thing the turn did, in the order it did it.
+ *
+ * A transcript line is either a piece of the model's prose or a run of tool
+ * calls with nothing said in between -- consecutive calls are one run, because
+ * a model that asks for five tools in one message asked for them together, and
+ * five rows in one tight block is what that looked like.
+ */
+type Run =
+  | { kind: "text"; text: string }
+  | { kind: "tools"; tools: ChatMessage["tools"] };
+
+/**
+ * Split one assistant message into the runs it is made of.
+ *
+ * A turn writes into a single message across several passes -- prose, tool
+ * calls, more prose, more calls -- and `ToolCall.after` records how much of the
+ * prose existed when each call started. Walking the calls and cutting the prose
+ * at those marks is what puts each row under the words that asked for it,
+ * instead of stacking the whole turn's rows under its last paragraph, which is
+ * the order the answer was *reported* in rather than the order it happened in.
+ *
+ * A call with no mark was never placed -- a hand-built message, or one restored
+ * from before the marks existed -- and goes after the prose, where every row
+ * used to go. Marks are clamped so that a mark past the end of the prose (a
+ * message whose text was shortened by a completion) cannot lose a row: a
+ * dropped tool card is a worse lie than a row in the wrong place.
+ *
+ * Whitespace-only pieces are dropped rather than rendered: they are the
+ * newlines between paragraphs the model wrote, and an empty block would show up
+ * as a gap on top of the run's own margin.
+ */
+function runsOf(message: ChatMessage): Run[] {
+  const runs: Run[] = [];
+  let pending: ChatMessage["tools"] = [];
+  let cursor = 0;
+  const flush = () => {
+    if (pending.length > 0) runs.push({ kind: "tools", tools: pending });
+    pending = [];
+  };
+
+  for (const tool of message.tools) {
+    const at = Math.max(cursor, tool.after ?? message.text.length);
+    if (at > cursor) {
+      // The calls already collected happened *before* this prose, so they are
+      // closed off here rather than after it.
+      flush();
+      const prose = message.text.slice(cursor, at);
+      if (prose.trim() !== "") runs.push({ kind: "text", text: prose });
+      cursor = at;
+    }
+    pending.push(tool);
+  }
+  flush();
+
+  const rest = message.text.slice(cursor);
+  if (rest.trim() !== "") runs.push({ kind: "text", text: rest });
+  return runs;
+}
+
 /** One tool invocation inside an assistant message. */
 function ToolRow({ tool }: { tool: ChatMessage["tools"][number] }) {
   return (
@@ -206,20 +266,24 @@ function Bubble({ message }: { message: ChatMessage }) {
         {/*
           Only assistant text is Markdown. A user's message is shown exactly as
           typed -- someone pasting `**not bold**` meant the asterisks.
+
+          An assistant turn is drawn as its runs, in order: the prose and the
+          tool rows alternate exactly as the model produced them. A user's
+          message has no runs to draw and one piece of text.
         */}
-        {message.text &&
-          (isUser ? (
-            <div className="bubble-text">{message.text}</div>
-          ) : (
-            <MarkdownText text={message.text} />
-          ))}
-        {message.tools.length > 0 && (
-          <div className="tools">
-            {message.tools.map((tool) => (
-              <ToolRow key={tool.id} tool={tool} />
-            ))}
-          </div>
-        )}
+        {isUser
+          ? message.text && <div className="bubble-text">{message.text}</div>
+          : runsOf(message).map((run, index) =>
+              run.kind === "text" ? (
+                <MarkdownText key={index} text={run.text} />
+              ) : (
+                <div className="tools" key={index}>
+                  {run.tools.map((tool) => (
+                    <ToolRow key={tool.id} tool={tool} />
+                  ))}
+                </div>
+              ),
+            )}
       </div>
     </div>
   );
@@ -304,12 +368,31 @@ export function MessageList({
   onChooseFolder,
   canChooseFolder,
 }: Props) {
-  // Pin to the bottom as tokens stream in. Keyed on message count rather than
-  // text, so this does not fire on every delta.
+  // Pin to the bottom as tokens stream in.
+  //
+  // Keyed on the *tail* of the transcript rather than on the whole list, so a
+  // long conversation does not re-run this for every delta of its last message
+  // -- but keyed on more than the message count, because a turn's own message
+  // grows under an unchanged count: its prose, then a row, then more prose, then
+  // another row. Keyed on the count alone the rows added after the turn's first
+  // token never pulled the view down, so a turn ended with its last call -- the
+  // one thing the reader stayed to watch -- below the fold. Detail text is in
+  // the key because a row that goes from "running" to finished grows one line
+  // deeper without changing any count.
   const endRef = useRef<HTMLDivElement>(null);
+  const tail = messages[messages.length - 1];
+  const growth = tail
+    ? [
+        messages.length,
+        tail.text.length,
+        tail.reasoning.length,
+        tail.tools.length,
+        tail.tools.reduce((n, tool) => n + (tool.detail?.length ?? 0), 0),
+      ].join(":")
+    : "empty";
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: "end" });
-  }, [messages.length, busy]);
+  }, [growth, busy]);
 
   if (messages.length === 0) {
     return (

@@ -694,6 +694,135 @@ describe("the first run", () => {
   });
 });
 
+// --- the order a turn happened in -----------------------------------------
+/*
+ * A turn is several passes: prose, tool calls, more prose, more calls. All of
+ * them write into one message, and `ToolCall.after` records how much of the
+ * prose existed when each call started -- so this is where the rows have to be
+ * drawn from it. The failure mode is not a missing row but a misleading
+ * transcript: every row stacked under the turn's last paragraph reads as an
+ * answer that decided what to do after saying it had done it, and the
+ * paragraphs written before the first call used to be deleted outright by the
+ * pass that followed them.
+ */
+
+/** The assistant bubble's children, in document order, as labelled runs. */
+function runs(container: HTMLElement): string[] {
+  const bubble = one(container, ".bubble-assistant")!;
+  return [...bubble.children].map((child) => {
+    if (child.classList.contains("tools")) {
+      const names = [...child.querySelectorAll(".tool-name")]
+        .map((name) => name.textContent)
+        .join(",");
+      return `tools:${names}`;
+    }
+    if (child.classList.contains("md")) return "text";
+    return `other:${child.className}`;
+  });
+}
+
+const call = (
+  id: string,
+  name: string,
+  after?: number,
+): ChatMessage["tools"][number] => ({ id, name, status: "ok", after });
+
+describe("the order a turn happened in", () => {
+  const first = "Let me look at the file. ";
+  const second = first + "It is one line. ";
+
+  test("each row is drawn under the words that asked for it", async () => {
+    const container = await transcript(
+      message({
+        text: "Let me look at the file. It is one line. Done.",
+        tools: [
+          call("c1", "read_file", first.length),
+          call("c2", "grep", first.length),
+          call("c3", "edit_file", second.length),
+        ],
+      }),
+    );
+
+    assert.deepEqual(runs(container), [
+      "text",
+      "tools:read_file,grep",
+      "text",
+      "tools:edit_file",
+      "text",
+    ]);
+
+    // The same thing said the other way round, because the order is the whole
+    // claim: the turn's last words are last. A row after them means the calls
+    // were collected at the end, which is the bug this replaces.
+    assert.equal(runs(container).at(-1), "text");
+  });
+
+  test("the sentences land with the rows they belong to", async () => {
+    const container = await transcript(
+      message({
+        text: "Let me look at the file. It is one line. Done.",
+        tools: [call("c1", "read_file", first.length), call("c2", "edit_file", second.length)],
+      }),
+    );
+    const prose = texts(container, ".md-p").map((piece) => piece ?? "");
+    assert.equal(prose.length, 3, "a paragraph of the turn went missing");
+    assert.match(prose[0], /Let me look at the file/);
+    assert.match(prose[1], /It is one line/);
+    assert.match(prose[2], /Done/);
+  });
+
+  test("consecutive calls stay one tight block", async () => {
+    // A model that asks for five tools in one message asked for them together.
+    // Five separate blocks would put air between calls that were batched, and
+    // the block is what the 3px gap between rows belongs to.
+    const container = await transcript(
+      message({ text: "Fetching.", tools: [call("a", "read_file", 9), call("b", "grep", 9)] }),
+    );
+    assert.deepEqual(runs(container), ["text", "tools:read_file,grep"]);
+    assert.equal(all(container, ".tools").length, 1);
+  });
+
+  test("a call nobody placed keeps the old place, after the prose", async () => {
+    // A restored transcript from before the marks existed, or a message a test
+    // built by hand. Dropping the row would lose a call the turn really made.
+    const container = await transcript(
+      message({ text: "An answer.", tools: [call("c1", "read_file")] }),
+    );
+    assert.deepEqual(runs(container), ["text", "tools:read_file"]);
+  });
+
+  test("a mark past the end of the prose cannot lose the row", async () => {
+    // The prose a mark points into can be shorter than the mark -- a completion
+    // that shortened a pass will do it. Clamped, not trusted.
+    const container = await transcript(
+      message({ text: "Short.", tools: [call("c1", "read_file", 999)] }),
+    );
+    assert.deepEqual(runs(container), ["text", "tools:read_file"]);
+  });
+
+  test("a turn whose calls came first keeps them first", async () => {
+    // No prose before the first call: the rows lead and the answer follows,
+    // which is the order those passes ran in.
+    const container = await transcript(
+      message({ text: "Done.", tools: [call("c1", "read_file", 0), call("c2", "edit_file", 0)] }),
+    );
+    assert.deepEqual(runs(container), ["tools:read_file,edit_file", "text"]);
+  });
+
+  test("the thinking panel still leads the turn it belongs to", async () => {
+    const container = await transcript(
+      message({
+        text: "Answer.",
+        reasoning: "Step one.",
+        reasoningComplete: true,
+        tools: [call("c1", "read_file", 0)],
+      }),
+    );
+    const bubble = one(container, ".bubble-assistant")!;
+    assert.equal(bubble.children[0].classList.contains("thinking"), true);
+  });
+});
+
 // --- a subagent's nested work ---------------------------------------------
 /*
  * Phase 5's nested UI: a child's frames accumulate under the `subagent` card

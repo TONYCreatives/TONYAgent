@@ -7,6 +7,21 @@
 }
 
 /*
+ * A run of calls that has prose after it takes the same air below as above.
+ *
+ * A turn is drawn as alternating runs now, so a block of rows can sit between
+ * two paragraphs rather than at the end of the message. The prose below it
+ * carries no top margin of its own -- `.md > :first-child` is zeroed, which is
+ * what keeps a message's first paragraph flush with the bubble -- so without
+ * this the next paragraph would start on the last row's baseline. The last run
+ * in a message keeps no bottom margin: there it would be 8px of nothing inside
+ * every bubble that ends in a tool call, which is most of them.
+ */
+.tools:not(:last-child) {
+  margin-bottom: 8px;
+}
+
+/*
  * One tool call and everything that belongs to it, stacked.
  *
  * The row itself is unchanged; the unit exists so the subagent's nested work

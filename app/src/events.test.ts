@@ -231,6 +231,67 @@ test("message.completed replaces the streamed text rather than appending", () =>
   assert.equal(state.messages[0].text, "partial and final");
 });
 
+/**
+ * A turn as the model actually works: prose, calls, more prose, more calls.
+ *
+ * The core emits one `message.started`/`message.completed` pair per pass, and
+ * every pass writes into the same message -- so a completion was deleting the
+ * paragraphs written before it, and the rows that survived could only be drawn
+ * after the final answer. The two integers asserted here are what the window
+ * draws from: each call's place in the prose, and the whole turn's prose.
+ */
+test("a turn keeps its prose in order and marks where each call fell", () => {
+  let state = applyEvent(initialState, event("turn.started"));
+
+  state = applyEvent(state, event("message.started"));
+  state = applyEvent(state, event("message.delta", { text: "Let me look. " }));
+  state = applyEvent(state, event("message.completed", { text: "Let me look. " }));
+  state = applyEvent(state, event("tool.started", { id: "c1", name: "read_file" }));
+  state = applyEvent(state, event("tool.started", { id: "c2", name: "grep" }));
+
+  state = applyEvent(state, event("message.started"));
+  state = applyEvent(state, event("message.delta", { text: "Found it. " }));
+  state = applyEvent(state, event("message.completed", { text: "Found it. " }));
+  state = applyEvent(state, event("tool.started", { id: "c3", name: "edit_file" }));
+
+  state = applyEvent(state, event("message.started"));
+  state = applyEvent(state, event("message.completed", { text: "Done." }));
+
+  const [message] = state.messages;
+  assert.equal(message.text, "Let me look. Found it. Done.");
+  assert.deepEqual(
+    message.tools.map((tool) => [tool.name, tool.after]),
+    [
+      ["read_file", "Let me look. ".length],
+      ["grep", "Let me look. ".length],
+      ["edit_file", "Let me look. Found it. ".length],
+    ],
+  );
+});
+
+/**
+ * The other half of the same contract, from the outside: a pass that ends with
+ * text still replaces its own slice rather than only appending.
+ *
+ * A delta stream that dropped a chunk must not leave the turn with both the
+ * streamed text and the authoritative one.
+ */
+test("a completion replaces its own pass and leaves the pass before it alone", () => {
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(state, event("message.delta", { text: "Let me look. " }));
+  state = applyEvent(state, event("message.completed", { text: "Let me look. " }));
+  state = applyEvent(state, event("tool.started", { id: "c1", name: "read_file" }));
+
+  // The second pass streams a truncated version of its own sentence -- the
+  // chunk carrying the rest was lost -- and its completion has to repair that
+  // sentence without touching the one above the tool rows.
+  state = applyEvent(state, event("message.started"));
+  state = applyEvent(state, event("message.delta", { text: "The file is " }));
+  state = applyEvent(state, event("message.completed", { text: "The file is small. " }));
+
+  assert.equal(state.messages[0].text, "Let me look. The file is small. ");
+});
+
 test("a tool result is paired by call id, not by position", () => {
   let state = applyEvent(initialState, event("turn.started"));
   state = applyEvent(state, event("tool.started", { id: "a", name: "read_file" }));

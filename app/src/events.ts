@@ -58,6 +58,25 @@ export interface ToolCall {
    * the child.
    */
   child?: SubagentChild;
+  /**
+   * How much of the turn's prose had been written when this call started.
+   *
+   * The one thing that keeps the transcript in the order the model worked in.
+   * A turn is several passes -- prose, tool calls, more prose, more calls -- and
+   * every pass writes into the same message, so without this the rows could
+   * only be drawn as a block at the end: the answer first and then the calls
+   * that produced it, which reads as a turn that did its work after saying it
+   * had. With it, each row is drawn under the words that asked for it.
+   *
+   * A count of characters rather than an index into the prose, because the text
+   * arrives in deltas and grows under the row: the number is a position in a
+   * string that is still being written.
+   *
+   * Absent on a call that was never placed -- a hand-built message in a test, or
+   * a transcript restored from before this existed. `MessageList` draws those
+   * after the prose, which is where they used to go.
+   */
+  after?: number;
 }
 
 /** One child session's work, as the window was told it. */
@@ -96,6 +115,20 @@ export interface ChatMessage {
   reasoningTruncated: boolean;
   /** Why, in words. Only ever set alongside `reasoningTruncated`. */
   reasoningNotice?: string;
+  /**
+   * Where the current pass's prose begins inside `text`.
+   *
+   * Carried so `message.completed` can replace *its own* pass and leave the
+   * earlier ones alone. The core sends one completion per assistant pass, each
+   * carrying that pass's authoritative text, and a completion that overwrote
+   * the whole field deleted everything the model had written before its first
+   * tool call -- the paragraph explaining what it was about to do, which is
+   * exactly the sentence a reader needs to follow the rows below it.
+   *
+   * Absent on a message that never had a second pass, which is every message a
+   * test builds by hand; it reads as zero, the start of the first pass.
+   */
+  passStart?: number;
 }
 
 /** Events that mean the turn is over, successfully or not. */
@@ -171,6 +204,7 @@ export function blankMessage(id: string, role: Role): ChatMessage {
     reasoning: "",
     reasoningComplete: false,
     reasoningTruncated: false,
+    passStart: 0,
   };
 }
 
@@ -478,8 +512,19 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
       // is a different turn: creating a placeholder for it here would put the
       // child's answer in this transcript one event after `turn.started`
       // declined to.
-      if (turnId && turnId === next.activeTurnId && !currentAssistant(next, turnId)) {
-        upsert(next, blankMessage(turnId, "assistant"));
+      //
+      // A turn writes into one message across several passes, so a second
+      // `message.started` is the same message beginning a new pass rather than
+      // a new message: it moves the boundary `message.completed` replaces up to
+      // here, which is what keeps the pass before it. See `passStart`.
+      if (turnId && turnId === next.activeTurnId) {
+        const target = currentAssistant(next, turnId);
+        if (target) {
+          target.passStart = target.text.length;
+          upsert(next, target);
+        } else {
+          upsert(next, blankMessage(turnId, "assistant"));
+        }
       }
       return next;
     }
@@ -526,11 +571,14 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
     case "message.completed": {
       const target = currentAssistant(next, turnId);
       if (target) {
-        // The core sends the authoritative final text. Replace rather than
-        // append: a delta stream that lost a chunk must not be papered over by
-        // duplicating what did arrive.
+        // The core sends the authoritative final text, and it is authoritative
+        // for *this pass* only. Replace rather than append: a delta stream that
+        // lost a chunk must not be papered over by duplicating what did arrive.
+        // Everything written before this pass is kept -- see `passStart`.
         const final = payloadString(payload, "text");
-        if (final !== undefined) target.text = final;
+        if (final !== undefined) {
+          target.text = target.text.slice(0, target.passStart ?? 0) + final;
+        }
         upsert(next, target);
       }
       return next;
@@ -545,6 +593,11 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
             id: payloadString(payload, "id") ?? String(target.tools.length),
             name: payloadString(payload, "name") ?? "tool",
             status: "running",
+            // Where this call falls in the prose so far. The model writes, then
+            // asks for the tool, so this is the end of the words that asked for
+            // it -- and the prose of the *next* pass lands after this mark, so
+            // the rows and the paragraphs come out in the order they happened.
+            after: target.text.length,
           },
         ];
         upsert(next, target);
