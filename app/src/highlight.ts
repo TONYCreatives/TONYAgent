@@ -62,7 +62,18 @@ export interface Token {
  */
 export interface Palette {
   name: string;
+  /** The theme's full name, the way the editor's own list writes it. */
   label: string;
+  /**
+   * What fits on a control.
+   *
+   * Two names for one theme because they are written in two places with
+   * different room: the menu lists "Dark+ (default dark)", where the
+   * parenthetical is the point, and the chip in a 38px header says "Dark+",
+   * where it is 60px of a bar that is holding a path, two chips and three
+   * buttons. VSCode does the same thing with the same theme.
+   */
+  short: string;
   /** Chrome colours, so the viewer's frame matches the code inside it. */
   background: string;
   foreground: string;
@@ -85,6 +96,7 @@ export interface Palette {
 const DARK_PLUS: Palette = {
   name: "dark-plus",
   label: "Dark+ (default dark)",
+  short: "Dark+",
   background: "#1e1e1e",
   foreground: "#d4d4d4",
   gutter: "#858585",
@@ -117,6 +129,7 @@ const DARK_PLUS: Palette = {
 const LIGHT_PLUS: Palette = {
   name: "light-plus",
   label: "Light+ (default light)",
+  short: "Light+",
   background: "#ffffff",
   foreground: "#000000",
   gutter: "#237893",
@@ -149,6 +162,7 @@ const LIGHT_PLUS: Palette = {
 const MONOKAI: Palette = {
   name: "monokai",
   label: "Monokai",
+  short: "Monokai",
   background: "#272822",
   foreground: "#f8f8f2",
   gutter: "#90908a",
@@ -516,6 +530,10 @@ function markupRules(): Rule[] {
     rule("string", '"[^"]*"'),
     rule("string", "'[^']*'"),
     rule("tag", "</?[A-Za-z][\\w:-]*"),
+    // `<!doctype html>` has no name after `</?`, so without this the doctype is
+    // the one line of a page that is plain text and a stray `>` gets the tag
+    // colour, which reads as a broken tag rather than as a doctype.
+    rule("tag", "<![A-Za-z][\\w-]*"),
     rule("tag", "/?>"),
     rule("attribute", "[A-Za-z_:][\\w:.-]*(?=\\s*=)"),
     rule("literal", "&[a-zA-Z#0-9]+;"),
@@ -523,17 +541,47 @@ function markupRules(): Rule[] {
   ];
 }
 
-/** CSS: at-rules, selectors, properties, values. */
+/**
+ * CSS: at-rules, selectors, properties, values.
+ *
+ * **The values are the change.** The rules used to stop at the property name,
+ * so `display: flex;` coloured the `display` and left the `flex` -- and since
+ * a stylesheet is mostly values, a CSS file came out looking like prose with
+ * its first word in bold. VSCode gives those bare words `#569CD6` (its keyword
+ * blue, this file's `declaration`), so that is what the rule near the end is
+ * for, and it is the *last* rule that can match a word: property names win
+ * over it because they are tried first and require the `:` that a value does
+ * not have.
+ *
+ * The element selector has the same problem in reverse -- `body` is a word at
+ * the head of a selector, and rule order alone cannot tell it from a value,
+ * because both are just words. The selector form is therefore anchored to the
+ * line's start, which is where a selector's first element name is written.
+ */
 function cssRules(): Rule[] {
   return [
     rule("comment", "/\\*[\\s\\S]*?\\*/"),
     rule("string", '"[^"]*"'),
     rule("string", "'[^']*'"),
     rule("keyword", "@[\\w-]+"),
+    rule("literal", "![a-zA-Z-]+"),
+    // A custom property, wherever it appears: `--fg` is the same token when it
+    // is being defined in `:root` and when it is read back out of `var()`.
+    rule("property", "--[\\w-]+"),
     rule("property", "[-\\w]+(?=\\s*:)"),
     rule("number", "#[0-9a-fA-F]{3,8}\\b|\\d+(?:\\.\\d+)?(?:px|em|rem|%|vh|vw|s|ms|fr|deg)?\\b"),
     rule("function", "[\\w-]+(?=\\()"),
-    rule("type", "\\.[-_a-zA-Z][\\w-]*|#[\\w-]+|:{1,2}[\\w-]+"),
+    // The selector forms that carry a marker of their own: classes, ids and
+    // pseudo-classes. A bare `#main` is not a colour -- the hex rule above
+    // only claims it when every character after the `#` is hexadecimal.
+    rule("type", "\\.[-_a-zA-Z][\\w-]*|#{1,2}[\\w-]+|:{1,2}[\\w-]+"),
+    // `(?!\s*:)` is what keeps a *property* from being read as an element
+    // name: this rule may swallow the line's leading spaces, so without it an
+    // indented `color: red;` matched here -- at the line's first space, where
+    // the property rule cannot match yet -- and every indented declaration in a
+    // stylesheet came out the colour of a selector.
+    lineRule("type", "^\\s*[a-zA-Z][\\w-]*(?!\\s*:)(?=[\\s,{:.\\[>+~])"),
+    rule("declaration", "[-a-zA-Z_][\\w-]*"),
     rule("punctuation", "[{}();:,]"),
   ];
 }
@@ -593,10 +641,27 @@ function configRules(language: string): Rule[] {
  * `[[{start,end,kind}], ...]`.
  */
 export function tokenize(text: string, language: string): Token[][] {
+  // Markup first, because its own scan cannot see the languages inside it:
+  // a `<style>` body and a `<script>` body are other languages' text, and the
+  // markup rules colour neither -- they colour the tags around it. That was
+  // the visible bug: a page with a stylesheet in its head drew the CSS as
+  // plain text, and the `=` in `a = 1` inside a script as an attribute.
+  if (language === "html" || language === "xml") return tokenizeMarkup(text, language);
+
   const rules = rulesFor(language);
   const lines = lineStarts(text);
   if (rules.length === 0) return lines.map(() => [] as Token[]);
+  return scan(text, lines, rules);
+}
 
+/**
+ * The single scan: each rule tried in order at the cursor, gaps left out.
+ *
+ * Extracted so the markup pass can run it over a *masked* copy of the text and
+ * keep the offsets, which is what lets one document be highlighted by two
+ * scanners -- see `tokenizeMarkup`.
+ */
+function scan(text: string, lines: number[], rules: Rule[]): Token[][] {
   const result: Token[][] = lines.map(() => [] as Token[]);
   let pos = 0;
 
@@ -613,6 +678,122 @@ export function tokenize(text: string, language: string): Token[][] {
       break;
     }
     if (!matched) pos += 1;
+  }
+  return result;
+}
+
+/** A markup region whose *contents* are another language. */
+interface Embedded {
+  /** The tag that opens it, without the brackets: `style`, `script`. */
+  tag: string;
+  language: string;
+}
+
+const EMBEDDED: readonly Embedded[] = [
+  { tag: "style", language: "css" },
+  { tag: "script", language: "javascript" },
+];
+
+/** One `<style>`/`<script>` body, as offsets into the whole document. */
+interface Block {
+  start: number;
+  end: number;
+  language: string;
+}
+
+/**
+ * Where the embedded bodies are.
+ *
+ * A scanner, not a parser, and the difference shows in one place worth naming:
+ * `<style>` written *inside an HTML comment* is skipped, because a commented-out
+ * stylesheet is a thing real pages contain and reading it as live CSS would
+ * colour the comment's own text as if it were the page. A `</style>` inside a
+ * CSS string ends the block early for the same reason a real highlighter's
+ * simpler cousin does.
+ */
+function embeddedBlocks(text: string): Block[] {
+  const lower = text.toLowerCase();
+  const comments = [...lower.matchAll(/<!--[\s\S]*?-->/g)].map((m) => [
+    m.index ?? 0,
+    (m.index ?? 0) + m[0].length,
+  ]);
+  const commentedOut = (at: number) =>
+    comments.some(([from, to]) => at >= from && at < to);
+
+  const blocks: Block[] = [];
+  let at = 0;
+  for (;;) {
+    // The earliest opening tag of any embedded language at or after `at`, and
+    // the first one of each kind that is not inside a comment.
+    let best: { tag: string; language: string; start: number; body: number } | null = null;
+    for (const { tag, language } of EMBEDDED) {
+      const open = new RegExp(`<${tag}\\b[^>]*>`, "g");
+      open.lastIndex = at;
+      for (let m = open.exec(lower); m; m = open.exec(lower)) {
+        if (commentedOut(m.index)) continue;
+        if (!best || m.index < best.start) {
+          best = { tag, language, start: m.index, body: m.index + m[0].length };
+        }
+        break;
+      }
+    }
+    if (!best) break;
+    const close = lower.indexOf(`</${best.tag}`, best.body);
+    blocks.push({
+      start: best.body,
+      end: close === -1 ? text.length : close,
+      language: best.language,
+    });
+    at = close === -1 ? text.length : close + 2;
+  }
+  return blocks;
+}
+
+/** The same text with the embedded bodies blanked, offsets and newlines kept. */
+function blankOut(text: string, blocks: Block[]): string {
+  const chars = text.split("");
+  for (const block of blocks) {
+    for (let index = block.start; index < block.end; index += 1) {
+      if (chars[index] !== "\n") chars[index] = " ";
+    }
+  }
+  return chars.join("");
+}
+
+/**
+ * Markup, with each embedded body highlighted by its own language.
+ *
+ * The two passes cannot share a scan, so they share the *offsets* instead: the
+ * markup pass runs over a copy with the bodies blanked (a space where a
+ * character was, a newline where there was one), which leaves every other
+ * offset exactly where it was, and the embedded pass runs over the real text of
+ * each body and has its results shifted into place. Blanks rather than a
+ * skipped range on purpose: a scanner has no notion of skipping, and a blank is
+ * the one thing no rule matches.
+ */
+function tokenizeMarkup(text: string, language: string): Token[][] {
+  const lines = lineStarts(text);
+  const rules = rulesFor(language);
+  const blocks = embeddedBlocks(text);
+  const masked = blocks.length > 0 ? blankOut(text, blocks) : text;
+  const result = rules.length > 0 ? scan(masked, lines, rules) : lines.map(() => [] as Token[]);
+
+  for (const block of blocks) {
+    const inner = text.slice(block.start, block.end);
+    const innerLines = lineStarts(inner);
+    tokenize(inner, block.language).forEach((row, index) => {
+      if (row.length === 0) return;
+      const absolute = block.start + innerLines[index];
+      const line = lineAt(lines, absolute);
+      const column = absolute - lines[line];
+      for (const token of row) {
+        result[line].push({
+          start: token.start + column,
+          end: token.end + column,
+          kind: token.kind,
+        });
+      }
+    });
   }
   return result;
 }

@@ -114,6 +114,25 @@ const CORPUS: Array<[string, string]> = [
   ["json", '{\n  "name": "tonyagent",\n  "count": 12,\n  "ok": true,\n  "none": null\n}'],
   ["css", ".card {\n  color: #ff0000;\n  margin: 4px;\n}\n@media screen {\n  a { color: blue; }\n}"],
   ["html", '<div class="row" id=main>\n  <!-- note -->\n  <span>&amp;</span>\n</div>'],
+  [
+    "html",
+    [
+      "<!doctype html>",
+      '<html lang="en">',
+      "  <head>",
+      "    <style>",
+      "      .card { color: #ff0000; display: flex; }",
+      "    </style>",
+      "  </head>",
+      "  <body>",
+      '    <script type="module">',
+      "      const a = 1; // note",
+      "      <span>still in the script</span>",
+      "    </script>",
+      "  </body>",
+      "</html>",
+    ].join("\n"),
+  ],
   ["markdown", "# Title\n\nSome **bold** and `code`.\n\n- item\n> quote\n\n[link](https://example.com)"],
   ["shell", "#!/bin/sh\n# comment\nexport PATH=\"$PATH:/opt\"\nif [ -f x ]; then\n  echo 'done'\nfi"],
   ["yaml", "name: agent\nlist:\n  - one\n  - two\ntrue_key: true"],
@@ -237,6 +256,70 @@ test("html colours tags, attributes and attribute values", () => {
   assert.equal(kindOf(code, "html", "<div"), "tag");
   assert.equal(kindOf(code, "html", "class"), "attribute");
   assert.equal(kindOf(code, "html", '"row"'), "string");
+  // The doctype is a tag like any other, and used to be the one line of a page
+  // with no colour on it at all.
+  assert.equal(kindOf("<!doctype html>\n<p>x</p>", "html", "<!doctype"), "tag");
+});
+
+test("css colours the values, not only the property names", () => {
+  // The bug this pins: the rules stopped at the property name, so a stylesheet
+  // -- which is mostly values -- came out as prose with its first word bold.
+  const code = [
+    ":root { --fg: #fff; }",
+    "body, a.card:hover {",
+    "  display: flex;",
+    "  color: var(--fg) !important;",
+    "  width: calc(100% - 2px);",
+    "}",
+  ].join("\n");
+  assert.equal(kindOf(code, "css", "--fg"), "property");
+  assert.equal(kindOf(code, "css", "#fff"), "number");
+  assert.equal(kindOf(code, "css", "body", 1), "type");
+  assert.equal(kindOf(code, "css", ".card", 1), "type");
+  assert.equal(kindOf(code, "css", "display", 2), "property");
+  assert.equal(kindOf(code, "css", "flex", 2), "declaration");
+  assert.equal(kindOf(code, "css", "var", 3), "function");
+  assert.equal(kindOf(code, "css", "--fg", 3), "property");
+  assert.equal(kindOf(code, "css", "!important", 3), "literal");
+  assert.equal(kindOf(code, "css", "100%", 4), "number");
+  assertWellFormed(code, "css");
+});
+
+test("a style or script body is highlighted as the language it is", () => {
+  // What used to happen: the markup rules ran over the CSS and the JavaScript
+  // as if they were markup, so a stylesheet in a page's head was plain text and
+  // the `a` in `const a = 1` inside a script came out as an *attribute* name.
+  const code = [
+    "<!doctype html>",
+    '<html lang="en">',
+    "  <style>",
+    "    .card { color: #ff0000; display: flex; }",
+    "  </style>",
+    "  <script type=\"module\">",
+    "    const a = 1; // note",
+    "  </script>",
+    "</html>",
+  ].join("\n");
+  assert.equal(kindOf(code, "html", ".card", 3), "type");
+  assert.equal(kindOf(code, "html", "color", 3), "property");
+  assert.equal(kindOf(code, "html", "#ff0000", 3), "number");
+  assert.equal(kindOf(code, "html", "flex", 3), "declaration");
+  assert.equal(kindOf(code, "html", "const", 6), "declaration");
+  assert.equal(kindOf(code, "html", "// note", 6), "comment");
+  // The tags themselves are still the markup scanner's: delegating the body
+  // must not take the tags with it.
+  assert.equal(kindOf(code, "html", "<style>", 2), "tag");
+  assert.equal(kindOf(code, "html", "</script>", 7), "tag");
+  assertWellFormed(code, "html");
+});
+
+test("a style tag inside an HTML comment is not read as live CSS", () => {
+  const code = "<!--\n<style>\n.card { color: red; }\n</style>\n-->\n<p>hi</p>";
+  assert.equal(kindOf(code, "html", "<style>", 1), "comment");
+  assert.equal(kindOf(code, "html", "color", 2), "comment");
+  assert.equal(kindOf(code, "html", "red", 2), "comment");
+  assert.equal(kindOf(code, "html", "<p>", 5), "tag");
+  assertWellFormed(code, "html");
 });
 
 test("markdown colours headings past the first line", () => {
