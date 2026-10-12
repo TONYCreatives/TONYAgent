@@ -356,14 +356,86 @@ def test_dragging_with_no_window_is_not_an_error():
 def test_the_card_is_smaller_than_the_one_that_shipped_before():
     """The size is a design decision, and this is the decision.
 
-    236x248 was the first card. The room for the reduction came out of the design
-    rather than the type: the name row above the character went, and the label
-    moved down beside the words it belongs with.
+    236x248 was the first card, 172x188 the second, and 180x180 is the round one.
+    Square because a circle needs one to be cut out of, and the *painted* area --
+    the circle, not the window -- is what actually got smaller. The room came out
+    of the design rather than the type: the name row above the character went, and
+    the status line moved under it as a caption.
     """
     from tonyagent.window.pet import HEIGHT, WIDTH
 
-    assert WIDTH == 172 and HEIGHT == 188
-    assert WIDTH * HEIGHT < 236 * 248, "the card did not actually get smaller"
+    assert WIDTH == HEIGHT == 180, "a circle needs a square window to be cut from"
+    # The visible circle against the rectangle it replaced; pi/4 of the square.
+    assert WIDTH * HEIGHT * 0.785 < 236 * 248, "the card did not actually get smaller"
+
+
+def test_the_window_is_cut_down_to_the_circle_it_draws(monkeypatch):
+    """The shape is the window's, not the stylesheet's.
+
+    A `border-radius: 50%` draws a circle *inside* a rectangle and the OS paints
+    what is left; the corners are only really gone once the window has a region.
+    Clipping is also what makes them click-through, which is the difference
+    between a round pet and a rectangle pretending to be one.
+    """
+    from tonyagent.window import pet as pet_module
+
+    clipped: list[tuple[int, int, int]] = []
+    monkeypatch.setattr(pet_module.win32, "root_window", lambda hwnd: hwnd)
+    monkeypatch.setattr(
+        pet_module.win32,
+        "clip_to_circle",
+        lambda hwnd, width, height: clipped.append((hwnd, width, height)),
+    )
+
+    window = FakeWindow()
+    window.native = type("Native", (), {"Handle": _Handle})()
+    pet_module._clip(window)
+
+    assert clipped == [(4242, pet_module.WIDTH, pet_module.HEIGHT)], clipped
+    assert pet_module.WIDTH == pet_module.HEIGHT, "an ellipse is not a circle"
+
+
+def test_opening_the_card_is_what_clips_it(monkeypatch):
+    """The wiring, so a card that opens is a card that was shaped."""
+    from tonyagent.window import pet as pet_module
+
+    clipped: list[Any] = []
+    monkeypatch.setattr(pet_module, "_clip", clipped.append)
+
+    p, _created = pet()
+    assert p.open() is True
+
+    assert len(clipped) == 1, "the window was created without being clipped"
+
+
+def test_a_card_that_cannot_be_clipped_is_not_an_error(monkeypatch):
+    """A square pet is a pet. Refusing to open one would be a decoration failing
+    at the thing it decorates."""
+    from tonyagent.window import pet as pet_module
+
+    def refuse(hwnd: int, width: int, height: int) -> None:
+        raise OSError("no window region for you")
+
+    monkeypatch.setattr(pet_module.win32, "root_window", lambda hwnd: hwnd)
+    monkeypatch.setattr(pet_module.win32, "clip_to_circle", refuse)
+
+    window = FakeWindow()
+    window.native = type("Native", (), {"Handle": _Handle})()
+
+    pet_module._clip(window)  # does not raise
+
+
+def test_a_window_with_no_handle_is_not_asked_for_one(monkeypatch):
+    """A fake window in a test has no `native`, and a real one that has not been
+    created yet is the same thing: nothing to clip, and nothing to complain about."""
+    from tonyagent.window import pet as pet_module
+
+    def unexpected(hwnd: int, width: int, height: int) -> None:
+        raise AssertionError("clipping was attempted with no handle")
+
+    monkeypatch.setattr(pet_module.win32, "clip_to_circle", unexpected)
+
+    pet_module._clip(FakeWindow())  # does not raise
 
 
 def test_showing_it_twice_makes_one_card():

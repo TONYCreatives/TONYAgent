@@ -429,11 +429,17 @@ export function PetCard() {
       <div className="pet-figure">
         <Figure pose={pose} />
       </div>
+      {/*
+        One line, and the detail in the tooltip. The card is a circle now, and a
+        chord is shorter than a diameter: at the height a second line would sit
+        there is room for about fourteen characters of a file path, so the detail
+        moved to the two places with room for it -- the tooltip and the label this
+        card announces itself with. See `pet.css`.
+      */}
       <div className="pet-text">
-        <span className="pet-label" title={status.label}>
+        <span className="pet-label" title={status.detail ? `${status.label} — ${status.detail}` : status.label}>
           {status.label}
         </span>
-        {status.detail && <span className="pet-detail">{status.detail}</span>}
       </div>
     </div>
   );

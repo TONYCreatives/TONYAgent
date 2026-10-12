@@ -27,6 +27,7 @@ import {
   WIDE_EYE_SCALE,
 } from "./petcard.js";
 import { SLEEP_AFTER_MS } from "./pet-status.js";
+import { readStylesheet } from "./stylesheet.js";
 import { all, one, render, wait } from "./test-render.js";
 
 /** Stand in for the host, recording what the card asked it to do. */
@@ -143,8 +144,42 @@ describe("the pet's eyes", () => {
   });
 });
 
-describe("the frame the character is drawn in", () => {
-  test("it contains everything drawn, so nothing is clipped", () => {
+describe("the circle the card is cut into", () => {
+  const css = readStylesheet();
+
+  test("the card is round, and its content is held inside the round part", () => {
+    // The stylesheet is the only place this can be checked: the shape comes from a
+    // window region and the *drawing* of it is CSS, and the failure it prevents is
+    // content sitting in a corner of the window that the region has cut away --
+    // which is invisible in a DOM assertion and obvious on screen.
+    const card = /\.pet\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    assert.match(card, /border-radius:\s*50%/, "the card is not a circle");
+
+    // The caption's own width, as the share the padding is derived from.
+    const caption = /--pet-caption:\s*([\d.]+)%/.exec(css)?.[1];
+    assert.ok(caption, "the caption's share of the card is not declared");
+    const share = Number(caption) / 100;
+    assert.ok(
+      share <= 0.75,
+      `a caption ${caption}% of the card's width reaches past the chord and gets cut`,
+    );
+
+    // A drop shadow cannot exist: there is no window outside the circle to paint it
+    // in, so one in the stylesheet would be silently clipped.
+    assert.doesNotMatch(card, /box-shadow/, "a shadow outside the circle cannot be drawn");
+    assert.match(css, /--pet-origin/, "the figure's pivot went missing with the shadow");
+  });
+
+  test("the figure is inset so its head does not meet the rim", () => {
+    // The widest thing on the character is its head, and the inscribed square of a
+    // circle is 70.7% of the diameter -- so the figure is drawn into a box smaller
+    // than the window rather than into the window.
+    const figure = /\.pet-figure\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    assert.match(figure, /margin:\s*[\d.]+%\s+[\d.]+%/, "the figure is not inset from the rim");
+  });
+});
+
+describe("the frame the character is drawn in", () => {  test("it contains everything drawn, so nothing is clipped", () => {
     // The frame is the drawing's own bounds rather than the mark's 1024-unit
     // canvas, and the whole risk of cropping is a pose that leaves it: an eye cut
     // by the edge reads as a wink, which this card does not mean.
@@ -287,8 +322,28 @@ describe("the card", () => {
     const card = one(container, ".pet")!;
     assert.equal(card.getAttribute("data-mood"), "working");
     assert.equal(one(container, ".pet-label")!.textContent, "Running read_file");
-    assert.equal(one(container, ".pet-detail")!.textContent, "src/app.py");
     assert.equal(all(container, "button").length, 0, "the card grew a button to compete with the drag");
+  });
+
+  test("the detail is not lost, it moves to where a circle has room for it", async () => {
+    // The card is a circle and a chord is shorter than a diameter: at the height a
+    // second line would sit, a file path fits about fourteen characters. So the
+    // label carries it as a tooltip and the card announces both -- dropping it
+    // would have been the other option, and "which file" is the useful half.
+    insideHost();
+    const container = await render(<PetCard />);
+    await wait(0);
+
+    await act(async () => {
+      push({ mood: "working", label: "Running read_file", detail: "src/app.py" });
+    });
+
+    assert.equal(one(container, ".pet-detail"), null, "a second line is still being drawn");
+    assert.equal(
+      one(container, ".pet-label")!.getAttribute("title"),
+      "Running read_file — src/app.py",
+    );
+    assert.match(one(container, ".pet")!.getAttribute("aria-label") ?? "", /src\/app\.py/);
   });
 
   test("the mood is on the root, because that is what the stylesheet reads", async () => {

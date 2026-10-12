@@ -1,15 +1,28 @@
 /*
  * The desktop pet: the card, the character, and everything that moves on it.
  *
- * An opaque card and not a cut-out character, and that is measured rather than
- * chosen. `transparent=True` on this shell leaves the form opaque -- measured:
- * `WS_EX_LAYERED` unset, `AllowTransparency` false, and the pixels beside the
- * artwork were the control grey instead of the window behind them. Setting the
- * form's `TransparencyKey` by hand through pythonnet hung the window. So this is
- * a rounded card, drawn as one, with the artwork inside it.
+ * **It is a circle, and the shape is not CSS's to make.** The window is a
+ * rectangle; a `border-radius: 50%` only draws a circle *inside* one, and the
+ * pixels between the circle and the window's edge are painted by the OS. The
+ * corners are therefore cut off the window itself with a region
+ * (`win32.clip_to_circle`) and this file draws the circle that lands on the cut
+ * edge. Two things follow, and both are the stylesheet's business:
  *
- * The card is the whole page: there is no window chrome to sit under, so the
- * root fills the viewport and every corner is the card's own.
+ * - **There can be no drop shadow.** There is no window outside the circle for one
+ *   to be painted in, so the `box-shadow` this card used to carry is gone rather
+ *   than left here to be clipped invisibly. The rim is a 1px border and an inner
+ *   sheen, which is what is left to separate the card from what is behind it.
+ * - **The content has to fit a circle.** A chord is shorter than the diameter, so
+ *   text near the rim gets very little width: the status line is inset by the
+ *   amount that keeps it inside the circle at the height it sits at, and the
+ *   character is sized from the box it has rather than the box it would like. The
+ *   detail line is gone from the drawing for the same reason -- at the height it
+ *   would have to sit, its chord fits about fourteen characters of a file path,
+ *   which is worse than not showing it. It is in the tooltip and in the
+ *   accessible label.
+ *
+ * The card is the whole page: there is no window chrome to sit under, so the root
+ * fills the viewport and every corner is the card's own.
  *
  * **Two attributes decide what is drawn**, and they are two vocabularies rather
  * than one: `data-mood` is what the *agent* is doing -- it comes off the wire and
@@ -45,19 +58,25 @@
   height: 100vh;
   box-sizing: border-box;
   display: grid;
-  /* The character takes everything the words do not need, which is what keeps a
-     smaller card from becoming a smaller *drawing*: 122px of 188 against the
-     96 of 248 this card had at 236 wide. */
+  /*
+   * The character takes everything the caption does not need. `1fr` of the circle
+   * rather than of a rectangle: what the character is drawn into is the box it is
+   * given, and the letterboxing inside it is what keeps the drawing square.
+   */
   grid-template-rows: minmax(0, 1fr) auto;
-  gap: 5px;
-  padding: 9px 10px 8px;
+  /*
+   * The bottom padding is the chord arithmetic, not a taste: the caption's
+   * baseline sits about 24px above the circle's bottom, where the chord is about
+   * 130px wide, so the text is held to `--pet-caption` of the card's width and the
+   * card's own padding keeps it off the rim. A caption that reached the full
+   * diameter would run out of circle and be cut by the window region.
+   */
+  --pet-caption: 74%;
+  padding: 0 calc((100% - var(--pet-caption)) / 2) 20px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: 50%;
   background: var(--surface);
   background-image: var(--glass-sheen);
-  /* The same cast as the app's own floating panels: it is a window above other
-     windows, and painting it flat made it read as a screenshot of one. */
-  box-shadow: var(--shadow-1);
   color: var(--fg);
   font-family: var(--sans);
   /* The waiting mood recolours this card's own edge, and a state that changes a
@@ -68,13 +87,22 @@
   overflow: hidden;
 }
 
-/* The lamp's own corner, so it costs the layout nothing. Inset rather than in the
-   exact corner because the card's radius would clip a square-cornered element
-   sitting in it. */
+/*
+ * The lamp, up and to the *left*, and both halves of that are the circle's doing.
+ *
+ * Inset from the rim because a chord is shorter than a diameter: at the height it
+ * sits the circle is about 128px wide, so a lamp in the corner of the *window*
+ * would be in the part the region cut away. On the left because the Z's rise on
+ * the right -- a lamp above the character's head put the two in the same corner,
+ * and a status light next to a drifting glyph reads as a fourth Z.
+ */
 .pet-dot {
   position: absolute;
-  top: 9px;
-  right: 10px;
+  top: 15%;
+  left: 30%;
+  /* Half its own width, so the offset is a nudge from a share of the card rather
+     than a pixel count that would stop being centred at another size. */
+  margin-left: -3.5px;
   width: 7px;
   height: 7px;
   border-radius: 50%;
@@ -115,6 +143,13 @@
 .pet-figure {
   position: relative;
   min-height: 0;
+  /*
+   * The circle's own inset, in a share of the card rather than in pixels: the
+   * figure is drawn into the *inscribed square* of the circle, which is 70.7% of
+   * the diameter. Without this the drawing is sized from the full square and its
+   * head -- the widest thing on the character -- meets the rim.
+   */
+  margin: 9% 7% 0;
 }
 
 /*
@@ -132,30 +167,26 @@
 }
 
 .pet-text {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
   min-width: 0;
+  text-align: center;
 }
 
+/*
+ * The caption. One line, centred, and the only text on the card.
+ *
+ * There is no second line here any more, and the circle is why: at the height a
+ * second line would have to sit -- about 24px above the bottom -- the chord is
+ * around 130px, which fits "src/tonyagent…" of a file path and nothing after it.
+ * A truncated path is worse than no path, so the detail lives in the tooltip and
+ * in the accessible label, which are places with room for it.
+ */
 .pet-label {
+  display: block;
   font-size: var(--text-xs);
   font-weight: 600;
-  /* One line, always: the card's height is fixed, and a label that wrapped would
-     push the detail out of the card rather than into a second line. */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.pet-detail {
-  color: var(--fg-dim);
-  font-size: var(--text-2xs);
-  /* Two lines at most, so the card never grows. */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
 .pet:active {

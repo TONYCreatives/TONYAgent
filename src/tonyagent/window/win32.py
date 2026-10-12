@@ -298,6 +298,22 @@ def _bind() -> None:
     ]
     dwmapi.DwmSetWindowAttribute.restype = ctypes.c_long
 
+    # `CreateEllipticRgn` is GDI and `SetWindowRgn` is user32, which is why one
+    # module fetches both: a window region is a GDI object handed to the window
+    # manager, and the two halves are in different libraries.
+    gdi32 = ctypes.windll.gdi32  # type: ignore[attr-defined]
+    gdi32.CreateEllipticRgn.argtypes = [
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.c_int,
+    ]
+    gdi32.CreateEllipticRgn.restype = ctypes.c_void_p
+    gdi32.DeleteObject.argtypes = [ctypes.c_void_p]
+    gdi32.DeleteObject.restype = wintypes.BOOL
+    user32.SetWindowRgn.argtypes = [wintypes.HWND, ctypes.c_void_p, wintypes.BOOL]
+    user32.SetWindowRgn.restype = ctypes.c_int
+
     _bound = True
 
 
@@ -672,6 +688,50 @@ def on_window_thread(window: Any, work: Callable[[], None]) -> None:
         work()
         return
     invoke(Action(work))
+
+
+def clip_to_circle(hwnd: int, width: int, height: int) -> None:
+    """Cut the window down to a circle. What is outside it is not there at all.
+
+    **A region and not transparency, and that is the only way this shell offers a
+    round window.** `transparent=True` leaves the form opaque here -- measured: no
+    ``WS_EX_LAYERED``, ``AllowTransparency`` false, and the pixels beside the
+    artwork coming back as control grey -- and setting the form's
+    ``TransparencyKey`` by hand, which is the compositing route, hung the window.
+    A window region predates all of it and composites nothing: the pixels outside
+    the ellipse are simply not part of the window, so the desktop behind them
+    shows through and a click there goes to whatever is behind rather than to the
+    pet.
+
+    Two consequences are visible and are chosen rather than suffered:
+
+    * the rim is **hard**. The OS clips the window; it does not antialias it. A
+      circle drawn in CSS on top of the region therefore has a slightly stepped
+      edge, and nothing here can smooth it;
+    * a **drop shadow cannot exist**, because there is no window outside the
+      circle for one to be painted in. The card's `box-shadow` was removed rather
+      than left in the stylesheet to be silently clipped.
+
+    Sized from the window's own numbers rather than from ``GetWindowRect``: the
+    window is frameless and not resizable, so its outer box is the box it was
+    created with, and asking the OS to confirm that is a call that can fail for no
+    benefit. ``CreateEllipticRgn``'s right and bottom are exclusive, so the
+    bounding box *is* the window and the region is not a pixel short of it.
+    """
+    if sys.platform != "win32":
+        raise WindowsOnlyError("a window region is Win32 behaviour")
+    _bind()
+    gdi32 = ctypes.windll.gdi32  # type: ignore[attr-defined]
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+    region = gdi32.CreateEllipticRgn(0, 0, width, height)
+    if not region:
+        raise OSError("CreateEllipticRgn returned no region")
+    # `SetWindowRgn` *takes ownership* on success -- the system deletes the region,
+    # so deleting it here too would be a double free. It does not on failure, and
+    # that is the branch that has to clean up.
+    if not user32.SetWindowRgn(wintypes.HWND(hwnd), region, True):
+        gdi32.DeleteObject(region)
+        raise OSError("SetWindowRgn refused the region")
 
 
 def show_system_menu(hwnd: int) -> None:

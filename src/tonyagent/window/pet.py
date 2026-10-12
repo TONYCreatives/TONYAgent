@@ -20,9 +20,12 @@ machine through ``Window.get_window_long`` and a screen capture, not assumed:
   ``WS_EX_LAYERED`` is unset, ``AllowTransparency`` is ``False`` and the pixels
   beside the artwork came back as the control grey rather than the window behind
   it. Setting the form's ``TransparencyKey`` by hand through pythonnet hung the
-  window. So the pet is an opaque rounded card and is drawn as one -- a cut-out
-  character is not available in this shell, and pretending otherwise would ship a
-  grey rectangle with a character floating in it.
+  window. So the card is **cut out instead of composited**: a window region takes
+  the corners off (`win32.clip_to_circle`), and what is outside the circle is not
+  part of the window at all -- nothing to be transparent, and a click there goes
+  through to the desktop. The rim is hard because the OS clips rather than
+  antialiases, and there can be no drop shadow because there is no window outside
+  the circle to paint one in.
 
 **The status arrives from the page, not from the core.** The app window is
 already the thing that reduces the core's event stream into "busy", "which tool",
@@ -47,16 +50,19 @@ PUSH_TARGET = "window.__tonyAgent"
 
 TITLE = "TONYAgent"
 
-#: The card. Narrow enough to sit in a corner without covering anything, and
-#: sized so the character still reads at a glance -- which is the whole job.
+#: The card. Round, and **square because a circle needs a square to be cut out
+#: of**: the window is a rectangle however hard the stylesheet tries, so the shape
+#: comes from a window region (`win32.clip_to_circle`) and the region is the
+#: ellipse inscribed in the window's box. Any other aspect would cut a circle
+#: inside a rectangle and leave the bands beside it showing.
 #:
-#: It was 236x248 and is 172x188 now, at the user's asking. The room for that came
-#: from the design rather than from shrinking the type: the "TONYAgent" row above
-#: the character was dropped (the character *is* the app's mark, so the row named
-#: something the artwork already says) and the status label moved down beside the
-#: words it belongs with, which together gave the figure a larger share of a
-#: smaller card than it had of the bigger one -- 122px of 188 against 96 of 248.
-WIDTH, HEIGHT = 172, 188
+#: 180x180 is a step down from the 236x248 it started at, and a step down again in
+#: *painted* area -- a circle of 180 covers 25,400 square pixels against the
+#: rectangle's 32,300. The room for the earlier reduction came out of the design
+#: rather than the type: the "TONYAgent" row above the character went (the
+#: character *is* the app's mark, so the row named something the artwork already
+#: says), and the status line moved under the character where it reads as a caption.
+WIDTH, HEIGHT = 180, 180
 
 #: How far from the corner of the work area it starts -- clear of the taskbar it
 #: already excludes, and far enough in that it does not look clipped to the edge.
@@ -146,6 +152,7 @@ class DeskPet:
             # first status waits for `mark_ready` rather than being sent here.
             self._ready = False
             _reveal(window, before)
+            _clip(window)
             window.events.closed += self._closed
             return True
 
@@ -392,6 +399,27 @@ def _reveal(window: Any, previous: int = 0) -> None:
         win32.give_foreground_back(previous, hwnd)
     except Exception as exc:  # noqa: BLE001 - a foreground that stays stolen is not fatal
         logger.debug(f"Could not give the foreground back after the card opened: {exc}")
+
+
+def _clip(window: Any) -> None:
+    """Take the window's corners off, so the card is the circle it draws.
+
+    The stylesheet can only *draw* a circle: the window underneath it stays a
+    rectangle, and its corners are painted by the OS. A window region is what
+    makes the shape real -- and it is also what makes the corners click-through,
+    which is the difference between a round pet and a rectangle pretending.
+
+    Failure is logged and survived. A card that could not be clipped is a square
+    card, which is what the pet was until now; refusing to open one would be a
+    decoration failing at the thing it decorates.
+    """
+    hwnd = _handle(window)
+    if not hwnd:
+        return
+    try:
+        win32.clip_to_circle(hwnd, WIDTH, HEIGHT)
+    except Exception as exc:  # noqa: BLE001 - see the docstring
+        logger.debug(f"Could not clip the pet to a circle: {exc}")
 
 
 def _foreground() -> int:
