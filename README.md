@@ -36,7 +36,9 @@ meant a second catalogue implementation returning "unknown" for most fields.
 - Tool call visualization and confirmation dialogs
 - Responsive layout with collapsible sidebar
 - **Code viewer**: browse the project tree and open any file — source with syntax highlighting, images, Markdown rendered or as source, CSV/TSV as a grid. Three colour palettes (VSCode's Dark+, Light+ and Monokai). Read-only by default with a per-file toggle; **locked while a turn is running**, so a file cannot be typed into while the agent is writing it. When you do edit and save, the change is written atomically and the next message tells the agent which file and which lines changed, so its picture of your code is never stale
-- **Agent / Code switch** in the top bar, for moving between the conversation and the project without losing either
+- **Agent / Code switch** in the top bar. Code mode is the whole window rather than a pane: the chat rail, the tab strip and the composer are replaced by a persistent **project explorer** on the left and the editor filling the rest, so leaving the conversation for the project does not mean losing either
+- **Desktop pet**: a small always-on-top card in the corner of the screen that says what the turn is doing right now — "Thinking", "Running read_file", "Needs your approval" — so a long turn can run while you are in another window. It never takes focus (asking for attention must not steal the keyboard) and clicking it brings the app back. It remembers whether it was open, and it is off until you turn it on from the rail
+- **Account view**: the usage panel counts what *this app* sent, which is not your provider's real total. One button opens your provider's own dashboard — activity, credits, API keys — in a browser window the app owns, with a persistent sign-in profile. It is a closed set of views, and the agent has no tool that can reach it
 
 ### ?���?Rich Tool Ecosystem (32 Tools)
 | Category | Tools |
@@ -55,6 +57,7 @@ meant a second catalogue implementation returning "unknown" for most fields.
 - **Command allowlist/denylist** for shell operations
 - **Folder locking** during AI generation to prevent conflicts
 - **Configurable confirmation** for destructive operations
+- **Batched tool calls**: every mode's system prompt states that independent tool calls may be issued together in one message, and the core runs them concurrently. Requests are metered on most plans (OpenRouter's free tier allows 20 requests a minute and 1,000 a day), so a turn that reads three files spends one round trip rather than three
 
 ### ?�� Sandboxed Execution
 - **Docker backend**: Full Linux environment with network isolation and per-container limits
@@ -346,7 +349,7 @@ When the AI wants to execute a potentially destructive action (file deletion, sh
 
 | Module | Path | Responsibility |
 |--------|------|----------------|
-| **Window** | `src/tonyagent/window/` | The desktop shell: opens the window, serves the bundle, owns the core |
+| **Window** | `src/tonyagent/window/` | The desktop shell: opens the window, serves the bundle, owns the core. `pet.py` is the status card, `account.py` the provider's dashboard, `prefs.py` the shell's own remembered settings |
 | **Interface** | `app/src/` | The React interface, built by Vite into `app/dist/` |
 | **Core** | `src/tonyagent/core/` | Conversation state, events, modes; served over JSONL by `headless/server.py` |
 | **Providers** | `src/tonyagent/providers/` | 8 LLM adapters + factory |
@@ -458,7 +461,7 @@ tail -f ~/.local/share/tonyagent/logs/tonyagent.log
 
 # Enable debug logging
 export TONYAGENT_LOG_LEVEL=DEBUG
-python -m tonyagent
+python -m tonyagent.window
 ```
 
 ### Reset Configuration
