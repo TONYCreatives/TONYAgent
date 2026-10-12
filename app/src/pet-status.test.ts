@@ -11,7 +11,10 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { initialState, type ChatState, type ChatMessage, type ToolCall } from "./events.js";
-import { firstLine, petStatus } from "./pet-status.js";
+import { firstLine, petPose, petStatus, type PetStatus } from "./pet-status.js";
+
+/** A status with the three fields the pose reads. */
+const status = (mood: PetStatus["mood"]): PetStatus => ({ mood, label: "x", detail: "" });
 
 function message(tools: ToolCall[]): ChatMessage {
   return {
@@ -33,8 +36,7 @@ function state(over: Partial<ChatState> = {}): ChatState {
   return { ...initialState, ...over };
 }
 
-describe("the pet's status", () => {
-  test("at rest it says so without claiming anything is happening", () => {
+describe("the pet's status", () => {  test("at rest it says so without claiming anything is happening", () => {
     const status = petStatus(state());
     assert.equal(status.mood, "idle");
     assert.equal(status.detail, "");
@@ -141,5 +143,26 @@ describe("the pet's status", () => {
     const long = "x".repeat(400);
     assert.equal(firstLine(long).length, 120, "the truncation is not the length it claims");
     assert.ok(firstLine(long).endsWith("..."));
+  });
+});
+
+describe("the pose, which is the mood plus sleeping", () => {
+  test("an idle pet asleep is the only pose a status cannot send", () => {
+    // `asleep` is the card's own word: it has no event behind it, so nothing on
+    // the wire can produce it, and nothing but idleness can reach it.
+    assert.equal(petPose(status("idle"), true), "asleep");
+    assert.equal(petPose(status("idle"), false), "idle");
+  });
+
+  test("working, waiting and failed do not sleep, however long they last", () => {
+    // A turn brings no status for as long as its longest tool takes -- minutes,
+    // for a build -- so a pet that nodded off while the agent worked would be
+    // reporting the opposite of what is happening. Waiting and failed are the two
+    // states that exist to be noticed, and there is nothing to notice about a
+    // sleeping card.
+    for (const mood of ["working", "waiting", "failed"] as const) {
+      assert.equal(petPose(status(mood), true), mood, `${mood} fell asleep`);
+      assert.equal(petPose(status(mood), false), mood);
+    }
   });
 });

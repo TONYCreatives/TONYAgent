@@ -95,3 +95,23 @@ export async function petFocusApp(): Promise<void> {
   if (!host) return;
   await host.pet("focus");
 }
+
+/**
+ * The card's own: hand the press to the OS's move loop.
+ *
+ * **Blocks until the user lets go**, which is the point: the loop is modal, so
+ * the answer to "did the card move" only exists once it has ended, and a press
+ * that moved nothing is a click. See `petcard.PetCard` for what the card does
+ * with that, and `DeskPet.drag` for the measurement behind doing it this way
+ * rather than with pywebview's own drag.
+ *
+ * A page with no host reports "did not move" rather than throwing: the card is
+ * also renderable in a browser, where a press that raises nothing is the honest
+ * outcome.
+ */
+export async function petDrag(): Promise<{ moved: boolean }> {
+  const host = await api();
+  if (!host) return { moved: false };
+  const reply = await host.pet("drag");
+  return { moved: Boolean(reply && reply.moved) };
+}

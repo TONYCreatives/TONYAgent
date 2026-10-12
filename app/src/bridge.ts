@@ -98,12 +98,26 @@ export interface AccountRead {
 }
 
 /** Everything the desktop pet can be asked. See `Bridge.pet`. */
-export type PetAction = "state" | "show" | "hide" | "ready" | "status" | "focus";
+export type PetAction = "state" | "show" | "hide" | "ready" | "status" | "focus" | "drag";
 
 /** What the pet reports about itself: up now, and wanted at next start. */
 export interface PetStateReply {
   open: boolean;
   wanted: boolean;
+}
+
+/**
+ * What a drag reported: whether the card actually moved.
+ *
+ * Not part of `PetStateReply`, because only one action answers it and the two
+ * callers care about different halves -- the app's toggle wants the booleans, the
+ * card wants this. See `DeskPet.drag`: a press that moved nothing is a click, and
+ * the card is the only thing that can act on the difference.
+ */
+export interface PetDragReply {
+  moved: boolean;
+  x: number;
+  y: number;
 }
 
 /**
@@ -138,10 +152,10 @@ export interface HostApi {
    * The desktop pet: ask about it, show or hide it, or tell it what to draw.
    *
    * One method with a closed set of actions, because two pages share this bridge
-   * -- the app asks for the state and pushes statuses, the card announces itself
-   * and raises the app -- and the action is what tells them apart.
+   * -- the app asks for the state and pushes statuses, the card announces itself,
+   * drags itself and raises the app -- and the action is what tells them apart.
    */
-  pet(action: PetAction, payload?: Record<string, unknown>): Promise<PetStateReply>;
+  pet(action: PetAction, payload?: Record<string, unknown>): Promise<PetStateReply & Partial<PetDragReply>>;
 }
 
 /** What the host pushes into the page. */

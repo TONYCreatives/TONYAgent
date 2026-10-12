@@ -18,12 +18,47 @@ import type { ChatState, ToolCall } from "./events.js";
 
 export type PetMood = "idle" | "working" | "waiting" | "failed";
 
+/**
+ * What the *character* is doing, which is not the same as what the agent is.
+ *
+ * `PetMood` is the agent's vocabulary and comes off the wire; this is the card's,
+ * and it exists because one of the drawings is not a mood: **a pet that has been
+ * idle for a while falls asleep**, and falling asleep is a change of pose with no
+ * event behind it. Keeping them apart is what stops the card from having to
+ * invent a mood -- and stops `asleep` from ever being sent over the wire, where
+ * nothing could produce it.
+ */
+export type PetPose = PetMood | "asleep";
+
+/**
+ * How long with nothing happening before it nods off.
+ *
+ * Long enough that it does not fall asleep between two messages of a
+ * conversation, and short enough that a user who walks away actually sees it.
+ */
+export const SLEEP_AFTER_MS = 90_000;
+
 export interface PetStatus {
   mood: PetMood;
   /** The headline: at most a few words, and never a sentence. */
   label: string;
   /** The second line, which may be empty. Whatever is most specific. */
   detail: string;
+}
+
+/**
+ * The pose to draw: the mood, or asleep when it has been idle long enough.
+ *
+ * **Only `idle` can sleep**, and that is the whole of this function's logic. A
+ * turn that is working brings no status for as long as its longest tool takes --
+ * minutes, for a build -- and a card that nodded off *while the agent was
+ * working* would be reporting the opposite of what is happening. Waiting and
+ * failed are deliberately not sleepable either: those are the two states that
+ * exist to be noticed.
+ */
+export function petPose(status: PetStatus, asleep: boolean): PetPose {
+  if (status.mood === "idle" && asleep) return "asleep";
+  return status.mood;
 }
 
 /** The last tool call that has not finished, if the turn is inside one. */

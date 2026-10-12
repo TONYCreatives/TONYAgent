@@ -29,20 +29,35 @@
   .thinking-live { animation: none; }
   .tab-spinner { animation: none; }
   /*
-   * The desktop pet's three, and they are the *progress* kind above rather than
-   * the decorative kind: the breathing and the pulse are how the card says "still
-   * working" without a spinner, and the idle state has no animation at all to
-   * lose. Cancelling them leaves the mood dot, the label and the detail -- which
-   * is the whole status, in words, already in the DOM.
+   * The desktop pet's, and they are the *progress* kind above rather than the
+   * decorative kind: the breathing, the typing and the pulse are how the card
+   * says "still working" without a spinner. Cancelling them leaves the mood lamp,
+   * the label and the detail -- which is the whole status, in words, already in
+   * the DOM -- and for the asleep pose it leaves the shut eyes and the Z's, which
+   * are *drawn* rather than animated and are the actual information.
    *
-   * Spelled out with the `[data-mood]` halves, per the note at the foot of this
-   * block: `.pet-body` alone is one class and loses to the two-class rule it is
-   * cancelling, so the movement would keep playing for precisely the people who
-   * asked it not to.
+   * `.pet-z` is the one that needed thinking about: the floating Z's are the only
+   * thing saying "asleep" that moves, and cancelling them leaves them stacked at
+   * their drawn positions, still reading as three z's over a shut-eyed character.
+   * That is why they are separate elements with an opacity keyframe rather than
+   * one element that travels: stopped, they are still a picture of sleep.
+   *
+   * Spelled out with the `[data-pose]`/`[data-mood]` halves, per the note at the
+   * foot of this block: `.pet-body` alone is one class and loses to the
+   * two-class rule it is cancelling, so the movement would keep playing for
+   * precisely the people who asked it not to.
    */
-  .pet[data-mood="working"] .pet-body,
+  .pet-eye,
+  .pet-z,
   .pet[data-mood="working"] .pet-dot,
-  .pet[data-mood="waiting"] .pet-body {
+  .pet[data-mood="waiting"] .pet-dot,
+  .pet[data-pose="idle"] .pet-body,
+  .pet[data-pose="working"] .pet-body,
+  .pet[data-pose="working"] .pet-hand,
+  .pet[data-pose="working"] .pet-key,
+  .pet[data-pose="waiting"] .pet-body,
+  .pet[data-pose="asleep"] .pet-body,
+  .pet[data-pose="failed"] .pet-body {
     animation: none;
   }
 
