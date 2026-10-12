@@ -69,6 +69,11 @@ from loguru import logger
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
 DWMWCP_ROUND = 2
 
+#: ``DWMWA_NCRENDERING_POLICY`` and ``DWMNCRP_DISABLED``: "draw no system frame for
+#: this window", which is what takes its drop shadow away. See `no_shadow`.
+DWMWA_NCRENDERING_POLICY = 2
+DWMNCRP_DISABLED = 1
+
 TPM_LEFTALIGN = 0x0000
 TPM_TOPALIGN = 0x0000
 TPM_RIGHTBUTTON = 0x0002
@@ -317,6 +322,48 @@ def _bind() -> None:
     user32.GetWindowRect.restype = wintypes.BOOL
 
     _bound = True
+
+
+def no_shadow(hwnd: int) -> None:
+    """Turn off the window's drop shadow.
+
+    **Measured, and it is the reason a round pet still looked rectangular.** The
+    region cuts the window's corners, but DWM draws the drop shadow to the window's
+    *rectangle*, not to its region -- so the cut-away corners are filled by the
+    shadow and the pet reads as a dark rounded square with a circle drawn inside it.
+
+    The evidence, taken over a pure white backdrop with the pet 180x180 in the
+    middle of it (pixel values, 6px and 14px outside the window's rect):
+
+        spot            window hidden   window shown   shadow policy off
+        corner (6px)    255             193-241        255
+        edge midpoint   255             119-211        255
+
+    A circle inscribed in a square touches that square's edges at their *midpoints*
+    and misses the corners entirely, so a shadow that followed the region would be
+    strong at the edge midpoints and absent at the corners. It was dark at both,
+    which is what says the shadow is rectangular -- and disabling non-client
+    rendering removes it everywhere, including the ring outside the rect.
+
+    ``DWMWA_NCRENDERING_POLICY`` with ``DWMNCRP_DISABLED`` is the documented way to
+    say "this window has no system-drawn frame": the shadow, the system border and
+    the compositor's rounded corners all go. None of them is wanted here -- the shape
+    is a region and the edge is the card's own border -- and the pet keeps every
+    extended style that makes it a pet (``WS_EX_NOACTIVATE``, topmost, frameless).
+    """
+    if sys.platform != "win32":
+        raise WindowsOnlyError("a window shadow is DWM behaviour")
+    _bind()
+    policy = ctypes.c_int(DWMNCRP_DISABLED)
+    hr = ctypes.windll.dwmapi.DwmSetWindowAttribute(  # type: ignore[attr-defined]
+        wintypes.HWND(hwnd),
+        DWMWA_NCRENDERING_POLICY,
+        ctypes.byref(policy),
+        ctypes.sizeof(policy),
+    )
+    if hr < 0:
+        # Signed, like `round_corners`: anything below zero is `FAILED()` in C.
+        raise OSError(f"DwmSetWindowAttribute refused the shadow policy: hr={hr}")
 
 
 def round_corners(hwnd: int) -> None:

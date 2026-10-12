@@ -193,7 +193,7 @@ class DeskPet:
             # The window exists and the page is talking to us, so a handle that
             # still cannot be read is not a matter of timing any more -- and this
             # is the warning that was missing when the card shipped as a rectangle.
-            logger.warning("The pet window could not be clipped to a circle.")
+            logger.warning("The pet window could not be shaped into a circle.")
         self.push(self._status)
         return {"open": self._window is not None}
 
@@ -316,7 +316,7 @@ class DeskPet:
             return
         self._dressed = True
         _reveal(window, self._previous)
-        _clip(window)
+        _shape(window)
 
     def _create_window(self, page: str, x: int, y: int) -> Any:
         return _create_window(page, x, y, self._api)
@@ -468,29 +468,32 @@ def _reveal(window: Any, previous: int = 0) -> None:
         logger.debug(f"Could not give the foreground back after the card opened: {exc}")
 
 
-def _clip(window: Any) -> None:
-    """Take the window's corners off, so the card is the circle it draws.
+def _shape(window: Any) -> None:
+    """Make the card the circle it draws.
 
-    The stylesheet can only *draw* a circle: the window underneath it stays a
-    rectangle, and its corners are painted by the OS. A window region is what
-    makes the shape real -- and it is also what makes the corners click-through,
-    which is the difference between a round pet and a rectangle pretending.
+    Two calls, and the second is not a refinement of the first -- it is what makes
+    the first visible:
 
-    The region is computed from the window's real box, not from `WIDTH`/`HEIGHT`;
-    see `win32.clip_to_circle`, where getting that wrong left a slab of window
-    beside the circle.
+    * the **region** takes the window's corners off, so what is outside the circle
+      is not part of the window, is not painted, and does not take clicks;
+    * the **shadow off**, because DWM draws the drop shadow to the window's
+      *rectangle* rather than to its region. Without this the cut-away corners are
+      filled by the shadow and the pet reads as a dark rounded square with a circle
+      inside it -- which is exactly how it shipped and exactly what the user saw.
+      `win32.no_shadow` carries the pixel measurements.
 
-    Failure is logged rather than raised. A card that could not be clipped is a
-    square card, which is what the pet was until now; refusing to open one would be
-    a decoration failing at the thing it decorates.
+    Failure is logged rather than raised. A card that could not be shaped is a square
+    card, which is what the pet was until now; refusing to open one would be a
+    decoration failing at the thing it decorates.
     """
     hwnd = _handle(window)
     if not hwnd:
         return
-    try:
-        win32.clip_to_circle(hwnd)
-    except Exception as exc:  # noqa: BLE001 - see the docstring
-        logger.warning(f"The pet window could not be clipped to a circle: {exc}")
+    for step, work in (("clipped to a circle", win32.clip_to_circle), ("unshadowed", win32.no_shadow)):
+        try:
+            work(hwnd)
+        except Exception as exc:  # noqa: BLE001 - see the docstring
+            logger.warning(f"The pet window could not be {step}: {exc}")
 
 
 def _foreground() -> int:

@@ -389,12 +389,59 @@ def test_the_window_is_cut_down_to_the_circle_it_draws(monkeypatch):
     clipped: list[int] = []
     monkeypatch.setattr(pet_module.win32, "root_window", lambda hwnd: hwnd)
     monkeypatch.setattr(pet_module.win32, "clip_to_circle", clipped.append)
+    monkeypatch.setattr(pet_module.win32, "no_shadow", lambda hwnd: None)
 
     window = FakeWindow()
     window.native = type("Native", (), {"Handle": _Handle})()
-    pet_module._clip(window)
+    pet_module._shape(window)
 
     assert clipped == [4242], clipped
+
+
+def test_the_shadow_is_taken_off_too_and_that_is_what_makes_it_round(monkeypatch):
+    """**The region alone is not enough, and this is the bug the user saw.**
+
+    DWM draws a window's drop shadow to the window's *rectangle*, not to its region,
+    so the corners the region cut away are filled by the shadow: the pet reads as a
+    dark rounded square with a circle drawn inside it. Measured over a white backdrop
+    (pixels 6px outside the rect): the corners were as dark as the edge midpoints
+    -- 193-241 against 119-211 -- where a circular window would have no shadow at the
+    corners at all. With `DWMWA_NCRENDERING_POLICY = DWMNCRP_DISABLED` every one of
+    those samples returns to the white behind it.
+    """
+    from tonyagent.window import pet as pet_module
+
+    unshadowed: list[int] = []
+    monkeypatch.setattr(pet_module.win32, "root_window", lambda hwnd: hwnd)
+    monkeypatch.setattr(pet_module.win32, "clip_to_circle", lambda hwnd: None)
+    monkeypatch.setattr(pet_module.win32, "no_shadow", unshadowed.append)
+
+    window = FakeWindow()
+    window.native = type("Native", (), {"Handle": _Handle})()
+    pet_module._shape(window)
+
+    assert unshadowed == [4242], "the window kept the shadow that fills its cut corners"
+
+
+def test_a_window_that_cannot_be_shadowed_is_still_circled(monkeypatch):
+    """The two halves fail independently: losing either is a worse pet, not a
+    broken one, and the earlier of the two must still have happened."""
+    from tonyagent.window import pet as pet_module
+
+    clipped: list[int] = []
+    monkeypatch.setattr(pet_module.win32, "root_window", lambda hwnd: hwnd)
+    monkeypatch.setattr(pet_module.win32, "clip_to_circle", clipped.append)
+
+    def refuse(hwnd: int) -> None:
+        raise OSError("no shadow policy for you")
+
+    monkeypatch.setattr(pet_module.win32, "no_shadow", refuse)
+
+    window = FakeWindow()
+    window.native = type("Native", (), {"Handle": _Handle})()
+    pet_module._shape(window)  # does not raise
+
+    assert clipped == [4242], "the clip was skipped because the shadow failed"
 
 
 def test_the_region_is_cut_from_the_window_the_os_reports(monkeypatch):
@@ -416,7 +463,7 @@ def test_the_region_is_cut_from_the_window_the_os_reports(monkeypatch):
 
     window = FakeWindow()
     window.native = type("Native", (), {"Handle": _Handle})()
-    pet_module._clip(window)
+    pet_module._shape(window)
 
     assert seen == [4242], "the window's own box was not what got measured"
 
@@ -498,7 +545,7 @@ def _window_comes_up(p: Any) -> None:
     p._window.events.shown.fire()
 
 
-def test_opening_the_card_is_what_clips_it(monkeypatch):
+def test_opening_the_card_is_what_shapes_it(monkeypatch):
     """The wiring: a card that opens is a card that ends up shaped.
 
     **And this pins down the bug the card shipped with.** `Window.native` does not
@@ -512,7 +559,7 @@ def test_opening_the_card_is_what_clips_it(monkeypatch):
 
     _quiet_reveal(monkeypatch)
     clipped: list[Any] = []
-    monkeypatch.setattr(pet_module, "_clip", clipped.append)
+    monkeypatch.setattr(pet_module, "_shape", clipped.append)
 
     p, _created = pet()
     assert p.open() is True
@@ -539,7 +586,7 @@ def test_the_pages_ready_is_the_third_chance_to_get_shaped(monkeypatch):
 
     _quiet_reveal(monkeypatch)
     clipped: list[Any] = []
-    monkeypatch.setattr(pet_module, "_clip", clipped.append)
+    monkeypatch.setattr(pet_module, "_shape", clipped.append)
 
     p, _created = pet()
     p.open()
@@ -585,7 +632,7 @@ def test_a_replaced_window_is_dressed_on_its_own_terms(monkeypatch):
 
     _quiet_reveal(monkeypatch)
     clipped: list[Any] = []
-    monkeypatch.setattr(pet_module, "_clip", clipped.append)
+    monkeypatch.setattr(pet_module, "_shape", clipped.append)
 
     p, _created = pet()
     p.open()
@@ -600,7 +647,7 @@ def test_a_replaced_window_is_dressed_on_its_own_terms(monkeypatch):
     assert len(clipped) == 2, "the replacement window was never shaped"
 
 
-def test_a_card_that_cannot_be_clipped_is_not_an_error(monkeypatch):
+def test_a_card_that_cannot_be_shapeped_is_not_an_error(monkeypatch):
     """A square pet is a pet. Refusing to open one would be a decoration failing
     at the thing it decorates."""
     from tonyagent.window import pet as pet_module
@@ -614,7 +661,7 @@ def test_a_card_that_cannot_be_clipped_is_not_an_error(monkeypatch):
     window = FakeWindow()
     window.native = type("Native", (), {"Handle": _Handle})()
 
-    pet_module._clip(window)  # does not raise
+    pet_module._shape(window)  # does not raise
 
 
 def test_a_window_with_no_handle_is_not_asked_for_one(monkeypatch):
@@ -627,7 +674,7 @@ def test_a_window_with_no_handle_is_not_asked_for_one(monkeypatch):
 
     monkeypatch.setattr(pet_module.win32, "clip_to_circle", unexpected)
 
-    pet_module._clip(FakeWindow())  # does not raise
+    pet_module._shape(FakeWindow())  # does not raise
 
 
 def test_showing_it_twice_makes_one_card():
