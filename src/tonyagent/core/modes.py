@@ -23,6 +23,38 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+#: Appended to **every** mode's prompt, by `AgentSession._messages_with_system`.
+#:
+#: One assistant message may declare several tool calls: they run at the same
+#: time and every result comes back in one batch, so a turn that reads three
+#: files can do it in one request instead of three. The mechanism is in the
+#: session and has been since parallel tool calls landed -- what was missing was
+#: anyone telling the model, because a model that does not know it *may* batch
+#: asks one call at a time. That is not a style difference on a metered
+#: provider: the free OpenRouter tier allows 20 requests a minute and 1000 a
+#: day, and every round trip is one of them, so an unbatched turn spends the
+#: user's quota on conversations the app could have had in a single message.
+#:
+#: Written as rules rather than as a suggestion, and kept short, because it is
+#: sent on every request in every mode and is paid for in tokens each time.
+#: `tests/unit/test_turn_economy.py` asserts it reaches every mode's prompt
+#: intact, including the one thing a model cannot guess: that it may ask for
+#: several tools in one message at all.
+TOOL_CALL_ECONOMY = (
+    "How to spend a turn. You may put several tool calls in one message: they "
+    "run at the same time, and you get every result back together in the next "
+    "one. Use that. Batch the calls that do not depend on each other -- the "
+    "files you already know you need to read, the searches that have nothing to "
+    "do with each other -- and put only the calls that need an earlier result "
+    "in a later message. Never ask again for something you already have. "
+    "Requests are metered, so a round spent narrating what you are about to do "
+    "is a round not spent doing it: for work of more than one step, write the "
+    "steps with todo_write in the same message as your first batch of calls, "
+    "and then work the list. One command that reports everything you need "
+    "beats three that each report part of it."
+)
+
+
 #: Tool categories, by the name the schema uses. Kept as strings so adding a
 #: category to the tool base does not silently change what a mode permits.
 READ_ONLY = "read_only"

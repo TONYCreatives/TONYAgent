@@ -25,6 +25,7 @@ import pytest
 import tonyagent.tools  # noqa: F401  -- importing registers every tool
 from tonyagent.core.conversations import ConversationStore
 from tonyagent.core.events import EventBus
+from tonyagent.core.modes import TOOL_CALL_ECONOMY
 from tonyagent.core.session import AgentSession
 from tonyagent.core.task_state import (
     TODO_STATUSES,
@@ -327,10 +328,21 @@ def test_the_plan_reaches_the_system_prompt():
     assert "write the test" in system.content
 
 
-def test_the_prompt_is_untouched_when_there_is_no_plan():
+def test_the_prompt_carries_no_plan_when_there_is_no_plan():
+    """Nothing is appended past the rules every mode is sent.
+
+    Was `content == session._mode.system_prompt`, and that equality is no longer
+    the right shape: every mode's prompt now ends with the turn-economy rules
+    (`test_turn_economy.py`), so the old assertion would have to be deleted --
+    and deleting it would leave the *absence* it existed for unchecked. Written
+    out in full, it fails for either mistake: a plan block that appeared, or
+    rules that went missing.
+    """
     session = AgentSession(bus=EventBus())
     system = session._messages_with_system()[0]
-    assert system.content == session._mode.system_prompt
+
+    assert session.state.render() == "", "there is a plan to be rendered"
+    assert system.content == f"{session._mode.system_prompt}\n\n{TOOL_CALL_ECONOMY}"
 
 
 async def test_a_tool_write_is_what_the_session_then_prompts_with():

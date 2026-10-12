@@ -26,6 +26,7 @@ from tonyagent.core.events import Event, EventType, bus as default_bus
 from tonyagent.core.modes import (
     DEFAULT_MODE,
     DEFAULT_PERMISSION,
+    TOOL_CALL_ECONOMY,
     Mode,
     Permission,
     get_mode,
@@ -886,7 +887,11 @@ class AgentSession:
         party said, and a transcript that grew a pasted procedure per invocation
         would make the file on disk unreadable in a week.
         """
-        prompt = self._mode.system_prompt
+        # The mode's own rules first -- what kind of work this is -- then how a
+        # turn is spent, which is the same in every mode and is appended here
+        # rather than copied into four prompts so a fifth mode cannot be the one
+        # that forgets it. See `modes.TOOL_CALL_ECONOMY`.
+        prompt = f"{self._mode.system_prompt}\n\n{TOOL_CALL_ECONOMY}"
         plan = self.state.render()
         if plan:
             prompt = f"{prompt}\n\n{plan}"
