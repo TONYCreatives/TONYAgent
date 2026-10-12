@@ -47,9 +47,16 @@ PUSH_TARGET = "window.__tonyAgent"
 
 TITLE = "TONYAgent"
 
-#: The card. Narrow enough to sit in a corner without covering anything, tall
-#: enough for the character and two lines of text at the app's own type scale.
-WIDTH, HEIGHT = 236, 248
+#: The card. Narrow enough to sit in a corner without covering anything, and
+#: sized so the character still reads at a glance -- which is the whole job.
+#:
+#: It was 236x248 and is 172x188 now, at the user's asking. The room for that came
+#: from the design rather than from shrinking the type: the "TONYAgent" row above
+#: the character was dropped (the character *is* the app's mark, so the row named
+#: something the artwork already says) and the status label moved down beside the
+#: words it belongs with, which together gave the figure a larger share of a
+#: smaller card than it had of the bigger one -- 122px of 188 against 96 of 248.
+WIDTH, HEIGHT = 172, 188
 
 #: How far from the corner of the work area it starts -- clear of the taskbar it
 #: already excludes, and far enough in that it does not look clipped to the edge.
@@ -68,6 +75,13 @@ IDLE: dict[str, str] = {"mood": "idle", "label": "Ready when you are", "detail":
 
 #: The preference that remembers whether it was up.
 OPEN_PREF = "pet_open"
+
+#: The preference that remembers **where** it was put, as ``[x, y]``.
+#:
+#: Remembered because dragging a card somewhere and having it come back in the
+#: corner next launch is the same as not being able to move it. The corner is the
+#: default, not the position.
+POS_PREF = "pet_pos"
 
 
 class DeskPet:
@@ -175,6 +189,47 @@ class DeskPet:
         """Whether it was up last time the app ran. What the toggle starts from."""
         return bool(prefs.get(OPEN_PREF, False))
 
+    def drag(self) -> dict[str, Any]:
+        """Hand the press to the OS's own move loop, and remember where it ended.
+
+        **The OS's loop and not pywebview's `easy_drag`, and the difference is
+        what dragging a window means.** `easy_drag` moves the form itself, one
+        `SetWindowPos` per mouse move, and a window moved by hand is not a window
+        the OS is dragging -- so it cannot be snapped anywhere. This is the same
+        call the app's own title bar makes (`win32.begin_drag`), which is the code
+        a decorated window runs: drag it to the top and it maximizes, drag it to a
+        side and it takes that half.
+
+        **The answer is the interesting half.** `SendMessage` does not return
+        until the user lets go, so by then the card either moved or did not -- and
+        a press that did not move it is a *click*, which is how the card raises the
+        app. The page cannot tell the two apart on its own: once the modal loop
+        starts, it receives no further pointer events, and a click that never
+        arrives as a `click` event is exactly the bug that would make the card
+        unable to open the app.
+
+        Returning `{"moved": False}` for a refused gesture is deliberate rather
+        than exceptional: on a backend with no window thread, or a handle that
+        cannot be read, the honest thing is that the card did not move, which
+        makes the press a click.
+        """
+        window = self._window
+        if window is None:
+            return {"moved": False, "x": 0, "y": 0}
+        before = _position(window)
+        hwnd = _handle(window)
+        try:
+            # Marshalled: see `win32.on_window_thread` for why a gesture issued
+            # from the page's worker thread moves nothing at all.
+            win32.on_window_thread(window, lambda: win32.begin_drag(hwnd))
+        except Exception as exc:  # noqa: BLE001 - a tooltip cannot be worth a crash
+            logger.debug(f"The pet could not be dragged: {exc}")
+            return {"moved": False, "x": before[0], "y": before[1]}
+        after = _position(window)
+        if after != before:
+            prefs.set(POS_PREF, list(after))
+        return {"moved": after != before, "x": after[0], "y": after[1]}
+
     # -- internals ------------------------------------------------------------
 
     def is_open(self) -> bool:
@@ -204,18 +259,28 @@ class DeskPet:
         return _create_window(page, x, y, self._api)
 
     def _corner(self) -> tuple[int, int]:
-        """The bottom-right of the work area, in screen coordinates.
+        """Where the card goes when it opens: where it was left, or the corner.
 
         The work area rather than the screen: it is the screen minus the taskbar
         and anything else docked to it, so the pet sits above the taskbar instead
         of behind it. Read from the monitor the *app* is on, so on two screens the
         pet appears where the user is looking.
+
+        A remembered position wins, **clamped into the work area**. The monitor
+        that position was measured on may be gone -- undocked, unplugged, or
+        rearranged -- and restoring a card at x=3400 on a machine that now has one
+        screen puts it somewhere the user cannot see or reach it. There is nothing
+        to drag it back by, because it is not on screen to be pressed.
         """
         try:
-            return _bottom_right(win32.work_area(0), WIDTH, HEIGHT)
+            area = win32.work_area(0)
         except Exception as exc:  # noqa: BLE001 - a placement is not a reason to refuse
             logger.debug(f"Could not read the work area for the pet: {exc}")
             return 0, 0
+        saved = _saved_position()
+        if saved is not None:
+            return _clamp(area, saved[0], saved[1], WIDTH, HEIGHT)
+        return _bottom_right(area, WIDTH, HEIGHT)
 
     def _closed(self) -> None:
         """Forget the window so the next press makes a new one.
@@ -236,6 +301,48 @@ class DeskPet:
 def _bottom_right(area: Any, width: int, height: int) -> tuple[int, int]:
     """Where the card goes inside a work area. A pure function, so it is testable."""
     return int(area.right) - width - MARGIN, int(area.bottom) - height - MARGIN
+
+
+def _clamp(area: Any, x: int, y: int, width: int, height: int) -> tuple[int, int]:
+    """The nearest position that keeps the whole card inside the work area.
+
+    Whole card rather than a corner of it: a card showing 20px of itself along an
+    edge is a card you cannot read and cannot grab.
+    """
+    left, top = int(area.left), int(area.top)
+    right = max(int(area.right) - width, left)
+    bottom = max(int(area.bottom) - height, top)
+    return min(max(int(x), left), right), min(max(int(y), top), bottom)
+
+
+def _saved_position() -> tuple[int, int] | None:
+    """The remembered position, or None when there is not a readable one.
+
+    Anything unreadable -- absent, the wrong shape, a float, a string -- is None
+    rather than an error: this decides where a decoration appears, and the corner
+    is a perfectly good answer.
+    """
+    saved = prefs.get(POS_PREF)
+    if not isinstance(saved, (list, tuple)) or len(saved) != 2:
+        return None
+    try:
+        return int(saved[0]), int(saved[1])
+    except (TypeError, ValueError):
+        return None
+
+
+def _position(window: Any) -> tuple[int, int]:
+    """The card's screen position, as the window itself reports it.
+
+    pywebview's own ``x``/``y`` rather than ``GetWindowRect``: it is the same
+    number without a second Win32 call, and it is what a fake window in a test can
+    answer without a GUI.
+    """
+    try:
+        return int(window.x), int(window.y)
+    except Exception as exc:  # noqa: BLE001 - an unaskable window is not a fatal one
+        logger.debug(f"Could not read the pet window's position: {exc}")
+        return 0, 0
 
 
 def _handle(window: Any) -> int:
@@ -326,10 +433,13 @@ def _create_window(page: str, x: int, y: int, api: Any = None) -> Any:
         # it *did* come back without `WS_EX_TOPMOST` or `WS_EX_NOACTIVATE`, which
         # are the two styles that make it a pet at all. So it is created visible
         # and the foreground is handed back afterwards instead; see `_reveal`.
-        # The whole card is the handle. The app's own window renounces this --
-        # there, a window where nothing can be selected or pressed is useless --
-        # but a card you drag out of the way by its artwork is the point.
-        easy_drag=True,
+        #
+        # **`easy_drag` is off, and the page drags it instead.** pywebview's own
+        # drag moves the form one `SetWindowPos` per mouse move, which looks the
+        # same and is not: the OS is not dragging it, so it cannot be snapped, and
+        # the host never learns where it ended up. `DeskPet.drag` runs the real
+        # move loop and saves the position -- see its docstring.
+        easy_drag=False,
         on_top=True,
         # Not activated, ever: this is the flag that lets the user keep typing
         # while the agent works, and `WS_EX_NOACTIVATE` is how it is enforced.

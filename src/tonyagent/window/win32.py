@@ -59,7 +59,9 @@ from __future__ import annotations
 import ctypes
 import sys
 import time
+from collections.abc import Callable
 from ctypes import wintypes
+from typing import Any
 
 from loguru import logger
 
@@ -634,6 +636,42 @@ def root_window(hwnd: int) -> int:
     # rather than one being assumed. Found by a test asserting the null case.
     address = getattr(root, "value", root)
     return int(address) if address else hwnd
+
+
+def on_window_thread(window: Any, work: Callable[[], None]) -> None:
+    """Run `work` on the thread that owns `window`, then return.
+
+    **Not a tidiness call, and the difference is a whole feature.** A page's
+    request arrives on a pywebview worker thread, but a window gesture is not a
+    message the host can send on the page's behalf from anywhere:
+    ``WM_NCLBUTTONDOWN`` starts a modal loop that belongs to the window's own
+    thread, and the ``ReleaseCapture()`` in front of it -- the half of the classic
+    pair that is easy to leave out -- acts on whichever thread makes the call.
+    Issued from a worker it released the worker's own (empty) capture, left the
+    webview's in place, and the loop never took: measured, the window did not move
+    by a pixel.
+
+    Two windows need this now -- the app's own draggable chrome and the pet's card
+    -- which is why it lives here rather than as a method on one of them. The
+    fallback is a direct call rather than an error, because a backend with no
+    WinForms control behind it has no window thread to marshal to, and refusing to
+    try would turn "this backend cannot drag" into "this backend raises".
+    """
+    native = getattr(window, "native", None)
+    invoke = getattr(native, "Invoke", None)
+    if invoke is None:
+        work()
+        return
+    try:
+        # pythonnet's delegate type. It is there whenever there is a WinForms
+        # control to invoke on -- the import needs `clr`, which the Windows
+        # backend has already imported by then.
+        from System import Action  # noqa: PLC0415
+    except Exception as exc:  # noqa: BLE001 - no delegate, no marshalling
+        logger.debug(f"No delegate to marshal a window gesture with: {exc}")
+        work()
+        return
+    invoke(Action(work))
 
 
 def show_system_menu(hwnd: int) -> None:

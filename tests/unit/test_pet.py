@@ -58,14 +58,18 @@ class _Handle:
 
 
 class FakeWindow:
-    """A window with the four things ``DeskPet`` may touch."""
+    """A window with the things ``DeskPet`` may touch."""
 
-    def __init__(self) -> None:
+    def __init__(self, x: int = 0, y: int = 0) -> None:
         self.events = FakeEvents()
         self.scripts: list[str] = []
         self.destroyed = 0
         self.shown = 0
         self.restored = 0
+        #: pywebview's own position properties, which is what `drag` reads to
+        #: find out where the user let go. A test moves the card by setting them.
+        self.x = x
+        self.y = y
 
     def evaluate_js(self, script: str) -> None:
         self.scripts.append(script)
@@ -129,7 +133,11 @@ def test_the_card_is_built_to_be_looked_at_without_being_activated():
     assert captured["resizable"] is False
     assert captured["on_top"] is True
     assert captured["focus"] is False, "the card would take the keyboard from the user"
-    assert captured["easy_drag"] is True, "the card cannot be moved out of the way"
+    # **Off, and the page drags the card instead.** pywebview's own drag moves the
+    # form a `SetWindowPos` per mouse move, so the OS is not dragging it, it cannot
+    # be snapped, and the host never learns where it ended up. `DeskPet.drag` runs
+    # the real move loop and saves the position.
+    assert captured["easy_drag"] is False, "two drags would fight for the same press"
     assert captured["x"] == 10 and captured["y"] == 20
     assert "transparent" not in captured or captured["transparent"] is False
     # **Visible, and that is the re-measured answer rather than the first one.**
@@ -235,6 +243,127 @@ def test_it_opens_at_the_corner_of_the_work_area():
     assert y == 900 - HEIGHT - MARGIN
     assert x + WIDTH + MARGIN == area.right, "the card overhangs the right edge"
     assert y + HEIGHT + MARGIN == area.bottom, "the card overhangs the bottom edge"
+
+
+def _area(left: int = 0, top: int = 0, right: int = 1440, bottom: int = 900):
+    """A work area, as `win32.work_area` answers one."""
+    return type("Rect", (), {"left": left, "top": top, "right": right, "bottom": bottom})()
+
+
+def test_the_place_it_was_left_wins_over_the_corner(monkeypatch):
+    """A card that comes back in the corner every launch cannot really be moved."""
+    from tonyagent.window import pet as pet_module
+
+    pet_module.prefs.set("pet_pos", [240, 120])
+    monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
+    p, _created = pet()
+
+    assert p._corner() == (240, 120)
+
+
+def test_a_place_that_is_no_longer_on_screen_is_pulled_back_into_view(monkeypatch):
+    """Undocking a monitor must not strand the card where nothing can reach it.
+
+    There is nothing to drag it back by: it is not on screen to be pressed. So a
+    remembered position is clamped into the work area that exists now.
+    """
+    from tonyagent.window import pet as pet_module
+
+    pet_module.prefs.set("pet_pos", [3200, 1400])
+    monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
+    p, _created = pet()
+
+    x, y = p._corner()
+    assert x + pet_module.WIDTH <= 1440, "the card overhangs the right edge"
+    assert y + pet_module.HEIGHT <= 900, "the card overhangs the bottom edge"
+
+
+def test_a_place_that_cannot_be_read_is_the_corner_not_an_error(monkeypatch):
+    """A decoration's position is not worth a refusal: the corner is an answer."""
+    from tonyagent.window import pet as pet_module
+
+    monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
+    for broken in ("nonsense", [1], [1, 2, 3], ["left", "top"], None, 5):
+        pet_module.prefs.set("pet_pos", broken)
+        p, _created = pet()
+        assert p._corner() == pet_module._bottom_right(_area(), pet_module.WIDTH, pet_module.HEIGHT)
+
+
+def test_dragging_saves_where_it_ended_and_says_it_moved(monkeypatch):
+    """The OS's move loop, then the position it left the window at.
+
+    The move is faked by having the loop's own stand-in write the window's new
+    position, which is what the real loop does to the real window.
+    """
+    from tonyagent.window import pet as pet_module
+
+    p, _created = pet()
+    monkeypatch.setattr(pet_module.win32, "root_window", lambda hwnd: hwnd)
+    p._window = FakeWindow(x=900, y=700)
+    p._window.native = type("Native", (), {"Handle": _Handle})()
+
+    def move(hwnd: int) -> None:
+        assert hwnd == 4242, "the move loop was handed the wrong window"
+        p._window.x, p._window.y = 300, 260
+
+    monkeypatch.setattr(pet_module.win32, "begin_drag", move)
+
+    assert p.drag() == {"moved": True, "x": 300, "y": 260}
+    assert pet_module.prefs.get("pet_pos") == [300, 260]
+
+
+def test_a_press_that_did_not_move_it_is_a_click(monkeypatch):
+    """The answer the page needs: once the move loop starts it sees no events.
+
+    A card whose drag swallows the press and never reports "nothing moved" is a
+    card that can no longer open the app -- the click event never arrives.
+    """
+    from tonyagent.window import pet as pet_module
+
+    p, _created = pet()
+    p._window = FakeWindow(x=900, y=700)
+    p._window.native = type("Native", (), {"Handle": _Handle})()
+    pet_module.prefs.set("pet_pos", [900, 700])
+    monkeypatch.setattr(pet_module.win32, "begin_drag", lambda hwnd: None)
+
+    assert p.drag() == {"moved": False, "x": 900, "y": 700}
+    assert pet_module.prefs.get("pet_pos") == [900, 700], "an unmoved card rewrote its position"
+
+
+def test_a_drag_that_cannot_run_reports_that_it_did_not_move(monkeypatch):
+    """A backend that cannot drag must not raise out of a tooltip's gesture."""
+    from tonyagent.window import pet as pet_module
+
+    p, _created = pet()
+    p._window = FakeWindow(x=10, y=20)
+    p._window.native = type("Native", (), {"Handle": _Handle})()
+
+    def refuse(hwnd: int) -> None:
+        raise OSError("no window thread here")
+
+    monkeypatch.setattr(pet_module.win32, "begin_drag", refuse)
+
+    assert p.drag() == {"moved": False, "x": 10, "y": 20}
+
+
+def test_dragging_with_no_window_is_not_an_error():
+    """The page can outlive the window by a frame; that is not a crash."""
+    p, _created = pet()
+
+    assert p.drag() == {"moved": False, "x": 0, "y": 0}
+
+
+def test_the_card_is_smaller_than_the_one_that_shipped_before():
+    """The size is a design decision, and this is the decision.
+
+    236x248 was the first card. The room for the reduction came out of the design
+    rather than the type: the name row above the character went, and the label
+    moved down beside the words it belongs with.
+    """
+    from tonyagent.window.pet import HEIGHT, WIDTH
+
+    assert WIDTH == 172 and HEIGHT == 188
+    assert WIDTH * HEIGHT < 236 * 248, "the card did not actually get smaller"
 
 
 def test_showing_it_twice_makes_one_card():

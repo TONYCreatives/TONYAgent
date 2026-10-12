@@ -71,7 +71,7 @@ ACTIONS = frozenset({"minimize", "toggleMaximize", "close", "drag", "resize"})
 #: and receives what to draw, and the last is what clicking it does. Both pages
 #: share one bridge, so the closed set is what keeps one from pretending to be the
 #: other.
-PET_ACTIONS = frozenset({"state", "show", "hide", "ready", "status", "focus"})
+PET_ACTIONS = frozenset({"state", "show", "hide", "ready", "status", "focus", "drag"})
 
 #: The JavaScript object the host pushes into. One global, installed by the
 #: frontend's own entry point, so a push cannot arrive before anything is
@@ -328,6 +328,12 @@ class Bridge:
         if action == "focus":
             self._pet.raise_app()
             return {"open": self._pet.is_open(), "wanted": self._pet.was_open()}
+        if action == "drag":
+            # The card's whole body is the handle, so this is the gesture rather
+            # than a button on it. It blocks until the user lets go -- the OS's
+            # own move loop -- and answers whether the card actually moved; see
+            # `DeskPet.drag` for why the answer is the interesting half.
+            return self._pet.drag()
 
         self._pet.push(payload or {})
         return {"open": self._pet.is_open(), "wanted": self._pet.was_open()}
@@ -380,38 +386,14 @@ class Bridge:
     # -- the native window ---------------------------------------------------
 
     def _on_window_thread(self, work: Any) -> None:
-        """Run `work` on the thread that owns the window, then return.
+        """Run `work` on the thread that owns this window, then return.
 
-        **Not a tidiness call, and the difference is the whole feature.** The
-        page's request arrives on a pywebview worker thread, but a window
-        gesture is not a message the host can send on the page's behalf from
-        anywhere: `WM_NCLBUTTONDOWN` starts a modal loop that belongs to the
-        window's own thread, and the `ReleaseCapture()` in front of it -- the
-        half of the classic pair that is easy to leave out -- acts on whichever
-        thread makes the call. Issued from a worker it released the worker's own
-        (empty) capture, left the webview's in place, and the loop never took:
-        measured, the window did not move by a pixel.
-
-        The fallback is a direct call rather than an error, because a backend
-        with no WinForms control behind it has no window thread to marshal to,
-        and refusing to try would turn "this backend cannot drag" into "this
-        backend raises".
+        The app's own window, and the measurement behind it, live in
+        `win32.on_window_thread` -- moved there when the pet needed the same
+        thing for its own window. This stays because every gesture the *app*
+        starts already calls it by this name.
         """
-        native = getattr(self._window, "native", None)
-        invoke = getattr(native, "Invoke", None)
-        if invoke is None:
-            work()
-            return
-        try:
-            # pythonnet's delegate type. It is there whenever there is a WinForms
-            # control to invoke on -- the import needs `clr`, which the Windows
-            # backend has already imported by then.
-            from System import Action  # noqa: PLC0415
-        except Exception as exc:  # noqa: BLE001 - no delegate, no marshalling
-            logger.debug(f"No delegate to marshal a window gesture with: {exc}")
-            work()
-            return
-        invoke(Action(work))
+        win32.on_window_thread(self._window, work)
 
     def _hwnd(self) -> int:
         """The top-level window's handle.
