@@ -314,9 +314,16 @@ class DeskPet:
             return
         if _handle(window) == 0:
             return
-        self._dressed = True
+        # **Marked done only once the shape actually took.** A window can be up
+        # before it has a usable rect, and one run of the probe caught exactly that:
+        # `GetWindowRgn` came back "none" after a single attempt. Marking this done
+        # first would make that permanent -- a square pet for the rest of the
+        # window's life, with the later chances (`loaded`, the page's `ready`)
+        # already spent. So a failure leaves the flag clear for the next event, and
+        # `mark_ready` is where the last chance is and where it warns.
         _reveal(window, self._previous)
-        _shape(window)
+        if _shape(window):
+            self._dressed = True
 
     def _create_window(self, page: str, x: int, y: int) -> Any:
         return _create_window(page, x, y, self._api)
@@ -468,10 +475,10 @@ def _reveal(window: Any, previous: int = 0) -> None:
         logger.debug(f"Could not give the foreground back after the card opened: {exc}")
 
 
-def _shape(window: Any) -> None:
-    """Make the card the circle it draws.
+def _shape(window: Any) -> bool:
+    """Make the card the circle it draws. Returns whether both steps took.
 
-    Two calls, and the second is not a refinement of the first -- it is what makes
+    The two calls are not a refinement and its polish -- the second is what makes
     the first visible:
 
     * the **region** takes the window's corners off, so what is outside the circle
@@ -482,18 +489,24 @@ def _shape(window: Any) -> None:
       inside it -- which is exactly how it shipped and exactly what the user saw.
       `win32.no_shadow` carries the pixel measurements.
 
-    Failure is logged rather than raised. A card that could not be shaped is a square
-    card, which is what the pet was until now; refusing to open one would be a
-    decoration failing at the thing it decorates.
+    The answer is the caller's: a failure has to be *retryable*, because the window
+    can be up before it is laid out. Nothing is raised -- a card that could not be
+    shaped is a square card, which is what the pet was until now.
     """
     hwnd = _handle(window)
     if not hwnd:
-        return
-    for step, work in (("clipped to a circle", win32.clip_to_circle), ("unshadowed", win32.no_shadow)):
+        return False
+    shaped = True
+    for step, work in (
+        ("clipped to a circle", win32.clip_to_circle),
+        ("unshadowed", win32.no_shadow),
+    ):
         try:
             work(hwnd)
         except Exception as exc:  # noqa: BLE001 - see the docstring
-            logger.warning(f"The pet window could not be {step}: {exc}")
+            shaped = False
+            logger.debug(f"The pet window could not be {step}: {exc}")
+    return shaped
 
 
 def _foreground() -> int:

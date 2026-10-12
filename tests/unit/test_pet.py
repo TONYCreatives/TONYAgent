@@ -423,6 +423,39 @@ def test_the_shadow_is_taken_off_too_and_that_is_what_makes_it_round(monkeypatch
     assert unshadowed == [4242], "the window kept the shadow that fills its cut corners"
 
 
+def test_a_shape_that_failed_is_retried_on_the_next_chance(monkeypatch):
+    """**A window can be up before it has a usable rect**, and marking it dressed
+    first made that permanent.
+
+    One run of the real-window probe caught exactly this: `GetWindowRgn` came back
+    "none" after a single attempt, leaving the pet a square for the rest of that
+    window's life -- with every later chance (`loaded`, the page's `ready`) already
+    spent. The flag is only set once the shape actually took.
+    """
+    from tonyagent.window import pet as pet_module
+
+    _quiet_reveal(monkeypatch)
+    attempts: list[Any] = []
+
+    def flaky(window: Any) -> bool:
+        attempts.append(window)
+        return len(attempts) > 1  # refuses once, then takes
+
+    monkeypatch.setattr(pet_module, "_shape", flaky)
+
+    p, _created = pet()
+    p.open()
+    _window_comes_up(p)
+
+    assert len(attempts) == 1
+    assert p._dressed is False, "a failed shape was recorded as done"
+
+    p._window.events.loaded.fire()
+
+    assert len(attempts) == 2, "the window came up and was never shaped again"
+    assert p._dressed is True
+
+
 def test_a_window_that_cannot_be_shadowed_is_still_circled(monkeypatch):
     """The two halves fail independently: losing either is a worse pet, not a
     broken one, and the earlier of the two must still have happened."""
@@ -559,7 +592,7 @@ def test_opening_the_card_is_what_shapes_it(monkeypatch):
 
     _quiet_reveal(monkeypatch)
     clipped: list[Any] = []
-    monkeypatch.setattr(pet_module, "_shape", clipped.append)
+    monkeypatch.setattr(pet_module, "_shape", lambda window: (clipped.append(window), True)[1])
 
     p, _created = pet()
     assert p.open() is True
@@ -586,7 +619,7 @@ def test_the_pages_ready_is_the_third_chance_to_get_shaped(monkeypatch):
 
     _quiet_reveal(monkeypatch)
     clipped: list[Any] = []
-    monkeypatch.setattr(pet_module, "_shape", clipped.append)
+    monkeypatch.setattr(pet_module, "_shape", lambda window: (clipped.append(window), True)[1])
 
     p, _created = pet()
     p.open()
@@ -632,7 +665,7 @@ def test_a_replaced_window_is_dressed_on_its_own_terms(monkeypatch):
 
     _quiet_reveal(monkeypatch)
     clipped: list[Any] = []
-    monkeypatch.setattr(pet_module, "_shape", clipped.append)
+    monkeypatch.setattr(pet_module, "_shape", lambda window: (clipped.append(window), True)[1])
 
     p, _created = pet()
     p.open()
