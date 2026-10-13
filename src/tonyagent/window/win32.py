@@ -498,6 +498,28 @@ def frameless_resizable_style(style: int) -> int:
     return style | WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SYSMENU
 
 
+def frameless_fixed_style(style: int) -> int:
+    """The style word for a window that is *real* without being resizable.
+
+    ``WS_THICKFRAME`` is what makes Windows treat a window as a window: DWM rounds its
+    corners and gives it a drop shadow. That is exactly what a card that is
+    deliberately rectangular wants, and it cannot be had any other way -- a window
+    region does not clip the composited content the card is drawn with (measured; see
+    ``research/why-the-square.md``), while DWM's rounding does, as this app's own main
+    window has been proving all along.
+
+    It is deliberately **not** ``frameless_resizable_style``: no maximize box, no
+    minimize box, no system menu. A pet that can be maximized is not a pet. The size
+    is pinned separately, so dragging an edge has nothing to give.
+    """
+    return style | WS_THICKFRAME
+
+
+def make_framed(hwnd: int) -> None:
+    """Add the frame bits DWM rounds, minus the ones that would resize."""
+    _adopt_style(hwnd, frameless_fixed_style)
+
+
 def make_resizable(hwnd: int) -> None:
     """Add the frame bits to a window that must not draw a frame.
 
@@ -505,13 +527,18 @@ def make_resizable(hwnd: int) -> None:
     it from two places -- and the first of those is the attempt that is allowed
     to find no window yet.
     """
+    _adopt_style(hwnd, frameless_resizable_style)
+
+
+def _adopt_style(hwnd: int, recipe: Callable[[int], int]) -> None:
+    """Set a window's style word to what `recipe` asks for, and make it take effect."""
     if sys.platform != "win32":
-        raise WindowsOnlyError("resizing is a Win32 window behaviour")
+        raise WindowsOnlyError("window styles are a Win32 behaviour")
     _bind()
     user32 = ctypes.windll.user32  # type: ignore[attr-defined]
     handle = wintypes.HWND(hwnd)
     style = user32.GetWindowLongW(handle, GWL_STYLE)
-    wanted = frameless_resizable_style(style)
+    wanted = recipe(style)
     if wanted == style:
         return
     user32.SetWindowLongW(handle, GWL_STYLE, wanted)

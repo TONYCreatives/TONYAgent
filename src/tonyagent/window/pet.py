@@ -16,16 +16,18 @@ machine through ``Window.get_window_long`` and a screen capture, not assumed:
   pull the keyboard away from you.
 * ``on_top=True`` sets ``TopMost``, so it stays above whatever you moved to.
 * ``frameless`` and non-resizable, because it is a card rather than a window.
-* **``transparent=True` does nothing here.** pywebview leaves the form opaque:
-  ``WS_EX_LAYERED`` is unset, ``AllowTransparency`` is ``False`` and the pixels
-  beside the artwork came back as the control grey rather than the window behind
-  it. Setting the form's ``TransparencyKey`` by hand through pythonnet hung the
-  window. So the card is **cut out instead of composited**: a window region takes
-  the corners off (`win32.clip_to_circle`), and what is outside the circle is not
-  part of the window at all -- nothing to be transparent, and a click there goes
-  through to the desktop. The rim is hard because the OS clips rather than
-  antialiases, and there can be no drop shadow because there is no window outside
-  the circle to paint one in.
+* **``transparent=True`` does nothing here, and a region cannot do it either.** The
+  form stays opaque (``WS_EX_LAYERED`` unset, ``AllowTransparency`` false) and
+  setting ``TransparencyKey`` by hand hung the window. Cutting the corners off with a
+  window region then failed for a subtler reason: the card's content is presented
+  through **DirectComposition** -- its child chain carries
+  ``WS_EX_NOREDIRECTIONBITMAP`` -- and *a region does not clip a composition visual*.
+  Clipping the form and then every window in the chain changed no pixel at all, and
+  ``DefaultBackgroundColor`` reads back ``A=0`` while the corners stay opaque. So the
+  card is a **real window** instead: ``WS_THICKFRAME`` with ``WM_NCCALCSIZE``
+  declining to draw a frame, which is what makes Windows round its corners and give
+  it a shadow -- the same treatment the app's own window gets. See `_windowed` and
+  ``research/why-the-square.md`` for the measurements.
 
 **The status arrives from the page, not from the core.** The app window is
 already the thing that reduces the core's event stream into "busy", "which tool",
@@ -50,15 +52,15 @@ PUSH_TARGET = "window.__tonyAgent"
 
 TITLE = "TONYAgent"
 
-#: The card. Round, and **square because a circle needs a square to be cut out
-#: of**: the window is a rectangle however hard the stylesheet tries, so the shape
-#: comes from a window region (`win32.clip_to_circle`) and the region is the
-#: ellipse inscribed in the window's box. Any other aspect would cut a circle
-#: inside a rectangle and leave the bands beside it showing.
+#: The card. **Rectangular on purpose, and rounded by Windows rather than by us**:
+#: the frame bits are what make DWM round a window and shadow it, the page fills the
+#: whole client area, and the size is pinned so the frame cannot be dragged bigger.
+#: See `_windowed`. The earlier attempt cut a circle out of this rectangle with a
+#: window region, which could never have worked -- the content is a composition
+#: visual and regions do not clip those.
 #:
-#: 180x180 is a step down from the 236x248 it started at, and a step down again in
-#: *painted* area -- a circle of 180 covers 25,400 square pixels against the
-#: rectangle's 32,300. The room for the earlier reduction came out of the design
+#: 180x180 is a step down from the 236x248 it started at. The room for that
+#: reduction came out of the design
 #: rather than the type: the "TONYAgent" row above the character went (the
 #: character *is* the app's mark, so the row named something the artwork already
 #: says), and the status line moved under the character where it reads as a caption.
@@ -192,8 +194,8 @@ class DeskPet:
         if not self._dressed and self._window is not None:
             # The window exists and the page is talking to us, so a handle that
             # still cannot be read is not a matter of timing any more -- and this
-            # is the warning that was missing when the card shipped as a rectangle.
-            logger.warning("The pet window could not be shaped into a circle.")
+            # is the warning that was missing when the card shipped square.
+            logger.warning("The pet window could not be turned into a window.")
         self.push(self._status)
         return {"open": self._window is not None}
 
@@ -322,7 +324,7 @@ class DeskPet:
         # already spent. So a failure leaves the flag clear for the next event, and
         # `mark_ready` is where the last chance is and where it warns.
         _reveal(window, self._previous)
-        if _shape(window):
+        if _windowed(window):
             self._dressed = True
 
     def _create_window(self, page: str, x: int, y: int) -> Any:
@@ -475,38 +477,71 @@ def _reveal(window: Any, previous: int = 0) -> None:
         logger.debug(f"Could not give the foreground back after the card opened: {exc}")
 
 
-def _shape(window: Any) -> bool:
-    """Make the card the circle it draws. Returns whether both steps took.
+def _windowed(window: Any) -> bool:
+    """Make the card a **real window**, so Windows rounds its corners. Returns whether
+    all of it took.
 
-    The two calls are not a refinement and its polish -- the second is what makes
-    the first visible:
+    This replaced cutting a circle out of a rectangle, and the replacement is the
+    user's own observation: *Windows makes every square window round-cornered*. It
+    does, and that is the only mechanism that works here.
 
-    * the **region** takes the window's corners off, so what is outside the circle
-      is not part of the window, is not painted, and does not take clicks;
-    * the **shadow off**, because DWM draws the drop shadow to the window's
-      *rectangle* rather than to its region. Without this the cut-away corners are
-      filled by the shadow and the pet reads as a dark rounded square with a circle
-      inside it -- which is exactly how it shipped and exactly what the user saw.
-      `win32.no_shadow` carries the pixel measurements.
+    **Why the region could not do it.** A region constrains a window's own GDI
+    surface. The card's content is presented through DirectComposition -- its child
+    chain carries `WS_EX_NOREDIRECTIONBITMAP` and an `Intermediate D3D Window` with
+    `TRANSPARENT,LAYERED,NOREDIRECTIONBITMAP` -- and a region does not clip a
+    composition visual. Measured by clipping the form and then *every* window in the
+    chain: the corner pixels did not change at all, and neither did making the
+    browser's background transparent (`DefaultBackgroundColor` reads back `A=0` and
+    the corners stay `[32,32,32]`). See `research/why-the-square.md`.
 
-    The answer is the caller's: a failure has to be *retryable*, because the window
-    can be up before it is laid out. Nothing is raised -- a card that could not be
-    shaped is a square card, which is what the pet was until now.
+    **Why this does.** `WS_THICKFRAME` is what makes a window a *window* to DWM, and
+    DWM rounds what it composites -- including the content -- and gives it a shadow
+    to match. The app's own main window has been the proof of this all along, and it
+    is why this is the same treatment (`host.apply`), minus the parts that would
+    resize: `make_framed` adds the frame without a maximize box, a minimize box or a
+    system menu, and the size is then pinned so an edge drag has nothing to give.
+
+    Order matters and is the same as the host's: the procedure first, so the next
+    frame computation answers "no non-client area", then the style that asks for one.
+    The other way round computes the frame under WinForms and leaves the page inset
+    from the window's own edge.
+
+    Nothing is raised. A card that could not be turned into a window is a square card,
+    which is what it was before the circle; refusing to open one would be a decoration
+    failing at the thing it decorates.
     """
     hwnd = _handle(window)
     if not hwnd:
         return False
-    shaped = True
-    for step, work in (
-        ("clipped to a circle", win32.clip_to_circle),
-        ("unshadowed", win32.no_shadow),
-    ):
+    steps: tuple[tuple[str, Any], ...] = (
+        ("rounded", lambda: win32.round_corners(hwnd)),
+        ("framed", lambda: (win32.install_frame(hwnd), win32.make_framed(hwnd))),
+        ("pinned to its size", lambda: _pin_size(window)),
+    )
+    done = True
+    for step, work in steps:
         try:
-            work(hwnd)
+            work()
         except Exception as exc:  # noqa: BLE001 - see the docstring
-            shaped = False
+            done = False
             logger.debug(f"The pet window could not be {step}: {exc}")
-    return shaped
+    return done
+
+
+def _pin_size(window: Any) -> None:
+    """Stop an edge drag resizing the card, now that it carries a frame.
+
+    `WS_THICKFRAME` is what buys the rounded corners and the shadow, and it also
+    offers a resize on every edge. The way to keep the frame and refuse the resize is
+    to make the maximum size the minimum one -- the OS then clamps every drag. It
+    reads `MinimumSize` rather than repeating the numbers: pywebview sets it from
+    `min_size`, which is the same value the window was actually created at (and the
+    reason it came back `200x141` when that argument was left at its default).
+    """
+    native = window.native
+    minimum = native.MinimumSize
+    if minimum.Width and minimum.Height:
+        native.MaximumSize = minimum
 
 
 def _foreground() -> int:

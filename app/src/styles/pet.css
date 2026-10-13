@@ -1,25 +1,26 @@
 /*
  * The desktop pet: the card, the character, and everything that moves on it.
  *
- * **It is a circle, and the shape is not CSS's to make.** The window is a
- * rectangle; a `border-radius: 50%` only draws a circle *inside* one, and the
- * pixels between the circle and the window's edge are painted by the OS. The
- * corners are therefore cut off the window itself with a region
- * (`win32.clip_to_circle`) and this file draws the circle that lands on the cut
- * edge. Two things follow, and both are the stylesheet's business:
+ * **It is a rectangle, and Windows rounds it -- not the stylesheet and not a
+ * region.** This card was a circle for a while, cut out of the window with a window
+ * region, and that could never have worked: the page is presented through
+ * DirectComposition (the window's child chain carries `WS_EX_NOREDIRECTIONBITMAP`)
+ * and a region does not clip a composition visual. `research/why-the-square.md` has
+ * the measurements. What does work is the window being a *real* window:
+ * `WS_THICKFRAME` with `WM_NCCALCSIZE` declining to draw a frame, which is what
+ * makes DWM round its corners and give it a shadow, exactly as it does for the app's
+ * own window. So this file fills the window, draws no radius of its own -- DWM's
+ * rounding would fight it -- and the corners that appear on screen are the OS's.
  *
- * - **There can be no drop shadow.** There is no window outside the circle for one
- *   to be painted in, so the `box-shadow` this card used to carry is gone rather
- *   than left here to be clipped invisibly. The rim is a 1px border and an inner
- *   sheen, which is what is left to separate the card from what is behind it.
- * - **The content has to fit a circle.** A chord is shorter than the diameter, so
- *   text near the rim gets very little width: the status line is inset by the
- *   amount that keeps it inside the circle at the height it sits at, and the
- *   character is sized from the box it has rather than the box it would like. The
- *   detail line is gone from the drawing for the same reason -- at the height it
- *   would have to sit, its chord fits about fourteen characters of a file path,
- *   which is worse than not showing it. It is in the tooltip and in the
- *   accessible label.
+ * Two things follow, and both are the stylesheet's business:
+ *
+ * - **No `border-radius` and no `box-shadow`.** DWM rounds the window's own corners
+ *   and paints the shadow behind it; a radius here would put the card's corners
+ *   somewhere other than the window's, and a `box-shadow` is not what shadows a
+ *   window. The rim is a 1px border and an inner sheen, which is what separates the
+ *   card from what is behind it.
+ * - **The content has the full width**, rather than the chord a circle would allow,
+ *   so the caption is inset by a plain padding.
  *
  * The card is the whole page: there is no window chrome to sit under, so the root
  * fills the viewport and every corner is the card's own.
@@ -54,21 +55,12 @@
    */
   --pet-origin: 50% 78%;
   position: relative;
-  /*
-   * **The biggest circle that fits the window, centred -- the same arithmetic the
-   * region does.** `win32.circle_box` cuts the ellipse out of the window's real box
-   * and this draws it, and the two have to agree: a card that drew a circle the
-   * window does not have would show the sliver of whichever is larger, and the
-   * region is the one that wins on screen.
-   *
-   * `min(100vw, 100vh)` rather than `100%` by `100%`: the window is square now (its
-   * `min_size` is passed to stop pywebview clamping it), but a square window is not
-   * something the stylesheet can assume, and a rectangle would make `border-radius:
-   * 50%` an ellipse rather than a circle.
-   */
-  width: min(100vw, 100vh);
-  height: min(100vw, 100vh);
-  margin: auto;
+  /* **The window, exactly.** Whatever DWM rounds and shadows is the shape this
+     paints inside, so `100%` by `100%` with no margin: anything else would leave a
+     band of the window's own background showing between the card and its frame. */
+  width: 100%;
+  height: 100%;
+  margin: 0;
   box-sizing: border-box;
   display: grid;
   /*
@@ -77,17 +69,9 @@
    * given, and the letterboxing inside it is what keeps the drawing square.
    */
   grid-template-rows: minmax(0, 1fr) auto;
-  /*
-   * The bottom padding is the chord arithmetic, not a taste: the caption's
-   * baseline sits about 24px above the circle's bottom, where the chord is about
-   * 130px wide, so the text is held to `--pet-caption` of the card's width and the
-   * card's own padding keeps it off the rim. A caption that reached the full
-   * diameter would run out of circle and be cut by the window region.
-   */
-  --pet-caption: 74%;
-  padding: 0 calc((100% - var(--pet-caption)) / 2) 20px;
+  /* A plain inset: the width a circle used to take away is the card's again. */
+  padding: 0 14px 16px;
   border: 1px solid var(--border);
-  border-radius: 50%;
   background: var(--surface);
   background-image: var(--glass-sheen);
   color: var(--fg);
@@ -111,8 +95,8 @@
  */
 .pet-dot {
   position: absolute;
-  top: 15%;
-  left: 30%;
+  top: 14px;
+  left: 14px;
   /* Half its own width, so the offset is a nudge from a share of the card rather
      than a pixel count that would stop being centred at another size. */
   margin-left: -3.5px;
@@ -156,13 +140,8 @@
 .pet-figure {
   position: relative;
   min-height: 0;
-  /*
-   * The circle's own inset, in a share of the card rather than in pixels: the
-   * figure is drawn into the *inscribed square* of the circle, which is 70.7% of
-   * the diameter. Without this the drawing is sized from the full square and its
-   * head -- the widest thing on the character -- meets the rim.
-   */
-  margin: 9% 7% 0;
+  /* A rectangle's inset, so the character does not touch the card's own edge. */
+  margin: 10% 12% 0;
 }
 
 /*
@@ -189,7 +168,7 @@
  *
  * There is no second line here any more, and the circle is why: at the height a
  * second line would have to sit -- about 24px above the bottom -- the chord is
- * around 130px, which fits "src/tonyagent…" of a file path and nothing after it.
+ * around 130px, which fits "src/tonyagent?? of a file path and nothing after it.
  * A truncated path is worse than no path, so the detail lives in the tooltip and
  * in the accessible label, which are places with room for it.
  */

@@ -144,38 +144,31 @@ describe("the pet's eyes", () => {
   });
 });
 
-describe("the circle the card is cut into", () => {
+describe("the rectangle Windows rounds", () => {
   const css = readStylesheet();
 
-  test("the card is round, and its content is held inside the round part", () => {
-    // The stylesheet is the only place this can be checked: the shape comes from a
-    // window region and the *drawing* of it is CSS, and the failure it prevents is
-    // content sitting in a corner of the window that the region has cut away --
-    // which is invisible in a DOM assertion and obvious on screen.
+  test("the card fills the window and draws no shape of its own", () => {
+    // The shape is the window's, and the window is a real window now: `WS_THICKFRAME`
+    // with a frame procedure that declines to draw a frame, which is what makes DWM
+    // round the corners and paint the shadow. So the card fills its window exactly
+    // (a margin would show the window's own background between card and frame) and
+    // draws no radius, which would put the card's corners somewhere other than the
+    // window's.
     const card = /\.pet\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
-    assert.match(card, /border-radius:\s*50%/, "the card is not a circle");
+    assert.match(card, /width:\s*100%/, "the card does not fill its window");
+    assert.match(card, /height:\s*100%/, "the card does not fill its window");
+    assert.doesNotMatch(card, /border-radius/, "the card draws a corner DWM is also drawing");
+    assert.doesNotMatch(card, /box-shadow/, "a shadow is DWM's to paint, not the card's");
 
-    // The caption's own width, as the share the padding is derived from.
-    const caption = /--pet-caption:\s*([\d.]+)%/.exec(css)?.[1];
-    assert.ok(caption, "the caption's share of the card is not declared");
-    const share = Number(caption) / 100;
-    assert.ok(
-      share <= 0.75,
-      `a caption ${caption}% of the card's width reaches past the chord and gets cut`,
-    );
-
-    // A drop shadow cannot exist: there is no window outside the circle to paint it
-    // in, so one in the stylesheet would be silently clipped.
-    assert.doesNotMatch(card, /box-shadow/, "a shadow outside the circle cannot be drawn");
-    assert.match(css, /--pet-origin/, "the figure's pivot went missing with the shadow");
+    // A plain inset replaced the chord arithmetic a circle needed.
+    assert.doesNotMatch(css, /--pet-caption/, "the chord arithmetic outlived the circle");
+    assert.match(card, /padding:\s*0\s+14px\s+16px/, "the caption lost its inset");
+    assert.match(css, /--pet-origin/, "the figure's pivot went missing");
   });
 
-  test("the figure is inset so its head does not meet the rim", () => {
-    // The widest thing on the character is its head, and the inscribed square of a
-    // circle is 70.7% of the diameter -- so the figure is drawn into a box smaller
-    // than the window rather than into the window.
+  test("the figure is inset so its character does not meet the edge", () => {
     const figure = /\.pet-figure\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
-    assert.match(figure, /margin:\s*[\d.]+%\s+[\d.]+%/, "the figure is not inset from the rim");
+    assert.match(figure, /margin:\s*[\d.]+%\s+[\d.]+%/, "the figure is not inset from the edge");
   });
 });
 

@@ -376,54 +376,66 @@ def test_the_card_is_smaller_than_the_one_that_shipped_before():
     assert WIDTH * HEIGHT * 0.785 < 236 * 248, "the card did not actually get smaller"
 
 
-def test_the_window_is_cut_down_to_the_circle_it_draws(monkeypatch):
-    """The shape is the window's, not the stylesheet's.
 
-    A `border-radius: 50%` draws a circle *inside* a rectangle and the OS paints
-    what is left; the corners are only really gone once the window has a region.
-    Clipping is also what makes them click-through, which is the difference
-    between a round pet and a rectangle pretending to be one.
+def test_the_card_is_made_a_real_window_so_windows_rounds_it(monkeypatch):
+    """**The fix for the square, and it is Windows' own mechanism.**
+
+    A window region cannot clip this page. The content is presented through
+    DirectComposition -- the child chain carries `WS_EX_NOREDIRECTIONBITMAP` -- and a
+    region does not clip a composition visual: clipping the form and then *every*
+    window in the chain changed no pixel at all. What does work is the window being a
+    *real* window: `WS_THICKFRAME` with a procedure that declines to draw a frame,
+    which is what makes DWM round the corners and paint the shadow behind them. The
+    app's own window has been doing exactly this all along.
+    """
+    from tonyagent.window import pet as pet_module
+
+    order: list[str] = []
+    monkeypatch.setattr(pet_module.win32, "root_window", lambda hwnd: hwnd)
+    monkeypatch.setattr(pet_module.win32, "round_corners", lambda hwnd: order.append("rounded"))
+    monkeypatch.setattr(pet_module.win32, "install_frame", lambda hwnd: order.append("frame"))
+    monkeypatch.setattr(pet_module.win32, "make_framed", lambda hwnd: order.append("framed"))
+    monkeypatch.setattr(pet_module, "_pin_size", lambda window: order.append("pinned"))
+
+    window = FakeWindow()
+    window.native = type("Native", (), {"Handle": _Handle})()
+    assert pet_module._windowed(window) is True
+
+    # The procedure before the style: the other order computes the frame under
+    # WinForms and leaves the page inset from the window's own edge.
+    assert order == ["rounded", "frame", "framed", "pinned"], order
+
+
+
+
+def test_the_card_is_never_clipped_by_a_region_again(monkeypatch):
+    """**Regression guard for the whole circle misadventure.**
+
+    The region was four attempts and a screenshot, and it could not have worked: it
+    does not clip the composition visual the card is drawn with, so the corner pixels
+    never moved, while it did cost the card the frame behaviour that rounds it. This
+    test exists so it cannot come back as an obvious-looking improvement.
     """
     from tonyagent.window import pet as pet_module
 
     clipped: list[int] = []
     monkeypatch.setattr(pet_module.win32, "root_window", lambda hwnd: hwnd)
     monkeypatch.setattr(pet_module.win32, "clip_to_circle", clipped.append)
-    monkeypatch.setattr(pet_module.win32, "no_shadow", lambda hwnd: None)
+    monkeypatch.setattr(pet_module.win32, "no_shadow", clipped.append)
+    monkeypatch.setattr(pet_module.win32, "round_corners", lambda hwnd: None)
+    monkeypatch.setattr(pet_module.win32, "install_frame", lambda hwnd: None)
+    monkeypatch.setattr(pet_module.win32, "make_framed", lambda hwnd: None)
+    monkeypatch.setattr(pet_module, "_pin_size", lambda window: None)
 
     window = FakeWindow()
     window.native = type("Native", (), {"Handle": _Handle})()
-    pet_module._shape(window)
+    pet_module._windowed(window)
 
-    assert clipped == [4242], clipped
-
-
-def test_the_shadow_is_taken_off_too_and_that_is_what_makes_it_round(monkeypatch):
-    """**The region alone is not enough, and this is the bug the user saw.**
-
-    DWM draws a window's drop shadow to the window's *rectangle*, not to its region,
-    so the corners the region cut away are filled by the shadow: the pet reads as a
-    dark rounded square with a circle drawn inside it. Measured over a white backdrop
-    (pixels 6px outside the rect): the corners were as dark as the edge midpoints
-    -- 193-241 against 119-211 -- where a circular window would have no shadow at the
-    corners at all. With `DWMWA_NCRENDERING_POLICY = DWMNCRP_DISABLED` every one of
-    those samples returns to the white behind it.
-    """
-    from tonyagent.window import pet as pet_module
-
-    unshadowed: list[int] = []
-    monkeypatch.setattr(pet_module.win32, "root_window", lambda hwnd: hwnd)
-    monkeypatch.setattr(pet_module.win32, "clip_to_circle", lambda hwnd: None)
-    monkeypatch.setattr(pet_module.win32, "no_shadow", unshadowed.append)
-
-    window = FakeWindow()
-    window.native = type("Native", (), {"Handle": _Handle})()
-    pet_module._shape(window)
-
-    assert unshadowed == [4242], "the window kept the shadow that fills its cut corners"
+    assert clipped == [], "the card was clipped to a shape, or had its shadow removed"
 
 
-def test_a_shape_that_failed_is_retried_on_the_next_chance(monkeypatch):
+
+def test_a_windowed_that_failed_is_retried_on_the_next_chance(monkeypatch):
     """**A window can be up before it has a usable rect**, and marking it dressed
     first made that permanent.
 
@@ -441,7 +453,7 @@ def test_a_shape_that_failed_is_retried_on_the_next_chance(monkeypatch):
         attempts.append(window)
         return len(attempts) > 1  # refuses once, then takes
 
-    monkeypatch.setattr(pet_module, "_shape", flaky)
+    monkeypatch.setattr(pet_module, "_windowed", flaky)
 
     p, _created = pet()
     p.open()
@@ -456,49 +468,80 @@ def test_a_shape_that_failed_is_retried_on_the_next_chance(monkeypatch):
     assert p._dressed is True
 
 
-def test_a_window_that_cannot_be_shadowed_is_still_circled(monkeypatch):
-    """The two halves fail independently: losing either is a worse pet, not a
-    broken one, and the earlier of the two must still have happened."""
-    from tonyagent.window import pet as pet_module
 
-    clipped: list[int] = []
-    monkeypatch.setattr(pet_module.win32, "root_window", lambda hwnd: hwnd)
-    monkeypatch.setattr(pet_module.win32, "clip_to_circle", clipped.append)
+def test_a_step_that_fails_does_not_skip_the_others(monkeypatch):
+    """Losing one step is a worse card, not a broken one.
 
-    def refuse(hwnd: int) -> None:
-        raise OSError("no shadow policy for you")
-
-    monkeypatch.setattr(pet_module.win32, "no_shadow", refuse)
-
-    window = FakeWindow()
-    window.native = type("Native", (), {"Handle": _Handle})()
-    pet_module._shape(window)  # does not raise
-
-    assert clipped == [4242], "the clip was skipped because the shadow failed"
-
-
-def test_the_region_is_cut_from_the_window_the_os_reports(monkeypatch):
-    """**Measured, not requested**, and the difference was the rectangle.
-
-    pywebview's WinForms backend sets the form's `MinimumSize` from `min_size`, and
-    its default of 200x100 overrode a card asked for at 180: the real window came
-    back 200x141 on this machine. A region built from the numbers we asked for left
-    a slab of window beside the circle -- which is what the user saw. So the cut is
-    computed from `GetWindowRect`.
+    The corner preference is the cosmetic part and the frame is the load-bearing one,
+    so a refusal from DWM must not stop the frame from being applied.
     """
     from tonyagent.window import pet as pet_module
 
+    done: list[str] = []
+
+    def refuse(hwnd: int) -> None:
+        raise OSError("no corner preference for you")
+
     monkeypatch.setattr(pet_module.win32, "root_window", lambda hwnd: hwnd)
-    seen: list[int] = []
-    monkeypatch.setattr(
-        pet_module.win32, "clip_to_circle", lambda hwnd: seen.append(hwnd)
-    )
+    monkeypatch.setattr(pet_module.win32, "round_corners", refuse)
+    monkeypatch.setattr(pet_module.win32, "install_frame", lambda hwnd: done.append("frame"))
+    monkeypatch.setattr(pet_module.win32, "make_framed", lambda hwnd: done.append("framed"))
+    monkeypatch.setattr(pet_module, "_pin_size", lambda window: done.append("pinned"))
 
     window = FakeWindow()
     window.native = type("Native", (), {"Handle": _Handle})()
-    pet_module._shape(window)
+    assert pet_module._windowed(window) is False, "a failed step was reported as fine"
+    assert done == ["frame", "framed", "pinned"], done
 
-    assert seen == [4242], "the window's own box was not what got measured"
+
+
+
+def test_the_size_is_pinned_so_the_frame_cannot_be_dragged_bigger(monkeypatch):
+    """`WS_THICKFRAME` buys the rounded corners and, with them, a resize on every
+    edge. Making the maximum size the minimum one is how the frame is kept and the
+    resize refused.
+
+    It reads `MinimumSize` rather than repeating the numbers, and that is the point:
+    that property is what pywebview sets from `min_size`, and leaving *that* at its
+    default is what clamped the card to `200x141` once already.
+    """
+    from tonyagent.window import pet as pet_module
+
+    class MinimumSize:
+        Width, Height = 180, 180
+
+    class Native:
+        def __init__(self) -> None:
+            self.MinimumSize = MinimumSize()
+            self.MaximumSize = None
+
+    window = FakeWindow()
+    window.native = Native()
+    pet_module._pin_size(window)
+
+    assert window.native.MaximumSize is window.native.MinimumSize
+
+
+def test_a_window_with_no_size_to_pin_is_left_alone(monkeypatch):
+    """`MinimumSize` is only meaningful once it is set, and a window whose size was
+    never pinned must not be pinned to zero -- which would be an invisible card
+    rather than a square one."""
+    from tonyagent.window import pet as pet_module
+
+    class MinimumSize:
+        Width, Height = 0, 0
+
+    class Native:
+        def __init__(self) -> None:
+            self.MinimumSize = MinimumSize()
+            self.MaximumSize = None
+
+    window = FakeWindow()
+    window.native = Native()
+    pet_module._pin_size(window)
+
+    assert window.native.MaximumSize is None
+
 
 
 def test_a_wide_window_is_cut_to_a_circle_centred_in_it():
@@ -578,7 +621,7 @@ def _window_comes_up(p: Any) -> None:
     p._window.events.shown.fire()
 
 
-def test_opening_the_card_is_what_shapes_it(monkeypatch):
+def test_opening_the_card_is_what_windoweds_it(monkeypatch):
     """The wiring: a card that opens is a card that ends up shaped.
 
     **And this pins down the bug the card shipped with.** `Window.native` does not
@@ -592,7 +635,7 @@ def test_opening_the_card_is_what_shapes_it(monkeypatch):
 
     _quiet_reveal(monkeypatch)
     clipped: list[Any] = []
-    monkeypatch.setattr(pet_module, "_shape", lambda window: (clipped.append(window), True)[1])
+    monkeypatch.setattr(pet_module, "_windowed", lambda window: (clipped.append(window), True)[1])
 
     p, _created = pet()
     assert p.open() is True
@@ -607,7 +650,7 @@ def test_opening_the_card_is_what_shapes_it(monkeypatch):
     assert clipped == [], "the card was dressed again by a later event"
 
 
-def test_the_pages_ready_is_the_third_chance_to_get_shaped(monkeypatch):
+def test_the_pages_ready_is_the_third_chance_to_get_windowedd(monkeypatch):
     """The one signal the *page* can give, and the last one to arrive.
 
     A backend that fires neither window event still gets a circle, because the card
@@ -619,7 +662,7 @@ def test_the_pages_ready_is_the_third_chance_to_get_shaped(monkeypatch):
 
     _quiet_reveal(monkeypatch)
     clipped: list[Any] = []
-    monkeypatch.setattr(pet_module, "_shape", lambda window: (clipped.append(window), True)[1])
+    monkeypatch.setattr(pet_module, "_windowed", lambda window: (clipped.append(window), True)[1])
 
     p, _created = pet()
     p.open()
@@ -641,7 +684,7 @@ def test_the_foreground_is_given_back_when_the_window_comes_up(monkeypatch):
     from tonyagent.window import pet as pet_module
 
     raised, given_back = _quiet_reveal(monkeypatch)
-    monkeypatch.setattr(pet_module.win32, "clip_to_circle", lambda *args: None)
+    monkeypatch.setattr(pet_module.win32, "round_corners", lambda *args: None)
     monkeypatch.setattr(pet_module, "_foreground", lambda: 777)
 
     p, _created = pet()
@@ -665,7 +708,7 @@ def test_a_replaced_window_is_dressed_on_its_own_terms(monkeypatch):
 
     _quiet_reveal(monkeypatch)
     clipped: list[Any] = []
-    monkeypatch.setattr(pet_module, "_shape", lambda window: (clipped.append(window), True)[1])
+    monkeypatch.setattr(pet_module, "_windowed", lambda window: (clipped.append(window), True)[1])
 
     p, _created = pet()
     p.open()
@@ -680,7 +723,7 @@ def test_a_replaced_window_is_dressed_on_its_own_terms(monkeypatch):
     assert len(clipped) == 2, "the replacement window was never shaped"
 
 
-def test_a_card_that_cannot_be_shapeped_is_not_an_error(monkeypatch):
+def test_a_card_that_cannot_be_windowedped_is_not_an_error(monkeypatch):
     """A square pet is a pet. Refusing to open one would be a decoration failing
     at the thing it decorates."""
     from tonyagent.window import pet as pet_module
@@ -689,12 +732,12 @@ def test_a_card_that_cannot_be_shapeped_is_not_an_error(monkeypatch):
         raise OSError("no window region for you")
 
     monkeypatch.setattr(pet_module.win32, "root_window", lambda hwnd: hwnd)
-    monkeypatch.setattr(pet_module.win32, "clip_to_circle", refuse)
+    monkeypatch.setattr(pet_module.win32, "round_corners", refuse)
 
     window = FakeWindow()
     window.native = type("Native", (), {"Handle": _Handle})()
 
-    pet_module._shape(window)  # does not raise
+    pet_module._windowed(window)  # does not raise
 
 
 def test_a_window_with_no_handle_is_not_asked_for_one(monkeypatch):
@@ -705,9 +748,9 @@ def test_a_window_with_no_handle_is_not_asked_for_one(monkeypatch):
     def unexpected(hwnd: int, width: int, height: int) -> None:
         raise AssertionError("clipping was attempted with no handle")
 
-    monkeypatch.setattr(pet_module.win32, "clip_to_circle", unexpected)
+    monkeypatch.setattr(pet_module.win32, "round_corners", unexpected)
 
-    pet_module._shape(FakeWindow())  # does not raise
+    pet_module._windowed(FakeWindow())  # does not raise
 
 
 def test_showing_it_twice_makes_one_card():
