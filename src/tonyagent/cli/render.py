@@ -33,10 +33,68 @@ import json
 import os
 import sys
 import time
+import unicodedata
 from typing import Any, Optional, TextIO
 
 #: Results longer than this are truncated with a count, not a preview.
 RESULT_PREVIEW_CHARS = 160
+
+#: Lines kept when a tool's output is too long to show whole.
+#:
+#: Borrowed from OpenCode's `collapseToolOutput`, and for its reason: the head of
+#: a command's output is the part that was already printed above it, while the
+#: tail is the error. Truncating the head shows the user the part they have and
+#: hides the part they do not.
+RESULT_MAX_LINES = 12
+
+
+def display_width(text: str) -> int:
+    """How many terminal columns `text` occupies.
+
+    Not `len()`. A CJK character is one Python character and two columns, and
+    an emoji is often two characters and zero or four columns, so `len()` turns
+    any table of tool arguments into a staircase. Python ships no width table,
+    but `unicodedata.east_asian_width` distinguishes the half from the full
+    forms, which covers every case that matters here.
+
+    OpenCode carries a grapheme-aware table for this and is more correct about
+    emoji sequences. That is a real difference, stated rather than hidden: the
+    `W`/`F` split below is correct for text, and wrong for a flag or a skin
+    tone, which would miscount by a column or two.
+    """
+    width = 0
+    for char in text:
+        if unicodedata.combining(char):
+            continue
+        width += 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+    return width
+
+
+def truncate_to_width(text: str, limit: int) -> str:
+    """Truncate on column width rather than character count.
+
+    The two agree for ASCII, which is most of what a transcript holds, and
+    disagree exactly where it would be visible: a truncated line of Korean is
+    short in characters and over the edge on screen.
+    """
+    if display_width(text) <= limit:
+        return text
+    out: list[str] = []
+    width = 0
+    for char in text:
+        step = 0 if unicodedata.combining(char) else (
+            2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+        )
+        if width + step > limit - 1:
+            break
+        out.append(char)
+        width += step
+    return "".join(out) + "…"
+
+
+def pad_to(text: str, columns: int) -> str:
+    """Pad on display width, so aligned columns stay aligned under CJK text."""
+    return text + " " * max(0, columns - display_width(text))
 
 
 def _supports_colour(stream: TextIO) -> bool:
@@ -266,6 +324,8 @@ class Renderer:
         description = payload.get("description")
         if description:
             self.line(f"  {self.style.dim(str(description))}")
+        self.blank()
+        self.line("  " + self.style.dim("[y] once   [a] always   [n] no"))
 
     def _on_user_asked(self, payload: dict[str, Any]) -> None:
         """Print a question or a presentation.
@@ -380,14 +440,33 @@ def _one_line(text: str, limit: int = 72) -> str:
 
 
 def _result_summary(payload: dict[str, Any]) -> str:
-    """A short tail for a finished tool call, or nothing useful to add."""
+    """A short tail for a finished tool call, or nothing useful to add.
+
+    **The tail, not the head.** A command that printed three hundred lines of
+    progress and then failed has put its error last, and a preview cut from the
+    front shows the user the part they have already seen on their terminal
+    while hiding the part they need. This is the one thing borrowed
+    deliberately from OpenCode's `collapseShellOutput`, which makes the same
+    argument about the same thing.
+    """
     result = payload.get("result")
     if result is None:
         return ""
     text = result if isinstance(result, str) else json.dumps(result, default=str)
-    flat = " ".join(text.split())
-    if not flat:
+    if not text.strip():
         return ""
-    if len(flat) > RESULT_PREVIEW_CHARS:
-        return f"{flat[:RESULT_PREVIEW_CHARS]}… (+{len(flat) - RESULT_PREVIEW_CHARS} chars)"
-    return flat
+
+    lines = text.splitlines()
+    if len(lines) <= RESULT_MAX_LINES:
+        flat = " ".join(text.split())
+        if display_width(flat) <= RESULT_PREVIEW_CHARS:
+            return flat
+        return truncate_to_width(flat, RESULT_PREVIEW_CHARS)
+
+    kept = lines[-RESULT_MAX_LINES:]
+    body = truncate_to_width("\n".join(kept), RESULT_PREVIEW_CHARS)
+    dropped = len(lines) - len(kept)
+    # The marker goes *before* the text, because this is a prefix of what was
+    # removed -- and a reader scanning for the error should see "N lines
+    # omitted" once, not a trailing ellipsis they have to interpret.
+    return f"… {dropped} earlier line{'s' if dropped != 1 else ''} omitted …\n{body}"

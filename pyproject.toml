@@ -59,6 +59,11 @@ packaging = [
     "nsis>=3.0.0",
 ]
 
+[project.scripts]
+# The terminal frontend. `python -m tonyagent.cli` runs the same code without an
+# install, which is how it is developed; this is how it is used.
+tony = "tonyagent.cli.repl:main"
+
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"

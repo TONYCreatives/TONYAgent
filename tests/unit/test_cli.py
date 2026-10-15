@@ -32,7 +32,6 @@ import pytest
 from tonyagent.cli.client import CoreClient, CoreError, core_argv
 from tonyagent.cli.render import Renderer, Style, _argument_summary, _result_summary
 
-
 # --- the boundary ----------------------------------------------------------
 
 
@@ -167,10 +166,51 @@ def test_a_tool_call_is_one_line_and_its_result_a_short_tail():
     assert "file body" in lines[1]
 
 
-def test_a_long_result_is_truncated_with_a_count():
+def test_a_long_result_keeps_the_tail_not_the_head():
+    """The error is at the end.
+
+    A command that printed 40 lines of progress and then failed has put its
+    message last. A preview cut from the front shows the part already printed
+    above it and hides the part that explains the failure.
+    """
+    body = "\n".join(f"line {n}" for n in range(40))
+    summary = _result_summary({"result": body + "\nFATAL: the disk is full"})
+
+    assert "FATAL: the disk is full" in summary
+    assert "line 0" not in summary
+    assert "earlier lines omitted" in summary
+
+
+def test_the_omission_count_is_plural_when_it_is_many_lines():
+    """The count is stated, so the user knows how much they are not seeing."""
+    from tonyagent.cli.render import RESULT_MAX_LINES
+
+    body = "\n".join(f"line {n}" for n in range(RESULT_MAX_LINES + 5))
+    summary = _result_summary({"result": body})
+    assert "5 earlier lines omitted" in summary
+
+
+def test_the_omission_count_is_singular_when_it_is_one_line():
+    from tonyagent.cli.render import RESULT_MAX_LINES
+
+    body = "\n".join(f"line {n}" for n in range(RESULT_MAX_LINES + 1))
+    summary = _result_summary({"result": body})
+    assert "1 earlier line omitted" in summary
+
+
+def test_output_that_already_fits_is_not_marked_as_omitted():
+    from tonyagent.cli.render import RESULT_MAX_LINES
+
+    body = "\n".join(f"line {n}" for n in range(RESULT_MAX_LINES))
+    summary = _result_summary({"result": body})
+    assert "omitted" not in summary
+    assert "line 0" in summary
+
+
+def test_a_long_single_line_result_is_truncated_by_width():
     summary = _result_summary({"result": "x" * 500})
-    assert summary.endswith("chars)")
-    assert len(summary) < 300
+    assert len(summary) < 200
+    assert summary.endswith("…")
 
 
 def test_multiline_arguments_are_flattened_to_one_line():
@@ -231,6 +271,45 @@ def test_an_unknown_event_is_ignored():
     ui = Renderer(io.StringIO())
     ui.handle("something.brand.new", {"x": 1})
     assert ui.out.getvalue() == ""
+
+
+def test_cjk_text_is_measured_in_columns_not_characters():
+    """A Korean character is one Python character and two terminal columns.
+
+    Padding on `len()` is what turns an aligned column list into a staircase
+    as soon as the text is not Latin, and the transcript is read as much by its
+    shape as by its words.
+    """
+    from tonyagent.cli.render import display_width, pad_to
+
+    assert display_width("abc") == 3
+    assert display_width("한글") == 4
+    assert display_width("a한") == 3
+
+    padded = pad_to("한글", 10)
+    assert display_width(padded) == 10
+
+
+def test_truncation_respects_column_width():
+    """Truncating Korean by character count runs past the edge on screen."""
+    from tonyagent.cli.render import display_width, truncate_to_width
+
+    truncated = truncate_to_width("가" * 100, 10)
+    assert display_width(truncated) <= 10
+
+
+def test_a_confirmation_offers_always_as_well_as_once():
+    """Three options, and the third is the one the user forgets they chose."""
+    stream = io.StringIO()
+    ui = Renderer(stream)
+    ui.handle("confirmation.requested", {
+        "id": "1", "name": "delete_file", "arguments": '{"path": "a.py"}',
+        "destructive": True,
+    })
+    out = stream.getvalue()
+    assert "[y] once" in out
+    assert "[a] always" in out
+    assert "[n] no" in out
 
 
 # --- the client ------------------------------------------------------------
@@ -401,6 +480,6 @@ def test_the_console_script_is_declared():
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[2]
-    with open(root / "pyproject.toml", "rb") as handle:
+    with (root / "pyproject.toml").open("rb") as handle:
         config = tomllib.load(handle)
     assert config["project"]["scripts"]["tony"] == "tonyagent.cli.repl:main"

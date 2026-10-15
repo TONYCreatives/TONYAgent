@@ -40,7 +40,7 @@ from pathlib import Path, PurePath
 from typing import Any, Optional
 
 from tonyagent.cli.client import CoreClient, CoreError
-from tonyagent.cli.render import Renderer
+from tonyagent.cli.render import Renderer, pad_to
 from tonyagent.core.events import EventType
 
 #: How long a confirmation or question waits for a keypress, re-checking for
@@ -231,15 +231,26 @@ class Repl:
     def _route_answer(self, answer: str) -> None:
         """Send a typed line to whichever dialog is open.
 
-        A confirmation takes yes/no; a question takes whatever the user typed,
-        or a number when the core offered numbered options. Guessing wrong
-        here would send an answer to a dialog that is not asking for one, so
-        the pending id decides.
+        A confirmation takes yes/no/always; a question takes whatever the user
+        typed. Guessing wrong here would send an answer to a dialog that is not
+        asking for one, so the pending id decides which.
+
+        **"always" is this session's permission level, and nothing more.**
+        `confirm.respond` takes a bool and nothing else -- there is no
+        per-tool allowlist in the protocol -- so the honest way to stop being
+        asked is to raise the level for the conversation, which is what `/permission`
+        does. Saying so out loud matters: a user who believes "always" has
+        permanently trusted one tool, and has instead trusted *everything* for
+        this session, would be badly surprised at a later destructive call.
+        So it confirms this turn and then tells the truth about what it did.
         """
         call_id = self._pending_confirm
         if call_id is not None:
             self._pending_confirm = None
-            confirmed = answer.lower() in {"y", "yes", "1", "true"}
+            lowered = answer.lower()
+            if lowered in {"a", "always"} and not self._allow_always():
+                return
+            confirmed = lowered in {"y", "yes", "a", "always", "1", "true"}
             try:
                 self.client.notify(
                     "confirm.respond", {"id": call_id, "confirmed": confirmed}
@@ -252,6 +263,54 @@ class Repl:
         except CoreError as exc:
             self.ui.error(str(exc))
         self._pending_ask = None
+
+    def _allow_always(self) -> bool:
+        """Raise this session's permission level, and say what that means.
+
+        Two steps rather than one, and the second is the point. OpenCode's
+        permission dialog has the same three-stage shape (`permission` ->
+        `always` -> confirm) and the same reason for it: granting permanent
+        access is the option whose consequences the user is least likely to
+        have in mind when they are reading a tool's arguments.
+        """
+        listing = self.client.call("permission.list") or {}
+        levels = listing.get("permissions") or []
+        current = str(listing.get("permission") or "")
+        order = [str(level.get("name")) for level in levels if isinstance(level, dict)]
+        index = order.index(current) if current in order else -1
+        if index < 0 or index + 1 >= len(order):
+            self.ui.warn(f"Already at the highest level ({current}); confirming this once.")
+            return True
+        target = order[index + 1]
+
+        self.ui.blank()
+        self.ui.line(
+            self.style.yellow(
+                f"'always' raises this session to {target} -- every tool allowed, "
+                "not just this one."
+            )
+        )
+        levels_desc = next(
+            (str(level.get("description", "")) for level in levels
+             if isinstance(level, dict) and level.get("name") == target),
+            "",
+        )
+        if levels_desc:
+            self.ui.line(f"  {self.style.dim(levels_desc)}")
+        try:
+            answer = input(self.style.yellow(f"  Switch to {target}? [y/N] ")).strip()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        if answer.lower() not in {"y", "yes"}:
+            self.ui.line(self.style.dim("cancelled; confirming this once only"))
+            return False
+        try:
+            self.client.call("permission.set", {"permission": target})
+        except CoreError as exc:
+            self.ui.error(str(exc))
+            return False
+        self.refresh_state()
+        return True
 
     # -- one turn ------------------------------------------------------------
 
@@ -334,8 +393,14 @@ class Repl:
         ]
         self.ui.blank()
         self.ui.line(self.ui.style.bold("Commands"))
+        # Measured rather than a fixed 22: the column has to fit the longest
+        # name, and padding on character count is what put the descriptions out
+        # of line under a CJK locale.
+        width = max(len(name) for name, _ in rows)
         for name, description in rows:
-            self.ui.line(f"  {self.ui.style.cyan(name):<22} {self.ui.style.dim(description)}")
+            self.ui.line(
+                f"  {pad_to(self.ui.style.cyan(name), width)}  {self.ui.style.dim(description)}"
+            )
         self.ui.blank()
         self.ui.line(
             self.ui.style.dim("Ctrl-C cancels a turn; Ctrl-C again leaves. Ctrl-D leaves.")
