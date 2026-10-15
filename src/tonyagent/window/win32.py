@@ -98,6 +98,12 @@ GWLP_WNDPROC = -4
 #: maximize, so without it the gestures the user asks for are not refused --
 #: they never reach the window at all. A frameless window carries none of these
 #: bits, which is exactly why dragging it to the top of the screen did nothing.
+#:
+#: ``WS_CAPTION`` is carried for a different reason again: DWM animates the
+#: maximize, restore and minimize transitions only for a window it considers to
+#: have a caption, and skips the animation entirely for one it does not. It is
+#: never painted -- see `frameless_resizable_style`, which carries the measurement.
+WS_CAPTION = 0x00C00000
 WS_MAXIMIZEBOX = 0x00010000
 WS_MINIMIZEBOX = 0x00020000
 WS_THICKFRAME = 0x00040000
@@ -488,14 +494,37 @@ def raise_without_activating(hwnd: int) -> None:
 
 
 def frameless_resizable_style(style: int) -> int:
-    """The style word for a window that resizes and snaps but draws no frame.
+    """The style word for a window that resizes, snaps and animates, drawing no frame.
 
     A pure function of the style it is handed, so the bits can be asserted
     without a window to put them on. The frame is not in the style word:
     ``WS_THICKFRAME`` is what *permits* one, and ``WM_NCCALCSIZE`` below is what
     declines to draw it.
+
+    **``WS_CAPTION`` is in here to be declined as well, and it is what makes the
+    window animate.** Without it the maximize, restore and minimize transitions do not
+    run at all: the rectangle and the content both arrive in one step, which is the
+    "not smooth" the user reported. Measured against Notepad -- activated first,
+    because DWM skips the transition for a background window -- by sampling a thin
+    strip of screen just below the window's own edge and counting frames that are
+    neither the state before nor the state after:
+
+        transition   without WS_CAPTION         with WS_CAPTION          Notepad
+        maximize     0 in between, settles 1    1 in between, settles 1   1, settles 1
+        restore      0 in between, settles 0    0 in between, settles 4   --
+        minimize     0 in between, settles 0    3 in between, settles 3   0, settles 3
+
+    ``WS_CAPTION`` is ``WS_BORDER | WS_DLGFRAME`` and none of the three is ever
+    painted, because the frame procedure answers ``WM_NCCALCSIZE`` with "the client
+    area is the whole window". Windows is being told what kind of window this is, not
+    asked to draw anything: DWM animates a window it considers to have a caption and
+    skips one it does not. Every custom-framed window that animates -- Chrome,
+    Terminal, VS Code -- carries it for this reason.
+
+    ``research/probe_transition_speed.py`` is the measurement, and it re-measures
+    Notepad in the same run so that a "no animation" result cannot be believed alone.
     """
-    return style | WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SYSMENU
+    return style | WS_CAPTION | WS_THICKFRAME | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_SYSMENU
 
 
 def frameless_fixed_style(style: int) -> int:

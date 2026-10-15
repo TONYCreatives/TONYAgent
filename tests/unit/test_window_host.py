@@ -428,11 +428,21 @@ def test_the_frame_bits_are_added_without_clearing_anything():
     grants resizing *and* snapping for, and a frameless window carries none of
     it. Asserted against the exact set the page's gestures need, because one bit
     short is a window that resizes and will not snap, or the reverse.
+
+    ``WS_CAPTION`` is in the set for the transition rather than for the frame: DWM
+    only animates a window it considers to have a caption, so without it maximize,
+    restore and minimize all arrive in a single step. It is declined rather than
+    drawn -- the frame procedure answers ``WM_NCCALCSIZE`` with "the client area is
+    the whole window" -- and the measurement is on `frameless_resizable_style`.
     """
     from tonyagent.window import win32
 
     wanted = (
-        win32.WS_THICKFRAME | win32.WS_MAXIMIZEBOX | win32.WS_MINIMIZEBOX | win32.WS_SYSMENU
+        win32.WS_CAPTION
+        | win32.WS_THICKFRAME
+        | win32.WS_MAXIMIZEBOX
+        | win32.WS_MINIMIZEBOX
+        | win32.WS_SYSMENU
     )
     assert win32.frameless_resizable_style(0) == wanted
     # Idempotent, and it keeps whatever else the window already carries: this is
