@@ -27,4 +27,34 @@
 # which is how these files came to be committed with the endings that break
 # them. tests/unit/test_build_scripts.py fails if this attribute is dropped or
 # if any .bat in the tree stops being CRLF.
+#
+# This rule is deliberately last: `* text=auto` above normalises everything else
+# in the repository, and a later, more specific attribute wins. Dropping this
+# line would let the general rule decide the endings of every .bat in the tree,
+# which is the failure this whole file exists to prevent.
 *.bat text eol=crlf
+
+# Everything that is not a .bat.
+#
+# `text=auto` normalises line endings in the index while leaving binaries alone,
+# and -- unlike core.autocrlf -- it is a property of the repository rather than
+# of whoever happened to clone it. That matters here: core.autocrlf was unset, so
+# a checkout on this machine wrote CRLF over files the index held as LF. The
+# content was byte-identical, so `git diff --ignore-all-space` showed nothing
+# while `git status` reported 207 modified files and 80,636 insertions against
+# 80,636 deletions. A real one-line edit was indistinguishable from a checkout,
+# which is the state a diff has to not be in.
+#
+# The cost is the mirror image and is worth stating: with no eol= override, a
+# working tree on Windows gets LF. That is what the tools here expect (Python,
+# Node, Vite, pytest all read either), and it is why the .bat rule above is
+# pinned explicitly rather than left to the general one.
+#
+# Binary files are detected by content, so icons, screenshots and the frozen
+# bundle are not at risk from this line.
+* text=auto
+
+# Generated or vendored trees that should not be diffed line by line anyway.
+# Listed last so the rule above already governs their endings.
+app/dist/** -diff -text
+app/node_modules/** -text
