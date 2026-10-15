@@ -133,12 +133,13 @@
      the composer's active mode pill, the selected row inside the permission
      menu, and the warn badge -- and all three are chips rather than states.
 
-     It used to be the selected step as well, claimed by the conversation row,
-     the tab and the selected rail item. Those three are the gradient now
-     (`--grad-wash` for the two surfaces, `--grad-accent` for the rail):
-     borrowing a container's colour for a state put "selected" one step off
-     `--hover`, so "the one you are in" and "the one under the pointer" were a
-     shade apart. */
+     The *selected* states are not this container's colour. Borrowing a
+     container colour for a state put "selected" one step off `--hover`, so
+     "the one you are in" and "the one under the pointer" were a shade apart;
+     the conversation row and the tab wear the flat `--wash` below instead and
+     the mode pill stays this chip -- one pixel value each, never a gradient.
+     The single gradient in the palette is the brand's, `--grad-accent`, and it
+     is first-run only. */
   --chip: #3d3d3d;
   --hover: #383838;
 
@@ -170,17 +171,54 @@
   --accent: #6393f0;
   --accent-fg: #0b1020;
   /*
-   * Flat, and one value, because the icon has one value.
+   * The trajectory's diff and status inks: green for a line added, red for one
+   * removed, each with a wash the text sits on. Tokens like everything else --
+   * a raw hex in a rule is a colour a palette swap cannot reach, which is the
+   * exact failure `layout.test`'s raw-colour guard exists to catch. These are
+   * the debugging view's own two colours, distinct from the achromatic ladders.
+   */
+  --traj-add: #7ee2a8;
+  --traj-del: #f2a0a0;
+  --traj-add-wash: rgb(70 180 120 / 0.16);
+  --traj-del-wash: rgb(220 90 90 / 0.2);
+  /*
+   * The brand gradient -- the accent read as a ramp, for the first-run hero.
    *
-   * It used to be a two-stop gradient -- this blue rotated 36 degrees toward
-   * violet at the far end. That rotation was the one thing in this palette that
-   * was invented rather than read out of the artwork: the mark is a white prompt
-   * on a single blue, and a second hue beside it made "this application's
-   * colour" two colours that nobody could name. Flat is the honest reading of
-   * the icon, and every surface that takes chroma now takes the same one.
+   * `--accent` stays flat above, and it is what every *functional* control
+   * paints: the send button, the accent button, badges, focus. A `color` or a
+   * `background` is one value, and a button cannot be a gradient the way text
+   * can, so folding a second hue into `--accent` would mean dragging twenty
+   * rules (and their contrast maths) along with it. The ramp is a *brand* move,
+   * not a control move, so it lives in its own token.
    *
-   * `--accent-bright` further down is the step that keeps *text* legible; the
-   * fill and the text are deliberately not the same blue.
+   * It is the pair this palette carried and then deleted: `--accent`'s own blue
+   * rotated 36 degrees toward violet at the far end. The rotation is the one
+   * invention here -- the icon is a white prompt on a single blue -- and it is
+   * back on purpose, scoped to the wordmark and the mark's glow, the one place
+   * the app means to look like a brand. Both stops clear the *text* floor on the
+   * field (5.77:1 and 5.41:1), because the wordmark writes the ramp as text and
+   * is held to the text floor rather than the graphic one; the accent suite
+   * asserts each stop. 135 degrees -- top-left to bottom-right -- because a
+   * wordmark reads left to right and a diagonal falloff does not read as a
+   * scanline behind the letters.
+   */
+  --grad-accent: linear-gradient(135deg, #6393f0, #9b7cf0);
+  /*
+   * The glow around the first-run mark: the accent at 34%, as a drop-shadow.
+   *
+   * `filter: drop-shadow` rather than a gradient halo behind the glyph, because
+   * a shadow hugging the strokes *is* the glow -- a radial gradient behind the
+   * box would spill past the artwork's own air and read as a second, rectangular
+   * object. Held under 40% so it is atmosphere and not a second mark. Its own
+   * token so the glow and the flat fill move with the accent together, rather
+   * than the colour being written out a second time where it cannot be swapped.
+   */
+  --accent-glow: rgb(99 147 240 / 0.34);
+  /*
+   * `--accent-bright` further down is the step that keeps *text* legible on a
+   * raised chip; the fill (`--accent`), the brand ramp (`--grad-accent`) and the
+   * small-text step are deliberately three different values -- three jobs, all
+   * from the same icon ramp.
    */
   /*
    * The selection wash: the accent at low alpha, for surfaces that carry the
@@ -263,6 +301,103 @@
    * it was.
    */
   --column-inset: 19px;
+  /*
+   * The reading column's two *outer* numbers, and they exist because the column
+   * only agreed with itself at one window width.
+   *
+   * Measured before this: at 1280 the transcript's inner box and the composer's
+   * inner box were both 760px at x=292. At 760 the window they were 676 at x=74
+   * and 632 at x=96 -- the messages 22px out to the left of the field that
+   * replies to them, and 44px wider. The cause was two surfaces deriving one
+   * column two ways: `.transcript` reserves a scrollbar gutter on both edges
+   * (`scrollbar-gutter: stable both-edges`) and takes no padding, while
+   * `.composer` takes 32px of padding and has no scroller. Above 888px both hit
+   * the `--measure` cap, so the difference was invisible; below it, every width
+   * had its own disagreement. `--measure` was never the problem -- the box
+   * around it was, and it was declared twice.
+   *
+   * So the air is a token and the scrollbar is added to it, rather than each
+   * surface spelling out its own total:
+   *
+   *   --column-air   the transcript's own padding, inside the gutter it holds
+   *   --column-edge  what a surface with no scroller must hold to land on the
+   *                  same edge: the air, plus the gutter the transcript reserves
+   *
+   * 22 and not 32 is the whole point: 22 + 10 (`--scrollbar`) is the 32 the
+   * composer already had, so this moves nothing above 888px and fixes
+   * everything below it. Both surfaces are then the same box at every width
+   * instead of at one.
+   */
+  --column-air: 22px;
+  --column-edge: calc(var(--column-air) + var(--scrollbar));
+  /*
+   * One panel inset, and one row inset, for the whole window.
+   *
+   * Before this the panel content edges were 10 (chat head and foot), 12 (group
+   * labels), 14 (the Files filter and its empty state), 18 (every dialog, since
+   * `.modal` is the base all three share) and `clamp(16px, 2.5vw, 32px)` (the
+   * usage dashboard, which was therefore the only surface in the app whose
+   * inset changed as the window was resized). Five surfaces, five answers to
+   * one question, none of them derivable from the others.
+   *
+   * `--pad-panel` is where a panel's content starts, and it is 16 everywhere:
+   * the chat list's head, foot, labels and rows, the Files filter and its tree,
+   * the code explorer's head, the code viewer's header, the dialog padding and
+   * the dashboard. `--pad-row` is how much air a row's own fill adds inside
+   * that, so a row's *text* lands on the panel's edge too: 8px of card inset in
+   * the region plus 8 of row padding is the 16, which is why `--pad-row` is 8
+   * and not a second 16.
+   */
+  --pad-panel: 16px;
+  --pad-row: 8px;
+  /*
+   * How far a floating menu sits from the control that opened it.
+   *
+   * Six pixels of air, written out five times -- the model picker's two anchors,
+   * the permission menu's two, the tool budget popover and the `/` menu -- which
+   * is one place too many for a number that a module also has to know.
+   * `placeMenu` in `menuPlacement.ts` measures the room a menu has from the
+   * trigger's edge and subtracts this gap to get the height it may be, while
+   * these rules are what actually put the menu this far away. Six pixels of
+   * disagreement would push the last row of a capped menu past the floor it was
+   * capped to, so `layout.test.ts` reads this number out of the stylesheet and
+   * compares it with `MENU_GAP` -- the closest a stylesheet and a module can get
+   * to sharing a constant.
+   *
+   * **Not the row menus' 4.** Those hang off a *pointer*, and four pixels is
+   * what clears the arrow without the menu's corner landing under the cursor
+   * that asked for it; this is the distance from a control the menu belongs to.
+   * Two numbers, two reasons, and the row menus carry theirs in
+   * `ConversationList.tsx`.
+   */
+  --menu-gap: 6px;
+  /*
+   * The breakpoint ladder: **720, 560, 420**, and nothing else.
+   *
+   * It cannot be a custom property -- a `@media` prelude is evaluated before
+   * any variable exists -- so it is a written-down convention with a test behind
+   * it, which is the closest a media query can get to a token. `layout.test.ts`
+   * walks every `@media (max-width: Npx)` in the cascade and fails on an N that
+   * is not one of the three, so a fourth step has to be argued for here rather
+   * than appearing in one surface and not the others.
+   *
+   * That was the failure: the compact-window pass invented 720 and 540 and 390
+   * for the title bar, 680 and 430 for the dashboard and 560 for the status bar,
+   * so one window changed state six times, at six different sizes, in three
+   * surfaces that all say "narrow". Three widths now, each with one job:
+   *
+   *   720  the chrome starts giving up air: the tab strip caps, the model chip
+   *        ellipsises, the caption buttons narrow, the dashboard's header wraps
+   *   560  the status bar drops secondary status, and the chip and tab caps drop
+   *        to their floor
+   *   420  the tab strip stops being a strip -- the controls that must never be
+   *        pushed out are worth more than a tab you cannot read -- and the
+   *        dashboard's period picker becomes locally scrollable
+   *
+   * A `@container (max-width: Npx)` is not on this ladder and must not be: it
+   * asks about the pane the rule is in, and the one in `code-viewer.css` is
+   * measured against the code pane rather than the window.
+   */
 
   --rail-w: 64px;
   /*
@@ -293,6 +428,27 @@
    * needs the width more than a list of titles does.
    */
   --code-side-w: 268px;
+  /*
+   * The assistant panel's width in Code mode, while it is showing.
+   *
+   * Set by the two surfaces inside it agreeing, which is the same rule the
+   * reading column above follows: the transcript keeps `--column-air` inside the
+   * scrollbar gutter it reserves (22 + 10 on either side) and the composer keeps
+   * `--column-edge` (32), so both boxes are this width minus 64 and the field
+   * below is as wide as the messages above it -- true here by the same
+   * construction that makes it true in Agent mode, rather than by two numbers
+   * that happen to agree. 400 leaves 336px of text; below about 360 the
+   * composer's own control row starts wrapping its buttons.
+   *
+   * Its own number rather than a share of the window: when the window grows it
+   * is the *file* beside the panel that should get the width.
+   *
+   * Put away it is `--rail-w`, and that is not a coincidence: a panel that is
+   * not showing is a strip holding its own 44px toggle with air either side, and
+   * this window already has one of those. It needs no token of its own for the
+   * same reason it needs no second number -- see `.helper` in `shell.css`.
+   */
+  --code-helper-w: 400px;
   /* Sized to what it holds: one row of 13px text, the model chip and the
      caption buttons that fill it. Taller than the reference's 44 because the
      chip moved up here out of the composer and the bar now has to hold it. */
@@ -321,6 +477,30 @@
    * `--radius-lg`: it carries a whole control row and grows to 220px tall with
    * the textarea, and a pill on a box that size reads as a lozenge rather than
    * as a field.
+   *
+   * **That rule was about half-applied until the stadium sweep.** Chips obeyed
+   * it and controls did not: the per-turn budget popover had six pill presets
+   * over a 6px-cornered `Set` button and a 6px-cornered number field, the
+   * drawer's rename field was a rounded rectangle, and the rail's icon buttons
+   * were 12px squares in a strip whose selected item was argued to be a stadium
+   * in `rail.css`. Everything a user presses or types in is a stadium now.
+   *
+   * **A row is not one of those, and the sweep had to be told.** Rows went to
+   * pills with the rest and came back on the owner's eye: a row is one of a
+   * column -- as tall as a line or two of text, stacked against its neighbours --
+   * so a stadium turns a list into a column of buttons, and the wash on the
+   * conversation row (271x56) read as the largest control in the window. The
+   * line is not "does it paint an edge" (a row does, on hover) but "is it one
+   * thing you press, or one of a stack of them".
+   *
+   * So what keeps a corner: a surface (a panel, a menu, a card, a code block, a
+   * notice); a row that tiles a column (the conversation list, the file tree,
+   * every menu item, the permission rungs); a shape *cut into* an edge (the
+   * document tab, square where it meets the bar's own); a box that holds a stack
+   * of controls (this field, and the permission control's open state -- the same
+   * lozenge argument); and a label drawn as one (a keycap, a badge whose box is
+   * under twice its radius). `layout.test.ts` holds all three lists, so a class
+   * moving between them is a decision rather than a slip.
    */
   --radius-xs: 6px;
   --radius-sm: 12px;

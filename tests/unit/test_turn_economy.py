@@ -62,6 +62,10 @@ def _unrestricted_orchestrator():
 def _prompt(mode: str = "build") -> str:
     session = AgentSession(bus=EventBus())
     session.set_mode(mode)
+    # Unlimited: these tests pin the economy block, and a budget line would put
+    # the number of a turn into a comparison about wording. The budget is tested
+    # on its own below.
+    session.max_tool_calls = 0
     return session._messages_with_system()[0].content
 
 
@@ -94,7 +98,7 @@ def test_a_mode_still_speaks_first(mode: str):
 
 
 def test_the_rules_are_one_block_every_mode_shares():
-    """Four prompts, one text: a fix to it is a fix to all four."""
+    """Five prompts, one text: a fix to it is a fix to all five."""
     tails = {
         _prompt(mode)[len(get_mode(mode).system_prompt):] for mode in MODE_ORDER
     }
@@ -130,3 +134,40 @@ def test_the_clause_asks_for_the_plan_in_the_same_message_as_the_work():
     """
     assert "todo_write in the same message" in TOOL_CALL_ECONOMY
     assert "metered" in TOOL_CALL_ECONOMY
+
+
+def test_a_limited_turn_is_told_its_budget_and_to_plan_against_it():
+    """The number on the wire, not only enforced and shown in the window.
+
+    `TOOL_CALL_ECONOMY` says how to spend a turn but cannot say how many calls
+    there are -- it is one fixed string. This is the per-session half: a model
+    told it has ten reads its way to the third differently from one that meets
+    the limit on the eleventh call. Asserted as guidance *and* the arithmetic
+    (limit, spent, left), because the sentence is the point and the numbers are
+    what make it honest.
+    """
+    session = AgentSession(bus=EventBus())
+    session.set_mode("build")
+    session.max_tool_calls = 10
+    session._tool_calls_used = 3
+    prompt = session._messages_with_system()[0].content
+
+    assert "10 tool calls" in prompt, "the limit never reached the model"
+    assert "3 spent" in prompt and "7 left" in prompt, prompt  # arithmetic, or a lie
+    # Guidance before the fact, not a tally after it: plan, then spend.
+    assert prompt.index("Tool-call budget") < prompt.index("Plan the whole job")
+
+
+def test_an_unlimited_turn_is_not_told_a_budget():
+    """`0` means no limit; naming one invites a model to fill it.
+
+    The same reason the economy rules are phrased as rules rather than as a
+    cap: "unlimited" is a ceiling a model spends because it is there.
+    """
+    session = AgentSession(bus=EventBus())
+    session.set_mode("build")
+    session.max_tool_calls = 0
+    prompt = session._messages_with_system()[0].content
+    assert "Tool-call budget" not in prompt
+    # And the economy rules are still there -- the budget line adds to them.
+    assert TOOL_CALL_ECONOMY in prompt

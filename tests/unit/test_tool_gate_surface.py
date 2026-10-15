@@ -57,6 +57,19 @@ from tonyagent.tools.shell_tools import NO_RUNTIME
 #: being added here -- this list is what makes that a decision rather than a
 #: discovery.
 REFUSED_BY_MODE: dict[str, set[str]] = {
+    # Chat refuses the most, and it refuses a *kind*: every tool that looks at
+    # something. The dozen names it keeps -- the planning verbs, `present`,
+    # `ask_user_question`, the skill readers and the four agent/job observers --
+    # touch nothing, which is the mode's whole definition.
+    "chat": {
+        "browser_click", "browser_eval", "browser_get_text", "browser_navigate",
+        "browser_screenshot", "browser_scroll", "browser_snapshot", "browser_type",
+        "browser_wait_for", "delete_file", "edit", "execute_command", "execute_js",
+        "glob", "grep", "http_request", "job_kill", "list_dir", "read",
+        "read_image", "sandbox_list_files", "sandbox_read_file", "send_message",
+        "set_viewport_size", "subagent", "subagent_fork", "take_screenshot",
+        "web_fetch", "write",
+    },
     "build": set(),
     "mission": {"take_screenshot"},
     "plan": {
@@ -302,7 +315,7 @@ async def test_the_two_axes_intersect_rather_than_override(project, body_ran):
             if refused_for_write:
                 assert result.status is ToolResultStatus.ERROR
                 assert body_ran == [], f"write ran at {mode_name}/{level}"
-    # The four modes and four levels are not one ladder each: the union of what
+    # The five modes and four levels are not one ladder each: the union of what
     # every combination allows is bigger than any single pair, and the
     # intersection is what none of them may exceed.
     assert allowed_total > len(tool_registry.list_names())

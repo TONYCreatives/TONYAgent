@@ -1,6 +1,19 @@
 
 /* --- banner + log -------------------------------------------------------- */
 .banner {
+  /*
+   * The reading column's box, and it is stated rather than inherited.
+   *
+   * This card, the log strip below it and the composer below that are all
+   * children of `.main`, and `.main` has no horizontal padding of its own -- so
+   * `max-width: --measure` alone made them the full width of the window's middle
+   * column whenever that column was narrower than the measure: at a 760px window
+   * this banner spanned 696 while the composer's field was 632, hanging 32px out
+   * on each side of the thing it belongs to. `--column-edge` is the inset the
+   * surfaces *without* a scrollbar hold, so the subtraction below lands all of
+   * them on the same two edges at every width.
+   */
+  width: calc(100% - 2 * var(--column-edge));
   max-width: var(--measure);
   margin: 0 auto 6px;
   /* 18 plus its own 1px border is the column's 19, so the banner's text starts
@@ -27,6 +40,7 @@
  * composer. This keeps the chat-to-input flow uninterrupted.
  */
 .logstrip {
+  width: calc(100% - 2 * var(--column-edge));
   max-width: var(--measure);
   margin: 0 auto;
   max-height: 150px;

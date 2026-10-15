@@ -5,6 +5,7 @@
   align-items: center;
   gap: 6px;
   height: 26px;
+  min-width: 0;
   padding: 0 12px;
   border-top: 1px solid var(--glass-edge);
   /* The window's lower edge, the same frosted material as the top. */
@@ -21,6 +22,17 @@
    */
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
+}
+
+/* The status line is useful context, not a reason to widen the window. Let its
+   text groups truncate before the always-reachable Logs control can be pushed
+   outside the bar. */
+.statusbar > span:not(.dot):not(.sep),
+.statusbar > button.linkish {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dot {
@@ -66,6 +78,7 @@
   color: var(--fg-dim);
   font: inherit;
   font-size: var(--text-xs);
+  flex: none;
   cursor: pointer;
   transition:
     background var(--motion-fast) ease,
@@ -112,4 +125,38 @@
 
 .linkish:hover {
   color: var(--fg);
+}
+
+/*
+ * 560 is the ladder's middle step (tokens.css), and this is the one surface
+ * with something to give up at it.
+ *
+ * What goes is *secondary* status and only that: the word beside the dot, which
+ * the dot already says, and the sandbox, which is one dialog away. What stays is
+ * the thing nothing else on the bar carries -- the provider and model in force,
+ * and the Logs control, which has no other door.
+ *
+ * The separators go with them, because a separator is punctuation for the
+ * items around it and there is no arrangement left that wants one. They are
+ * hidden as a group rather than one per neighbour: the rule this replaces hid
+ * `span:nth-of-type(2)` and `span:nth-of-type(5)`, and those indices shift when
+ * the provider is a `linkish` button instead of a span (the needs-a-provider
+ * state), which hid a *different* pair of things in exactly the state where the
+ * bar is telling the user what to do. Named classes cannot drift like that.
+ */
+@media (max-width: 560px) {
+  .statusbar {
+    gap: 5px;
+    padding-inline: 8px;
+  }
+
+  .statusbar > .sep,
+  .statusbar > .statusbar-state,
+  .statusbar > .statusbar-sandbox {
+    display: none;
+  }
+
+  .statusbar-logs {
+    padding-inline: 6px;
+  }
 }

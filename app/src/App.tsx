@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { TrajectoryView, captureEvent, type CapturedEvent } from "./TrajectoryView.js";
 import { CoreBackend } from "./backend.js";
 import {
   applyEvent,
@@ -92,7 +93,7 @@ const USAGE_TAB = "usage-tab";
  * window then shows a file while the strip highlights a chat. The strip
  * keeps one job (which conversation), the switch keeps the other.
  */
-type MainMode = "agent" | "code";
+type MainMode = "agent" | "code" | "trajectory";
 
 /**
  * A folder path split into where it lives and what it is called.
@@ -107,6 +108,11 @@ function splitFolder(path: string): [string, string] {
   const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return cut === -1 ? ["", path] : [path.slice(0, cut + 1), path.slice(cut + 1)];
 }
+
+const HELPER_GLYPH: Record<"open" | "closed", string> = {
+  open: "M3 4h18v16H3zM15 4v16",
+  closed: "M3 4h18v16H3zM19 4v16",
+};
 
 export function App({
   backend: injected,
@@ -337,6 +343,25 @@ export function App({
   >(new Map());
   /** Which half of the main area is in front. */
   const [mainMode, setMainMode] = useState<MainMode>("agent");
+  /**
+   * The raw event log for the trajectory view: every frame the core pushed,
+   * unfolded and timestamped, newest last, capped so a long session cannot grow
+   * without bound. Deliberately separate from `state`, which is the *reduced*
+   * transcript -- this is the complete traffic, not a summary of it.
+   */
+  const [trajectory, setTrajectory] = useState<CapturedEvent[]>([]);
+  const trajSeq = useRef(0);
+  /**
+   * Whether Code mode's assistant panel is showing.
+   *
+   * Its own state rather than something derived from `mainMode`: a user who put
+   * the panel away and goes back to the conversation and returns must find the
+   * window as they left it, not a panel that reappeared because the mode which
+   * owns it was re-entered. It is deliberately *not* persisted the way the code
+   * palette is -- it is one click to restore, and a panel that came back in the
+   * state it was left in last week is a preference nobody remembers setting.
+   */
+  const [helperOpen, setHelperOpen] = useState(true);
   /** Guards a slow read from overwriting a file the user has moved on from. */
   const viewerPathRef = useRef("");
   /**
@@ -436,6 +461,11 @@ export function App({
 
     const offEvent = backend.onEvent((event) => {
       setState((prev) => applyEvent(prev, event));
+      trajSeq.current += 1;
+      setTrajectory((prev) => [...prev, captureEvent(event, trajSeq.current, Date.now())].slice(-3000));
+      if (event.type === "turn.finished" || event.type === "turn.failed") {
+        void refreshConversationsRef.current();
+      }
       if (event.type === "sandbox.status") {
         const status = event.payload.status;
         if (typeof status === "string") setSandbox(status);
@@ -636,6 +666,11 @@ export function App({
     };
     setConversations(listed.conversations ?? []);
   }, []);
+
+  const refreshConversationsRef = useRef(refreshConversations);
+  useEffect(() => {
+    refreshConversationsRef.current = refreshConversations;
+  }, [refreshConversations]);
 
   /**
    * Read the project tree from the core.
@@ -1083,29 +1118,39 @@ export function App({
   }, [connected, model, refreshReasoning]);
 
   /** Replace the transcript with a conversation's saved messages. */
-  const showMessages = useCallback((raw: unknown[]) => {      const restored: ChatMessage[] = [];
-      (raw ?? []).forEach((entry, index) => {
-        const message = entry as {
-          role?: string;
-          content?: string | string[] | null;
-          reasoning?: string | null;
-        };
-        if (!message.role) return;
-        // Tool turns come back as assistant text rather than reconstructed tool
-        // cards. Their results are already flattened into the transcript by the
-        // core, and a tool call with no card behind it would render as an
-        // orphaned heading for work that already happened.
-        const role: Role = message.role === "user" ? "user" : "assistant";
-        restored.push({
-          ...blankMessage(`restored-${index}`, role),
-          text: textFromContent(message.content),
-          // A saved message is finished by definition. Without this it would
-          // come back mid-stream and its panel would sit open forever, waiting
-          // for a `reasoning.completed` that was sent hours ago.
-          reasoning: message.reasoning ?? "",
-          reasoningComplete: true,
-        });
+  const showMessages = useCallback((raw: unknown[]) => {
+    const restored: ChatMessage[] = [];
+    (raw ?? []).forEach((entry, index) => {
+      const message = entry as {
+        role?: string;
+        content?: string | string[] | null;
+        reasoning?: string | null;
+      };
+      if (!message.role) return;
+      const role: Role = message.role === "user" ? "user" : "assistant";
+      // A tool result is the one kind of saved row a transcript must not
+      // replay. Its `content` is the tool's raw output -- a whole file for
+      // `read_file`, the command's stdout for `run_command` -- and leaving it
+      // in place squirted that into the conversation as prose: a paste of
+      // unrelated source with line numbers, rendered ahead of the answer that
+      // was written from it. The live window draws this content in a tool
+      // *card*, which is what the transcript means when it says the work
+      // happened; restored history has no card to put it in (the tool events
+      // themselves were never persisted), so the only honest rendering is not
+      // to render the raw output at all. The assistant prose that came out of
+      // this work stays, which is what the chat is for.
+      if (message.role === "tool") return;
+
+      restored.push({
+        ...blankMessage(`restored-${index}`, role),
+        text: textFromContent(message.content),
+        // A saved message is finished by definition. Without this it would
+        // come back mid-stream and its panel would sit open forever, waiting
+        // for a `reasoning.completed` that was sent hours ago.
+        reasoning: message.reasoning ?? "",
+        reasoningComplete: true,
       });
+    });
     setState((prev) => ({
       ...prev,
       messages: restored,
@@ -1846,8 +1891,69 @@ export function App({
    * rail, the conversation overlay and the chat tab strip are all absent from
    * it -- and the grid it lays out is `--code-side-w` of explorer plus the
    * editor. See `.app[data-mode="code"]`.
+   *
+   * What the two modes share is the *conversation*, which is why
+   * `conversationView` below is one element rather than two: Code mode shows it
+   * in the assistant panel instead of under a tab strip, it does not have a
+   * second one.
    */
   const codeMode = mainMode === "code";
+  const trajectoryMode = mainMode === "trajectory";
+
+  /**
+   * The conversation: the transcript, anything the window has to say about it,
+   * and the field.
+   *
+   * **One element, placed twice.** There is one session and one transcript in
+   * this window -- the tabs, the rail's message count and the assistant panel
+   * are all reading the same `state` -- so these props are written once, and a
+   * second copy inside the panel would be the second place the two could
+   * disagree about what is on screen. The failure would be quiet rather than
+   * loud: a transcript that stops streaming in the panel, or a field that sends
+   * into a conversation nobody is looking at.
+   *
+   * Only one of the two placements is mounted at a time (`codeMode` decides
+   * which), so this is never two composers, and never two scrollers both
+   * pinning themselves to the end of the same message.
+   */
+  const conversationView = (
+    <>
+      <MessageList
+        messages={state.messages}
+        busy={state.busy}
+        project={project}
+        onChooseFolder={() => void chooseFolder()}
+        canChooseFolder={connected && !state.busy}
+      />
+
+      {state.error && <div className="banner">{state.error}</div>}
+
+      {/*
+        The composer, and nothing else. The permission ladder used to sit above
+        it as its own bar, with the Thinking dial as a native select in the
+        control row; both are in the settings panel now, where a user goes to
+        ask what this window may do rather than scrolling past a strip to find
+        out. See `SettingsMenus`.
+      */}
+      <Composer
+        inputRef={composerRef}
+        busy={state.busy}
+        disabled={!connected}
+        modes={modes}
+        mode={mode}
+        skills={skills}
+        onSkillsNeeded={loadSkills}
+        onModeChange={changeMode}
+        onSend={send}
+        onCancel={cancel}
+        maxToolCalls={maxToolCalls}
+        budgetOpen={budgetOpen}
+        onBudgetOpen={() => setBudgetOpen(true)}
+        onBudgetClose={() => setBudgetOpen(false)}
+        onBudgetChange={(limit) => void changeToolBudget(limit)}
+      />
+    </>
+  );
 
   return (
     <div className="app" data-mode={mainMode}>
@@ -1869,8 +1975,8 @@ export function App({
         // front. The bar keeps the mark, the drag region, the switch and the
         // caption -- which is what "the whole screen changes" means at the top
         // edge of the window as well as the middle.
-        tabs={codeMode ? [] : tabStrip}
-        active={codeMode ? "" : usageTab === "active" ? USAGE_TAB : conversation}
+        tabs={codeMode || trajectoryMode ? [] : tabStrip}
+        active={codeMode || trajectoryMode ? "" : usageTab === "active" ? USAGE_TAB : conversation}
         mode={mainMode}
         canCode={project !== ""}
         onModeChange={(next) => {
@@ -1901,7 +2007,7 @@ export function App({
         // nothing to be a "+" *of* -- a button that starts a chat in a window
         // whose whole point is that it is not showing chats. Starting one is a
         // click on Agent away, which is the same door the tabs use.
-        onNewTab={codeMode ? undefined : () => void startNewChat()}
+        onNewTab={codeMode || trajectoryMode ? undefined : () => void startNewChat()}
         onRename={(id, title) => void renameConversation(id, title)}
         controls={windowControls}
         // Built here and placed by the bar, so `TopBar` stays presentational
@@ -1934,7 +2040,7 @@ export function App({
         below -- which is the difference between "a pane changed" and "the
         window changed".
       */}
-      {!codeMode && (
+      {!codeMode && !trajectoryMode && (
         <IconRail
           connected={connected}
           busy={state.busy}
@@ -1965,7 +2071,7 @@ export function App({
         what tells the two apart, and the closed state is inert -- see
         `.chatlist[data-state="closed"]`.
       */}
-      {!codeMode && conversationsMounted && (
+      {!codeMode && !trajectoryMode && conversationsMounted && (
         <ConversationList
           open={railExpanded}
           conversations={conversations}
@@ -1974,7 +2080,6 @@ export function App({
           busy={state.busy}
           connected={connected}
           onDismiss={() => setRailExpanded(false)}
-          onNew={() => void startNewChat()}
           onChooseProject={chooseFolder}
           onOpen={(id) => void openConversation(id)}
           onDelete={(id) => void deleteConversation(id)}
@@ -2141,7 +2246,7 @@ export function App({
 
           Which mode the *window* is in decides the first -- `codeMode`, not
           `mode`, and the distinction is the whole bug this replaces: `mode` is
-          the **core's** agent mode (`build`, `plan`, `mission`, `skills`), a
+          the **core's** agent mode (`chat`, `build`, `plan`, `mission`, `skills`), a
           different question with its own picker, and no core mode is called
           `code`. Gating the viewer on it meant the pane could never render: the
           file was read, the state was set, and the frame went on drawing the
@@ -2155,57 +2260,136 @@ export function App({
           which is what selecting another tab does everywhere else in this
           window -- see `openConversation`, `createConversation` and `TopBar`.
         */}
-        {codeMode ? (
+        {trajectoryMode ? (
+          <TrajectoryView events={trajectory} />
+        ) : codeMode ? (
           /*
-            The code half: the viewer, and nothing else. The composer goes with
-            the transcript for the same reason the dashboard takes it -- a text
-            field under a file would offer a message for a conversation that is
-            not on screen -- and the tree is the explorer column beside this
-            pane, the same `FilesPane` the sidebar shows.
+            The code half: the file, and the assistant beside it.
+
+            **The assistant panel is the change here.** Code mode used to end at
+            the file -- the composer went with the transcript, because a text
+            field under a file offers a message for a conversation that is not
+            on screen. That was right about the *window* and wrong about the
+            work: reading a file is exactly when the question about it arrives,
+            and the only way to ask was to leave the file you were asking about.
+            So the conversation is docked on the right instead -- the same
+            transcript, the same composer, the file still open beside them.
+
+            Everything inside `.code-split` is that pair. The shell around it
+            -- the title bar, the status bar, the dialogs and the log strip --
+            belongs to `.main`, which is why this is a row *inside* the column
+            rather than a third grid column of the window: with the panel in
+            its own column the status bar stopped at the editor's edge, and a
+            strip that ends halfway across a window reads as a defect rather
+            than as a decision.
 
             With no file open this is a signpost rather than a blank pane: the
             project is there, the tree is one click away, and an empty surface
             that explains nothing is the dead end this replaces.
           */
-          viewerPath === "" ? (
-            <div className="code-empty">
-              <p>
-                {project === ""
-                  ? "Choose a project folder to browse its files."
-                  : "Pick a file from the explorer to read it here."}
-              </p>
-              {/*
-                No "open the tree" button any more: the tree *is* the column
-                beside this pane, so a button that revealed it would be a
-                control for something already on screen. What is left is the
-                one thing the mode cannot do on its own -- choose a folder.
-              */}
-              {project === "" && (
-                <button type="button" className="btn" onClick={() => void chooseFolder()}>
-                  Choose folder...
+          <div className="code-split">
+            {viewerPath === "" ? (
+              <div className="code-empty">
+                <p>
+                  {project === ""
+                    ? "Choose a project folder to browse its files."
+                    : "Pick a file from the explorer to read it here."}
+                </p>
+                {/*
+                  No "open the tree" button any more: the tree *is* the column
+                  beside this pane, so a button that revealed it would be a
+                  control for something already on screen. What is left is the
+                  one thing the mode cannot do on its own -- choose a folder.
+                */}
+                {project === "" && (
+                  <button type="button" className="btn" onClick={() => void chooseFolder()}>
+                    Choose folder...
+                  </button>
+                )}
+              </div>
+            ) : (
+              <CodeViewer
+                path={viewerPath}
+                file={viewerFile}
+                loading={viewerLoading}
+                error={viewerError}
+                readOnly={readOnly}
+                locked={state.busy}
+                onToggleReadOnly={(next) => setReadOnly(next)}
+                saving={viewerSaving}
+                onSave={(content) => void saveFile(content)}
+                onDirtyChange={(dirty) => {
+                  viewerDirtyRef.current = dirty;
+                }}
+                onDiscard={discardFile}
+                palette={palette}
+                onPalette={setPalette}
+                onClose={closeViewer}
+              />
+            )}
+
+            {/*
+              The assistant: a header with the one control that puts it away,
+              and the conversation below it.
+
+              Docked rather than floating, and put away by a click rather than
+              by a breakpoint: a panel that vanishes when the window narrows is
+              a panel whose state the user did not choose, and the toggle is how
+              this window has always answered "I need the width" -- see the
+              rail. A narrow window keeps it too, over the file rather than
+              beside it; see the media query in `shell.css`.
+
+              The header stays when the panel is away, and that is the whole
+              reason the toggle lives in it rather than in the file header: the
+              control that put the panel away is inside the panel, so a closed
+              state that unmounted everything would hide its own way back. What
+              goes away is the *body*, which is also why reopening starts at the
+              end of the conversation -- `MessageList` pins to the bottom when it
+              mounts, and a scroller left in a hidden subtree would have come
+              back where it was, or at the top.
+            */}
+            <aside
+              className="helper"
+              data-state={helperOpen ? "open" : "closed"}
+              aria-label="Assistant"
+            >
+              <div className="helper-head">
+                <span className="helper-title">Assistant</span>
+                <button
+                  type="button"
+                  className="helper-toggle"
+                  onClick={() => setHelperOpen((open) => !open)}
+                  title={helperOpen ? "Hide the assistant" : "Show the assistant"}
+                  aria-label={helperOpen ? "Hide the assistant" : "Show the assistant"}
+                  aria-expanded={helperOpen}
+                >
+                  {/*
+                    A frame with a divider: on the right when the panel is
+                    shown, pushed against the edge when it is away. The rail's
+                    toggle is the mirror of this and not the same drawing,
+                    because the two name opposite edges -- and `currentColor`
+                    with `strokeWidth` is the rail's own frame, so the two read
+                    as one family.
+                  */}
+                  <svg
+                    width="17"
+                    height="17"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d={HELPER_GLYPH[helperOpen ? "open" : "closed"]} />
+                  </svg>
                 </button>
-              )}
-            </div>
-          ) : (
-            <CodeViewer
-              path={viewerPath}
-              file={viewerFile}
-              loading={viewerLoading}
-              error={viewerError}
-              readOnly={readOnly}
-              locked={state.busy}
-              onToggleReadOnly={(next) => setReadOnly(next)}
-              saving={viewerSaving}
-              onSave={(content) => void saveFile(content)}
-              onDirtyChange={(dirty) => {
-                viewerDirtyRef.current = dirty;
-              }}
-              onDiscard={discardFile}
-              palette={palette}
-              onPalette={setPalette}
-              onClose={closeViewer}
-            />
-          )
+              </div>
+
+              {helperOpen && <div className="helper-body">{conversationView}</div>}
+            </aside>
+          </div>
         ) : usageTab === "active" ? (
           <Dashboard
             connected={connected}
@@ -2213,41 +2397,8 @@ export function App({
             load={loadUsage}
           />
         ) : (
-          <>
-            <MessageList
-              messages={state.messages}
-              busy={state.busy}
-              project={project}
-              onChooseFolder={() => void chooseFolder()}
-              canChooseFolder={connected && !state.busy}
-            />
-
-            {state.error && <div className="banner">{state.error}</div>}
-
-            {/*
-              The composer, and nothing else. The permission ladder used to sit
-              above it as its own bar, with the Thinking dial as a native select
-              in the control row; both are in the settings panel now, where a
-              user goes to ask what this window may do rather than scrolling
-              past a strip to find out. See `SettingsMenus`.
-            */}
-            <Composer
-              inputRef={composerRef}
-              busy={state.busy}
-              disabled={!connected}
-              modes={modes}
-              mode={mode}
-              skills={skills}              onSkillsNeeded={loadSkills}
-              onModeChange={changeMode}
-              onSend={send}
-              onCancel={cancel}
-              maxToolCalls={maxToolCalls}
-              budgetOpen={budgetOpen}
-              onBudgetOpen={() => setBudgetOpen(true)}
-              onBudgetClose={() => setBudgetOpen(false)}
-              onBudgetChange={(limit) => void changeToolBudget(limit)}
-            />
-          </>
+          /* The conversation, in the column it belongs to -- see `conversationView`. */
+          conversationView
         )}
 
         {shownConfirm && (

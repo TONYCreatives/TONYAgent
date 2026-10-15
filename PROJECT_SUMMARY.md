@@ -1,12 +1,8 @@
 # TONYAgent — Project Summary
 
-**Updated:** 2026-10-11 · **Tests:** Python 919 passed, 10 skipped (`-m "not docker"`) · TS 578 passed (98 suites) · `scripts/e2e_all_tools.py --fast` 42/42 · **32 tools**
-(`test_build_scripts.py` 는 실행 환경 의존이라 3~5개가 매번 다른 이름으로
-실패 — 커밋 전 코드로도 재현됨), TypeScript 494 passed
-**Build:** Tauri MSI + NSIS installers produced; app verified running end to end
-(`decorations: false` — 시스템 타이틀 바를 빼고 앱이 직접 그리며, 우클릭/F10으로
-**OS의 시스템 메뉴**를 열어 이동·크기 조절을 그대로 씁니다. 꺼진 타이틀 바와 함께
-사라진 **둥근 모서리**는 `DwmSetWindowAttribute(DWMWCP_ROUND)`로 되돌렸습니다)
+**Current architecture (2026-10-13):** Python `pywebview` desktop host + React/Vite frontend + separate headless Python core (JSONL over stdio). The core currently registers **41 tools** and **2 providers** (OpenRouter and OpenCode Go).
+
+**Verification note:** Historical test totals and build observations below refer to the dated snapshots in their entries; they are not a current test report. See the latest handoff section at the end before using any historical counts.
 
 ---
 
@@ -15,26 +11,28 @@
 ### English
 
 **TONYAgent** is a local-first desktop AI agent. It connects to user-provided LLM
-API keys, operates on a selected project folder inside a hardened Docker
-sandbox, and exposes a rich toolset (file operations, shell, search, network,
-browser automation) for autonomous programming tasks.
+API keys, works in a selected project folder, and exposes tools for file
+operations, shell, search, network and browser automation. Docker and WSL provide
+the supported isolated execution backends; local mode refuses sandbox-required
+execution, and Windows Sandbox is currently an unimplemented stub.
 
-The architecture is now **core / UI separated**: the agent core is a headless
-Python package that imports no GUI toolkit, and the UI is a client of it. A
-Tauri + React frontend is being built against that boundary; the existing
-Tkinter UI is a second client of the same core.
+The current desktop app uses a **Python `pywebview` host**, a **React/Vite UI**,
+and a separate headless Python core. The host serves the frontend, exposes a
+narrow JavaScript bridge and owns the core child process. The UI and core
+communicate through the host using JSONL over stdio. There is no current Tauri or
+Tkinter frontend.
 
 ### 한국어
 
 **TONYAgent**은 로컬 퍼스트 데스크톱 AI 에이전트입니다. 사용자가 제공한 LLM API
-키에 연결하고, 강화된 Docker 샌드박스 안에서 선택한 프로젝트 폴더를 대상으로
-작동하며, 자율 프로그래밍 작업을 위한 도구 세트(파일, 쉘, 검색, 네트워크,
-브라우저 자동화)를 제공합니다.
+키를 사용하고, 선택한 프로젝트 폴더에서 파일·쉘·검색·네트워크·브라우저 도구를
+실행합니다. 격리 실행은 Docker와 WSL을 지원합니다. 로컬 모드는 샌드박스가 필요한
+실행을 거부하며 Windows Sandbox는 아직 동작하지 않는 스텁입니다.
 
-아키텍처는 **코어와 UI를 분리**했습니다. 에이전트 코어는 GUI 툴킷을 전혀
-import하지 않는 헤드리스 Python 패키지이고, UI는 그 코어의 클라이언트입니다.
-Tauri + React 프론트엔드가 이 경계에 맞춰 개발 중이며, 기존 Tkinter UI는 같은
-코어의 두 번째 클라이언트입니다.
+현재 데스크톱 앱은 **Python `pywebview` 호스트**, **React/Vite UI**, 별도 헤드리스
+Python 코어로 구성됩니다. 호스트가 프론트엔드를 서빙하고 제한된 JS 브리지를
+제공하며 코어 자식 프로세스를 소유합니다. UI와 코어는 호스트를 통해 stdio의
+JSONL로 통신합니다. 현재 Tauri 또는 Tkinter 프론트엔드는 없습니다.
 
 ---
 
@@ -42,7 +40,7 @@ Tauri + React 프론트엔드가 이 경계에 맞춰 개발 중이며, 기존 T
 
 | 기능 / Feature | 상태 | 설명 |
 |---|---|---|
-| 멀티 프로바이더 / Multi-Provider | ❌ | **OpenRouter 단일 provider** — Anthropic·Gemini dialect는 삭제(`fe1e470`). 프로바이더를 늘리기보다 실제로 쓰는 경로 하나를 확실히 두는 쪽을 택함 |
+| Multi-provider | ✅ | OpenRouter and OpenCode Go are registered provider adapters |
 | 스트리밍 채팅 / Streaming Chat | ✅ | 토큰 단위 스트리밍, 도구 실행 표시 |
 | thinking 패널 / Thinking panel | ✅ | 모델의 사고를 답변과 **별도 채널**(`reasoning.delta`/`reasoning.completed`)로 받아 별도 표시. 스트리밍 중 열림 → 완료 시 접힘. 읽는 사람이 직접 펼친 패널은 접히지 않음 |
 | effort 선택 / Reasoning effort | ✅ | 모델별로 effort를 고르는 다이얼. **effort 목록이 있는 모델에만** 표시 — 조작할 수 없는 컨트롤은 장식이다 |
@@ -52,47 +50,46 @@ Tauri + React 프론트엔드가 이 경계에 맞춰 개발 중이며, 기존 T
 | 쉘 도구 / Shell | ✅ | execute_command — 샌드박스 미기동 시 fail-closed |
 | 네트워크 도구 / Network | ✅ | http_request, SSRF 가드(내부 IP 차단) |
 | 브라우저 도구 / Browser | ✅ | navigate, click, type, eval, screenshot, get_text, wait_for, scroll, snapshot |
-| Docker 샌드박스 / Sandbox | ✅ | 단일 프로세스 RPC, pids/cap/tmpfs/ulimit 강화 |
+| Sandbox | ✅ | Docker and WSL isolation backends; local mode is fail-closed for isolated execution; Windows Sandbox remains an unimplemented stub |
 | 헤드리스 코어 / Headless Core | ✅ | `AgentSession` + `EventBus`, GUI 무의존 |
-| IPC 프로토콜 / Sidecar | ✅ | stdio JSONL, 25개 메서드, 16개 이벤트 |
-| Tauri 프론트엔드 / Tauri UI | ✅ | 빌드됨, 사이드카 스폰, 전체 왕복 경로 검증 |
-| 테마 / Theme | ✅ | 라이트/다크/시스템, 토큰 기반 |
+| IPC 프로토콜 / Sidecar | ✅ | stdio JSONL, 41개 메서드(`headless/server.py`의 핸들러 표 기준, `plan.get`만 프런트엔드 타입에 없음), 19개 이벤트(`core/events.py::EventType`) |
+| 데스크톱 UI / Desktop UI | ✅ | React/Vite frontend hosted in a native `pywebview` window; Python host owns the headless core process |
+| Theme | ✅ | Current desktop UI is dark-only and uses shared CSS design tokens |
 | 마크다운 렌더링 / Markdown | ✅ | 어시스턴트 텍스트를 토큰 트리로 파싱해 React 엘리먼트로 렌더 (HTML 문자열 없음, 위험 URL/원격 이미지 차단) |
 | 커스텀 모델·엔드포인트 / Custom model + endpoint | ✅ | 모델 필드 자유 입력(`<datalist>` 제안 + 임의 id 허용), `bind_provider`의 선택적 `base_url` — `custom` provider를 UI에서 사용 가능하게 함 |
 | 키링 보안 / Keyring | ✅ | OS 키링, 정확한 키 길이 검증 |
 
 ---
 
-## 아키텍처 / Architecture
+## 아키텍처 / Architecture (current overview above; implementation history below)
 
 ```
-┌──────────────┐   ┌──────────────┐
-│  Tkinter UI  │   │  Tauri + React│
-└──────┬───────┘   └──────┬───────┘
-       │  EventBus        │  JSONL over stdio
-       └────────┬─────────┘
-                ▼
-      ┌───────────────────┐
-      │   AgentSession    │  core/session.py
-      │  history · tools  │
-      │  provider · sandbox│
-      └─────────┬─────────┘
-                │
-   ┌────────────┼─────────────┐
-   ▼            ▼             ▼
- LLMClient   orchestrator   SandboxManager
-  api/        tools/        sandbox/
+┌──────────────────────────────┐
+│ React + Vite desktop UI      │
+└──────────────┬───────────────┘
+               │ pywebview bridge
+┌──────────────▼───────────────┐
+│ Python window host           │── serves app/dist/
+│ owns the core child process  │
+└──────────────┬───────────────┘
+               │ JSONL over stdio
+┌──────────────▼───────────────┐
+│ Headless AgentSession        │
+│ conversations · events · tools│
+└──────┬────────────────┬──────┘
+       │                │
+┌──────▼───────┐ ┌──────▼─────────┐
+│ OpenRouter / │ │ Docker / WSL   │
+│ OpenCode Go  │ │ sandbox backends│
+└──────────────┘ └────────────────┘
 ```
 
 ### 왜 이 구조인가 / Why
 
-Tkinter는 단일 스레드 강제 모델이라 UI 갱신을 전부 큐로 밀어넣어야 하고, 그
-결과 `schedule_on_ui` 같은 간접 계층이 생겼습니다. 이 계층은 Tk 루프가 없으면
-**모든 콜백을 조용히 버립니다** — 헤드리스 실행에서는 확인 요청이 사라지고
-도구가 60초 타임아웃됩니다.
-
-코어를 UI에서 분리하면 이 문제가 구조적으로 사라지고, 동시에 두 번째 프론트엔드
-(Tauri)를 코드 변경 없이 붙일 수 있게 됩니다.
+코어를 별도 프로세스로 분리해 UI와 에이전트 세션의 lifecycles 및 failures를
+독립적으로 관리합니다. stdio JSONL은 포트 충돌 없이 요청·응답과 이벤트를
+전달하고, React UI는 host bridge를 통해 필요한 좁은 API만 사용합니다.
+이 경계 덕분에 Python GUI toolkit을 코어에서 불러올 필요가 없습니다.
 
 ---
 
@@ -113,11 +110,9 @@ Tkinter는 단일 스레드 강제 모델이라 UI 갱신을 전부 큐로 밀�
 
 ---
 
-## 창: Tauri → pywebview (2026-10-10)
+## 창: Tauri → pywebview (2026-10-10, historical)
 
-**Rust 셸을 걷어냈습니다.** 앱은 이제 `python -m tonyagent.window`이고,
-`src/tonyagent/window/`가 셸 전체입니다. 카고도, `rc.exe`도, Windows SDK도,
-45MB짜리 사이드카 프리즈도, `@tauri-apps/*` 의존성도 없습니다.
+이 섹션은 Tauri에서 `pywebview`로 옮긴 당시의 기록이며, 현재 상태를 설명하는 문서가 아닙니다. 지금 앱은 아래의 현행 아키텍처 요약을 따릅니다.
 
 | 예전 | 지금 |
 |---|---|
@@ -491,19 +486,21 @@ limit"), 한도가 무시된 것처럼 읽혔습니다.
 
 ---
 
-## 검증 / Verification
+## 검증 / Verification (historical snapshots)
+
+The commands and counts in this section are preserved as dated historical notes; they are not a current verification report. Re-run checks against the current checkout before relying on these numbers.
 
 ```bash
 python -m compileall -q src
-python -m pytest tests/unit -q               # 635 passed, 8 skipped
-python scripts/check_all.py --fast           # 3 checks
-cd app && npm test                           # 513 passed
-python scripts/verify_window.py              # 실제 창: 페이지 · 브리지 · Win32 · 코어 왕복
-python scripts/verify_core.py                # 코어 자식 프로세스 + 펌프 왕복
-python scripts/audit_reduced_motion.py       # 취소 목록에 없는 애니메이션 찾기
+python -m pytest tests/unit -q               # historical: 635 passed, 8 skipped
+python scripts/check_all.py --fast           # historical: 3 checks
+cd app && npm test                           # historical: 513 passed
+python scripts/verify_window.py              # historical desktop-host smoke check
+python scripts/verify_core.py                # historical core-process check
+python scripts/audit_reduced_motion.py       # current-purpose audit command; verify on this checkout
 ```
 
-TypeScript 프로토콜 테스트가 Rust·Tauri·Python 없이 도는 것은 의도된 설계입니다.
+The TypeScript protocol tests use an injected transport; they do not need a Rust shell, Tauri, or Python runtime.
 `LineTransport` 인터페이스로 전송 계층을 주입하므로 계약은 빌드 도구가 없어도
 검증됩니다.
 
@@ -522,9 +519,12 @@ react-dom보다 **먼저** import되어야 하고(react-dom이 import 시점에 
 
 ---
 
-## 다음 단계 / Next Steps
+## 다음 단계 / Next Steps (historical snapshot, 2026-10-11)
 
-**Tauri UI에서 완료** (Phase 1–10)
+**Completed UI capabilities** (historical implementation checklist)
+
+The entries below record implementation work as it landed. They are not a current backlog; use the dated notes below as implementation history.
+
 1. ~~프로젝트 폴더 선택기~~ ✅ (`sandbox.start`의 `path`)
 2. ~~provider/model 설정 패널~~ ✅ (`bind_provider`)
 3. ~~샌드박스 시작/중지 버튼~~ ✅
@@ -535,21 +535,21 @@ react-dom보다 **먼저** import되어야 하고(react-dom이 import 시점에 
 8. ~~대화 이름 변경·복제~~ ✅
 9. ~~전송 아이콘·파일 첨부·모델 선택·턴당 tool call 한도~~ ✅ (`send`의 content parts, `models.list`, `tools.get`/`tools.set`)
 
-**남은 것 (우선순위 순)**
-- **실제 호스팅 모델로 성공하는 end-to-end 턴 1회** — 턴 경로는 라이브로 검증됨(OpenRouter가 제공자 오류를 그대로 반환, 로컬 mock 엔드포인트로 성공 턴 완주). 남은 건 호스팅 모델의 성공 응답뿐: OpenRouter 키 한도 상향/교체 필요
-- **thinking 패널·effort 다이얼의 실앱 확인** — jsdom 테스트로는 통과했지만, 패키징된 앱에서 실제로 접히고 펴지는지는 아직 눈으로 안 봤습니다
-- `App.tsx`가 여전히 창 전체를 담고 있습니다. 프로토콜 상태 훅과 대화 목록 로직을 떼어내야 컴포넌트 단위 테스트가 쉬워집니다
+**Open items as recorded on 2026-10-11 (not verified against the current checkout)**
+- (Historical, 2026-10-11) One successful end-to-end turn against a hosted model was blocked by the API key's quota; the local mock-provider path had completed successfully.
+- (Historical, 2026-10-11) Packaged-app visual verification of the thinking panel and effort dial remained outstanding; tests covered the component behavior.
+- (Historical, 2026-10-11) `App.tsx` was identified as a future extraction candidate for protocol and conversation-list hooks.
 - ~~composer의 model 칩 / Attach 버튼~~ ✅ (model 칩 = `models.list` 기반 필터 메뉴, Attach = 멀티모달 첨부). 남음: `/`·`@` 힌트 처리
-- Files 트리에 디렉터리 그룹화 (`TreeEntry.kind`는 이미 `"dir"` 지원)
-- **Tkinter UI** — 10개 단계 동안 한 번도 손대지 않았습니다. 성숙한 경로이고 여전히 유효합니다
+- (Historical, 2026-10-11) Group directories in the Files tree (`TreeEntry.kind` already supported `"dir"`).
+- Refresh this handoff when a new implementation pass lands; current architecture and feature status belong in the overview above
 
-**대기 없이 가능**
+**Ideas from that historical snapshot (not a current backlog)**
 - `read_file` offset/limit, `edit_file` replace_all
 - timeout `timeout_ms` 단위 통일
 - `http_request` 파일 다운로드
 - 스키마/레지스트리 단일 소스화
 - 턴별 출력 예산
-- **Tkinter 채팅 버블 폭 수정** — React UI는 `fit-content`로 이미 해결됨
+- (Removed from current work list) Tkinter chat bubble sizing; the current React transcript uses `fit-content` bubbles.
 
 ---
 
@@ -1182,3 +1182,172 @@ Chromium은 스크롤바를 border box 위에 칠하면서 그라운드 라운�
 하지 못한 것: 눈으로 확인하지 못했습니다(이 빌드는 이미지 읽기가 BLOCKED이고
 preview가 프레임을 만들지 않아). 대안인 라운드 축소(24px -> 12px)는 계산상
 0.79px만 밖으로 나가지만 빌드·측정을 하지 않았습니다. 커밋하지 않았습니다.
+
+---
+
+## 이번 패스: 문서 정렬 + 레이아웃 일관성 (2026-10-13)
+
+**문서.** README와 이 문서가 실제 앱과 다른 것을 말하고 있었습니다 — Tauri MSI, 살아 있는
+Tkinter 클라이언트, 32개 도구, 라이트/다크 테마, OpenRouter 단일 provider. 현행 아키텍처
+요약(pywebview 호스트 + React/Vite + 헤드리스 코어, 도구 41개, provider 2개, 어두운 테마
+전용)으로 다시 썼고, 지난 시점의 기록은 그 절 제목에 *historical*이라고 적었습니다. IPC 표의
+숫자도 실측으로 바꿨습니다 — `headless/server.py`의 핸들러 **41개**, `core/events.py`의
+`EventType` **19개** (문서는 25개/16개라고 적고 있었습니다). `app/vite.config.ts`에는 더 이상
+없는 `src-tauri/`와 `binaries/`를 감시 제외 목록에 두고 그 이유를 설명하는 주석이 남아
+있었습니다.
+
+**레이아웃.** "디자인과 레이아웃이 일관적이지 않다"는 지적에서 시작해, 눈으로 고치지 않고
+먼저 쟀습니다. 이번에도 결함은 전부 *같은 것을 두 곳에 선언해 어긋난 자리*에서 나왔습니다.
+
+| 항목 | 실측(수정 전) | 수정 |
+| --- | --- | --- |
+| 읽기 칼럼 | 1280px 창에서 트랜스크립트 내부 상자와 컴포저 상자가 둘 다 292..1052(760px). **760px 창에서는 74..750(676) 대 96..728(632)** — 왼쪽 22px, 폭 44px 어긋남. 888px 위에서는 `--measure` 상한이 양쪽을 덮어 가려져 있었습니다 | `--column-air`(22) + `--column-edge`(air + `--scrollbar` = 32) 신설. 트랜스크립트는 air를, 스크롤러가 없는 세 표면(컴포저·배너·로그 스트립)은 edge를 씁니다. 888px 위에서는 아무것도 움직이지 않고 그 아래가 전부 맞습니다 |
+| 메시지 폭 | 어시스턴트 본문 606.5px — `.bubble`의 `min(680px, 84%)`. 680은 `--measure`가 760으로 오기 전의 값이고, 84%는 토큰이 닿을 수 없는 단위로 창을 따라 줄어듭니다 | `.bubble`은 칼럼 그대로(`max-width: 100%`). 사용자 말풍선만 `min(560px, 100%)`로 남겨 칼럼을 넘지 못하게 |
+| 브레이크포인트 | 720·680·560·540·430·390 — 한 창이 여섯 크기에서 상태를 바꿨습니다 | **720 / 560 / 420** 사다리 하나. `layout.test.ts`가 캐스케이드의 모든 `@media (max-width: Npx)`가 이 셋 중 하나인지 검사합니다 |
+| 패널 인셋 | 10(채팅 머리·발), 12(그룹 라벨), 14(Files 필터·빈 상태), 18(모든 다이얼로그), `clamp(16px, 2.5vw, 32px)`(대시보드 — 창을 따라 움직인 유일한 표면) | `--pad-panel: 16px` 하나 + `--pad-row: 8px`. 행 카드는 8만큼 들어가고 8만큼 안쪽 여백을 가져 글자가 같은 16px 선에 섭니다 |
+| 검증 | — | 실브라우저(Chromium)에서 1280 / 760 / 560 / 420 실측: 네 표면이 같은 상자, 가로 오버플로 0, 패널 텍스트 선 16px, 상태바는 560에서 provider/model과 Logs만 남김. `npm test` **820 passed / 127 suites**, `npx tsc --noEmit` exit 0, `pytest tests/unit -q -m "not docker"` **1377 passed / 15 skipped**, `scripts/audit_reduced_motion.py` clean |
+
+부수적으로 고친 것: 상태바의 좁은 창 규칙이 `span:nth-of-type(2)`/`(5)`로 대상을 세고
+있었는데, provider가 없을 때 그 자리는 `linkish` 버튼으로 바뀌어 span 번호가 밀립니다 —
+즉 정확히 "무엇을 하라고 알려주는 상태"에서 다른 것을 숨기고 있었습니다. 이제 클래스로
+가리킵니다(`.statusbar-state`, `.statusbar-sandbox`, `.sep`).
+
+하지 못한 것 두 가지. ① 이번 세션 후반에 preview webview가 프레임을 만들지 않아(합성 중단)
+**스크린샷을 눈으로 보지 못했습니다** — 기하 계측(`getBoundingClientRect`, `offsetLeft`,
+`getComputedStyle`)으로 대신했습니다. ② 패널 쪽 검증은 개발 서버에 임시 스텁 호스트를 물린
+스크래치 페이지로 했고, 측정 후 지웠습니다(저장소에 남지 않았습니다). 커밋하지 않았습니다.
+
+---
+
+## 이번 패스: 일반 채팅과 코드 어시스턴트 (2026-10-13)
+
+**일반 채팅.** 컴포저는 코어의 Chat 모드를 첫 번째 알약으로 제공합니다. Chat은
+프로젝트·브라우저·쉘·변경 도구가 없습니다. 읽거나 실행하거나 바꾸는 것이 없고,
+읽기 전용 힌트는 해당 모드의 설명을 그대로 보여줍니다.
+
+**코드 어시스턴트.** 코드 모드의 오른쪽 패널은 같은 대화와 같은 컴포저를
+그대로 둡니다. 에이전트 모드의 복사본이 아니라 위치만 옮긴 하나의
+`conversationView`이며, 한 번에 하나만 마운트됩니다. 패널을 접어도 헤더와
+토글이 남아 돌아올 수 있고, 본문이 사라진 동안 숨은 컴포저가 남지 않습니다.
+
+---
+
+## 이번 패스: 읽기 전용 컴포저의 모서리 (2026-10-14)
+
+Chat · Plan · Skills가 필드를 표시할 때 칠하는 색은 **텍스트영역 자신**의 것입니다.
+`.composer-inner`는 자식을 클립할 수 없습니다 — `/` 메뉴가 필드 위쪽으로 삐져나오기
+때문입니다(`.skills-menu`). 그래서 24px 테두리 안의 각진 채움 사각형이 필드의 위쪽
+두 모서리를 각지게 만들었고, 아래 두 모서리는 컨트롤 줄에 채움이 없어 둥근 채로
+남았습니다. 이것이 정확히 읽기 전용 세 모드에서만 보인 이유입니다(Build·Mission은
+정상).
+
+채움의 호를 테두리 **안쪽** 호로 맞췄습니다(`calc(var(--radius-lg) - 1px)`, 위 두
+모서리에만). 두 호는 이제 같은 중심을 갖습니다 — 개발 서버에서 필드 위쪽 모서리
+3px 안쪽 픽셀을 hit-test로 재었습니다. 수정 전 그 자리는 `TEXTAREA.is-readonly`,
+수정 후에는 필드 자신입니다. `layout.test.ts`가 이 규칙과 그 이유(필드가 자식을
+클립하지 않는다)를 함께 고정했습니다(그 채움은 다음 절에서 사라집니다): `npm test` **823 passed / 127 suites**,
+`npx tsc --noEmit` exit 0, `scripts/audit_reduced_motion.py` clean.
+
+개발용 `code-preview.html`의 스텁 코어는 모드를 Build·Plan 둘만 알고 있었습니다.
+그래서 실제 창에는 있는 Chat·Skills가 이 페이지에는 없었고, 문제의 그 모서리도
+여기서는 재현되지 않았습니다. 이제 코어의 `MODE_ORDER` 다섯 개를 코어의 문구
+그대로 제공합니다.
+
+---
+
+## 이번 패스: 컴포저의 배경 하나 (2026-10-14)
+
+읽기 전용 모드의 채움을 없앴습니다. Chat · Plan · Skills는 **텍스트영역**에
+`color-mix(in srgb, var(--input) 70%, var(--bg))`를 칠했습니다 — 불투명한 회색이고,
+브라우저는 이를 `color(srgb 0.148627 0.148627 0.148627)`로 계산합니다(Build의
+텍스트영역은 `rgba(0, 0, 0, 0)`). 채움이 필드가 아니라 텍스트영역의 것이었기
+때문에 컨트롤 줄에서 멈췄고, 그 세 모드는 유리 위에 회색 상자를 얹은 모양이었습니다.
+앞 절의 모서리 수정은 그 이음매를 둥글게 만들 뿐이었습니다. 이제 다섯 모드 모두
+투명한 텍스트영역 너머로 필드 자신의 `--glass-field`가 보입니다 — 어떤 모드든
+하나의 면입니다.
+
+상태는 여전히 두 곳에서 말합니다: 모드 그룹에서 켜져 있는 알약이 현재 모드이고,
+필드 아래 힌트가 문장으로 설명합니다("Chat mode — Talk. Nothing is read, run or
+changed."). `Composer.tsx`는 `is-readonly`를 스타일 훅이 아니라 마크업의 상태
+표시로 남겨 두고, `layout.test.ts`의 "the field is one field in every mode"가 그
+셀렉터에 대한 규칙이 스타일시트에 없음을 — 주석을 제거한 `SOURCE`로 읽으므로 삭제를
+설명하는 주석이 셀렉터를 이름으로 불러도 안전합니다 — 그리고 `.composer textarea`가
+`background: transparent`임을 고정합니다. 이 단언이 실제로 걸리는지도
+확인했습니다: 지금 모듈들에서는 false, 옛 규칙을 다시 붙인 같은 텍스트에서는
+true입니다.
+
+채움과 함께 사라진 선언이 둘 있습니다. 둘 다 채움을 필드의 곡률 안에 붙잡아 두기
+위한 것이었습니다 — 위 두 모서리의 `calc(var(--radius-lg) - 1px)`와
+`border-color: var(--border)`입니다. 후자는 애초에 아무것도 칠하지 않았습니다:
+`.composer textarea`가 `border: 0`이므로 너비 0, `none` 스타일 테두리의 색은 어떤
+픽셀에도 닿지 않는 선언입니다. 검증: `npm test` **823 passed / 127 suites** exit 0,
+`npx tsc --noEmit` exit 0, `scripts/audit_reduced_motion.py` clean, 그리고 개발
+서버(`code-preview.html`, 실제 `App`)의 Chat 모드에서 텍스트영역은 `is-readonly`를
+단 채 `rgba(0, 0, 0, 0)`이고 필드는 여전히 `rgba(46, 46, 46, 0.78)`입니다.
+
+---
+
+## 이번 패스: 스타디움 전면 적용 (2026-10-14)
+
+모양 규칙은 이미 `tokens.css`에 적혀 있었습니다 — "테두리를 볼 수 있는 컨트롤은
+스타디움, 그보다 짧은 모서리는 컨테이너". 문제는 창의 절반만 그 규칙을 따르고
+있었다는 점입니다. 턴당 도구 호출 한도 팝오버가 그 증거였습니다: 알약 프리셋 여섯
+개 아래에 6px 모서리의 `Set` 버튼과 같은 모서리의 숫자 필드가, 한 덩어리 컨트롤인
+한 줄에 놓여 있었습니다.
+
+판단 기준은 하나였습니다: *테두리를 그리는 컨트롤*(항상, 또는 호버·선택 시)은
+스타디움입니다. 그래서 컴포저의 `+`·기어·예산 버튼이 Send와 같은 원판이 되고,
+첨부 칩과 그 썸네일, 모델 선택기의 검색 필드, 서랍의 토글·뒤로·하단 동작·
+New chat, 탭의 이름 필드와 닫기 글리프, 레일의 44px 버튼, 어시스턴트 토글,
+코드 뷰어의 닫기, 설정 패널의 셀렉트·입력·24px 키 동작 둘, 권한 트리거가
+스타디움이 되었습니다.
+
+모서리를 지킨 것들도 각각 이유가 있습니다: 모든 패널·메뉴·카드·공지·코드
+블록(표면), 상단 띠의 아래 모서리에 잘려 들어간 문서 탭, 컨트롤 더미를 담는
+컴포저 필드와 권한 컨트롤의 열린 상태(필 위에 호를 그리면 첫 행과 끝 행을
+가로지릅니다), 빈 화면의 키캡, 그리고 눌리기는 하지만 채움을 전혀 칠하지 않는
+사이드바 폴더 제목(호버가 색 변화뿐이라 둥글릴 모양 자체가 없습니다).
+
+### 행은 돌아왔습니다 (같은 패스)
+
+같은 기준을 *행*에도 밀어붙였습니다 — `/` 메뉴 항목, 모델 선택기 행, 행 메뉴 항목,
+권한 네 단계, 파일 트리, 대화 목록과 이름 바꾸기 필드 — 그리고 그 절반은 실행 중인
+창을 한 번 본 것으로 틀린 것으로 판명됐습니다. 행은 컨트롤 하나가 아니라 한 열의
+구성원입니다: 한두 줄 높이로 이웃과 맞붙어 쌓이므로 스타디움을 입히면 목록이
+버튼의 열이 됩니다. 대화 행은 271x56 — 양 끝 28px의 캡슐에 선택 워시가 실려 창에서
+가장 큰 컨트롤처럼 보였고 — `/` 메뉴 행은 712x31, 컴포저 폭을 가로지르는 막대였습니다.
+대화 행은 `--radius-md`, 트리와 행 안의 이름 필드는 `--radius-sm`, 모든 메뉴 항목은
+`--radius-xs`로 돌아왔습니다. 창이 긋는 선은 "테두리를 칠하는가"(행은 호버에서
+칠합니다)가 아니라 "누르는 하나인가, 쌓인 여럿 중 하나인가"입니다.
+
+권한 단계 행의 2px 왼쪽 색 경계도 이것으로 정리됐습니다. 알약 위에서는 왼쪽 호를
+따라 그려져 초승달이 되었는데, 곧은 왼쪽 변이 그 표시의 절반이고 스타디움에는
+곧은 왼쪽 변이 없습니다. 한 가지는 의도적으로 남겼습니다 — 모델 선택기의 행은
+여전히 12px 안쪽에서 시작합니다. 위의 검색 필드가 텍스트를 12px에 두는
+스타디움이고, 메뉴의 행은 맨 위 필드와 같은 텍스트 열을 쓰기 때문입니다. 반지름은
+모양이고, 안쪽 여백은 열입니다.
+
+`layout.test.ts`가 이제 세 목록을 고정합니다 — `no control has a corner`,
+`no row is a stadium either`, `and no container wears a control's shape`.
+셀렉터 모양만 보고 컨트롤을 추측하는 테스트는 자기 추측을 검증하는 셈이므로,
+클래스 이름을 목록으로 적는 것이 이 단언의 유일한 형태입니다. 선택자가 가진 *모든*
+블록을 읽습니다(`body`의 마지막 블록이 아니라): 첫 실행은 `.chatrow`에서
+실패했는데, 그 클래스는 `arriving.css`에 모양과 무관한 등장 애니메이션 블록을
+하나 더 갖고 있고, `border-radius`가 없는 블록은 덮어쓰기가 아니라 누락이기
+때문입니다.
+
+검증: `npm test` **826 passed / 127 suites** exit 0, `npx tsc --noEmit` exit 0,
+`scripts/audit_reduced_motion.py` clean, `npm run build` exit 0. 스타일시트를 읽는
+데서 그치지 않고 개발 서버(`code-preview.html`, 실제 `App`)에서 렌더된 결과를
+재었습니다: 예산 팝오버의 `Set`은 47x26에 999px, 숫자 필드는 154x26에 999px,
+프리셋은 66x26, 서랍의 New chat은 271x40에 999px, Files 필터 271x34에 999px,
+검색 필드 999px. 행은 새 모서리로 나왔습니다 — 대화 행 271x56에 16px, 그 안의
+버튼 245x56에 16px, 트리 행 271x26에 12px, 행 메뉴 항목 122x31에 6px. 사각형으로
+남은 컨트롤은 보이는 박스가 부모인 둘뿐입니다(알약 `label` 안의 Files 필터
+`input`, 24px 필드 안의 컴포저 텍스트영역). 남은 직사각형 둘은 문서 탭(30x51)과
+키캡(20x21)입니다.
+
+미리보기에서 재지 못한 것: 모델 선택기의 검색 필드와 행, 설정 Keys 탭의 셀렉트와
+공개 버튼, 코드 뷰어의 닫기 버튼. 이 스텁 코어가 그 메서드들을 답하지 않습니다.
+이 셋은 렌더된 박스가 아니라 테스트로 고정되어 있으며, 이번 패스에서 "보고
+확인한" 것이 아니라 "읽고 확인한" 부분입니다.

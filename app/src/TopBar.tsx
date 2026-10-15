@@ -62,6 +62,8 @@ import {
 } from "./useWindowControls.js";
 import { AppMark } from "./AppMark.js";
 import { WindowControls } from "./WindowControls.js";
+import { placeFixedMenu, pointerBounds } from "./menuPlacement.js";
+import type { MenuBounds } from "./menuPlacement.js";
 
 /**
  * How far below the point that opened it the tab's menu sits.
@@ -137,8 +139,8 @@ interface Props {
    * *leaves* the transcript, so it belongs beside the tabs it competes with.
    * The rail answers "what can I do"; a mode lives with the view.
    */
-  mode?: "agent" | "code";
-  onModeChange?: (mode: "agent" | "code") => void;
+  mode?: "agent" | "code" | "trajectory";
+  onModeChange?: (mode: "agent" | "code" | "trajectory") => void;
   /** True when a project is open, so the code half has something to show. */
   canCode?: boolean;
 }
@@ -160,8 +162,10 @@ export function TopBar({
   /** The tab whose name is being typed, and what has been typed so far. */
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  /** The tab menu, and where it was asked for. */
-  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  /** The tab menu, and what it was asked for against -- the pointer, here. */
+  const [menu, setMenu] = useState<{ id: string; anchor: MenuBounds } | null>(
+    null,
+  );
   const inputRef = useRef<HTMLInputElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -173,6 +177,12 @@ export function TopBar({
   // it is the menu being used rather than dismissed, which is the bug all three
   // surfaces had before `useDismiss` existed.
   useDismiss(menu !== null, () => setMenu(null), menuRef);
+
+  // Placed during the render: this menu is fixed to the window and anchored to
+  // a point, so both boxes are known without waiting for a layout pass. See the
+  // same call in `ConversationList`, which is the same menu on the same kind of
+  // target -- they opened in two different places once already.
+  const placed = menu ? placeFixedMenu(menu.anchor, MENU_GAP) : null;
 
   /** Keep the typed name, or throw it away. Both close the editor. */
   const commitRename = (save: boolean) => {
@@ -235,18 +245,16 @@ export function TopBar({
               // them would make the strip a toolbar. The browser puts its tab
               // menu behind this same press.
               event.preventDefault();
-              setMenu({
-              id: tab.id,
-              x: event.clientX,
-              // The same 4px the conversation row's menu uses. Without it the
+              // The same 4px the conversation row's menu leaves. Without it the
               // menu's corner sits exactly on the pointer, so the click that
               // asked for it is already over its first item -- which is how a
               // rename turns into a delete. See `MENU_GAP` in
               // `ConversationList`: this is the same menu on the same kind of
               // target, and it opened in two different places depending on
-              // whether the row or the tab was right-clicked.
-              y: event.clientY + MENU_GAP,
-            });
+              // whether the row or the tab was right-clicked. It is the
+              // placement that applies it now, on whichever side of the pointer
+              // the menu ends up.
+              setMenu({ id: tab.id, anchor: pointerBounds(event.clientX, event.clientY) });
             }}
           >
             {/*
@@ -361,7 +369,10 @@ export function TopBar({
           ref={menuRef}
           className="rowmenu"
           role="menu"
-          style={{ left: menu.x, top: menu.y }}
+          style={{
+            ...placed?.offsets,
+            maxHeight: placed ? `${placed.placement.maxHeight}px` : undefined,
+          }}
           onContextMenu={(event) => event.preventDefault()}
         >
           <button
@@ -397,11 +408,12 @@ export function TopBar({
       )}
       <div className={`topbar-spacer ${DRAG_REGION_CLASS}`} />
       {/*
-        The mode switch. A segmented pair rather than one toggle, because both
-        states are nameable and a button labelled with the state you are *not*
-        in is a button people press the wrong way round. Disabled on the code
-        side with no folder open: a viewer with nothing to view is a dead end,
-        and the tooltip says which thing is missing.
+        The mode switch. A segmented set rather than one toggle, because every
+        state is nameable and a button labelled with the state you are *not* in
+        is a button people press the wrong way round. Code is disabled with no
+        folder open -- a viewer with nothing to view is a dead end, and the
+        tooltip names the missing thing -- while Trajectory reads the same
+        traffic in every state, so it is never disabled.
       */}
       <div className="topbar-modes" role="group" aria-label="View">
         <button
@@ -421,6 +433,15 @@ export function TopBar({
           onClick={() => onModeChange?.("code")}
         >
           Code
+        </button>
+        <button
+          type="button"
+          className={`topbar-mode${mode === "trajectory" ? " is-active" : ""}`}
+          aria-pressed={mode === "trajectory"}
+          title="Every event the agent produced, in order: calls, arguments, outputs and diffs"
+          onClick={() => onModeChange?.("trajectory")}
+        >
+          Trajectory
         </button>
       </div>
       {modelSelector}

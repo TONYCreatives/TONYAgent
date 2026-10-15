@@ -31,9 +31,7 @@ import { dom } from "./test-dom.js";
 import {
   PermissionMenu,
   ThinkingMenu,
-  measureMenu,
   permissionGain,
-  type MenuBounds,
   type PermissionInfo,
   type PermissionList,
   type ReasoningInfo,
@@ -531,45 +529,13 @@ describe("both controls come from the same parts", () => {
 });
 
 // --- where the menu opens -------------------------------------------------
-describe("the menu opens toward the room it has", () => {
-  /** A rectangle with only the two edges that matter for placement. */
-  const rect = (top: number, bottom: number): MenuBounds => ({ top, bottom });
-
-  test("a trigger near the top of the panel opens down, not up", () => {
-    // The bug this replaced. The menu was anchored above its trigger while the
-    // trigger was the panel's *first* control, so it rendered off the top of
-    // the window: measured at y=-210 in an 800px window, with the whole
-    // permission ladder outside the visible area.
-    assert.deepEqual(
-      measureMenu(rect(120, 150), rect(24, 776)),
-      { dir: "down", maxHeight: 776 - 150 - 6 },
-    );
-  });
-
-  test("a trigger near the bottom opens up", () => {
-    // The half of the rule that keeps the composer's original behaviour: a
-    // control low in a scrolling panel has no room below it.
-    assert.equal(measureMenu(rect(700, 730), rect(24, 776)).dir, "up");
-  });
-
-  test("the cap is the room that was measured, less the gap", () => {
-    // Not the height of the menu, which is not known until it is laid out, and
-    // not a fixed number, which would be wrong in every window but one. What is
-    // known at open time is the space available, and a menu taller than that is
-    // a menu whose last option cannot be clicked.
-    assert.equal(measureMenu(rect(10, 40), rect(0, 306)).maxHeight, 260);
-  });
-
-  test("and it is floored, because a zero-height menu cannot be used", () => {
-    // A trigger hard against the top edge of its bounds still has to open
-    // somewhere. The floor lets it exceed the measured room by a little and
-    // scroll, which is recoverable; zero is not.
-    const cramped = measureMenu(rect(4, 34), rect(0, 40));
-    assert.equal(cramped.dir, "down");
-    assert.equal(cramped.maxHeight, 120);
-  });
-
+describe("the thinking menu is placed where it opens", () => {
   test("the open menu carries the direction it decided on", async () => {
+    // The arithmetic itself is `menuPlacement.test.ts` -- the same helper places
+    // this menu, the model picker and the two row menus now, and this is the
+    // half that is this component's: that a menu which never got a measurement
+    // still names a side.
+    //
     // `data-dir` is the whole contract with the stylesheet: the two anchors are
     // declared on it and the base rule declares neither, so a menu that never
     // got a direction would render unpositioned rather than silently opening

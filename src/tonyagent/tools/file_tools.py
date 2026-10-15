@@ -12,6 +12,13 @@ from tonyagent.tools.workspace import confine
 from tonyagent.tools.images import EDGE_NOTE, MAX_SOURCE_BYTES, encode
 
 
+#: How many diff lines a `file_change` artifact may carry. The trajectory view
+#: shows the real +/− change, but a whole-file rewrite is bounded: the artifact
+#: is also the tool result the model reads back on the next round, so echoing
+#: an unbounded file would double every large edit.
+_DIFF_MAX_LINES = 120
+
+
 def _line_delta(before: str, after: str) -> tuple[int, int]:
     """Count lines added and removed between two file contents.
 
@@ -32,15 +39,39 @@ def _line_delta(before: str, after: str) -> tuple[int, int]:
     return added, removed
 
 
-def _change_artifact(path: str, added: int, removed: int) -> dict:
-    """The machine-readable form the Files tree reads.
+def _bounded_diff(before: str, after: str) -> str:
+    """A unified diff of the change, capped at ``_DIFF_MAX_LINES`` lines.
+
+    The trajectory view wants the actual +/− lines rather than a count, and the
+    edit tools already read both sides to compute the count, so this is free.
+    The file headers (``---``/``+++``) are dropped -- the path is already in the
+    artifact -- and a ``… N more lines`` tail says a large change was cut
+    rather than pretending it was small.
+    """
+    raw = difflib.unified_diff(
+        before.splitlines(),
+        after.splitlines(),
+        lineterm="",
+        n=2,
+    )
+    lines = [ln for ln in raw if not ln.startswith(("---", "+++"))]
+    if len(lines) > _DIFF_MAX_LINES:
+        hidden = len(lines) - _DIFF_MAX_LINES
+        lines = lines[:_DIFF_MAX_LINES] + [f"… {hidden} more lines"]
+    return "\n".join(lines)
+
+
+def _change_artifact(path: str, added: int, removed: int, diff: str = "") -> dict:
+    """The machine-readable form the Files tree and the trajectory read.
 
     Kept separate from `output`, which stays a human sentence, because the
-    transcript and the tree want the same fact in two different shapes.
+    transcript and the tree want the same fact in two different shapes. `diff`
+    is the unified diff, for the trajectory view; it is empty for the tools that
+    do not read both sides -- a delete removes the whole file, not a delta.
     """
     return {
         "type": "file_change",
-        "data": {"path": path, "added": added, "removed": removed},
+        "data": {"path": path, "added": added, "removed": removed, "diff": diff},
     }
 
 
@@ -284,7 +315,14 @@ class WriteTool(Tool):
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
                 output=f"Written {len(content)} chars to {path}",
-                artifacts=[_change_artifact(path, added, removed)],
+                artifacts=[
+                    _change_artifact(
+                        path,
+                        added,
+                        removed,
+                        _bounded_diff(previous if existed else "", content),
+                    )
+                ],
             )
         except Exception as e:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))
@@ -384,7 +422,11 @@ class EditTool(Tool):
             return ToolResult(
                 status=ToolResultStatus.SUCCESS,
                 output=f"Replaced {replaced} occurrence(s) in {path}",
-                artifacts=[_change_artifact(path, added, removed)],
+                artifacts=[
+                    _change_artifact(
+                        path, added, removed, _bounded_diff(content, new_content)
+                    )
+                ],
             )
         except Exception as e:
             return ToolResult(status=ToolResultStatus.ERROR, error=str(e))

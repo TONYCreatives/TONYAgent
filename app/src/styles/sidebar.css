@@ -38,8 +38,14 @@
   align-items: center;
   gap: 8px;
   height: 34px;
-  margin: 12px;
-  padding: 0 14px;
+  /* A card in the pane, so it is inset and padded by `--pad-row`: the field's
+     fill starts where the tree rows' fills do and its text lands on the pane's
+     `--pad-panel` edge, which is the same relationship the conversation rows
+     have with the chat list. It was `margin: 12px` and 14 of padding -- a
+     third and fourth number for one pane's content edge (the tree held 6 + 8,
+     the empty state 14). */
+  margin: 12px var(--pad-row);
+  padding: 0 var(--pad-row);
   border: 1px solid transparent;
   /* A search field is the one input in this window that is a latch rather than
      a form control -- you type two letters and leave -- so it is the one input
@@ -78,7 +84,7 @@
 .sidebar-tree {
   flex: 1;
   overflow-y: auto;
-  padding: 0 6px 12px;
+  padding: 0 var(--pad-row) 12px;
 }
 
 .tree-row {
@@ -86,7 +92,10 @@
   align-items: center;
   gap: 6px;
   height: 26px;
-  padding: 0 8px;
+  /* `--pad-row`: the tree's region insets by the same, so a file's name lands
+     on the pane's `--pad-panel` edge exactly as a conversation title does. */
+  padding: 0 var(--pad-row);
+  /* A row tiles the column it is in, so it keeps a corner -- see `.chatrow`. */
   border-radius: var(--radius-sm);
   color: var(--fg-dim);
   font-size: var(--text-sm);
@@ -140,7 +149,7 @@
 }
 
 .sidebar-empty {
-  padding: 18px 14px;
+  padding: 18px var(--pad-panel);
   color: var(--fg-mute);
   font-size: var(--text-sm);
   line-height: 1.6;

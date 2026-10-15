@@ -73,7 +73,6 @@ function conversation(over: Partial<ConversationSummary> = {}): ConversationSumm
 
 interface Handlers {
   onDismiss: () => void;
-  onNew: () => void;
   onChooseProject: () => void;
   onOpen: (id: string) => void;
   onDelete: (id: string) => void;
@@ -90,7 +89,6 @@ let calls: Handlers & {
   opened: string[];
   deleted: string[];
   duplicated: string[];
-  news: number;
   picks: number;
   dismissals: number;
 };
@@ -105,9 +103,6 @@ async function renderList(
   calls = {
     onDismiss: () => {
       calls.dismissals += 1;
-    },
-    onNew: () => {
-      calls.news += 1;
     },
     onChooseProject: () => {
       calls.picks += 1;
@@ -130,7 +125,6 @@ async function renderList(
     opened: [],
     deleted: [],
     duplicated: [],
-    news: 0,
     picks: 0,
     dismissals: 0,
   };
@@ -691,6 +685,20 @@ describe("the list is the current folder's chats", () => {
     );
   });
 
+  test("an empty conversation is not listed until it has a message", async () => {
+    // A chat created but not yet said into -- the one the core reuses at boot, or
+    // a "+" chat with nothing typed -- is a draft, not a chat. The panel lists a
+    // conversation from its first message, which is also what titles the row.
+    const all = [
+      conversation({ title: "New chat", message_count: 0 }),
+      conversation({ id: "b", title: "Real chat", message_count: 1 }),
+    ];
+    assert.deepEqual(
+      rowsForFolder(all, "").map((c) => c.title),
+      ["Real chat"],
+    );
+  });
+
   test("with no folder open the list is everything", async () => {
     // There is nothing to scope by yet, and the alternative -- showing only the
     // chats that have no folder -- would greet a first run with an empty list
@@ -741,23 +749,5 @@ describe("the list is the current folder's chats", () => {
     await click(one(container, ".chatlist-folder")!);
 
     assert.equal(calls.picks, 1);
-  });
-
-  test("New chat says which project it will file under", async () => {
-    // Silently filing a chat under whatever folder was open last is how a
-    // conversation ends up somewhere the user did not mean, so the button has to
-    // show it before the press rather than after.
-    const container = await renderList(
-      [conversation({ project: TONY })],
-      "",
-      true,
-      TONY,
-    );
-    assert.deepEqual(texts(container, ".chatlist-new-project"), ["TONYAgent"]);
-  });
-
-  test("and says it will ask when there is no project yet", async () => {
-    const container = await renderList([conversation()]);
-    assert.deepEqual(texts(container, ".chatlist-new-project"), ["Choose folder"]);
   });
 });

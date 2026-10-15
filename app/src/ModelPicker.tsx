@@ -24,6 +24,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useDismiss } from "./useDismiss.js";
 import { useDelayedUnmount } from "./useDelayedUnmount.js";
+import { useMenuPlacement } from "./useMenuPlacement.js";
 
 /** What `models.list` returns. */
 export interface ModelList {
@@ -95,7 +96,21 @@ export function ModelPicker({
   // The wrap, not the menu panel: the chip lives inside it, and a press on the
   // chip is the chip's own toggle. This is also what keeps a press on the
   // filter from dismissing the menu it is the filter for.
+  //
+  // It is also the menu's anchor: the wrap is the chip's own box, so it is the
+  // half of the pair the placement is measured from.
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  // The menu itself, for its measured width -- which side it may hang from is a
+  // question about how wide it is.
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  // Which way the menu opens and which edge it hangs from, measured when it
+  // opens. The chip is in the title bar's right-hand cluster, so the answer is
+  // not a constant: the menu is 320px wide and the window it has to fit in is
+  // whatever the user made it. See `menuPlacement.ts`.
+  //
+  // Keyed on `mounted` rather than `open`: this menu lingers on its way out, so
+  // its node arrives one commit after the flag does.
+  const placement = useMenuPlacement(mounted, wrapRef, menuRef);
   // Whether the list has been asked for. A ref, not state: it gates a fetch
   // and must not itself cause a render, and re-rendering on every open just to
   // remember what was already fetched is how a list gets requested twice.
@@ -168,11 +183,24 @@ export function ModelPicker({
 
       {mounted && (
         <div
+          ref={menuRef}
           className="modelpicker"
           role="dialog"
           aria-label="Choose a model"
           data-state={open ? "open" : "closed"}
+          data-dir={placement?.dir ?? "down"}
+          data-align={placement?.align ?? "start"}
+          style={
+            placement ? { maxHeight: `${placement.maxHeight}px` } : undefined
+          }
         >
+          {/*
+            The two attributes above are the whole contract with the
+            stylesheet, and the base rule declares neither anchor -- so the
+            fallbacks are not cosmetic: a menu with no direction would render
+            unpositioned rather than opening the wrong way, and "down, on the
+            chip's left edge" is what it did before there was a measurement.
+          */}
           <input
             ref={filterRef}
             className="modelpicker-filter"

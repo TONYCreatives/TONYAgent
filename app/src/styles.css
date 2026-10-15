@@ -35,5 +35,6 @@
 @import "./styles/markdown.css";
 @import "./styles/motion.css";
 @import "./styles/surfaces.css";
+@import "./styles/trajectory.css";
 @import "./styles/arriving.css";
 @import "./styles/reduced-motion.css";

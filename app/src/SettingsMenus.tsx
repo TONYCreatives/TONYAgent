@@ -49,56 +49,11 @@
  * deciding whether to trust a folder.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useDismiss } from "./useDismiss.js";
+import { useMenuPlacement } from "./useMenuPlacement.js";
 
-/**
- * Which way a menu opens, and how tall it may be.
- *
- * Measured rather than declared, because the answer is a fact about where the
- * trigger happens to sit and the panel is a scrolling one. These rows are the
- * panel's first group, so the room below them is large and the room above them
- * is whatever is left of the window -- declaring "up" unconditionally put the
- * menu off the top of the screen, and a menu the user cannot see the end of is
- * a menu whose last option cannot be picked.
- */
-export type MenuDirection = "up" | "down";
-
-/**
- * The edges a menu is bounded by.
- *
- * Not a `DOMRect`, because the window's bounds are built here rather than
- * measured -- and because the function below reads two numbers and casting a
- * two-field object to a full rectangle would be a lie the type system could not
- * catch.
- */
-export interface MenuBounds {
-  top: number;
-  bottom: number;
-}
-
-/**
- * The side with the most room, and that room as a height.
- *
- * Exported because the decision is worth testing without a layout engine:
- * jsdom reports every rectangle as zero, so the rule has to be a function of
- * numbers rather than something only a browser can exercise. A tie opens down,
- * which is the case the settings panel is actually in.
- */
-export function measureMenu(
-  trigger: MenuBounds,
-  bounds: MenuBounds,
-  gap = 6,
-): { dir: MenuDirection; maxHeight: number } {
-  const above = trigger.top - bounds.top - gap;
-  const below = bounds.bottom - trigger.bottom - gap;
-  const dir: MenuDirection = above > below ? "up" : "down";
-  // Floored rather than taken literally. A height of zero is a menu the user
-  // cannot click; a menu slightly taller than its room is one that scrolls, and
-  // a scrolling menu still has a readable end.
-  return { dir, maxHeight: Math.max(120, dir === "up" ? above : below) };
-}
 
 /** One level, as `permission.list` reports it. */
 export interface PermissionInfo {
@@ -443,6 +398,11 @@ function ChoiceSummary({ label, value, steps }: Pick<ChoiceProps, "label" | "val
  * against the panel it lives in, capped to the room it found, and given
  * `overflow-y: auto` behind that, so the last option is always reachable.
  *
+ * That measurement is `useMenuPlacement` now rather than this component's own:
+ * the model picker and the row menus had the same question to ask and each was
+ * answering it with a hardcoded side, which is the bug this component's version
+ * had already been fixed for.
+ *
  * **One node for the panel, one for the list, and the trigger is inside the
  * panel** -- so a press on the trigger is a press on the surface being used,
  * not a dismissal. That is the contract `useDismiss` is built around.
@@ -465,36 +425,19 @@ function ChoiceMenu({
   onSelect,
 }: ChoiceProps) {
   const [open, setOpen] = useState(false);
-  // Null until the menu first opens: there is nothing to place before there is
-  // anything to place, and measuring on mount would read a layout the panel is
-  // still settling.
-  const [placement, setPlacement] = useState<{
-    dir: MenuDirection;
-    maxHeight: number;
-  } | null>(null);
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  // Nothing to place before the menu first opens, and measuring on mount would
+  // read a layout the panel is still settling -- so the render names the
+  // stylesheet's own direction until the measurement replaces it, which is why
+  // the base rule declares neither anchor (see the block above).
+  //
+  // Keyed on `open` and not on a mount flag: unlike the two pickers this menu is
+  // rendered by `open` alone, so its node is in the DOM in the same commit.
+  const placement = useMenuPlacement(open, triggerRef, menuRef);
 
   useDismiss(open, () => setOpen(false), surfaceRef);
-
-  // Measured in a layout effect, before paint: measured in an effect the menu
-  // would appear at the old position for a frame first, which on a row near the
-  // top of the panel is a frame of an off-screen menu.
-  useLayoutEffect(() => {
-    if (!open) return;
-    const trigger = triggerRef.current;
-    const panel = surfaceRef.current?.closest(".modal");
-    // The panel when there is one, the window otherwise. A menu is bounded by
-    // the surface it is clipped by, not by the window: inside a scrolling
-    // modal anything past the panel's edge is gone even though it is on screen.
-    const bounds: MenuBounds = panel?.getBoundingClientRect() ?? {
-      top: 0,
-      bottom: window.innerHeight,
-    };
-    setPlacement(
-      measureMenu(trigger?.getBoundingClientRect() ?? bounds, bounds),
-    );
-  }, [open]);
 
   // Escape closes the menu, and must not also reach the window, which treats
   // Escape as "close whatever is open" -- the settings panel itself. Registered
@@ -532,6 +475,7 @@ function ChoiceMenu({
 
       {open && (
         <div
+          ref={menuRef}
           className="permchoice-menu"
           role="listbox"
           aria-label={label}

@@ -169,10 +169,12 @@ const BOOT = {
       {
         name: "high",
         label: "High",
-        description: "Everything, including running commands.",
+        description: "Everything, including running any command.",
         runs_commands: true,
         skips_confirmation: false,
-        runs_any_command: false,
+        // High now bypasses the allow-list (it runs any command), but still in
+        // the sandbox and still asking -- mirror the core ladder.
+        runs_any_command: true,
       },
       {
         name: "full",
@@ -417,6 +419,62 @@ describe("the sidebar, driven through the window", () => {
     await wait(80);
   });
 
+  test("a restored chat does not replay the raw text a tool returned", async () => {
+    // Re-entering a conversation used to paste the tool's own output back into
+    // the transcript. `_persist` writes every message including the `tool`
+    // rows, whose content IS the tool's answer -- a whole numbered file for
+    // `read_file`, the command's stdout for `run_command` -- and `showMessages`
+    // flattened each of those rows into an assistant bubble. So a chat you left
+    // and came back to opened on hundreds of lines of unrelated source code,
+    // and the answer written from it was buried underneath.
+    //
+    // The live window draws that content inside a tool *card*, which the
+    // restore path cannot rebuild: the tool events themselves were never saved,
+    // so there is no card to put it in. Dropping the row is the only honest
+    // rendering, and the prose the model wrote from the work still stays.
+    const saved = [
+      { role: "user", content: "read alarm.js and tell me what it does" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [
+          { id: "c1", name: "read_file", arguments: { path: "alarm.js" } },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: "c1",
+        content: "  1\tfunction startAlarm() {\n  2\t  currentCount = 0;\n",
+      },
+      { role: "assistant", content: "It is a repeating countdown alarm." },
+    ];
+    const { container } = await mount({
+      "conversations.list": { conversations: [conversation()] },
+      "conversations.switch": { conversation: conversation(), messages: saved },
+    });
+
+    await click(one(container, ".rail-toggle")!);
+    await click(one(container, ".chatrow-open")!);
+    await wait(120);
+
+    const said = one(container, ".transcript")?.textContent ?? "";
+    assert.ok(
+      !said.includes("function startAlarm"),
+      "the tool's raw output was replayed into the conversation",
+    );
+    assert.ok(
+      said.includes("repeating countdown alarm"),
+      "the answer the tool call was made for was lost",
+    );
+    // The user's own words survive, obviously: the drop is scoped to the
+    // machine-written row.
+    assert.ok(
+      said.includes("read alarm.js"),
+      "the user's message went with it",
+    );
+    await wait(80); // same trailing list re-read; see the note above
+  });
+
   test("New chat closes it too, for the same reason", async () => {
     const { container, transport } = await mount({
       // A project is open, so "New chat" files straight into it. The
@@ -426,8 +484,7 @@ describe("the sidebar, driven through the window", () => {
       "conversations.create": { conversation: conversation() },
     });
 
-    await click(one(container, ".rail-toggle")!);
-    await click(one(container, ".chatlist-new")!);
+    await click(one(container, ".tab-new")!);
 
     assert.ok(transport.methods().includes("conversations.create"));
     await wait(exitDurationMs() + 60);
@@ -581,8 +638,7 @@ describe("New chat files the conversation under a project", () => {
       async () => FOLDER,
     );
 
-    await click(one(container, ".rail-toggle")!);
-    await click(one(container, ".chatlist-new")!);
+    await click(one(container, ".tab-new")!);
     await wait(80);
 
     assert.deepEqual(picked, [FOLDER], "the folder picker was never opened");
@@ -613,8 +669,7 @@ describe("New chat files the conversation under a project", () => {
       async () => "S:/somewhere/else",
     );
 
-    await click(one(container, ".rail-toggle")!);
-    await click(one(container, ".chatlist-new")!);
+    await click(one(container, ".tab-new")!);
     await wait(80);
 
     assert.deepEqual(picked, [], "a project was open, so nothing should have been asked");
@@ -630,8 +685,7 @@ describe("New chat files the conversation under a project", () => {
       async () => null,
     );
 
-    await click(one(container, ".rail-toggle")!);
-    await click(one(container, ".chatlist-new")!);
+    await click(one(container, ".tab-new")!);
     await wait(80);
 
     assert.deepEqual(picked, [null], "the picker was not opened at all");
@@ -652,8 +706,7 @@ describe("New chat files the conversation under a project", () => {
       async () => FOLDER,
     );
 
-    await click(one(container, ".rail-toggle")!);
-    await click(one(container, ".chatlist-new")!);
+    await click(one(container, ".tab-new")!);
     await wait(80);
 
     assert.ok(
@@ -1336,11 +1389,11 @@ describe("Code mode takes over the window", () => {
     size: 13,
   };
 
-  // A chat is open, because the point of the first test is that the things
-  // Agent mode has -- the rail, the composer, the tab strip -- *stop being
-  // there* in Code mode. With no conversation at all the strip is empty in both
-  // modes, so the assertion would pass for a window that never had a tab and
-  // prove nothing about the switch.
+  // A chat is open, because the point of the first test is that Agent mode's
+  // rail and tab strip *stop being there* in Code mode, while its conversation
+  // and composer move into the helper. With no conversation at all the strip
+  // is empty in both modes, so the assertion would pass for a window that
+  // never had a tab and prove nothing about the switch.
   const OPEN = "open-chat";
 
   const mountCode = () =>
@@ -1350,6 +1403,14 @@ describe("Code mode takes over the window", () => {
         conversations: [
           conversation({ id: OPEN, title: "Alpha work", project: FOLDER }),
         ],
+      },
+      "mode.list": {
+        modes: [
+          { name: "chat", label: "Chat", description: "Talk. Nothing is read, run or changed.", writes: false },
+          { name: "build", label: "Build", description: "Full access. Read, write and run commands.", writes: true },
+          { name: "plan", label: "Plan", description: "Read and search only.", writes: false },
+        ],
+        mode: "build",
       },
       "files.tree": TREE,
       "files.read": SOURCE,
@@ -1362,11 +1423,11 @@ describe("Code mode takes over the window", () => {
     all(c, ".tree-row").find((row) => one(row, ".tree-name")?.textContent === name)!;
 
   test("entering it replaces the chat window with the project", async () => {
-    // What "mode" means here, and the reason it is not a pane swap: the rail,
-    // the tab strip and the composer all belong to the conversation, and a
-    // conversation is not part of an editor. Each one is asserted *absent*
-    // rather than merely unused, because leaving them mounted is the cheap
-    // way to get this wrong and it looks almost right.
+    // What "mode" means here, and the reason it is not a pane swap: the rail
+    // and the tab strip belong to Agent mode, while the conversation itself
+    // moves into Code mode's assistant panel. The rail and strip are asserted
+    // *absent* rather than merely unused, because leaving them mounted is the
+    // cheap way to get this wrong and it looks almost right.
     const { container } = await mountCode();
 
     // Agent mode first, so the assertions below are about a change that
@@ -1381,13 +1442,79 @@ describe("Code mode takes over the window", () => {
 
     assert.equal(container.querySelector(".app")!.getAttribute("data-mode"), "code");
     assert.equal(one(container, ".rail"), null, "the chat rail is still on screen");
-    assert.equal(one(container, ".composer-inner"), null, "the composer has no chat to write to");
     assert.equal(all(container, ".tab-title").length, 0, "the chat tabs are still there");
     // The "+" belongs to the strip, and a strip that is gone leaves a lone "+"
     // beside the app's mark with nothing to be a "+" of.
     assert.equal(one(container, ".tab-new"), null, "a new-chat button in an editor");
     assert.ok(one(container, ".code-explorer"), "no project explorer");
+    assert.ok(one(container, ".helper"), "no assistant panel");
+    assert.ok(one(container, ".helper .composer-inner textarea"), "the helper has no composer");
+    // One shared conversation, not a second composer beside the Agent one. The
+    // Agent composer unmounts when Code mode mounts the helper's copy.
+    assert.equal(all(container, ".composer").length, 1, "the conversation was duplicated");
     assert.ok(one(container, ".main"), "the editor column is missing");
+  });
+
+  test("the trajectory tab shows the raw traffic, full width", async () => {
+    const { container } = await mount();
+
+    await click(modeButton(container, "Trajectory"));
+    await wait(40);
+
+    assert.equal(
+      container.querySelector(".app")!.getAttribute("data-mode"),
+      "trajectory",
+    );
+    // Full-bleed: the rail and the chat strip are not drawn, the same as Code --
+    // the whole window is the log.
+    assert.equal(one(container, ".rail"), null, "the rail is on screen in trajectory");
+    assert.equal(all(container, ".tab-title").length, 0, "chat tabs are on screen");
+    assert.ok(one(container, ".traj"), "the trajectory view did not mount");
+    assert.ok(one(container, ".traj-empty"), "a fresh window has no traffic yet");
+  });
+
+  test("the helper can be put away without losing the conversation", async () => {
+    const { container } = await mountCode();
+    await click(modeButton(container, "Code"));
+    await wait(40);
+
+    const toggle = one(container, ".helper-toggle") as HTMLButtonElement;
+    assert.equal(toggle.getAttribute("aria-label"), "Hide the assistant");
+    await click(toggle);
+    await wait(20);
+
+    // The header remains so the panel has a way back; only the shared
+    // conversation body goes away.
+    assert.ok(one(container, ".helper"), "hiding the assistant removed its way back");
+    assert.equal(one(container, ".helper-body"), null, "the helper body stayed mounted");
+    assert.equal(all(container, ".composer").length, 0, "a hidden helper kept its composer");
+
+    await click(one(container, ".helper-toggle")!);
+    await wait(20);
+    assert.ok(one(container, ".helper .composer-inner textarea"), "the helper did not restore its composer");
+    assert.equal(all(container, ".composer").length, 1, "restoring the helper duplicated the conversation");
+  });
+
+  test("plain chatting is offered beside the agent modes", async () => {
+    const { container, transport } = await mountCode();
+    await click(modeButton(container, "Code"));
+    await wait(40);
+
+    assert.deepEqual(
+      all(container, ".helper .mode").map((pill) => (pill.textContent ?? "").trim()),
+      ["Chat", "Build", "Plan"],
+    );
+
+    await click(all(container, ".helper .mode")[0]!);
+    await wait(80);
+
+    const request = transport.sent.find((r) => r.method === "mode.set");
+    assert.equal(request?.params?.mode, "chat", "selecting Chat did not ask the core for Chat");
+    assert.match(
+      one(container, ".helper .hint")?.textContent ?? "",
+      /Nothing is read, run or changed/,
+      "the helper does not explain Chat's lack of reach",
+    );
   });
 
   test("the explorer lists the current project", async () => {

@@ -55,6 +55,28 @@ TOOL_CALL_ECONOMY = (
 )
 
 
+#
+# The economy rules above teach *how* a turn is spent but are one fixed string,
+# so they cannot say *how many* calls there are. This supplies the number, once
+# per request, so a model told it has ten spends them differently from one that
+# discovers the wall on the eleventh. ``0`` means no limit and returns ``""`` --
+# naming an unlimited budget invites a model to fill it.
+def tool_budget_note(used: int, limit: int) -> str:
+    """The model's tool-call budget for this turn, or ``""`` when unlimited."""
+    if limit <= 0:
+        return ""
+    left = max(limit - used, 0)
+    return (
+        f"Tool-call budget: this turn may spend {limit} tool calls "
+        f"({used} spent, {left} left). Plan the whole job before you spend "
+        "them -- decide every call you will need, put the ones you already "
+        "know about in one message, and spend only what the work needs. The "
+        "turn is stopped for you when they run out, so keep enough in hand to "
+        "act on what you have read rather than using a call because there is "
+        "room for one."
+    )
+
+
 #: Tool categories, by the name the schema uses. Kept as strings so adding a
 #: category to the tool base does not silently change what a mode permits.
 READ_ONLY = "read_only"
@@ -181,6 +203,45 @@ _MUTATING_TOOLS = _READ_ONLY_TOOLS | {
     "job_kill",
 }
 
+#: The read-only tools that *look at something*: the project, the sandbox, the
+#: browser or the screen. Looking is what they are for, and they are the whole
+#: difference between Chat and Skills.
+#:
+#: Written as the list to take away rather than as the list Chat keeps. The two
+#: are the same set today and would not stay the same: the planning verbs, the
+#: two tools that reach the user and the skill readers belong to **every** mode
+#: (three separate tests pin that, each for its own reason), so a Chat allow-list
+#: written out from scratch would be the one rung that quietly lost one of them
+#: the day somebody added the next harmless tool to a mode above it.
+_LOOKING_TOOLS = frozenset({
+    "read",
+    "read_image",
+    "list_dir",
+    "glob",
+    "grep",
+    "sandbox_read_file",
+    "sandbox_list_files",
+    "browser_navigate",
+    "browser_get_text",
+    "browser_screenshot",
+    "browser_snapshot",
+    "browser_scroll",
+    "browser_wait_for",
+    "browser_eval",
+    "browser_click",
+    "browser_type",
+    "execute_js",
+    "set_viewport_size",
+})
+
+#: What Chat may do: the read-only set with the looking taken out.
+#:
+#: Everything left touches neither the project, nor the machine, nor the web --
+#: the agent's own note-to-self, the two tools that put words in front of the
+#: user, and the skill readers. `tests/unit/test_modes_and_diffs.py` measures
+#: that claim by sweeping the registered tools rather than by reading this set.
+_CHAT_TOOLS = _READ_ONLY_TOOLS - _LOOKING_TOOLS
+
 #: Tools that observe the user's own machine rather than the workspace.
 #:
 #: Kept out of every other rung on purpose. Everything above reads files or
@@ -244,9 +305,11 @@ class Permission:
     #:
     #: Kept separate from `allowed_tools` because it widens a different axis.
     #: The allow-list answers "may this run at all"; this answers "is this one
-    #: of the ones we know about". Folding the two together would make Full's
-    #: extra power indistinguishable from High, and there would be nothing left
-    #: above it.
+    #: of the ones we know about". High and Full both set it now: an off-list
+    #: command is no longer the rung that separates them -- `runs_on_host` (the
+    #: host boundary) and `skips_confirmation` are. The destructive deny-list
+    #: still applies at every rung that bypasses, so this widens the door without
+    #: lifting the lock on the worst commands.
     bypasses_command_allowlist: bool = False
     #: Whether this level runs commands on the host, with no sandbox at all.
     #:
@@ -286,18 +349,22 @@ _MEDIUM = Permission(
     allowed_tools=_MUTATING_TOOLS - {"execute_command"},
 )
 
-#: Full tool access. Still gated twice: a command must be on the allow-list, and
-#: `execute_command` refuses to run without an isolating sandbox behind it. So
-#: "High" grants the *attempt*, and the two gates decide whether it happens. Only
-#: Full lifts the second one -- see `runs_on_host`.
+#: Full tool access, and **any command** -- the allow-list no longer applies. The
+#: container still does: `execute_command` refuses to run without an isolating
+#: sandbox behind it, so "High" runs what it likes but only inside the sandbox,
+#: and it still stops to ask before a destructive tool. That is the whole grant
+#: -- it lifts the first gate and leaves the second, so Full's `runs_on_host`
+#: (see below) is still a boundary rather than a relabel.
 _HIGH = Permission(
     name="high",
     label="High",
     description=(
-        "Everything, including running commands. Commands must still be "
-        "allow-listed and the sandbox must be running."
+        "Everything, including running any command, not only the allow-listed "
+        "ones. Commands still run inside the sandbox, which must be running, and "
+        "it still asks before a destructive tool."
     ),
     allowed_tools=_MUTATING_TOOLS,
+    bypasses_command_allowlist=True,
 )
 
 #: High, without the prompt, and **on your machine rather than in a container**.
@@ -345,6 +412,40 @@ def get_permission(name: str) -> Permission:
     """
     return PERMISSIONS.get((name or "").strip().lower(), PERMISSIONS[DEFAULT_PERMISSION])
 
+
+#: Conversation, and nothing else.
+#:
+#: **The mode with no reach.** Every other rung is defined by what it may do to
+#: the project; this one is defined by being unable to see it: no read, no grep,
+#: no browser, no shell. It exists because "do not touch anything" and "look at
+#: this for me" are two different requests, and before it the only honest way to
+#: ask for the first was to pick Plan -- which reads the whole project and
+#: answers from files the user may not have meant to spend a turn on. A
+#: conversation about something else entirely ("what does this error mean",
+#: "write me a regex") had no mode that would leave the workspace alone by
+#: construction rather than by the model remembering to.
+#:
+#: `writes=False`, like Plan and Skills, so the window says read-only beside the
+#: composer -- and the claim is enforced twice: these tools are not in the
+#: schema the model is shown, and the orchestrator refuses the rest by name.
+_CHAT = Mode(
+    name="chat",
+    label="Chat",
+    description="Talk. Nothing is read, run or changed.",
+    system_prompt=(
+        "You are in CHAT mode. This is a conversation and nothing else: you "
+        "have no tool that reads the project, the sandbox, the screen or the "
+        "web, and no tool that changes anything. Answer from this "
+        "conversation and from what you already know. Do not claim to have "
+        "read a file, run a command, or seen the code -- you cannot, and a "
+        "confident guess about this project is worse than saying so. When the "
+        "question does need the project, say which mode can answer it: Build "
+        "to change it, Plan to read it and propose a change, Skills to read "
+        "it and explain, Mission to run a long task to completion."
+    ),
+    allowed_tools=_CHAT_TOOLS,
+    writes=False,
+)
 
 _BUILD = Mode(
     name="build",
@@ -413,13 +514,23 @@ _SKILLS = Mode(
 )
 
 
-MODES: dict[str, Mode] = {m.name: m for m in (_BUILD, _PLAN, _MISSION, _SKILLS)}
+MODES: dict[str, Mode] = {m.name: m for m in (_CHAT, _BUILD, _PLAN, _MISSION, _SKILLS)}
 
 #: The mode a session starts in.
+#:
+#: Build, and deliberately not Chat, which now sits in front of it in the
+#: picker. A window that opened in Chat is a window whose first question --
+#: "why will it not look at my files?" -- has no answer on screen, and the
+#: answer would have to be found by a user who has not yet learned that the
+#: pills above the field decide it.
 DEFAULT_MODE = "build"
 
 #: Order for the UI, which must not have to hardcode the list.
-MODE_ORDER = ("build", "plan", "mission", "skills")
+#:
+#: Chat leads it because it is the one rung that reaches nothing at all, so the
+#: row starts at "just talk" and the four the project already had keep their
+#: order after it.
+MODE_ORDER = ("chat", "build", "plan", "mission", "skills")
 
 
 def get_mode(name: str) -> Mode:

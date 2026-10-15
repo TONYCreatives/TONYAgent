@@ -519,7 +519,7 @@ export function Composer({
       */}
       <p className="hint">
         {readOnly
-          ? `${active.label} mode — the agent can read and search, but writes are refused.`
+          ? `${active.label} mode — ${active.description}`
           : "Enter to send · Shift+Enter for a new line"}
       </p>
     </div>

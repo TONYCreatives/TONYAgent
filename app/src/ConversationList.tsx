@@ -41,6 +41,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount.js";
 import { useDismiss } from "./useDismiss.js";
+import { placeFixedMenu, pointerBounds } from "./menuPlacement.js";
+import type { MenuBounds } from "./menuPlacement.js";
 import { FilesPane } from "./FileSidebar.js";
 import type { CoreTreeEntry, FileChange } from "./filetree.js";
 import { Gear } from "./Gear.js";
@@ -87,6 +89,11 @@ function projectName(path: string): string {
  * conversation saved before `project` existed is; it is a real chat, it is just
  * not about any folder yet.
  *
+ * **A chat is listed once it has a message, not when it is created.** The empty
+ * conversation the core reuses at boot, and a fresh "+" chat with nothing typed
+ * yet, are not chats the list should show: the panel reads as "your chats", so it
+ * starts at the first message -- which is also what gives the row its title.
+ *
  * Exported because it is the rule the whole feature turns on, and a rule that
  * only exists inside a render is a rule with no test.
  */
@@ -94,8 +101,12 @@ export function rowsForFolder(
   conversations: ConversationSummary[],
   project: string,
 ): ConversationSummary[] {
-  if (!project) return conversations;
-  return conversations.filter((conversation) => conversation.project === project);
+  // A chat is listed once it has a message. The empty conversation the core
+  // reuses at boot, and a "+" chat with nothing typed yet, are left out: the
+  // panel is the user's chats, not a shelf of untitled drafts.
+  const started = conversations.filter((conversation) => conversation.message_count > 0);
+  if (!project) return started;
+  return started.filter((conversation) => conversation.project === project);
 }
 
 interface Props {
@@ -129,7 +140,6 @@ interface Props {
    * from inside would mean this component unmounts itself.
    */
   onDismiss: () => void;
-  onNew: () => void;
   /** Open the folder picker, to file the next chat somewhere else. */
   onChooseProject: () => void;
   onOpen: (id: string) => void;
@@ -218,8 +228,16 @@ function when(timestamp: number): string {
 
 interface Menu {
   id: string;
-  x: number;
-  y: number;
+  /**
+   * What the menu is placed against: the row's own button as a box, or the
+   * pointer as a rectangle with no size.
+   *
+   * The placement turns this into offsets rather than the component doing it,
+   * which is what lets the same menu open upward when it is asked for near the
+   * bottom of a short window -- it used to open downward unconditionally, and
+   * Delete ended up outside the client rect.
+   */
+  anchor: MenuBounds;
 }
 
 export function ConversationList({
@@ -230,7 +248,6 @@ export function ConversationList({
   busy,
   connected,
   onDismiss,
-  onNew,
   onChooseProject,
   onOpen,
   onDelete,
@@ -266,6 +283,11 @@ export function ConversationList({
  * and a right-click on the row have to agree about it: they were 4 and 0, and
  * the same menu opened in two different places depending on how it was asked
  * for.
+ *
+ * It is read by the *placement* now instead of being added to the coordinates
+ * by each caller, because the direction is no longer known at the call site:
+ * the gap has to be part of the measurement for the same reason it is part of
+ * the position.
  */
 const MENU_GAP = 4;
 
@@ -299,7 +321,8 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
    */
   const projectLabel = project ? projectName(project) : "";
 
-  const openMenu = (id: string, x: number, y: number) => setOpenMenuAt({ id, x, y });
+  const openMenu = (id: string, anchor: MenuBounds) =>
+    setOpenMenuAt({ id, anchor });
   const closeMenu = () => setOpenMenuAt(null);
 
   /**
@@ -366,6 +389,22 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
     if (keep && !title) return; // Blank: stay open, keep the draft.
     setEditing(null);
   };
+
+  /**
+   * Where the open menu goes, and how tall it may be.
+   *
+   * Computed during the render rather than measured in a layout effect, which
+   * is the one way this differs from the model picker's menu: this one is fixed
+   * to the window and anchored to a point, so its box and its bounds are both
+   * already known -- there is no layout to wait for, and no frame in which it
+   * would sit in the window's corner.
+   *
+   * The *retained* menu is what is placed, not the open one: the node outlives
+   * the dismissal so the exit animation has something to fade from the right
+   * place, and a menu that jumped to the window's corner on its way out would
+   * be worse than one that simply vanished.
+   */
+  const placed = menu ? placeFixedMenu(menu.anchor, MENU_GAP) : null;
 
   return (
     <>
@@ -500,40 +539,12 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
         </div>
       )}
 
-      <button
-        type="button"
-        className="chatlist-new"
-        onClick={onNew}
-        disabled={!connected || busy}
-        title={
-          projectLabel
-            ? `New conversation in ${projectLabel}`
-            : "Choose a project folder for the new conversation"
-        }
-      >
-        <svg
-          width="15"
-          height="15"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          aria-hidden="true"
-        >
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-        <span>New chat</span>
-        {/*
-          Naming the project on the button, because "New chat" is now a
-          decision about where a conversation lives. A button that silently
-          files the chat under whatever folder was open last is how a
-          conversation ends up somewhere the user did not mean.
-        */}
-        <span className="chatlist-new-project">
-          {projectLabel || "Choose folder"}
-        </span>
-      </button>
+      {/*
+        There is no "New chat" button here any more. A conversation begins from
+        the tabs' "+" or, more usually, from simply typing -- the first message
+        files it and lists it -- so this panel is the user's chats rather than a
+        place to mint empty ones. Starting one on purpose is the "+" by the tabs.
+      */}
 
       {/*
         The folder this list is, named -- and the way to change it.
@@ -600,8 +611,7 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
                 // that asked for it already sat over "Rename".
                 openMenu(
                   conversation.id,
-                  event.clientX,
-                  event.clientY + MENU_GAP,
+                  pointerBounds(event.clientX, event.clientY),
                 );
               }}
             >
@@ -646,8 +656,13 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
                     type="button"
                     className="chatrow-more"
                     onClick={(event) => {
-                      const box = event.currentTarget.getBoundingClientRect();
-                      openMenu(conversation.id, box.left, box.bottom + MENU_GAP);
+                      // The button's own box, and the placement decides which
+                      // side of it the menu goes: below it in a tall window,
+                      // above it in a short one.
+                      openMenu(
+                        conversation.id,
+                        event.currentTarget.getBoundingClientRect(),
+                      );
                     }}
                     title="Rename, duplicate or delete"
                     aria-label={`Options for ${conversation.title}`}
@@ -703,7 +718,10 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
           className="rowmenu"
           role="menu"
           data-state={openMenuAt ? "open" : "closed"}
-          style={{ left: menu.x, top: menu.y }}
+          style={{
+            ...placed?.offsets,
+            maxHeight: placed ? `${placed.placement.maxHeight}px` : undefined,
+          }}
           onContextMenu={(event) => event.preventDefault()}
         >
           <button

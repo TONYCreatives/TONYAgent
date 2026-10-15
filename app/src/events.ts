@@ -91,6 +91,36 @@ export interface SubagentChild {
   running: boolean;
 }
 
+/**
+ * One thinking pass, placed in the prose the way a tool call is.
+ *
+ * The core sends `reasoning.completed` once per assistant pass -- the pass that
+ * thinks before its tool call, the pass that thinks before the answer -- and
+ * each completion carries that pass's thought alone. Storing them in one flat
+ * string lost the boundary between them: every thought in a turn stacked into a
+ * single block at the very top of the bubble, in the order they were *reported*
+ * rather than the order they *happened*. Giving each pass its own run with a
+ * position is what lets a reader see "it thought this, then ran that tool,
+ * then thought this" -- which is the whole point of showing the thinking.
+ *
+ * `after` is the mirror of `ToolCall.after`: how much of the turn's prose had
+ * been written when this pass started thinking. The model thinks *before* it
+ * writes and acts, so a run's mark is the end of the words that preceded the
+ * thought -- and the next pass's prose and tool rows land after it.
+ */
+export interface ReasonRun {
+  /** The thought itself: streamed on the deltas, authoritative on completion. */
+  text: string;
+  /** Prose length when this pass began thinking. See the note above. */
+  after: number;
+  /** Whether `reasoning.completed` has arrived for *this pass*. */
+  complete: boolean;
+  /** The model ran out of budget on this pass and wrote nothing. */
+  truncated: boolean;
+  /** Why, in words. Only ever set alongside `truncated`. */
+  notice?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: Role;
@@ -115,6 +145,20 @@ export interface ChatMessage {
   reasoningTruncated: boolean;
   /** Why, in words. Only ever set alongside `reasoningTruncated`. */
   reasoningNotice?: string;
+  /**
+   * Each thinking pass, placed against the prose -- the reasoning counterpart
+   * of `tools`.
+   *
+   * The flat `reasoning` string above is kept (and is what every consumer that
+   * only wants "the whole thought" reads), but it cannot say *where* a pass sat
+   * relative to the tool rows. This list can, and `runsOf` uses it to interleave
+   * thinking with the calls that followed it, in the order they happened.
+   *
+   * Absent on a hand-built message or one restored from before this existed --
+   * which reads as a single pass at the top, the old behaviour, so nothing that
+   * only sets `reasoning` has to change to keep working.
+   */
+  reasonRuns?: ReasonRun[];
   /**
    * Where the current pass's prose begins inside `text`.
    *
@@ -204,6 +248,7 @@ export function blankMessage(id: string, role: Role): ChatMessage {
     reasoning: "",
     reasoningComplete: false,
     reasoningTruncated: false,
+    reasonRuns: [],
     passStart: 0,
   };
 }
@@ -443,6 +488,10 @@ function copyMessages(state: ChatState): ChatMessage[] {
         ? { ...t.child, tools: t.child.tools.map((c) => ({ ...c })) }
         : undefined,
     })),
+    // The thinking runs are copied too: the reducer mutates the open run's text
+    // as deltas stream in, and a shallow copy would write through into the
+    // caller's state -- the exact corruption `copyMessages` exists to prevent.
+    reasonRuns: m.reasonRuns?.map((r) => ({ ...r })),
   }));
 }
 
@@ -533,9 +582,23 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
       // Appended exactly like `message.delta`, and kept on its own field. The
       // reasoning panel is the only thing that reads this; folding it into
       // `text` would put a model's scratchpad inside its own answer.
+      //
+      // The flat `reasoning` still accumulates the whole turn's thought -- it is
+      // what a consumer that only wants "the reasoning" reads, and what the
+      // empty-bubble guard checks. Alongside it, each pass is tracked as its own
+      // run so the transcript can place it in order; the first delta of a pass
+      // opens a run at the prose written so far, and later deltas extend it.
       const target = currentAssistant(next, turnId);
       if (target) {
-        target.reasoning += payloadString(payload, "text") ?? "";
+        const chunk = payloadString(payload, "text") ?? "";
+        target.reasoning += chunk;
+        const runs = (target.reasonRuns ??= []);
+        const open = runs[runs.length - 1];
+        if (open && !open.complete) {
+          open.text += chunk;
+        } else {
+          runs.push({ text: chunk, after: target.text.length, complete: false, truncated: false });
+        }
         upsert(next, target);
       }
       return next;
@@ -545,14 +608,38 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
       const target = currentAssistant(next, turnId);
       if (target) {
         // The core sends the authoritative final text, same contract as
-        // `message.completed`. Replace rather than append: a dropped delta must
-        // not leave a hole that a second copy of the text would fill.
+        // `message.completed` -- but it is authoritative for *this pass* only,
+        // because the core emits one completion per assistant pass. Replacing
+        // the flat field with it used to delete every earlier pass's thought
+        // the moment a second pass completed; the runs below are what keep each
+        // pass's text where it belongs, and the flat field is rebuilt from them.
         const final = payloadString(payload, "text");
-        if (final !== undefined) target.reasoning = final;
+        const truncated = payload.truncated === true;
+        const runs = (target.reasonRuns ??= []);
+        const open = runs[runs.length - 1];
+        if (open && !open.complete) {
+          // Replace rather than append: a dropped delta must not leave a hole a
+          // second copy would fill.
+          if (final !== undefined) open.text = final;
+          open.complete = true;
+          open.truncated = truncated;
+          if (truncated) open.notice = payloadString(payload, "notice");
+        } else if (final !== undefined) {
+          // A completion with no matching open run -- a hand-built or restored
+          // message -- still gets a pass, so its thought is not dropped.
+          runs.push({
+            text: final,
+            after: target.text.length,
+            complete: true,
+            truncated,
+            ...(truncated ? { notice: payloadString(payload, "notice") } : {}),
+          });
+        }
+        target.reasoning = runs.map((r) => r.text).join("");
         target.reasoningComplete = true;
-        target.reasoningTruncated = payload.truncated === true;
+        target.reasoningTruncated = runs.some((r) => r.truncated);
         if (target.reasoningTruncated) {
-          target.reasoningNotice = payloadString(payload, "notice");
+          target.reasoningNotice = runs.find((r) => r.truncated)?.notice;
         }
         upsert(next, target);
       }

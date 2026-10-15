@@ -53,7 +53,9 @@
   gap: 8px;
   flex: none;
   height: 38px;
-  padding: 0 10px;
+  /* `--pad-panel`: the viewer's header holds the same edge as the explorer
+     beside it and the panels in Agent mode. It was 10. */
+  padding: 0 var(--pad-panel);
   border-bottom: 1px solid var(--border-soft);
   background: var(--chrome);
 }
@@ -204,9 +206,15 @@
  * `.chip` is the composer's model chip -- the same control, so the same rules.
  * Two things are the header's and not the chip's: it is one size down, because
  * this bar holds a path, two chips and three buttons in the width a composer
- * gives a chip alone; and its menu opens to the *right*-hand edge, because this
+ * gives a chip alone; and its menu is narrower than the picker's 320px, because
+ * a theme name is short.
+ *
+ * Its menu used to be pinned to the chip's *right*-hand edge here, because this
  * chip sits at the window's edge and a 320px panel anchored to its left corner
- * would hang off the screen.
+ * hangs off the screen. That was a local fix for a general problem -- the same
+ * thing happens to the title bar's model chip, which nobody had patched -- so
+ * the side is measured now and the rule here is the width alone. See
+ * `menuPlacement.ts`.
  */
 .code-theme {
   flex: none;
@@ -226,8 +234,6 @@
 }
 
 .code-theme .modelpicker {
-  left: auto;
-  right: 0;
   width: 232px;
 }
 
@@ -236,7 +242,7 @@
   width: 24px;
   height: 24px;
   border: 0;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--fg-mute);
   font-size: var(--text-lg);

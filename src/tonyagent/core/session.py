@@ -27,6 +27,7 @@ from tonyagent.core.modes import (
     DEFAULT_MODE,
     DEFAULT_PERMISSION,
     TOOL_CALL_ECONOMY,
+    tool_budget_note,
     Mode,
     Permission,
     get_mode,
@@ -892,6 +893,13 @@ class AgentSession:
         # rather than copied into four prompts so a fifth mode cannot be the one
         # that forgets it. See `modes.TOOL_CALL_ECONOMY`.
         prompt = f"{self._mode.system_prompt}\n\n{TOOL_CALL_ECONOMY}"
+        # The actual budget, once per request. The economy rules say *how* to
+        # spend a turn but not *how many* calls there are, and a model that is
+        # never given the number cannot plan against it -- it finds the wall on
+        # the call that hits it. Empty when the budget is unlimited (`0`).
+        budget = tool_budget_note(self._tool_calls_used, self.max_tool_calls)
+        if budget:
+            prompt = f"{prompt}\n\n{budget}"
         plan = self.state.render()
         if plan:
             prompt = f"{prompt}\n\n{plan}"

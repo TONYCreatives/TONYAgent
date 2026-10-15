@@ -42,7 +42,7 @@
 // a CSS file that Node cannot resolve.
 import { useEffect, useState } from "react";
 
-import { MARK_RECTS } from "./AppMark.js";import { installStatusHandler } from "./bridge.js";
+import { MARK_EYES as PET_EYES, MARK_RECTS } from "./AppMark.js";import { installStatusHandler } from "./bridge.js";
 import { petDrag, petFocusApp, petReady } from "./pet.js";
 import { petPose, SLEEP_AFTER_MS, type PetMood, type PetPose, type PetStatus } from "./pet-status.js";
 
@@ -55,10 +55,7 @@ import { petPose, SLEEP_AFTER_MS, type PetMood, type PetPose, type PetStatus } f
  * rectangle -- an eye that spills over its edge is a drawing bug that reads as a
  * wink, and a wink is not something this card means.
  */
-export const PET_EYES: readonly { cx: number; cy: number; r: number }[] = [
-  { cx: 348, cy: 260, r: 52 },
-  { cx: 676, cy: 260, r: 52 },
-];
+export { PET_EYES };
 
 /**
  * The three Z's of the asleep pose, by their drawn position and size.

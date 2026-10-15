@@ -1,7 +1,11 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-10-11, after **the adversarial gate pass** — the whole
+**Last updated:** 2026-10-13, after **the documentation-and-layout pass** -- the README and
+PROJECT_SUMMARY brought back in line with the pywebview app that actually ships, and the
+layout's six breakpoints and five panel insets reduced to one ladder and two tokens.
+See "The docs, and one layout instead of six" below.
+**Was:** 2026-10-11, after **the adversarial gate pass** — the whole
 registered surface swept through the orchestrator, the skill store and the
 workflow fan-out probed as hostile input, three gate holes fixed, and the
 recorded `_execution_history` leak closed. See "The adversarial gate pass" below.
@@ -6294,5 +6298,500 @@ not touch, now with evidence rather than a shrug:
   nesting, and `MAX_CHILDREN_PER_TURN = 8` stops the count. (The "no depth limit" claim
   was wrong even when it was written — the serial gate refused the spawn — but nothing
   tested it, which is exactly how a rule gets lost. It has tests now.)
-* `README.md` and `PROJECT_SUMMARY.md` still say 32 tools, Tauri MSI builds and a live
-  Tkinter client.
+* ~~`README.md` and `PROJECT_SUMMARY.md` still say 32 tools, Tauri MSI builds and a live
+  Tkinter client.~~ **Closed** in the documentation-and-layout pass below: both now describe
+the pywebview host, the 41 registered tools, the Docker/WSL backends and the dark-only
+token system. What is left in the docs is the corpus of *historical* sections, which now
+say so in their own headings rather than being silently stale.
+
+## The docs, and one layout instead of six (2026-10-13)
+
+### The docs were describing a different application
+
+Not stale by a version -- stale by a *shell*. `README.md` and `PROJECT_SUMMARY.md`
+both still opened on Tauri MSI installers, a live Tkinter client, 32 tools, a
+light/dark/system theme and OpenRouter as the only provider. Every one of those had
+stopped being true at a different time, which is why no single edit had caught them:
+the shell moved on 10-10, the provider count on 09-27, the theme when the design
+system collapsed to one dark palette. They now describe the pywebview host, the
+React/Vite frontend, the headless core, **41 tools** and **2 providers**.
+
+Two numbers in them were wrong in a way worth naming, because both were *counts of
+things in the source* rather than prose: the IPC row said "25 methods, 16 events".
+Measured instead of remembered -- `headless/server.py`'s handler table has **41**
+entries and `core/events.py`'s `EventType` has **19** members. The 25 was probably
+true when it was written; nothing in the repository checks a number in a Markdown
+table, so it stayed.
+
+Historical sections are now labelled as history rather than quietly contradicting
+the summary above them, and `app/vite.config.ts` no longer explains itself in terms
+of a Rust build directory that does not exist: its `server.watch.ignored` list was
+`src-tauri/**` and `binaries/**`, and the comment beside it described a cargo build
+holding `.exe` files open until `fs.watch` failed with EBUSY and killed Vite. The
+list now ignores `.tmp/**` (where `npm test` rewrites its compiled output, so a dev
+server watching it would reload the page once per test file) and `dist/**`.
+
+### The layout: the same defect as every previous sweep, one level up
+
+The complaint was "the design and the layout are inconsistent". Measured first,
+changed second -- and the defects had one shape between them, **the same thing
+declared in two places and therefore drifted**, which is what the last three passes
+found too, at a smaller scale.
+
+**The reading column agreed with itself at exactly one window width.** At 1280 the
+transcript's inner box and the composer's inner box were both `292..1052` (760px).
+At a 760px window they were `74..750` (676) against `96..728` (632): 22px apart on
+the left edge, 44px on the width, with the banner and the log strip spanning the
+full 696 in between. Both boxes were `max-width: var(--measure)` and centred, so
+above 888px the cap hid the difference and below it every width had its own. The
+cause was one column derived two ways: `.transcript` holds a `scrollbar-gutter:
+stable both-edges` reservation and takes no padding, while `.composer` takes 32px of
+padding and has no scroller.
+
+The fix is the air as a token and the gutter added to it, once:
+
+```css
+--column-air: 22px;                                  /* the transcript's own padding */
+--column-edge: calc(var(--column-air) + var(--scrollbar));  /* 32: what a surface without a scroller holds */
+```
+
+`.transcript` takes the air (its own gutter supplies the rest), and the composer, the
+banner and the log strip take the edge -- the banner and the strip as
+`width: calc(100% - 2 * var(--column-edge))`, because they are children of `.main`
+with no padding of their own, which is exactly why they could span a narrow window
+while the field below them could not. **22 + 10 is the 32 the composer already had**,
+so nothing above 888px moved and everything below it now agrees. Measured after: at
+760 all four surfaces are `96..728` (632); at 1280 the composer and the transcript
+are `292..1052` (760) as before.
+
+**`--measure`'s own claim was being defeated by a literal two rules away.** The token
+says the composer is as wide as the messages it replies to. `.bubble` capped at
+`min(680px, 84%)`: 680 is the value `--measure` held *before* it moved to 760 -- a
+stale copy of a token -- and 84% resolved against the transcript's content box, a
+second definition of the column in a unit no token can reach, which shrank as the
+window did while the field above it did not. Measured at 1280: the prose ran
+`224..830.5`, 606.5px, inside a 722px column under a 760px field whose text starts on
+the same pixel. The assistant's prose is now the column (`max-width: 100%`, with
+`fit-content` still hugging a short message), and the one cap left is on the user's
+bubble (`min(560px, 100%)`), because that one is a chip rather than a column -- and
+`100%` is the column, so it can never exceed it.
+
+**Six breakpoints, three of them invented in one pass for one surface.** The
+compact-window work had the title bar reflowing at 720, 540 and 390, the dashboard at
+680 and 430, and the status bar at 560 -- so one window changed state six times, at
+six sizes, in three surfaces that all say "narrow". The ladder is now three widths
+with one job each -- **720, 560, 420** -- declared in `tokens.css` (a media query
+prelude is evaluated before any variable exists, so it is a written-down convention
+with a test behind it rather than a token), and `layout.test.ts` walks every
+`@media (max-width: Npx)` in the cascade and fails on an N that is not one of them. A
+`@container` query is explicitly *not* on it and the test says so: the one in
+`code-viewer.css` asks about the code pane, which is a different question.
+
+**Five panel content edges, none derivable from the others.** 10 (the chat list's head
+and foot), 12 (its group labels), 14 (the Files filter and its empty state), 18 (every
+dialog, since `.modal` is the base all three share) and
+`clamp(16px, 2.5vw, 32px)` on the dashboard -- which made the dashboard the only
+surface in the window whose content edge moved when the window was resized (measured
+27.6px in a 1106px window, 16px in a 760px one). Two tokens now:
+
+* `--pad-panel` (16): where a panel's content starts -- the chat list's head, foot,
+  labels, rows and empty state, the Files filter and its tree, the code explorer's
+  head, the code viewer's header, `.modal`'s padding (and therefore all three dialogs,
+  the settings pane and the search pane), and the dashboard.
+* `--pad-row` (8): how far a row's own fill is inset *and* how much it pads, so the two
+  together are `--pad-panel` and a row's text lands on the panel's edge. The regions
+  that hold those cards inset by the same token, which is what makes the arithmetic
+  true rather than lucky.
+
+The dialog footer was the sharpest example: `.modal-actions` cancels `.modal`'s
+padding with three literals, and `settings.css` carried a second set of the same three
+for the same bar as a sidebar pane -- six copies of one number in two files. They are
+`calc(-1 * var(--pad-panel))` now, in both places.
+
+Measured in Chromium after the change, with `offsetLeft` rather than rects (the
+preview's compositing had stalled by then, so an animated panel reports a mid-slide
+`x`; `offsetLeft` is layout and immune):
+
+| surface | content edge | was |
+|---|---|---|
+| chat list head, foot | 16 | 10 |
+| chat list label / row text | 16 (8 region + 8 card) | 12 / 20 |
+| New chat button (box, text) | 8, 16 | 12, 24 |
+| Files filter (box), empty state | 8, 16 | 12, 14 |
+| code explorer head | 16 | 12 |
+| settings pane (h3, note, tabs) | 16 | 18 |
+| usage head and tiles | 16, at every width | 16--27.6, by window |
+| code viewer header | 16 | 10 |
+
+### One bug found on the way
+
+The status bar's compact rule aimed itself with `span:nth-of-type(2)` and
+`span:nth-of-type(5)`. Those indices are not stable: with no provider bound the row
+swaps its provider span for a `linkish` **button**, every later span renumbers, and
+the same two selectors then hide a different pair of things -- in exactly the state
+where the bar is telling the user what to do. It hides by name now
+(`.statusbar-state`, `.statusbar-sandbox`, `.sep`), and the test asserts the *class*,
+plus that `nth-of-type` does not come back.
+
+### Verification, and what it does not cover
+
+`npm test` **820 passed / 127 suites** (six new tests: the ladder, the container query
+that is not on it, the shared column box, the bubble that is the column, the panel
+edge, the card inset), `npx tsc --noEmit` exit 0,
+`scripts/audit_reduced_motion.py` clean, `pytest tests/unit -q -m "not docker"` green.
+Geometry measured in a real browser at 1280, 760, 560 and 420: no horizontal overflow
+at any of them, the four reading-column surfaces identical, and the status bar at 420
+reduced to provider/model and Logs with the tab strip collapsed to zero, as the ladder
+intends.
+
+**Not covered:** the preview webview stopped compositing partway through the session
+("produced no frames"), so **there is no screenshot of the result** -- the numbers
+above are `getBoundingClientRect` / `offsetLeft` / `getComputedStyle`, not a look at
+it. The panel measurements needed a window host, so they were taken through a scratch
+page served by the dev server that installs a stub `window.pywebview` answering the
+core protocol from fixed data; it was deleted afterwards and nothing of it is in the
+repository. And the two column widths that remain deliberately different (`--list-w`
+288 for chats, `--code-side-w` 268 for the code tree, documented in `tokens.css` as
+sized by different evidence) were left alone.
+
+### Still open
+
+* The Files pane and the code explorer were measured empty: the stub host's
+  `files.tree` reply never produced rows, so a populated tree, the code viewer with a
+  file in it, and the search panel are unmeasured this pass.
+* The three ladder steps are the *chrome's* ladder. If a surface ever needs to change
+  at a width the window does not, the answer is a container query -- and the ladder
+  test will refuse the media query, which is the intent.
+* `--pad-panel` is not applied to the window chrome (the top bar's 8px gaps, the
+  status bar's 12px, the rail's own padding). Those are hairlines and hit targets
+  rather than content insets, and pretending otherwise would have moved the caption
+  buttons for no reason.
+
+## Plain Chat and the Code assistant (2026-10-13)
+
+Chat was already enforced in the core; this pass exposes it. The composer lists
+Chat first, and its read-only hint now renders the active mode's own
+description, so Chat says that nothing is read, run, or changed. The Code-mode
+assistant renders the same shared `conversationView`, mounted in only one place
+at a time; its toggle keeps the header mounted while the body goes away, so the
+panel closes without stranding a hidden composer. `App.test.tsx` pins one
+composer across the Agent/Code switch, the helper toggle round-trip, Chat
+selection through `mode.set`, and the Chat hint copy.
+
+## The read-only composer's corners (2026-10-14)
+
+Chat, Plan and Skills mark the field by tinting the *textarea*, and the textarea is a
+square inside a 24px box that cannot clip it -- `.composer-inner` has no
+`overflow: hidden` because the `/` menu hangs out of its top edge. So the opaque fill
+squared off the field's own top corners in exactly those three modes and left the
+bottom two round, because the control row carries no fill. Build and Mission were
+right by accident.
+
+The fill was given the border's *inner* arc (`calc(var(--radius-lg) - 1px)` on the
+top two corners only), so the two curves were concentric rather than nearly so. The
+proof was a hit test on the pixel 3px inside the field's top-left corner: before, it
+resolved to `TEXTAREA.is-readonly`; after, to the field's own box. `layout.test.ts`
+pinned that rule while it existed, along with the 1px border it subtracted and the
+reason it was needed -- that the field clips nothing.
+
+That worked, and the fill itself was still wrong: measured the same way, the three
+read-only modes were a different *colour* from the other two, not just a different
+shape. See the next section -- the fill is gone, and the radii went with it.
+
+`code-preview.html`'s stub core also knew two modes, Build and Plan, which is why the
+defect was invisible on that page while the real window had it: Chat and Skills were
+not there to be wrong. It answers with the core's five `MODE_ORDER` modes and the
+core's own words now.
+
+## One fill for the composer (2026-10-14)
+
+The read-only fill is gone. Chat, Plan and Skills tinted the *textarea* with
+`color-mix(in srgb, var(--input) 70%, var(--bg))` -- opaque, and the browser
+computes it to `color(srgb 0.148627 0.148627 0.148627)` where Build's textarea
+computes to `rgba(0, 0, 0, 0)`. Because the fill belonged to the textarea rather
+than to the field, it stopped at the control row: those three modes drew a grey
+typing area stacked on a glass one, and the corner fix above could only make the
+seam round. All five modes now show the field's own `--glass-field` through a
+transparent textarea -- one surface, whichever mode is selected.
+
+The state is still stated, twice, without repainting anything: the lit pill in the
+mode group is the active mode, and the hint under the field spells it out in words
+("Chat mode -- Talk. Nothing is read, run or changed."), which is the copy a screen
+reader gets too. `Composer.tsx` keeps `is-readonly` on the textarea as the markup's
+own statement of the state rather than as a style hook, and `layout.test.ts`'s "the
+field is one field in every mode" holds the stylesheet to having no rule for it --
+read from the comment-stripped `SOURCE`, so the comment explaining the removal can
+still name the selector -- and to `.composer textarea` staying `background:
+transparent`. Checked that the assertion bites: the regex is false against today's
+modules and true against the same text with the old rule appended.
+
+Two declarations went with the fill, both of which existed only to hold it inside
+the field's radius: the `calc(var(--radius-lg) - 1px)` top corners, and
+`border-color: var(--border)` -- which painted nothing anyway, since `.composer
+textarea` sets `border: 0`, so a colour on a 0-width `none`-style border is a
+declaration no pixel can see. Verified: `npm test` **823 passed / 127 suites**, exit
+0; `npx tsc --noEmit` exit 0; `scripts/audit_reduced_motion.py` clean; and in the dev
+server (`code-preview.html`, which mounts the real `App`) Chat's textarea computes to
+`rgba(0, 0, 0, 0)` with `is-readonly` on it, inside a field still filled with
+`rgba(46, 46, 46, 0.78)`.
+
+Still open: the composer's scrollbar is a square-cornered box inside a rounded field,
+so a long message can poke the top of its thumb through the field's top-right corner.
+That is pre-existing, identical in every mode now and before this pass (Chromium
+paints a scrollbar over the border box without clipping it to the radius -- see
+`scrollbars.css` for the same defect measured on `.modal`), and it is not mine to fix
+here. Unmeasured this pass: the same corner at 125% display scaling.
+
+## The stadium sweep (2026-10-14)
+
+The shape rule was already written in `tokens.css` -- "a control you can see the edge
+of is a stadium, and a corner that stops short of one is a container" -- and about
+half the window obeyed it. The per-turn budget popover is where it showed: a grid of
+six pill presets over a 6px-cornered `Set` button and a 6px-cornered number field, in
+a row that is one control.
+
+One criterion decided every case: a control that paints an edge -- at rest, or on
+hover, or when selected -- is a stadium. So the composer's `+`, gear and budget
+buttons are discs beside Send's disc (rank is the fill's job, not the shape's); the
+attachment chip and its thumbnail; the model picker's filter; the drawer's toggle,
+back, footer actions and New chat; the tab's rename field and close glyph; the rail's
+44px buttons; the assistant's toggle; the code viewer's close disc; the settings
+panel's selects, text fields and the two 24px key actions; the permission trigger.
+
+What kept a corner, each an argument rather than an oversight: every panel, menu,
+card, notice and code block (surfaces); the document tab, whose bottom corners are
+square because it is cut into the bar's own edge; the composer field and the
+permission control's *open* state, which hold a stack of controls, so a pill would
+put an arc through the first and last of them; the keycaps in the empty state; and
+the sidebar's folder heading, which is pressable but paints no fill at all (its hover
+is a colour change), so it has no shape to round.
+
+### The rows came back (same pass)
+
+The same criterion went on to *rows* -- the `/` menu's items, the model picker's, the
+row menu's, the permission rungs, the file tree, the conversation list and the inline
+rename field -- and that half of it was wrong, on one look at the running window. A
+row is not one control: it is one of a column, as tall as a line or two of text and
+stacked against its neighbours, so a stadium turns a list into a column of buttons.
+The conversation row measured 271x56 -- a capsule with 28px ends carrying the
+selection wash, which read as the largest control in the window -- and the `/` menu's
+row 712x31, a bar spanning the whole composer. They are back to `--radius-md` (the
+conversation row), `--radius-sm` (the tree, and the rename field inside the row) and
+`--radius-xs` (every menu item). The line the window draws is not "does it paint an
+edge", which a row does on hover, but "is it one thing you press, or one of a stack
+of them".
+
+That also settled the permission rungs' 2px coloured left edge, which a pill had
+turned into a crescent hugging the row's end: a straight left side is half of what
+makes that mark, and a stadium has none. One inset was kept deliberately -- the model
+picker's rows still sit 12px in, because the filter above them is a stadium whose text
+is at 12px and a menu's rows share the text column of the field at the top of it. The
+radius is the shape; the inset is the column.
+
+`layout.test.ts` now holds all three lists -- `no control has a corner`, `no row is a
+stadium either` and `and no container wears a control's shape` -- because "which
+classes are controls" is not
+something a stylesheet knows about itself, and a test that guessed from a selector's
+shape would be testing its own guess. It reads every block a selector owns rather
+than `body`'s last one: the first run failed on `.chatrow`, which owns an
+animation-only block in `arriving.css` that says nothing about its shape, and a block
+with no `border-radius` is an omission rather than an override.
+
+Verified: `npm test` **826 passed / 127 suites** exit 0 (the three new tests are among
+them), `npx tsc --noEmit` exit 0, `scripts/audit_reduced_motion.py` clean, `npm run
+build` exit 0. Then measured in the DOM rather than read off the stylesheet, in the
+dev server (`code-preview.html`, the real `App`), across the composer, the budget
+popover, the drawer on both panes, the settings pane and Code mode: the budget
+popover's `Set` is 47x26 at 999px, its number field 154x26 at 999px and a preset
+66x26; the drawer's New chat 271x40 at 999px, its Files filter 271x34 at 999px and
+its Search field 999px; and the rows at their corners -- the conversation row 271x56
+at 16px, its own button 245x56 at 16px, the tree row 271x26 at 12px, a row-menu item
+122x31 at 6px. The only controls that measure square are the two whose visible box is
+their parent: the Files filter's own `input`, and the composer's textarea inside the
+24px field. The only other rectangles in the window are the document tab (30x51) and
+a keycap (20x21), which is the lists above arriving in the DOM.
+
+Not measured in the preview, because its stub core does not serve them: the model
+picker's filter and rows, the settings Keys tab's selects and reveal buttons, and the
+code viewer's close button. Those are held by the test rather than by a rendered box,
+and they are the one part of this pass I would call verified by reading rather than by
+looking.
+
+## Overflow: what leaves the window (2026-10-14) -- findings
+
+Found by walking the running page rather than by reading it: open each surface, then
+ask every visible `position: fixed|absolute` box whether its rect is inside the client
+rect. Two surfaces fail, one is latent, and the rest of the window is clean.
+
+**The top-bar model picker leaves the window on its right.** `.modelpicker` is
+`position: absolute; top: calc(100% + 6px); left: 0; width: 320px` inside
+`.modelpicker-wrap`, which is the trigger's own box -- so the placement is anchored to
+the chip and knows nothing about the window. Measured in the dev server at 1228x931,
+with the chip at the end of the bar: the menu is at x=1036 and 320 wide, so its right
+edge is 1356 -- **128px past the window** -- and what the user sees is the panel's own
+right border and corner missing with every id cut mid-word
+("anthropic / claude-sonnet-4.5-2...").
+
+In the real window the caption cluster sits right of the chip and gives the menu some
+buffer. The arithmetic is from the stylesheet's own numbers -- captions are 3x46 = 138
+(`win-btn`), 3x38 = 114 below 888px, 3x32 = 96 below 560px, and the chip is capped at
+240/144/104 -- and the menu's right edge is `window - captions - chip + 320`:
+**10px inside** at 192px of chip above 888, **62px past** below 888, **120px past**
+below 560. So it fits at wide sizes by a ten-pixel coincidence, and the ladder that
+makes the window narrow is what pushes it out. The tell is that `code-viewer.css`
+already patches this locally for its theme picker (`.code-theme .modelpicker { left:
+auto; right: 0; width: 232px }`) -- one consumer fixed it by hand because the base rule
+has no idea where it is.
+
+**The conversation row's menu leaves the window at the bottom.** `.rowmenu` is placed
+from the row's own box (`openMenu(id, box.left, box.bottom + 6)`) with no clamp, and it
+is portalled to the body (deliberately -- see its comment), so nothing clips it back
+into view. Measured at the window's stated minimum, 640x480, with eight conversations
+and the list scrolled to its end: the row's button ends at y=413, the menu is 132x108
+at y=417, so its bottom is 525 -- **45px past a 480px window**. The menu's last item is
+its destructive one, which is the item the user cannot reach or scroll to.
+
+**Latent, same cause.** `.settings-picker .modelpicker { width: 100%; min-width: 0 }`
+is CSS for a control that no longer exists: `SettingsPanel.test.tsx` asserts that no
+`.settings-picker` is in the panel. The class is still on `ListPicker`'s own wrapper
+though, so the rule now lands on the code viewer's theme picker, where
+`.code-theme .modelpicker` beats it only because `code-viewer.css` is imported after
+`settings.css` -- two equally specific rules for one element, decided by `@import`
+order. And the comment beside `.permchoice` claims "the same reason `.budget-popover`
+and `.modelpicker` open upward at the bottom of the window": `.modelpicker` opens
+*downward* (`top: calc(100% + 6px)`), which is right in the title bar and wrong in the
+panel the sentence was written about.
+
+**Checked and clean**, so the plan does not chase them: the deliberate ellipses
+(`.tab-title` 273>112, the status bar's values, a row's own title), the scroll boxes
+(`.md-pre`, the code viewer's body, the tab strip at `max-width: min(60%, 360px)`),
+`overflow-wrap: anywhere` in prose, tool output and search, the dashboard at 640x480,
+the budget popover at 640x480 (232 wide, ending 3px inside the window -- tight, and
+inside), and the `/` skill menu and the drawer at 640x480.
+
+Not measured: the real WebView2 window itself, whose caption cluster and resize the
+browser page does not draw (hence the arithmetic above rather than a second
+measurement), the question dialog, and the pet card.
+
+## Overflow: the fix plan (2026-10-14)
+
+Every menu in this window is positioned by CSS against its own trigger, so whether it
+fits is a question only layout can answer -- and no surface asks it. `measureMenu` in
+`SettingsMenus.tsx` already asks it for the permission menu, but only vertically
+(`dir` and `maxHeight`) and only against the panel it sits in. The fix is to make that
+the window's general answer instead of one menu's private trick.
+
+1. **One placement helper.** `menuPlacement(trigger, bounds, gap)` returning
+   `{ dir: "up" | "down", align: "start" | "end", maxHeight }`, in its own module,
+   with `measureMenu`'s cases moved onto it. `align` is the new half, and it is what
+   the model picker needs and the permission menu does not. Pure arithmetic over two
+   rectangles, which is the only reason it can be tested at all in a suite with no
+   layout engine.
+2. **One vocabulary in CSS.** The attribute pair `.permchoice-menu[data-dir]` already
+   established, plus `data-align`: `[data-align="end"] { left: auto; right: 0 }`,
+   `[data-dir="up"] { top: auto; bottom: calc(100% + 6px) }`, and `max-height` from
+   the measured room as an inline custom property -- the stylesheet keeps the shape,
+   JS only supplies numbers.
+3. **The surfaces.** ModelPicker (top bar) and ListPicker (theme) need `align`; the row
+   menu needs `dir` and a clamp, and keeps its portal; ToolBudget and the skill menu are
+   re-measured but expected to need nothing, since they open upward from the bottom of
+   the window into the room they were given.
+4. **Pin it.** Cases for the helper (up, down, left, right, tie, the 120px floor); the
+   stylesheet read for the attribute rules; and the *pixels* in
+   `scripts/verify_window.py`, which already drives the real window and already runs JS
+   inside it (`window.evaluate_js`). The probe is the one this pass used: open each
+   surface and fail if any visible fixed/absolute box leaves the client rect. That is
+   the check this class of bug never had.
+5. **Clean up what the fix makes obvious.** Fold the code viewer's local patch into
+   `data-align`; delete the dead `.settings-picker` rule; fix the permission comment's
+   claim about which menu opens upward.
+
+**The alternative, and why it is not step 1:** CSS anchor positioning
+(`position-anchor` plus `position-try-fallbacks: flip-inline, flip-block`) does all of
+this declaratively and would delete the JS. Windows is fine -- this window's WebView2 is
+Chromium 154 -- but the same page is hosted in WKWebView on macOS (`vite.config.ts`
+targets both engines), so it needs a support check there before it can be the answer. If
+it is available everywhere, step 1 disappears and step 2 becomes `position-try-fallbacks`.
+
+**Order:** the row menu first (it hides an action), then the top-bar picker (the
+report), then the patch folded in, the dead rule and the stale comment, with the probe
+added to `verify_window.py` in the same pass so the next measurement is a run rather
+than an argument.
+
+## Overflow: the fix, and the two bugs it found on the way (2026-10-14)
+
+The plan above is now built. One helper, one hook, three consumers, and the pixels read
+back out of the real window.
+
+**`menuPlacement.ts`** is the decision: `placeMenu(trigger, bounds, {width, gap})` returns
+`dir`, `align` and the cap, pure arithmetic over two rectangles. It took the vertical half
+from `measureMenu` (which was `SettingsMenus.tsx`'s own private trick) and added the
+horizontal one. `placeFixedMenu` is the same placement for the two row menus, written out
+as offsets because a `position: fixed` node cannot be positioned by `calc(100% + …)`.
+
+**`useMenuPlacement.ts`** is when and against what: a layout effect, so the menu never
+paints at the stylesheet's default position for a frame; bounded by the nearest `.modal`
+when there is one, the window otherwise; re-measured on resize; and its answer kept after a
+close, because the node outlives the dismissal and a placement that reset would send the
+menu back to the window's corner on its way out.
+
+**Two corrections to the plan, both from measuring rather than arguing:**
+
+1. **`align` is flip-when-it-does-not-fit, not "the roomier side".** The first version
+   compared the room left and right of the anchor, which needs no width and is equivalent
+   to fitting in the cases I had in mind — but not in the ordinary one: for a *wide* chip in
+   the middle of the window the left room includes the chip's own width, so a menu that fit
+   perfectly well to the right flipped to the left. The rule is now what a menu should be:
+   it keeps the side it has always been on and moves only when that side cannot hold it.
+   The width comes in as a parameter, measured with `offsetWidth` — which is also what
+   picks up the code viewer's 232px override without a second copy of `232` in TypeScript.
+   `menuPlacement.test.ts` has the case that caught this.
+2. **The gap is a token, not a custom property.** The plan said JS would supply the room
+   through an inline custom property and the stylesheet would subtract the gap. What
+   shipped is a shared `--menu-gap` token in `tokens.css`, used by every rule that places a
+   menu, with `layout.test.ts` reading that number out of the stylesheet and comparing it
+   with `MENU_GAP` in `menuPlacement.ts`. Same end — the two numbers cannot drift — with
+   no custom property in a `style` attribute and no `calc` in four more places.
+
+**The bug the probe found that no test would have.** The first real-window run failed at
+640x480 with the model menu 57px outside. The cause was mine and it was subtle:
+`useDelayedUnmount` starts `mounted` at `false` and raises it in an *effect*, so the menu's
+node arrives one commit *after* `open` does. An effect keyed on `open` therefore measured a
+menu that was not in the DOM, read its width as 0, and answered "it fits to the right" for
+a 320px panel — the fallback markup's `start` standing in for a measurement that had not
+happened yet. The hook's flag is now "the node is on screen" (`mounted` for the two
+pickers, `open` for the permission menu, which does not linger). Nothing in jsdom can see
+this: the bug is a gap between two React commits.
+
+**Measured in the window** (`scripts/verify_window.py`, new `probe_menus`; the run before
+the fix, and after):
+
+| | before | after |
+|---|---|---|
+| model menu, 1184x761 | — | `[837,46,1157,362]`, `align=start`, inside |
+| model menu, 640x480 | `[377,46,697,362]` — 57px past the right edge | `[201,46,521,362]`, `align=end`, inside |
+| row menu, press at y=291 of 480 | opened down | `[32,179,164,287]`, up, inside |
+| row menu, press at y=420 of 480 | 52px below the client rect | `[32,308,164,416]`, up, inside |
+
+The chip in the window that found it is `cohere/north-mini-code:free`, which is what the
+chip's `max-width` was for — and a chip at its cap is exactly the case that put the panel
+past the window's edge.
+
+**Not measured, and why.** The code viewer's theme picker needs the app in code mode with a
+file open; its numbers are the same two decisions (the chip is at the right, so `align=end`
+by the same arithmetic the model chip's `end` was measured with) and its width override is
+covered by a stylesheet assertion. The tool budget popover and the `/` skill menu open
+*upward* from the composer's foot into room that already fits at 640x480 (232px of popover
+into ~300px of gap), so they were left alone — the placement helper is available to them if
+that ever stops being true.
+
+**Left undone deliberately.** `.settings-picker .modelpicker { width: 100% }` in
+`settings.css` is dead: it matches only inside the code viewer, where
+`.code-theme .modelpicker { width: 232px }` has the same specificity and comes later in the
+cascade. I did not remove it, because `.settings-picker .chip` beside it is *not* dead (no
+later rule sets that width) and the pair is one story about a form row this picker no
+longer lives in. Whoever moves the pickers back into the settings panel should keep it.
+
+**Order for the next pass**, since the plan's order is now built: the code viewer's theme
+picker measured in the window, then the same probe pointed at the budget popover and the
+`/` menu so the "checked and clean" note above is a run rather than a reading.

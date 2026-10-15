@@ -8,7 +8,18 @@
 .transcript {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 0 4px;
+  /*
+   * `--column-air`, and it is half of one box rather than an inset of its own.
+   *
+   * This scroller holds a `--scrollbar` gutter on both edges (`stable
+   * both-edges`, below); the composer below it, and the banner and the log strip
+   * above it, hold none. So each of them waits `--column-edge` -- this air plus
+   * that gutter -- and every one of the four is the same box at every width. It
+   * used to be 0 here and 32 there, and the pair only agreed while the window
+   * was wide enough that both boxes hit the `--measure` cap: measured, 676 at
+   * x=74 against 632 at x=96 in a 760px window. See the tokens.
+   */
+  padding: 12px var(--column-air) 4px;
   user-select: text;
   /*
    * Both edges reserved, always.
@@ -61,17 +72,41 @@
  * Tkinter UI never got -- see NEXT_SESSION.md section 8, where a grid weight
  * could not achieve it and pixel measurement was required. Flexbox does it
  * declaratively.
+ *
+ * **The cap is the column, and it is written as the column.** It was
+ * `min(680px, 84%)`: 680 is the value `--measure` had *before* it moved to 760,
+ * so it was a stale copy of a token, and `84%` resolved against this box's own
+ * content width -- a second definition of the reading column, in a unit no
+ * token can reach, which shrank as the window did while the composer's field
+ * did not. Measured at 1280 before this: the prose ran 224..830.5 (606.5px)
+ * under a 760px field whose text starts on the same pixel, so the window's own
+ * claim -- the composer is as wide as the messages it replies to -- held for
+ * neither the field nor the column. `100%` is that column, and `fit-content`
+ * still hugs a short message.
  */
 .bubble {
   width: fit-content;
-  max-width: min(680px, 84%);
+  max-width: 100%;
   padding: 9px 14px;
   border-radius: var(--radius-md);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
+/*
+ * The one cap left, and it is on the user's bubble rather than on the prose.
+ *
+ * The two are different shapes: an assistant turn is the column (it is prose
+ * the window is being read in), and a user message is a chip -- a right-aligned
+ * block that says "this was me" and reads as a bubble only while it is visibly
+ * narrower than the page it sits on. 560 is where it stops being one; `100%` is
+ * the column, so a bubble can never be wider than the prose under it, whatever
+ * the window does. The assistant's own cap is gone: a transparent box with no
+ * fill had nothing to gain from being narrower, and being narrower than the
+ * field below it was the defect.
+ */
 .bubble-user {
+  max-width: min(560px, 100%);
   background: var(--raised);
   color: var(--fg);
   border-bottom-right-radius: 3px;
@@ -154,23 +189,40 @@
   width: clamp(44px, 13vh, 104px);
   height: auto;
   color: var(--accent);
+  /* The glow: the accent behind the glyph (see `--accent-glow`). A drop-shadow
+     rather than a halo box, so it clings to the strokes instead of framing the
+     artwork's own air with a rectangle. Static -- no motion here. */
+  filter: drop-shadow(0 0 22px var(--accent-glow));
   animation: rise-in var(--motion-base) var(--ease-out) both;
 }
 
 /*
- * The wordmark, in the accent.
+ * The wordmark, as the brand gradient read through the letters.
  *
- * It used to be the one piece of gradient *text* in the app -- the accent read
- * through the letters with `background-clip: text` and a transparent colour.
- * With the accent flat there is nothing left to clip, so it is plain `color`
- * again, and the mark above it (`.empty-mark`) and this word are the same blue
- * by construction rather than by two gradient stops that happened to agree.
+ * This is the one place the accent is a *gradient*, and `color` cannot be one --
+ * a gradient is a background, so the ramp goes in `background`, is clipped to
+ * the glyph with `background-clip: text`, and the fill is made transparent so
+ * the ramp shows through the letters instead of a flat blue behind them. It is
+ * the pattern this file carried before the flat pass and then deleted; it is
+ * back, scoped to this one line, which is the only text in the app that is a
+ * brand rather than interface.
+ *
+ * `-webkit-text-fill-color` beside `color` because Chromium clips the text to
+ * the background only when that vendor fill is transparent; the standard `color`
+ * is set too so the rule reads correctly as standard CSS. Both ramp stops are
+ * held to the *text* contrast floor (5.77:1 and 5.41:1 on the field) rather than
+ * the graphic one, because a letter whose fill is a background is only as legible
+ * as the dimmer of the two stops -- the accent suite asserts each of them.
  */
 .empty h1 {
   margin: 0;
   font-size: var(--text-lg);
   font-weight: 600;
-  color: var(--accent);
+  background: var(--grad-accent);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
 }
 
 .empty p {
@@ -224,6 +276,16 @@
   min-width: 0;
 }
 
+/*
+ * The folder icon beside the name: `flex: none` so it never shrinks below its
+ * stroke when the name truncates, and `--fg-dim` to match the name it labels, so
+ * the two read as one unit rather than an icon with a caption.
+ */
+.empty-folder-icon {
+  flex: none;
+  color: var(--fg-dim);
+}
+
 .empty-folder-name {
   color: var(--fg-dim);
   font-size: var(--text-sm);
@@ -244,10 +306,28 @@
   font-size: var(--text-sm);
 }
 
+/*
+ * Each hint is a card: a keycap and its sentence, together, in a pill. The card's
+ * own surface is `--surface` and its keycap is `--raised` one step above it, so
+ * the two keys the composer hides in its placeholder read as two invitations
+ * rather than a footnote. Non-interactive by construction -- the `<button>` and
+ * `<a>`-free structure is asserted in `MessageList.test.tsx` -- so the border is
+ * a hairline that frames, not a control that promises a press.
+ */
+.empty-hints li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px 6px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--fg-dim);
+}
+
 .empty-hints kbd {
   display: inline-block;
   min-width: 20px;
-  margin-right: 7px;
   padding: 1px 6px;
   border: 1px solid var(--border);
   border-radius: var(--radius-xs);

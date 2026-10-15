@@ -79,10 +79,17 @@ def tool(name):
 
 
 def change_of(result):
-    """The `file_change` payload, or None if the tool reported no change."""
+    """The `file_change` counts the Files tree reads, or None when there are none.
+
+    The `diff` is dropped here on purpose: these tests are about the +/− badge
+    counts, and folding the diff text in would turn a count comparison into a
+    diff-text comparison to the nth line. The diff is asserted on its own in
+    `test_a_change_carries_the_unified_diff_for_the_trajectory`.
+    """
     for artifact in result.artifacts:
         if artifact.get("type") == "file_change":
-            return artifact["data"]
+            data = artifact["data"]
+            return {key: data[key] for key in ("path", "added", "removed")}
     return None
 
 
@@ -112,7 +119,13 @@ def test_mode_list_comes_from_the_core():
     """
     result = drive([{"id": 1, "method": "mode.list"}])[0]["result"]
     assert [m["name"] for m in result["modes"]] == list(MODE_ORDER)
-    assert {m["label"] for m in result["modes"]} == {"Build", "Plan", "Mission", "Skills"}
+    assert {m["label"] for m in result["modes"]} == {
+        "Build",
+        "Chat",
+        "Plan",
+        "Mission",
+        "Skills",
+    }
     assert result["mode"] == "build", "a fresh session starts in build"
 
 
@@ -169,6 +182,57 @@ def test_writing_modes_keep_every_mutating_tool(mode):
     session.set_mode(mode)
     names = {s.name for s in session._tool_schemas()}
     assert MUTATING <= names
+
+
+# Chat's own table, and it is the mirror image of the two above: not "what may
+# this change", but "what may this see". Spelled out rather than read off
+# `_CHAT_TOOLS`, for the reason the sweep in `test_tool_gate_surface.py` gives --
+# a test that asks the mode what it permits agrees with every change to the mode.
+LOOKING = {
+    "read",
+    "read_image",
+    "list_dir",
+    "glob",
+    "grep",
+    "sandbox_read_file",
+    "sandbox_list_files",
+    "browser_navigate",
+    "browser_get_text",
+    "browser_screenshot",
+    "browser_snapshot",
+    "browser_scroll",
+    "browser_wait_for",
+    "browser_eval",
+    "browser_click",
+    "browser_type",
+    "execute_js",
+    "set_viewport_size",
+}
+
+
+def test_chat_is_the_mode_that_cannot_look_at_anything():
+    """The one property that makes Chat a mode rather than a shorter Plan.
+
+    Everything else a mode decides is what it may *do* to the project; Chat's is
+    that it cannot see it. Asserted through the session rather than against the
+    allow-list, because the promise the window makes -- "nothing is read, run or
+    changed" -- is about what the model is offered and what the gate refuses, and
+    a mode whose schema filter and whose allow-list disagreed would pass a test
+    of either half alone.
+
+    The last line is the other half of the same claim: stripped of every tool
+    that reaches the project, Chat is still a mode. The verbs that write down what
+    the agent intends, and the two that put words in front of the user, are in
+    every mode on purpose, and a Chat allow-list that lost them would refuse a
+    clarifying question rather than a file read.
+    """
+    session = AgentSession(bus=EventBus())
+    session.set_mode("chat")
+    names = {s.name for s in session._tool_schemas()}
+
+    assert not names & LOOKING, f"Chat can look at something: {sorted(names & LOOKING)}"
+    assert not names & MUTATING
+    assert {"todo_write", "ask_user_question", "present"} <= names
 
 
 def test_the_permission_level_withholds_a_tool_the_mode_allows():
@@ -410,6 +474,28 @@ def test_rewriting_a_file_reports_a_real_line_diff(project):
     assert change_of(result) == {"path": "f.py", "added": 1, "removed": 1}
 
 
+def test_a_change_carries_the_unified_diff_for_the_trajectory(project):
+    """The trajectory view shows the real lines, not only the count.
+
+    `change_of` drops the diff so the badge tests above stay count comparisons;
+    this reads it raw and pins the +/- shape. A diff that came back empty -- or
+    as a second copy of the whole file -- would fail here rather than in the
+    window, which is the difference between a feature that works and one that
+    merely renders nothing.
+    """
+    (project / "f.py").write_text("alpha\n", encoding="utf-8")
+    result = asyncio.run(
+        tool("edit").execute(path="f.py", old_string="alpha", new_string="beta")
+    )
+    data = next(a for a in result.artifacts if a["type"] == "file_change")["data"]
+
+    assert data["path"] == "f.py"
+    # The file headers are the artifact's job, not the diff's -- it carries the
+    # path already, and a diff that repeated them is one nobody asked for.
+    assert "---" not in data["diff"] and "+++" not in data["diff"], data["diff"]
+    assert "-alpha" in data["diff"] and "+beta" in data["diff"], data["diff"]
+
+
 def test_appending_only_adds(project):
     (project / "f.py").write_text("a\nb\n", encoding="utf-8")
     result = asyncio.run(tool("write").execute(path="f.py", content="a\nb\nc\nd\n"))
@@ -649,14 +735,11 @@ async def test_a_command_runs_on_the_host_at_full_and_is_refused_at_high(
     only proved Full works would pass just as happily against a change that had
     also removed the check everywhere else.
 
-    The command is `python -c "print(...)"`, and the choice is load-bearing.
-    An earlier version of this test used `echo`, which passed at Full and failed
-    at High -- for the wrong reason. `echo` is not on the command allow-list, so
-    High refused it at the *allow-list* gate, which is upstream of the isolation
-    gate and unchanged by this work. The test would have gone green while
-    measuring nothing it claimed to measure. `python` is on the allow-list, so
-    at High the allow-list passes and the isolation gate is what refuses --
-    which is the gate under test.
+    The command is `python -c "print(...)"`. High now bypasses the command
+    allow-list, so the allow-list is no longer a gate that can confound this test
+    at High -- any command reaches the isolation gate. `python` is kept on the
+    allow-list anyway, so one spelling measures the isolation gate at High and
+    the host path at Full without the command itself being the variable.
 
     The command also produces output that proves it *ran* rather than merely
     being accepted, and nothing here writes to disk or touches anything outside
@@ -897,11 +980,15 @@ async def test_full_runs_a_command_off_the_allowlist(tmp_path, monkeypatch):
     )
 
 
-async def test_high_still_refuses_a_command_off_the_allowlist(tmp_path, monkeypatch):
-    """The negative, and the reason the ladder still means anything.
+async def test_high_runs_off_the_allowlist_but_stays_sandboxed(tmp_path, monkeypatch):
+    """High lifts the allow-list now, but not the container.
 
-    If High also ran everything, Full would be High under a second name and the
-    bar would be offering the same power twice.
+    `ls` is deliberately off the allow-list. At High it clears that gate -- the
+    "not in allowlist" refusal is gone -- because the allow-list is no longer
+    what High is bounded by. The isolation gate is: High has not been granted
+    the host, so with no sandbox running the command is still refused, only the
+    refusal names the sandbox rather than the list. That is the whole of the
+    grant -- more commands, the same container boundary, still asked about.
     """
     from tonyagent.tools import ToolCall
     from tonyagent.tools.orchestrator import ToolOrchestrator
@@ -910,8 +997,8 @@ async def test_high_still_refuses_a_command_off_the_allowlist(tmp_path, monkeypa
     orch = ToolOrchestrator()
     orch.set_trusted(str(tmp_path), True)
     orch.set_permission(_permission("high"))
-    # The user says yes, so the refusal under test is the command allow-list's
-    # and not the confirmation gate's.
+    # The user says yes, so any refusal is the isolation gate's and not the
+    # confirmation gate's -- High has not been granted the prompt either.
     orch.set_confirmation_callback(
         lambda request: asyncio.get_running_loop().create_task(_answer(orch, request))
     )
@@ -923,8 +1010,12 @@ async def test_high_still_refuses_a_command_off_the_allowlist(tmp_path, monkeypa
     )
     result = await orch.execute_tool_async(call)
 
-    assert result.status is ToolResultStatus.ERROR
-    assert "not in allowlist" in (result.error or ""), result.error
+    assert "not in allowlist" not in (result.error or ""), (
+        f"High still refuses an off-allow-list command: {result.error}"
+    )
+    assert result.status is ToolResultStatus.ERROR, (
+        "High left the sandbox -- it must still be bounded by the container"
+    )
 
 
 #: Every way of spelling the three commands the denylist exists to stop.
@@ -1183,14 +1274,15 @@ def test_permission_survives_a_mode_switch():
     assert session.permission_name == "low"
 
 
-def test_the_ladder_reports_which_rung_widens_the_allowlist():
-    """The bar has to be able to say what Full adds, so the wire has to say it.
+def test_the_ladder_reports_which_rung_runs_off_the_allowlist():
+    """The bar has to be able to say what a rung permits, so the wire says it.
 
-    `runs_commands` alone cannot express this: High and Full are identical on
-    that flag, which is exactly the pair the user is choosing between. So the
-    payload carries `runs_any_command` as its own boolean, and the frontend
-    marks the rung from that rather than from the description -- prose is not
-    something to parse for a security fact.
+    `runs_any_command` is reported per rung rather than inferred from the
+    description -- prose is not something to parse for a security fact. High and
+    Full both set it now: running an off-list command is no longer the boundary
+    between them. What still separates the two on the wire is the host boundary
+    (`runs_on_host`) and the prompt (`skips_confirmation`), each its own boolean
+    and each asserted on its own elsewhere; `runs_commands` is True for both.
     """
     session = AgentSession(bus=EventBus())
     frames = drive(
@@ -1200,9 +1292,11 @@ def test_the_ladder_reports_which_rung_widens_the_allowlist():
     levels = {p["name"]: p for p in frames[0]["result"]["permissions"]}
 
     assert levels["full"]["runs_any_command"] is True
-    assert levels["high"]["runs_any_command"] is False
+    assert levels["high"]["runs_any_command"] is True
     assert levels["medium"]["runs_any_command"] is False
     assert levels["low"]["runs_any_command"] is False
-    # And the two rungs really are otherwise the same, so the new flag is the
-    # only thing telling them apart on the wire.
+    # `runs_any_command` no longer tells High from Full; `runs_commands` never
+    # did. The rung that still reads apart on the wire is the host boundary.
     assert levels["high"]["runs_commands"] == levels["full"]["runs_commands"] is True
+    assert levels["high"]["runs_on_host"] is False
+    assert levels["full"]["runs_on_host"] is True

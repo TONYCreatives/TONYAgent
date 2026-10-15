@@ -88,7 +88,11 @@
   gap: 8px;
   height: var(--topbar-h);
   flex: none;
-  padding: 0 10px;
+  /* `--pad-panel`: the same edge as the rows below it, the Files filter, the
+     settings pane and every dialog. It was 10 here and 12 on the foot -- three
+     numbers for one panel's content edge, which is what "the layout is
+     inconsistent" looks like in a measurement. */
+  padding: 0 var(--pad-panel);
   border-bottom: 1px solid var(--glass-edge);
 }
 
@@ -98,7 +102,9 @@
   width: 36px;
   height: 36px;
   border: 0;
-  border-radius: var(--radius-sm);
+  /* A disc, like the rail button it stands in for: this is the same control in
+     the two states of one sidebar, so the two had better be one shape. */
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--fg-mute);
   cursor: pointer;
@@ -240,7 +246,7 @@
   flex: none;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--fg-dim);
   cursor: pointer;
@@ -275,7 +281,6 @@
  * them one by one means a fifth pane would quietly keep the list on screen
  * behind itself.
  */
-.chatlist:not([data-pane="chats"]) .chatlist-new,
 .chatlist:not([data-pane="chats"]) .chatlist-label,
 .chatlist:not([data-pane="chats"]) .chatlist-rows,
 .chatlist:not([data-pane="chats"]) .chatlist-empty {
@@ -311,7 +316,7 @@
   align-items: center;
   gap: 4px;
   flex: none;
-  padding: 8px 10px;
+  padding: 8px var(--pad-panel);
   border-top: 1px solid var(--glass-edge);
 }
 
@@ -321,7 +326,7 @@
   width: 38px;
   height: 38px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--fg-mute);
   cursor: pointer;
@@ -407,41 +412,6 @@
   cursor: default;
 }
 
-.chatlist-new {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin: 12px 12px 10px;
-  padding: 0 12px;
-  height: 40px;
-  flex: none;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--raised);
-  color: var(--fg);
-  font: inherit;
-  font-size: var(--text-base);
-  cursor: pointer;
-  transition:
-    background var(--motion-fast) ease,
-    border-color var(--motion-fast) ease,
-    transform var(--motion-fast) var(--ease-out);
-}
-
-.chatlist-new:hover:not(:disabled) {
-  background: var(--hover);
-  border-color: var(--border-strong, var(--border));
-}
-
-.chatlist-new:active:not(:disabled) {
-  transform: scale(0.98);
-}
-
-.chatlist-new:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
 .chatlist-empty {
   /*
    * The empty list takes the free height, and that is what pins the foot.
@@ -457,13 +427,17 @@
    * for a user with no conversations.
    */
   flex: 1;
-  padding: 0 14px 8px;
+  padding: 0 var(--pad-panel) 8px;
 }
 
 .chatlist-rows {
   list-style: none;
   margin: 0;
-  padding: 0 8px 12px;
+  /* The region that insets the row *cards*: `--pad-row` a side, and each row
+     pads by the same, so a row's fill starts 8px in and its text on the panel's
+     16 -- see the tokens. 8 was already right here; it is a token now so the
+     Files tree, the New chat button and this cannot drift apart. */
+  padding: 0 var(--pad-row) 12px;
   overflow-y: auto;
   min-height: 0;
   /* Only the rows scroll; the "New chat" button above them stays put. */
@@ -478,7 +452,9 @@
  * the conversation titles it sits above, and those are what the panel is for.
  */
 .chatlist-label {
-  padding: 8px 12px 8px;
+  /* Inside `.chatlist-rows`, so `--pad-row` on top of the region's own 8px is
+     the panel's `--pad-panel` edge again. */
+  padding: 8px var(--pad-row) 8px;
   font-size: var(--text-xs);
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -520,31 +496,26 @@
   white-space: nowrap;
 }
 
-/*
- * The project a new chat will be filed under, shown on the New chat button.
- *
- * Pushed to the far edge with `margin-left: auto` rather than sat next to the
- * label: it is the button's state rather than a second action, so it belongs at
- * the end of the line where the eye finishes. A flex row with two children and
- * no auto margin pins the first to the start and the second wherever it lands.
- */
-.chatlist-new-project {
-  margin-left: auto;
-  font-size: var(--text-xs);
-  color: var(--fg-mute);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 96px;
-}
-
 .chatrow {
   position: relative;
   display: flex;
   align-items: stretch;
-  /* `--radius-md`, one step up from the shape it had, because this is a list
-     item rather than a control: the row is as tall as two lines of text and a
-     small corner on a box that shape reads as a table cell. */
+  /*
+   * A corner, and the stadium sweep is where that was settled rather than
+   * assumed.
+   *
+   * The sweep gave every row a pill, on the reasoning that a row paints an edge
+   * when you hover it. That is true and it is the wrong question: a row is as
+   * tall as two lines of text and *stacks with its neighbours*, so a stadium on
+   * it makes each one a button lying in a column -- and a 271x56 capsule
+   * carrying the selection wash reads as the largest control in the window. What
+   * the sweep got right was everything beside the rows: the drawer's buttons,
+   * the rename field, the icon discs.
+   *
+   * The step above the corner steps is the original argument and it holds -- this
+   * is a list item, and a small corner on a box this shape reads as a table
+   * cell.
+   */
   border-radius: var(--radius-md);
   transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
 }
@@ -579,7 +550,9 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 10px 12px;
+  /* `--pad-row`, on top of the region's own, so a title, a group label and the
+     New chat button's label all start on the panel's 16px edge. */
+  padding: 10px var(--pad-row);
   border: 0;
   background: none;
   color: var(--fg-mute);
@@ -642,7 +615,9 @@
 
 /*
  * The inline rename field. Deliberately the same box the row was, so the title
- * does not appear to jump when editing starts -- the text swaps in place.
+ * does not appear to jump when editing starts -- the text swaps in place. Its
+ * corner is the row's own shape, one step in: the field is inside the row, and
+ * a stadium here would put an arc inside a rectangle.
  */
 .chatrow-input {
   flex: 1;
@@ -667,6 +642,14 @@
   position: fixed;
   z-index: 40;
   min-width: 132px;
+  /*
+   * The cap is written inline from the room the placement measured -- see
+   * `placeFixedMenu` -- and this is what makes a cap that is still too tall
+   * usable rather than cut off. It is the reason the menu opens *upward* near
+   * the floor of a short window instead of hiding its own Delete, and the
+   * fallback for the window that is too short for either side.
+   */
+  overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--border);
   /* `--radius-md`: a floating surface is a container, so it is one step off the
@@ -685,6 +668,7 @@
   width: 100%;
   padding: 6px 10px;
   border: 0;
+  /* A menu row is a row: see `.chatrow`. */
   border-radius: var(--radius-xs);
   background: none;
   color: var(--fg-mute);

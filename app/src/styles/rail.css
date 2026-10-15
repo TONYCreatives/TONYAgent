@@ -92,7 +92,10 @@
   width: 44px;
   height: 44px;
   border: 0;
-  border-radius: var(--radius-sm);
+  /* A disc, which is this window's shape for an icon you can press: the tokens
+     list the rail item among the stadiums, and 12px corners on a 44x44 button
+     was the last place in the strip that was not one. */
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--fg-mute);
   cursor: pointer;
@@ -150,8 +153,8 @@
  *
  * So the state is painted on the button, which makes the shapes the same by
  * construction rather than by two rules agreeing. `.rail-btn` keeps the 44x44
- * click target and the 12px radius, and its own background is clipped by that
- * radius -- there is no second box left to keep in step.
+ * click target and now takes the stadium radius with it, and its own background
+ * is clipped by that radius -- there is no second box left to keep in step.
  *
  * The hover is restated rather than left to the rule above, which is *more*
  * specific -- `.rail-btn:hover:not(:disabled)` is three selectors to this one's

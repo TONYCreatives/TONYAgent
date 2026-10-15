@@ -104,18 +104,34 @@
  * baseline falls, so inside a 34px band both the title and the path drew
  * against the top edge and the header read as text that had slipped up. Rows
  * are laid out by their own line boxes now, so there is nothing to slip.
+ *
+ * The assistant panel's head is the other half of this pair and keeps the same
+ * box: one inset, one bottom hairline, one chrome fill, so the two panels either
+ * side of the file start their content on the same edge. It differs in being a
+ * row rather than a column -- a label and the control that puts the panel away
+ * -- which is why it is a rule of its own below rather than a shared selector
+ * with a `flex-direction` override.
  */
 .code-explorer-head {
   display: flex;
   flex-direction: column;
   gap: 5px;
   flex: none;
-  padding: 8px 12px 9px;
+  /* `--pad-panel` horizontally, paired with the tree under it: the tree's rows
+     are inset `--pad-row` and pad by it, so the head's text, the filter's text
+     and every row's name are one edge. It was 12, which lined up with nothing. */
+  padding: 8px var(--pad-panel) 9px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--chrome);
 }
 
-.code-explorer-title {
+/*
+ * One label style for a panel head, and there are two of them: the explorer's
+ * and the assistant's. A second copy would be a second size for the same kind of
+ * word, which is how this file ended up with five panel insets once.
+ */
+.code-explorer-title,
+.helper-title {
   color: var(--fg-mute);
   font-size: var(--text-2xs);
   font-weight: 700;
@@ -176,4 +192,161 @@
 .code-explorer .files-pane {
   flex: 1;
   min-height: 0;
+}
+
+/*
+ * --- Code mode's assistant panel ------------------------------------------
+ *
+ * The file, and the conversation that is about it, side by side.
+ *
+ * A row inside `.main` rather than a third column of the window's grid. The
+ * grid belongs to the shell -- the title bar, the status bar and the dialog
+ * scrim all span it -- and a third column would have put the assistant *beside*
+ * the status bar instead of above it, so the bar would have stopped at the
+ * editor's edge and the panel would have run to the bottom of the window under
+ * it. `.main` is already the column that owns the viewer, the status bar and
+ * the overlays, so the split belongs inside it.
+ */
+.code-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  /* The positioning context for the narrow-window rule at the foot of this
+     file, which floats the panel over the file rather than taking a column
+     from it. */
+  position: relative;
+}
+
+/*
+ * The panel: a header, and the transcript and field below it.
+ *
+ * `flex: none` with a width of its own, so the *file* is what absorbs a wider
+ * window -- the panel holds a column of text, which has a width it wants and no
+ * use for more.
+ *
+ * There is no transition on this width, and the omission is the same one
+ * `shell.css` states for the conversation list: animating a docked column
+ * re-lays-out the code beside it on every frame, and a file reflowing under the
+ * pointer reads as the editor being dragged rather than as a panel arriving. The
+ * list can slide because it floats; this one cannot because it does not.
+ */
+.helper {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: var(--code-helper-w);
+  min-height: 0;
+  border-left: 1px solid var(--border-soft);
+  background: var(--surface);
+}
+
+/*
+ * Put away: the strip the toggle sits in, and nothing else.
+ *
+ * `--rail-w`, which is the width this window already gives a panel that is not
+ * showing -- 44px of target with air either side. The header stays (see `App`),
+ * so the strip is never empty and the way back is never hidden.
+ */
+.helper[data-state="closed"] {
+  width: var(--rail-w);
+}
+
+/* The panel's head, and it holds the same box as the explorer's over there. */
+.helper-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+  padding: 8px var(--pad-panel) 9px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--chrome);
+}
+
+/* Away, the header *is* the strip: the button is centred in the rail's width
+   and the label is gone, because 44px has room for one of the two. */
+.helper[data-state="closed"] .helper-head {
+  justify-content: center;
+  padding-inline: 0;
+}
+
+.helper[data-state="closed"] .helper-title {
+  display: none;
+}
+
+/*
+ * The one control on the panel.
+ *
+ * 24px tall, which is what every other control in a header row of this app is --
+ * the viewer's Edit, theme and Close are the same box, and a head whose one
+ * button were 44px tall would be a taller band than the explorer's beside it.
+ * Wide it is not: the button is as wide as it is tall where it sits beside the
+ * label, and takes the rail's own 44px where it has the strip to itself.
+ *
+ * The put-away state widens the target and does not heighten it, deliberately:
+ * a taller button is a taller *header*, so the panel's band would grow by 20px at
+ * the moment it was put away -- and `layout.test.ts` holds every `[data-state]`
+ * rule to that standard, which is what stops a state from repainting itself
+ * between two frames.
+ */
+.helper-toggle {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  /* A disc -- and at 44x24, when the panel is closed, a stadium with the same
+     12px step on either end. */
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.helper[data-state="closed"] .helper-toggle {
+  width: 44px;
+}
+
+.helper-toggle:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+/* The transcript, the banner and the composer, stacked exactly as they are in
+   the conversation column -- they are the same three children (`App`). */
+.helper-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/*
+ * A window too narrow for three columns: the explorer, the file and the panel.
+ *
+ * The assistant gives way, and it is the right one to: the tree and the file are
+ * what the mode is *for*, and the panel is the one of the three that can be put
+ * away without losing anything. It does not disappear, though -- it floats over
+ * the file, the way the conversation list floats over the transcript in Agent
+ * mode, so a narrow window can still ask about what it is reading. Its own
+ * width, cast to the left (`--panel-cast`, which exists for exactly this: a
+ * right-edge panel), and above the viewer's own sticky rows.
+ *
+ * 720 is the ladder's first step, and the number is not arbitrary here: it is
+ * where the chrome starts giving up air, and 268 of explorer plus 400 of panel
+ * plus a file with nothing left in it is the same statement in pixels. The
+ * closed strip keeps the rule too -- it is 44px of a file rather than 400, but
+ * a strip that vanished at 720 would take its own toggle with it.
+ */
+@media (max-width: 720px) {
+  .helper {
+    position: absolute;
+    inset: 0 0 0 auto;
+    z-index: 2;
+    --panel-cast: -18px;
+    box-shadow: var(--shadow-2);
+  }
 }

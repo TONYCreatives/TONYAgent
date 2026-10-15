@@ -1,9 +1,12 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// Tauri serves the built assets from a custom protocol, so asset URLs must be
-// relative. Absolute "/assets/..." paths resolve against the protocol root and
-// 404 in a packaged build while working fine in `vite dev`.
+// Relative asset URLs. The page is served from a loopback HTTP server whose port
+// is picked at runtime (`window/host.py`'s `AssetServer`), so "/assets/..."
+// would resolve against that server's root rather than against the page -- which
+// happens to work today and did not when a Rust shell served the same files from
+// a custom protocol, where it 404d in the packaged build while working fine in
+// `vite dev`. Relative is the form that does not depend on who is serving.
 export default defineConfig({
   plugins: [react()],
   base: "./",
@@ -13,25 +16,32 @@ export default defineConfig({
     strictPort: true,
     watch: {
       /*
-       * Keep the watcher out of the Rust build directory.
+       * Keep the watcher out of the two directories this repo writes while it is
+       * running something else.
        *
-       * Vite's watcher walks the project root, which includes
-       * src-tauri/target/. While cargo is building, those .exe files are held
-       * open, and fs.watch on Windows fails with EBUSY -- which kills Vite
-       * outright and takes `tauri dev` down with it:
+       * `.tmp/` is where `npm test` emits its compiled tests (`tsconfig.test.json`
+       * outDir), and it is rewritten wholesale on every run -- so a dev server
+       * watching it would reload the page every time somebody ran the suite, or
+       * once per file if the writes raced. `dist/` is the build output this
+       * server does not consume.
+       *
+       * The list used to name `src-tauri/target` and `binaries`, which no longer
+       * exist: a cargo build held .exe files open there, and fs.watch on Windows
+       * fails with EBUSY on a locked file, which killed Vite outright:
        *
        *   Error: EBUSY: resource busy or locked, watch '...\build_script_build.exe'
-       *   Error The "beforeDevCommand" terminated with a non-zero status code.
        *
-       * Watching those files is also pointless: cargo owns them, and a change
-       * to one is not something the frontend needs to react to.
+       * That failure mode is gone with the Rust shell. Ignoring directories that
+       * do not exist is not.
        */
-      ignored: ["**/src-tauri/**", "**/binaries/**"],
+      ignored: ["**/.tmp/**", "**/dist/**"],
     },
   },
   build: {
-    // Match the webview engines Tauri ships against. es2021 is safe for the
-    // WebView2 runtime on Windows and the WKWebView on macOS.
+    // Match the webviews this app is actually hosted in: the WebView2 runtime on
+    // Windows and WKWebView on macOS. es2021 is safe for both, and it is the one
+    // target the two engines agree on -- a newer one would ship syntax the older
+    // WebView2 builds on Windows 10 cannot parse.
     target: "es2021",
     outDir: "dist",
     emptyOutDir: true,

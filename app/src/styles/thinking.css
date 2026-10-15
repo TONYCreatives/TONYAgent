@@ -139,16 +139,32 @@
 /*
  * The model menu, anchored to the chip that opens it.
  *
- * The wrap is the containing block and the panel is absolute within it. It
- * opens *down* now: the selector lives in the title bar at the top of the
- * window, so down is where the room is -- the opposite of the tool budget
- * popover, which is still in the composer at the foot of the window and still
- * opens upward.
+ * The wrap is the containing block and the panel is absolute within it. **Which
+ * side of the chip it opens on is measured, not declared.** It used to open
+ * down and to the right unconditionally: down because the selector lives in the
+ * title bar at the top of the window and that is where the room is (the
+ * opposite of the tool budget popover, which is in the composer at the foot of
+ * the window and still opens upward), and right because the menu hangs off the
+ * chip's left edge by default. The chip is in the title bar's *right-hand*
+ * cluster, so a 320px panel anchored to its left edge ran off the window -- the
+ * report this came from. The code viewer's theme chip had already been given
+ * `right: 0` by hand for exactly that reason, which is the local patch this
+ * generalises.
+ *
+ * So the base rule declares neither anchor and the two attributes carry them:
+ * `data-dir` from the room above and below the chip, `data-align` from the room
+ * to each side. A menu whose component never got a placement therefore renders
+ * unpositioned rather than silently opening the wrong way, which is the same
+ * contract `.permchoice-menu` has and the reason both fall back to `down` in
+ * their markup.
  *
  * The list is its own scroll box with a capped height rather than an
  * expanding one. OpenRouter answers with several hundred entries, and a menu
  * three thousand pixels tall is a menu that pushes the transcript off the
- * screen the user opened it from.
+ * screen the user opened it from. It is also what gives way when the *window*
+ * caps the menu: the panel is a flex column and the list is the only child
+ * allowed to shrink, so an inline `max-height` written from the measured room
+ * shortens the list instead of cutting the panel off.
  */
 .modelpicker-wrap {
   position: relative;
@@ -157,10 +173,9 @@
 
 .modelpicker {
   position: absolute;
-  /* Down, because the selector is in the title bar now -- see above. */
-  top: calc(100% + 6px);
-  left: 0;
   z-index: 40;
+  display: flex;
+  flex-direction: column;
   width: 320px;
   padding: 8px;
   border: 1px solid var(--border);
@@ -170,14 +185,49 @@
   box-shadow: var(--shadow-1);
 }
 
+/*
+ * `--menu-gap`, not a 6: `placeMenu` subtracts the same token before the
+ * measured room becomes the menu's cap, and the two have to agree exactly --
+ * see the token's own note.
+ */
+.modelpicker[data-dir="down"] {
+  top: calc(100% + var(--menu-gap));
+}
+
+.modelpicker[data-dir="up"] {
+  bottom: calc(100% + var(--menu-gap));
+}
+
+/*
+ * `start` is the anchor's left edge and `end` its right one. No width is
+ * involved: the side is chosen by which one has more room, and the roomier side
+ * is the side that fits whenever anything fits -- see `menuPlacement.ts` for why
+ * that is the same rule as "does the menu fit" without having to know how wide
+ * the menu is.
+ */
+.modelpicker[data-align="start"] {
+  left: 0;
+}
+
+.modelpicker[data-align="end"] {
+  right: 0;
+}
+
 .modelpicker-filter {
   display: block;
   width: 100%;
+  /* The field is not the box that gives way -- see `.modelpicker-list`, which
+     is, and which is the only child here with a height worth reclaiming. */
+  flex: none;
   height: 28px;
   margin-bottom: 6px;
-  padding: 0 9px;
+  padding: 0 12px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-xs);
+  /* A field you can see the edge of, so it is a stadium -- the rule in
+     `tokens.css`. The 12px side padding is the pill's own inset: on a box this
+     short the curve eats the first eight pixels, and the text used to start
+     inside the arc. */
+  border-radius: var(--radius-pill);
   background: var(--input);
   color: var(--fg);
   font: inherit;
@@ -189,6 +239,11 @@
 }
 
 .modelpicker-list {
+  /* A ceiling, not a height: the list shrinks below it when the window caps the
+     menu, and `min-height: 0` is what lets it -- without it a flex item refuses
+     to be shorter than its content, and the panel overflows the cap instead. */
+  flex: 0 1 auto;
+  min-height: 0;
   max-height: 264px;
   margin: 0;
   padding: 0;
@@ -201,7 +256,10 @@
   align-items: baseline;
   gap: 7px;
   width: 100%;
-  padding: 5px 8px;
+  /* The 12px inset is kept although the rows are boxes again: the filter above
+     them is a stadium whose own text sits 12px in, and a menu's rows share the
+     text column of the field at the top of it. */
+  padding: 5px 12px;
   border: 0;
   border-radius: var(--radius-xs);
   background: none;
@@ -267,7 +325,7 @@
 
 .budget-popover {
   position: absolute;
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + var(--menu-gap));
   left: 0;
   z-index: 40;
   width: 232px;
@@ -402,6 +460,10 @@
  * One row: the field takes what is left and the button is its own size, so the
  * two read as a single control. `Set` is a word and not a glyph because a lone
  * arrow next to a number field is ambiguous about what it applies to.
+ *
+ * **Both halves are stadiums, and they were the only two boxes in this popover
+ * that were not.** The field and the button were 6px-cornered rectangles sitting
+ * under a grid of six pill presets, in a row that is one control.
  */
 .budget-custom-row {
   display: flex;
@@ -423,9 +485,11 @@
   flex: 1;
   min-width: 0;
   height: 26px;
-  padding: 0 8px;
+  /* 12px, not 8: a stadium's own inset, so the digits do not start inside the
+     left arc. See the shape rule in tokens.css. */
+  padding: 0 12px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-pill);
   background: var(--input);
   color: var(--fg);
   font: inherit;
@@ -446,9 +510,9 @@
 
 .budget-custom-apply {
   height: 26px;
-  padding: 0 10px;
+  padding: 0 13px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-pill);
   background: var(--raised);
   color: var(--fg);
   font: inherit;
@@ -535,9 +599,12 @@
   align-items: center;
   gap: 6px;
   max-width: 260px;
-  padding: 3px 4px 3px 3px;
+  /* 3px of air all round, and the pill's curve does the rest: this is a chip,
+     and the tokens say a chip is a stadium. 4px on the right, so the remove
+     glyph is not sitting on the curve. */
+  padding: 3px 7px 3px 3px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   background: var(--raised);
 }
 
@@ -549,7 +616,9 @@
 .attach-thumb {
   width: 26px;
   height: 26px;
-  border-radius: var(--radius-xs);
+  /* A disc: 26px inside a stadium whose ends are 17px, so a box corner here
+     would be the one square in the chip. */
+  border-radius: var(--radius-pill);
   object-fit: cover;
 }
 
@@ -558,7 +627,7 @@
   place-items: center;
   width: 26px;
   height: 26px;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-pill);
   background: var(--input);
   color: var(--fg-mute);
   font-size: var(--text-2xs);
@@ -587,7 +656,7 @@
   height: 18px;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-pill);
   background: none;
   color: var(--fg-mute);
   font-size: var(--text-md);

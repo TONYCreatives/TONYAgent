@@ -62,9 +62,9 @@ async function bar(options: {
   busy?: boolean;
   tabs?: Tab[];
   active?: string;
-  mode?: "agent" | "code";
+  mode?: "agent" | "code" | "trajectory";
   canCode?: boolean;
-  onModeChange?: (mode: "agent" | "code") => void;
+  onModeChange?: (mode: "agent" | "code" | "trajectory") => void;
 } = {}): Promise<{ container: HTMLElement; calls: Calls }> {
   const calls: Calls = {
     minimized: 0,
@@ -113,16 +113,16 @@ describe("the Agent / Code switch", () => {
   const activeMode = (container: HTMLElement) =>
     one(container, ".topbar-mode.is-active")!.textContent;
 
-  test("it names both halves of the window", async () => {
+  test("it names every state of the window", async () => {
     // A single toggle labelled with the state you are *not* in is a control
-    // people press the wrong way round, so both states are named.
+    // people press the wrong way round, so every state is named.
     const { container } = await bar();
-    assert.deepEqual(modes(container), ["Agent", "Code"]);
+    assert.deepEqual(modes(container), ["Agent", "Code", "Trajectory"]);
     assert.equal(activeMode(container), "Agent");
     assert.equal(
       one(container, ".topbar-modes")!.getAttribute("aria-label"),
       "View",
-      "a group of two buttons needs a name",
+      "a group of buttons needs a name",
     );
   });
 
@@ -153,6 +153,18 @@ describe("the Agent / Code switch", () => {
     assert.match(codeButton.getAttribute("title") ?? "", /project folder/);
     await click(codeButton);
     assert.deepEqual(asked, [], "a disabled half must not be enterable");
+  });
+
+  test("trajectory is a third mode, and it is never disabled", async () => {
+    // Trajectory reads the event log, so it has nothing to do with a project
+    // folder: it is live whether or not one is open -- unlike the code half.
+    const asked: string[] = [];
+    const { container } = await bar({ canCode: false, onModeChange: (m) => asked.push(m) });
+    const button = all(container, ".topbar-mode").find((b) => b.textContent === "Trajectory")!;
+    assert.ok(button, "the trajectory mode is missing from the switch");
+    assert.equal((button as HTMLButtonElement).disabled, false, "trajectory is gated on canCode");
+    await click(button);
+    assert.deepEqual(asked, ["trajectory"]);
   });
 
   test("the switch is not a drag handle", async () => {

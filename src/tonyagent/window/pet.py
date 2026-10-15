@@ -603,5 +603,18 @@ def _create_window(page: str, x: int, y: int, api: Any = None) -> Any:
         # while the agent works, and `WS_EX_NOACTIVATE` is how it is enforced.
         focus=False,
         text_select=False,
+        # The DWM frame, and this is what makes the corners roundable at all.
+        #
+        # pywebview's `shadow` is what calls `DwmExtendFrameIntoClientArea` -- a
+        # 1px DWM frame -- and with no frame there is nothing for DWM to round, so
+        # `DWMWA_WINDOW_CORNER_PREFERENCE` is accepted and then ignored. The main
+        # app window has been the proof of this all along: with `shadow=True` the
+        # preference reads back as 2 and the corner pixels are the desktop's.
+        #
+        # The pet needs the same treatment. `make_framed` adds `WS_THICKFRAME`
+        # (which DWM rounds), and `install_frame` answers `WM_NCCALCSIZE` with
+        # "no non-client area" so the frame is invisible -- but DWM only rounds
+        # a window that *has* a frame, and `shadow=True` is what gives it one.
+        shadow=True,
         background_color="#1a1a1a",
     )

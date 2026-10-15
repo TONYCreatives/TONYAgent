@@ -151,6 +151,32 @@ const ANSWERS: Record<string, unknown> = {
   "providers.list": {
     providers: [{ id: "openrouter", name: "OpenRouter", has_key: true }],
   },
+  /*
+   * Long ids on purpose. This page exists to be looked at, and a model id is
+   * the longest unbreakable string in the window -- it is what the chip
+   * ellipsises and what a picker row has to hold. The real router answers with
+   * several hundred; eight is enough to fill the scroll box.
+   */
+  "models.list": {
+    models: [
+      "stealth/space-bunny-alpha",
+      "anthropic/claude-sonnet-4.5-20250929-thinking-preview",
+      "google/gemini-2.5-pro-preview-03-25-experimental",
+      "openai/gpt-5-codex-high-reasoning-effort-2026-01-14",
+      "deepseek/deepseek-chat-v3.1:free",
+      "meta-llama/llama-4-maverick-instruct-basic",
+      "qwen/qwen3-coder-480b-a35b-instruct",
+      "mistralai/mistral-medium-3.1",
+    ],
+  },
+  /*
+   * Enough rows to scroll, and that is the point of the number.
+   *
+   * A list short enough to fit its pane never puts a row near the window's
+   * bottom edge, which is where the row menu's placement is least tested and
+   * where it can end up off the window. Eight is one screenful at the window's
+   * 480px minimum height.
+   */
   "conversations.list": {
     conversations: [
       {
@@ -169,12 +195,96 @@ const ANSWERS: Record<string, unknown> = {
         updated_at: 1_700_000_000,
         message_count: 2,
       },
+      {
+        id: "c".repeat(32),
+        title: "Move the tool budget into the composer",
+        project: PROJECT,
+        created_at: 1_699_000_000,
+        updated_at: 1_699_000_000,
+        message_count: 11,
+      },
+      {
+        id: "d".repeat(32),
+        title: "The sandbox backend keeps picking wsl",
+        project: PROJECT,
+        created_at: 1_698_000_000,
+        updated_at: 1_698_000_000,
+        message_count: 6,
+      },
+      {
+        id: "e".repeat(32),
+        title: "Streaming events arrive out of order",
+        project: PROJECT,
+        created_at: 1_697_000_000,
+        updated_at: 1_697_000_000,
+        message_count: 3,
+      },
+      {
+        id: "f".repeat(32),
+        title: "Add a reduced-motion audit to the test run",
+        project: PROJECT,
+        created_at: 1_696_000_000,
+        updated_at: 1_696_000_000,
+        message_count: 8,
+      },
+      {
+        id: "9".repeat(32),
+        title: "Skills should load from the project root",
+        project: PROJECT,
+        created_at: 1_695_000_000,
+        updated_at: 1_695_000_000,
+        message_count: 5,
+      },
+      {
+        id: "8".repeat(32),
+        title: "Rename the permission levels",
+        project: PROJECT,
+        created_at: 1_694_000_000,
+        updated_at: 1_694_000_000,
+        message_count: 1,
+      },
     ],
   },
   "mode.list": {
+    /*
+     * The core's own five, in the core's own order (`MODE_ORDER`), with the
+     * core's own words -- this page's whole job is to look like the window, and
+     * a stub that offered two modes showed a composer the window never draws:
+     * the read-only field's top corners were squared off here and nowhere on
+     * screen, because Chat and Skills were not on this page to be wrong.
+     */
     modes: [
-      { name: "build", label: "Build", description: "Full access.", writes: true },
-      { name: "plan", label: "Plan", description: "Read only.", writes: false },
+      {
+        name: "chat",
+        label: "Chat",
+        description: "Talk. Nothing is read, run or changed.",
+        writes: false,
+      },
+      {
+        name: "build",
+        label: "Build",
+        description: "Full access. Read, write and run commands.",
+        writes: true,
+      },
+      {
+        name: "plan",
+        label: "Plan",
+        description: "Read and search only. Writing is refused, not discouraged.",
+        writes: false,
+      },
+      {
+        name: "mission",
+        label: "Mission",
+        description: "A long task, run to completion without stopping to ask.",
+        writes: true,
+      },
+      {
+        name: "skills",
+        label: "Skills",
+        description:
+          "Explain and plan, with this project's skills loadable. No side effects at all.",
+        writes: false,
+      },
     ],
     mode: "build",
   },
@@ -202,10 +312,10 @@ const ANSWERS: Record<string, unknown> = {
       {
         name: "high",
         label: "High",
-        description: "Everything, including running commands.",
+        description: "Everything, including running any command.",
         runs_commands: true,
         skips_confirmation: false,
-        runs_any_command: false,
+        runs_any_command: true,
       },
       {
         name: "full",

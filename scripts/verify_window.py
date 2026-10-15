@@ -14,6 +14,7 @@ worse than no verification script.
 from __future__ import annotations
 
 import faulthandler
+import json
 import sys
 import threading
 import time
@@ -49,6 +50,52 @@ def check(label: str, fn: object) -> None:
         say(f"  [OK]   {label}: {fn()}")  # type: ignore[operator]
     except Exception as exc:  # noqa: BLE001 - the failure is the result
         say(f"  [FAIL] {label}: {type(exc).__name__}: {exc}")
+
+
+#: Installs `window.__menuBox`, which reports where a menu landed.
+#:
+#: A menu is positioned by the stylesheet against its own trigger, so whether it
+#: fits is a question only a layout engine can answer -- `menuPlacement.test.ts`
+#: is arithmetic over rectangles its caller handed it, and the caller is the half
+#: that can be wrong. This is the other half: the *pixels*, read out of the real
+#: window, against the client rect.
+#:
+#: Both axes are compared, because both have been wrong here: the model picker
+#: hung 320px off a chip in the title bar's right-hand cluster and was cut off by
+#: the window's right edge, and a row menu opened downward from a click near the
+#: floor of a short window and hid its own Delete below the client rect.
+MENU_PROBE = (
+    "window.__menuBox = (sel) => {"
+    " const node = document.querySelector(sel);"
+    " if (!node) return 'MISSING';"
+    " const r = node.getBoundingClientRect();"
+    " return JSON.stringify({"
+    "  box: [Math.round(r.left), Math.round(r.top),"
+    "        Math.round(r.right), Math.round(r.bottom)],"
+    "  window: [window.innerWidth, window.innerHeight],"
+    "  dir: node.dataset.dir ?? null,"
+    "  align: node.dataset.align ?? null,"
+    "  cap: node.style.maxHeight || 'none',"
+    "  inside: r.left >= 0 && r.top >= 0"
+    "   && r.right <= window.innerWidth && r.bottom <= window.innerHeight });"
+    "};"
+)
+
+
+def menu_box(window: webview.Window, selector: str) -> str:
+    """The menu's box, or an exception -- which is what `check` reports.
+
+    Failing rather than reporting the numbers is the point: a menu half a pixel
+    outside the window is the bug this file is here to catch, and a line that
+    printed the box would pass the run.
+    """
+    raw = window.evaluate_js(f"window.__menuBox({selector!r})")
+    if raw == "MISSING":
+        raise AssertionError(f"{selector} is not on screen")
+    data = json.loads(raw)
+    if not data["inside"]:
+        raise AssertionError(f"outside the window: {raw}")
+    return raw
 
 
 def probe(window: webview.Window, core: CoreProcess, bridge: Bridge) -> None:
@@ -254,6 +301,8 @@ def probe(window: webview.Window, core: CoreProcess, bridge: Bridge) -> None:
         "})()"
     ))
 
+    probe_menus(window)
+
     say("--- the core, the whole way round ---")
     if not WITH_CORE:
         say("  [SKIP] no core was started for this run")
@@ -283,6 +332,101 @@ def probe(window: webview.Window, core: CoreProcess, bridge: Bridge) -> None:
         "document.querySelectorAll('.modelpicker, .composer, .statusbar').length"
     ))
     window.destroy()
+
+
+def probe_menus(window: webview.Window) -> None:
+    """Where the two anchored menus land, in a real layout.
+
+    This is the check this class of bug never had, and it is here rather than in
+    the stylesheet tests because a menu is positioned by CSS *against its own
+    trigger*: whether it fits is a question only a layout engine can answer, and
+    both failures were found by opening one in the running window. The model
+    picker is anchored to a chip in the title bar's right-hand cluster, so its
+    320px panel ran from that chip's left edge off the right-hand edge of the
+    window -- "the modal is cropped by the window" -- and a row menu opened
+    downward from a press near the floor of a short window put its own Delete
+    below the client rect.
+
+    Both are measured now (`menuPlacement.ts`) and this reads where they landed.
+    The window is resized to 640x480 -- the minimum `host.py` sets -- for the
+    second half of each, because neither answer is a constant: the same menu
+    opens down or up, and hangs left or right, depending on the room it finds.
+    """
+    say("--- the menus, measured ---")
+    window.evaluate_js(MENU_PROBE)
+    window.evaluate_js("document.querySelector('.modelpicker-wrap .chip')?.click()")
+    time.sleep(1.0)
+    check("the model menu is inside the window", lambda: menu_box(window, ".modelpicker"))
+
+    # Opened again at the smallest window this app may be made, where the room to
+    # the left of the chip is as short as it ever gets. Nothing about the
+    # placement is a constant, so this is the same check with different numbers
+    # rather than a second code path.
+    window.evaluate_js("document.querySelector('.modelpicker-wrap .chip')?.click()")
+    window.resize(640, 480)
+    time.sleep(1.0)
+    window.evaluate_js("document.querySelector('.modelpicker-wrap .chip')?.click()")
+    time.sleep(1.0)
+    check(
+        "the model menu is inside a 640x480 window too",
+        lambda: menu_box(window, ".modelpicker"),
+    )
+    window.evaluate_js("document.querySelector('.modelpicker-wrap .chip')?.click()")
+
+    # Best effort by design: a window with no conversations has no row to press,
+    # and that is not a failure of the placement.
+    def open_row_menu(pointer: str) -> str:
+        """`pointer` is a JS expression for the press's `clientY`.
+
+        An expression rather than a number because the interesting points are
+        relative to the row and to the window, and both are only known in there.
+        """
+        rows = window.evaluate_js(
+            "(() => {"
+            " const list = document.querySelector('.chatlist-rows');"
+            " if (!list) return 0;"
+            " list.scrollTop = list.scrollHeight;"
+            " return list.querySelectorAll('.chatrow').length;"
+            " })()"
+        )
+        if not rows:
+            return "no conversations to open a menu on"
+        y = window.evaluate_js(
+            "(() => {"
+            " const rows = [...document.querySelectorAll('.chatrow')];"
+            " const r = rows[rows.length - 1].getBoundingClientRect();"
+            f" const y = Math.round({pointer});"
+            " rows[rows.length - 1].dispatchEvent(new MouseEvent('contextmenu', {"
+            "  bubbles: true, clientX: Math.round(r.left + 24), clientY: y }));"
+            " return y;"
+            " })()"
+        )
+        time.sleep(0.8)
+        return f"pressed at y={y}, " + menu_box(window, ".rowmenu")
+
+    check(
+        "the row menu is inside a 640x480 window",
+        lambda: open_row_menu("r.bottom - 4"),
+    )
+
+    # And the same press near the window's *floor*, which is the geometry the
+    # report came from and the one that has to answer `up`. Dispatched with the
+    # pointer low rather than on a low row: the menu is anchored to the press, so
+    # the press is the whole of the question -- and a list with three chats in it
+    # has no row near the bottom to press on.
+    def row_menu_above_the_floor() -> str:
+        raw = open_row_menu("window.innerHeight - 60")
+        if raw == "no conversations to open a menu on":
+            return raw
+        bottom = json.loads(raw[raw.index("{") :])["box"][3]
+        floor = window.evaluate_js("window.innerHeight") - 60
+        if bottom > floor:
+            raise AssertionError(
+                f"the menu opened below the press instead of above it: {raw}"
+            )
+        return raw
+
+    check("and it opens upward from a press near the floor", row_menu_above_the_floor)
 
 
 def watchdog(window: webview.Window) -> None:

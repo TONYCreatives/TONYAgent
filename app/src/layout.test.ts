@@ -21,6 +21,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { describe, test } from "node:test";
 
+import { MENU_GAP } from "./menuPlacement.js";
 import { readStylesheet, readStylesheetSource, stylesheetModules } from "./stylesheet.js";
 
 // `tsc` emits the tests to `.tmp/` and copies no other file, so the stylesheet
@@ -210,6 +211,60 @@ function body(selector: string): string {
   return found[found.length - 1];
 }
 
+/** The first declaration block, before component-specific responsive overrides. */
+function baseBody(selector: string): string {
+  const found = bodies(selector);
+  assert.ok(found.length > 0, `${selector} has no rule in the stylesheet at all`);
+  return found[0];
+}
+
+/**
+ * Every block declared at one width, in cascade order.
+ *
+ * `mediaBody` below returns the first one, which is right when the test is
+ * asking about one surface's rule. It stopped being enough the moment the ladder
+ * became shared: `(max-width: 560px)` appears in the title bar and in the status
+ * bar now, so "the first block at 560" would answer a question about the footer
+ * with the title bar's rules -- and pass, because the assertion it feeds is about
+ * a selector that happens to be in both.
+ */
+function mediaBodies(query: string): string {
+  const marker = `@media (${query})`;
+  const out: string[] = [];
+  let from = 0;
+  for (;;) {
+    const start = STYLESHEET.indexOf(marker, from);
+    if (start === -1) break;
+    const open = STYLESHEET.indexOf("{", start);
+    let depth = 1;
+    let index = open + 1;
+    for (; index < STYLESHEET.length; index += 1) {
+      if (STYLESHEET[index] === "{") depth += 1;
+      if (STYLESHEET[index] === "}" && --depth === 0) break;
+    }
+    out.push(STYLESHEET.slice(open + 1, index));
+    from = index;
+  }
+  assert.ok(out.length > 0, `${marker} is missing`);
+  return out.join("\n");
+}
+
+/** A media query body with nested rules, kept intact for responsive assertions. */
+function mediaBody(query: string): string {
+  const marker = `@media (${query})`;
+  const start = STYLESHEET.indexOf(marker);
+  assert.notEqual(start, -1, `${marker} is missing`);
+  const open = STYLESHEET.indexOf("{", start);
+  let depth = 1;
+  for (let index = open + 1; index < STYLESHEET.length; index += 1) {
+    if (STYLESHEET[index] === "{") depth += 1;
+    if (STYLESHEET[index] === "}" && --depth === 0) {
+      return STYLESHEET.slice(open + 1, index);
+    }
+  }
+  assert.fail(`${marker} is not closed`);
+}
+
 /**
  * One side of a `margin`/`padding` shorthand, in CSS px.
  *
@@ -289,7 +344,7 @@ describe("the app shell's rows", () => {
     // Across *every* column, because the caption buttons belong at the right
     // edge of the window and not at the right edge of the transcript column --
     // which the Files panel covers.
-    const bar = body(".topbar");
+    const bar = baseBody(".topbar");
     assert.match(bar, /grid-row:\s*1\b/);
     assert.match(bar, /grid-column:\s*1\s*\/\s*-1/);
   });
@@ -639,8 +694,8 @@ describe("a selected thing is a wash, and the tab is a tab", () => {
     // puts their bottom edge on the bar's own rather than in the middle of the
     // chrome. It is the *strip* that stretches them: a tab stretching itself is
     // a tab that only fills the bar when it is the only thing in it.
-    assert.match(body(".tabs"), /align-items:\s*stretch/);
-    assert.match(body(".tabs"), /height:\s*100%/);
+    assert.match(baseBody(".tabs"), /align-items:\s*stretch/);
+    assert.match(baseBody(".tabs"), /height:\s*100%/);
     // Asserted as the four corners rather than as one radius, because the square
     // pair is the whole of the shape: a radius on the lower corners lifts the tab
     // off the edge it is attached to, and it is a chip again.
@@ -667,8 +722,8 @@ describe("a selected thing is a wash, and the tab is a tab", () => {
     // The offset is also asserted absent: a `0` left in front of a stale
     // `--list-w` expression is the half-written failure this replaces, and it
     // would read as aligned without being aligned.
-    const gap = parseFloat(/gap:\s*([0-9.]+)px/.exec(body(".topbar"))![1]);
-    const pull = parseFloat(/margin-left:\s*-([0-9.]+)px/.exec(body(".tabs"))![1]);
+    const gap = parseFloat(/gap:\s*([0-9.]+)px/.exec(baseBody(".topbar"))![1]);
+    const pull = parseFloat(/margin-left:\s*-([0-9.]+)px/.exec(baseBody(".tabs"))![1]);
     assert.equal(pull, gap, "the strip is not pulled back by the bar's own gap");
     assert.doesNotMatch(body(".tabs"), /--list-w|--rail-w/);
   });
@@ -715,19 +770,157 @@ describe("a selected thing is a wash, and the tab is a tab", () => {
   });
 });
 
+// --- the shape language ------------------------------------------------------
+//
+// The tokens state the rule -- "a control you can see the edge of is a stadium,
+// and a corner that stops short of one is a container" -- and until this pass it
+// was true of the window's chips and of about half its controls. The per-turn
+// budget popover is where it showed: a grid of six pill presets with a
+// 6px-cornered `Set` button and a 6px-cornered number field under them, in a row
+// that is one control.
+//
+// The sweep that followed is written out here because a list is the only form
+// this assertion *can* take: "which classes are controls" is not something the
+// stylesheet knows about itself, and a test that guessed from a selector's shape
+// would be testing its own guess. What it buys is that the next rule added to a
+// list has to be an argument rather than a copy-paste of whatever was nearby --
+// and the third list is what that is worth: the sweep pill-ed the rows as well,
+// and one look at the running window took them back.
+describe("every control is a stadium and every container is a box", () => {
+  /** Things the user presses or types in -- a shape that stands alone. */
+  const CONTROLS = [
+    // The composer, and the popover and menus it opens.
+    ".icon-btn",
+    ".budget-custom-input",
+    ".budget-custom-apply",
+    ".attach-item",
+    ".attach-thumb",
+    ".attach-doc",
+    ".attach-remove",
+    ".modelpicker-filter",
+    ".permchoice-warn",
+    ".permchoice-trigger",
+    // The sidebar's controls.
+    ".chatlist-toggle",
+    ".chatlist-back",
+    ".chatlist-act",
+    // The title bar and the rail.
+    ".tab-input",
+    ".tab-close",
+    ".rail-btn",
+    ".helper-toggle",
+    ".code-close",
+    // The settings panel.
+    ".settings-select",
+    ".settings-input",
+    ".settings-reveal",
+    ".settings-unkey",
+  ];
+
+  /**
+   * Rows, and why they are not controls.
+   *
+   * The sweep pill-ed these too and they came back on the owner's eye: a row is
+   * as tall as one or two lines and *stacks with its neighbours*, so a stadium
+   * turns a list into a column of buttons -- the conversation row is 271x56 and
+   * the `/` menu's row is 712x31, which is a capsule the width of the composer.
+   * The line the window actually draws is not "does it paint an edge" (a row
+   * does, on hover) but "is it one thing you press, or one of a column of them".
+   */
+  const ROWS = [
+    ".chatrow",
+    ".chatrow-open",
+    ".chatrow-input", // the row's own shape, one step in
+    ".tree-row",
+    ".skills-item",
+    ".modelpicker-item",
+    ".rowmenu button",
+    ".permchoice-item",
+    ".permchoice-list .permchoice-item",
+  ];
+
+  /**
+   * Surfaces, and the two shapes that are attached rather than floating.
+   *
+   * `.composer-inner` and `.permchoice-open` are the two that *hold a stack of
+   * controls* -- a control row, and the permission rows -- which is the one
+   * reason a control-shaped box keeps a corner: a stadium on a box that tall
+   * puts an arc through whatever is at its top and bottom.
+   */
+  const BOXES = [
+    ".composer-inner",
+    ".permchoice-open",
+    ".modal",
+    ".rowmenu",
+    ".modelpicker",
+    ".skills-menu",
+    ".budget-popover",
+    ".permchoice-menu",
+    ".tab", // cut into the bar's own bottom edge, square where it meets it
+    ".md-pre",
+    ".usage-tile",
+    ".banner",
+  ];
+
+  test("no control has a corner", () => {
+    // Every block a selector owns, rather than `body`'s last one: several of
+    // these classes are declared more than once -- `.chatrow` has an entry
+    // animation in `arriving.css` that says nothing about its shape -- and a
+    // block with no `border-radius` is not an override, it is an omission.
+    for (const selector of CONTROLS) {
+      const blocks = bodies(selector);
+      assert.ok(
+        blocks.some((block) => /border-radius:\s*var\(--radius-pill\)/.test(block)),
+        `${selector} is a control with a corner`,
+      );
+      for (const block of blocks) {
+        const declared = /border-radius:\s*([^;]+)/.exec(block)?.[1];
+        assert.ok(
+          declared === undefined || /var\(--radius-pill\)/.test(declared),
+          `${selector} declares a corner: ${declared}`,
+        );
+      }
+    }
+  });
+
+  test("no row is a stadium either", () => {
+    for (const selector of ROWS) {
+      for (const block of bodies(selector)) {
+        assert.doesNotMatch(
+          block,
+          /border-radius:\s*var\(--radius-pill\)/,
+          `${selector} is a row in a column wearing a button's shape`,
+        );
+      }
+    }
+  });
+
+  test("and no container wears a control's shape", () => {
+    for (const selector of BOXES) {
+      for (const block of bodies(selector)) {
+        assert.doesNotMatch(
+          block,
+          /border-radius:\s*var\(--radius-pill\)/,
+          `${selector} is a container wearing a control's shape`,
+        );
+      }
+    }
+  });
+});
+
 // --- the strip's own robustness ---------------------------------------------
 describe("the tab strip gives way instead of overflowing the window", () => {
   test("the strip can shrink, so a long one cannot push the caption out", () => {
     // `flex: none` held the strip at its content width however tight the bar got,
     // and Close is the last control on the bar, so it was the first thing to end
     // up outside the window.
-    assert.match(body(".tabs"), /flex:\s*0 1 auto/);
-    assert.match(body(".tabs"), /min-width:\s*0/);
+    assert.match(baseBody(".tabs"), /flex:\s*0 1 auto/);
+    assert.match(baseBody(".tabs"), /min-width:\s*0/);
     // Still capped and still not growing: yielding is not the strip taking the
     // bar's slack for itself.
-    assert.match(body(".tabs"), /max-width:\s*60%/);
+    assert.match(baseBody(".tabs"), /max-width:\s*min\(60%,\s*360px\)/);
     // Past the ceiling it scrolls, rather than crushing the tabs flat.
-    assert.match(body(".tabs"), /overflow-x:\s*auto/);
+    assert.match(baseBody(".tabs"), /overflow-x:\s*auto/);
   });
 
   test("a tab keeps a width it can be read at, and the strip scrolls instead", () => {
@@ -741,10 +934,10 @@ describe("the tab strip gives way instead of overflowing the window", () => {
   test("the model id is ellipsised, not wrapped onto a second line", () => {
     // A model id has no spaces in it, so a long one broke at whatever character
     // fit and grew the chip two rows tall inside a 52px bar.
-    assert.match(body(".chip"), /white-space:\s*nowrap/);
-    assert.match(body(".chip"), /max-width:\s*240px/);
+    assert.match(baseBody(".chip"), /white-space:\s*nowrap/);
+    assert.match(baseBody(".chip"), /max-width:\s*240px/);
     assert.match(
-      body(".chip > span:first-child"),
+      baseBody(".chip > span:first-child"),
       /text-overflow:\s*ellipsis/,
       "the unbroken id has nothing to stop it crowding the caption",
     );
@@ -817,15 +1010,15 @@ describe("the file header gives way instead of dropping the file name", () => {
 });
 
 // --- the accent --------------------------------------------------------------
-describe("the accent is one flat blue, and it is the icon's", () => {
-  test("there is no gradient left anywhere, because the icon is one colour", () => {
-    // The accent used to be a two-stop gradient: the icon's blue rotated 36
-    // degrees toward violet at the far end. The redesign asks for the icon's own
-    // blue and nothing beside it, so `--grad-accent` is deleted rather than
-    // flattened -- a gradient token whose two stops happened to match would
-    // still be the place the two drift apart again.
-    assert.doesNotMatch(SOURCE, /grad-accent/);
-    assert.doesNotMatch(SOURCE, /grad-wash/);
+describe("the accent is the icon's blue; the brand carries it as one gradient", () => {
+  test("the brand gradient is declared once, as a token, and nothing else gradients", () => {
+    // The accent used to be a two-stop gradient, the "one flat blue" pass deleted
+    // it, and it is back -- scoped to the *brand* (the first-run wordmark and the
+    // mark's glow) rather than folded into `--accent`. Selection stays flat, so a
+    // gradient selection wash (`--grad-wash`) is still absent rather than being a
+    // second stop this reintroduces; `--wash` remains one pixel value.
+    assert.match(SOURCE, /--grad-accent\s*:/, "the brand gradient token is gone");
+    assert.doesNotMatch(SOURCE, /grad-wash/, "the selection wash is a gradient again");
   });
 
   test("the rules that wear it paint the token, so there is one blue", () => {
@@ -836,11 +1029,15 @@ describe("the accent is one flat blue, and it is the icon's", () => {
     // along with the chosen budget preset: a solid accent belongs to a control
     // that does something when you press it, not to one that is already chosen,
     // and both of these were the latter wearing the former's ink.
+    // `.empty h1` was here until the wordmark became the brand *gradient* -- a
+    // `color` cannot be a gradient, so it paints `--grad-accent` through a
+    // background clipped to the letters. It is asserted, with its per-stop
+    // contrast, below; what is left here is the set of *solid* accent fills,
+    // which is every control that acts.
     const wearers = [
       [".icon-btn.send-btn", body(".icon-btn.send-btn")],
       [".icon-btn.stop-btn", body(".icon-btn.stop-btn")],
       [".btn-accent", body(".btn-accent")],
-      [".empty h1", body(".empty h1")],
     ];
     for (const [selector, rule] of wearers) {
       assert.match(
@@ -865,6 +1062,48 @@ describe("the accent is one flat blue, and it is the icon's", () => {
       ratio >= 4.5,
       `--accent ${tokens("accent")} is ${ratio.toFixed(2)}:1 on --bg, under the text floor`,
     );
+  });
+
+  test("the wordmark is that blue read through the letters, and every stop clears the text floor", () => {
+    // The one place the accent is a gradient: the wordmark is *text*, and `color`
+    // cannot be a gradient, so the ramp goes in the background and is clipped to
+    // the glyph (`background-clip: text`, transparent fill). It is the pattern
+    // this file used to forbid, scoped to one brand line -- and it still has to be
+    // legible, which is a property of *each* stop, not of the pair.
+    const wordmark = body(".empty h1");
+    assert.match(wordmark, /background:\s*var\(--grad-accent\)/);
+    assert.match(wordmark, /(-webkit-)?background-clip:\s*text/);
+    assert.match(
+      wordmark,
+      /(-webkit-)?text-fill-color:\s*transparent|color:\s*transparent/,
+    );
+
+    // Two stops, both held to the *text* floor rather than the graphic one,
+    // because a gradient that is legible at one end and not the other is a
+    // gradient nobody can read.
+    const grad = tokenRaw("grad-accent")!;
+    assert.match(grad, /^linear-gradient\(/);
+    const stops = [...grad.matchAll(/#[0-9a-f]{6}/gi)].map((m) => m[0]);
+    assert.equal(stops.length, 2, "the brand gradient is not a two-stop ramp");
+    const bg = tokens("bg")!;
+    for (const stop of stops) {
+      const ratio = contrast(stop, bg);
+      assert.ok(
+        ratio >= 4.5,
+        `${stop} is ${ratio.toFixed(2)}:1 on --bg, under the text floor`,
+      );
+    }
+  });
+
+  test("the mark's glow is the accent, through a token and not a literal", () => {
+    // The glyph stays flat `--accent` (asserted in the first-run suite below); the
+    // glow around it is that blue in a drop-shadow, referenced through
+    // `--accent-glow` so the copy cannot drift from the fill -- the same "no
+    // second writing of the colour" rule the fills follow.
+    assert.match(body(".empty-mark"), /filter:\s*drop-shadow\([^;]*var\(--accent-glow\)/);
+    const glow = flatMasked("accent-glow");
+    assert.ok(glow, "--accent-glow is not a masked rgb() colour");
+    assert.ok(glow.alpha > 0 && glow.alpha <= 0.5, `the glow is at alpha ${glow.alpha}`);
   });
 
   test("the selection wash is the same blue at low alpha", () => {
@@ -935,9 +1174,9 @@ describe("the title bar is indented past the left column", () => {
     // the arrangement is what matters: a `padding` that came back alongside the
     // mark would double the indent, and that reads as "almost aligned" rather
     // than as a bug.
-    assert.match(body(".topbar"), /padding:\s*0;/);
-    assert.match(body(".topbar"), /gap:\s*8px/);
-    assert.match(body(".topbar-mark"), /width:\s*var\(--rail-w\)/);
+    assert.match(baseBody(".topbar"), /padding:\s*0;/);
+    assert.match(baseBody(".topbar"), /gap:\s*8px/);
+    assert.match(baseBody(".topbar-mark"), /width:\s*var\(--rail-w\)/);
   });
 
   test("and the indent does NOT follow the conversation panel", () => {
@@ -1280,6 +1519,58 @@ describe("every state change has a transition to animate it", () => {
     assert.match(body(".transcript"), /scrollbar-gutter:\s*stable\s+both-edges/);
   });
 
+  test("and the two boxes are one box, at every width rather than at the widest", () => {
+    // The half of this that only shows up in a narrow window.
+    //
+    // Measured before this: at 1280 the transcript's inner box and the
+    // composer's inner box were both 760px at x=292. At 760 the window they were
+    // 676 at x=74 against 632 at x=96 -- 22px apart on the left edge and 44px on
+    // the width. Above 888px both boxes hit the `--measure` cap and the
+    // difference vanished; below it, every width had its own. The cause was one
+    // column derived two ways: `.transcript` holds a `--scrollbar` gutter on
+    // each edge and takes no padding, while `.composer` takes 32px of padding
+    // and has no scroller.
+    //
+    // So the air is a token and the composer holds the air *plus* the gutter the
+    // transcript reserves. 22 + 10 is the 32 this surface already had, which is
+    // why the fix moves nothing above 888 and fixes everything below it.
+    assert.match(
+      STYLESHEET,
+      /--column-edge:\s*calc\(var\(--column-air\) \+ var\(--scrollbar\)\)/,
+    );
+    assert.match(body(".transcript"), /padding:\s*12px var\(--column-air\) 4px/);
+    assert.match(body(".composer"), /padding:\s*0 var\(--column-edge\) 16px/);
+    // The banner and the log strip are the other two occupants of that column,
+    // and they are children of `.main` with no padding of their own -- which is
+    // what let them span the full width of a narrow window while the field below
+    // them did not. They subtract the same edge from the width instead.
+    for (const selector of [".banner", ".logstrip"]) {
+      assert.match(
+        body(selector),
+        /width:\s*calc\(100% - 2 \* var\(--column-edge\)\)/,
+        `${selector} is not the width of the column it sits in`,
+      );
+    }
+  });
+
+  test("and a message is as wide as the field it replies to", () => {
+    // Where the shared measure was still defeated by a literal.
+    //
+    // `.bubble` capped at `min(680px, 84%)`. 680 is the value `--measure` had
+    // *before* it moved to 760 -- a stale copy of a token -- and `84%` resolved
+    // against the transcript's content box, which is a second definition of the
+    // reading column in a unit no token can reach. Measured at 1280: the prose
+    // ran 224..830.5, 606.5px wide, inside a 722px column under a 760px field
+    // whose own text starts on the same pixel. The window's stated invariant --
+    // the composer is as wide as the messages it replies to -- held for neither.
+    assert.doesNotMatch(body(".bubble"), /min\(\s*[\d.]+px\s*,\s*[\d.]+%\s*\)/);
+    assert.match(body(".bubble"), /max-width:\s*100%/);
+    // One cap is left, on the user's bubble, because that one is a chip rather
+    // than a column -- and it is written so it can never exceed the column it
+    // sits in, whatever the window does.
+    assert.match(body(".bubble-user"), /max-width:\s*min\([\d.]+px, 100%\)/);
+  });
+
   test("and it is narrow enough to be read, wide enough to be a field", () => {
     // A measure has two failure modes and this sits between them: under about
     // 560px the transcript stops holding a code block, over about 760px a line
@@ -1305,6 +1596,33 @@ describe("every state change has a transition to animate it", () => {
     assert.ok(lift("surface") > lift("bg"), "--surface is not above --bg");
     assert.ok(lift("surface") < lift("input"), "--surface is not below --input");
     assert.match(body(".composer-inner"), /background:\s*var\(--glass-field\)/);
+  });
+
+  test("and the field is one field in every mode", () => {
+    // Chat, Plan and Skills used to tint the *textarea* to say "this mode does
+    // not write": `color-mix(in srgb, var(--input) 70%, var(--bg))`, an opaque
+    // grey one step *down* from the glass around it. The fill was the
+    // textarea's rather than the field's, so it stopped at the control row --
+    // and those three modes drew a grey typing area stacked on a glass control
+    // row, which made the three quietest modes the loudest composer in the
+    // window. Measured in a browser in Plan, before this: the textarea computed
+    // to `color(srgb 0.148627 0.148627 0.148627)` where Build's computed to
+    // `rgba(0, 0, 0, 0)`.
+    //
+    // The comment in composer.css records why the fill is gone; this asserts the
+    // *absence*, which is the half a stray rule could undo quietly. It reads
+    // SOURCE rather than STYLESHEET because the comment explaining the removal
+    // names the selector it removed.
+    assert.match(body(".composer textarea"), /background:\s*transparent/);
+    assert.doesNotMatch(
+      SOURCE,
+      /textarea\.is-readonly/,
+      "a read-only mode repaints the field again",
+    );
+    // Which is also why the field must go on *not* clipping its children: the
+    // `/` menu hangs out of this box (see `.skills-menu`), so an
+    // `overflow: hidden` here would cut the menu off at the field's own top edge.
+    assert.doesNotMatch(body(".composer-inner"), /overflow:\s*(hidden|clip)/);
   });
 });
 
@@ -1381,6 +1699,143 @@ describe("a keyboard user can see where they are", () => {
       tokens("accent"),
       "the focus ring is the accent, which is the fill of the buttons it marks",
     );
+  });
+});
+
+// --- narrow-window layout ---------------------------------------------------
+describe("compact windows keep the dashboard and status chrome in bounds", () => {
+  test("the usage header wraps and its period picker can scroll locally", () => {
+    // Previously the picker, title and exit button shared one unwrapped row:
+    // at 520px the Usage view's content measured 503px inside a 456px column,
+    // so the Back button was clipped at the right edge. The header now wraps,
+    // and the period group is the only locally scrollable control.
+    assert.match(baseBody(".usage-head"), /flex-wrap:\s*wrap/);
+    assert.match(mediaBodies("max-width: 420px"), /\.usage-periods\s*\{[^}]*overflow-x:\s*auto/);
+    assert.match(mediaBodies("max-width: 420px"), /\.usage-periods\s*\{[^}]*min-width:\s*0/);
+    assert.match(mediaBodies("max-width: 420px"), /\.usage-periods\s*\{[^}]*flex:\s*1\s+1\s+0/);
+    assert.match(STYLESHEET, /@media\s*\(max-width:\s*420px\)/);
+    // The panel's own inset is the app's panel inset and not a clamp. A
+    // `clamp(16px, 2.5vw, 32px)` made this the only surface in the window whose
+    // content edge moved as the window was resized -- measured at 27.6px in a
+    // 1106px window, 16px in a 760px one, against chat list and Files panes that
+    // stayed put at both.
+    assert.match(baseBody(".usage"), /padding:\s*18px var\(--pad-panel\) 24px/);
+    assert.match(baseBody(".usage-account-figure dt"), /-webkit-line-clamp:\s*2/);
+  });
+
+  test("the footer gives up secondary status before logs", () => {
+    // Provider/model and sandbox details can be recovered from Settings; the
+    // Logs action must remain visible rather than widening or clipping the bar.
+    assert.match(baseBody(".statusbar"), /min-width:\s*0/);
+    assert.match(baseBody(".statusbar-logs"), /flex:\s*none/);
+    assert.match(STYLESHEET, /@media\s*\(max-width:\s*560px\)/);
+    const narrow = mediaBodies("max-width: 560px");
+    /*
+     * Named, not counted. The rule this replaces hid `span:nth-of-type(2)` and
+     * `span:nth-of-type(5)`, and those two indices are not stable: when no
+     * provider is bound the row swaps its provider span for a `linkish` button,
+     * the spans renumber, and the same selectors then hide a different pair of
+     * things -- in exactly the state where the bar is telling the user what to
+     * do about it. What goes is the word beside the dot (the dot says it) and
+     * the sandbox (one dialog away); the provider, the model and Logs stay.
+     */
+    assert.match(narrow, /\.statusbar > \.statusbar-state[\s\S]*display:\s*none/);
+    assert.match(narrow, /\.statusbar > \.statusbar-sandbox[\s\S]*display:\s*none/);
+    assert.match(narrow, /\.statusbar > \.sep[\s\S]*display:\s*none/);
+    assert.doesNotMatch(narrow, /nth-of-type/, "the footer is hidden by position again");
+  });
+
+  test("the title-bar tab strip yields width to its actual controls", () => {
+    // The strip may scroll inside itself, but the mode switch, model control and
+    // native window caption must not be pushed outside the viewport.
+    assert.match(baseBody(".tabs"), /min-width:\s*0/);
+    const narrow = mediaBody("max-width: 560px");
+    assert.match(narrow, /\.win-btn\s*\{[^}]*width:\s*32px/);
+    assert.match(narrow, /\.topbar-mark\s*\{[^}]*width:\s*40px/);
+    assert.match(narrow, /\.tabs\s*\{[^}]*max-width:\s*12%/);
+    assert.match(STYLESHEET, /@media\s*\(max-width:\s*420px\)/);
+    assert.match(baseBody(".tabs"), /max-width:\s*min\(60%,\s*360px\)/);
+  });
+});
+
+// --- one ladder, one inset ------------------------------------------------
+/*
+ * The consistency the app was missing, asserted as properties rather than as
+ * values.
+ *
+ * Both of these were "each surface decided for itself" failures: six media
+ * query widths, three of them invented in a single pass for one surface, so one
+ * window changed state at six different sizes; and five panel content edges (10,
+ * 12, 14, 18 and a clamp), none of them derivable from the others. The tests
+ * below are what makes the next number an argument instead of an accident.
+ */
+describe("one ladder, and one inset, for the whole window", () => {
+  test("every media query in the cascade is a step on the ladder", () => {
+    // A fourth width has to be added to the ladder in `tokens.css`, where it is
+    // written down with the reason it exists -- not dropped into one surface and
+    // left for the other two to disagree with.
+    const widths = new Set(
+      [...STYLESHEET.matchAll(/@media\s*\(\s*max-width:\s*(\d+)px\s*\)/g)].map((m) =>
+        Number(m[1]),
+      ),
+    );
+    assert.ok(widths.size > 0, "there are no media queries at all");
+    assert.deepEqual(
+      [...widths].sort((a, b) => a - b),
+      [420, 560, 720],
+      "a surface reflows at a width the ladder does not have",
+    );
+  });
+
+  test("and a pane's own width is asked as a container query, not as one", () => {
+    // The code viewer's header gives things up when *the pane* is narrow, which
+    // is a different question from the window's width and cannot be answered
+    // with a media query at all -- it used to be answered with 440, a fourth
+    // number that looked like a breakpoint and was not one.
+    assert.match(STYLESHEET, /@container\s*\(max-width:\s*440px\)/);
+    assert.doesNotMatch(STYLESHEET, /@media[^{]*max-width:\s*440px/);
+  });
+
+  test("every panel puts its content on the same edge", () => {
+    // Asserted over *every* block for the selector rather than the last one:
+    // `.code-header` has a second rule inside a container query, and "the last
+    // rule" would then be answering this question with a rule about gaps.
+    for (const selector of [
+      ".chatlist-head",
+      ".chatlist-foot",
+      ".chatlist-empty",
+      ".sidebar-empty",
+      ".code-header",
+      ".code-explorer-head",
+      ".usage",
+    ]) {
+      assert.ok(
+        bodies(selector).some((text) => /var\(--pad-panel\)/.test(text)),
+        `${selector} does not hold the panel inset every other panel holds`,
+      );
+    }
+    assert.match(body(".modal"), /padding:\s*var\(--pad-panel\)/);
+  });
+
+  test("and a card inside one lands on that edge too", () => {
+    // A row is inset `--pad-row` from the panel and pads by `--pad-row`, so the
+    // two together are `--pad-panel`: a conversation title, a group label,
+    // a file's name and the Files filter's text all start on one line. The regions
+    // token, which is what makes the arithmetic true rather than lucky.
+    for (const selector of [".chatlist-rows", ".sidebar-tree"]) {
+      assert.match(body(selector), /padding:\s*0 var\(--pad-row\)/);
+    }
+    for (const selector of [
+      ".chatrow-open",
+      ".chatlist-label",
+      ".tree-row",
+      ".sidebar-filter",
+    ]) {
+      assert.ok(
+        bodies(selector).some((text) => /var\(--pad-row\)/.test(text)),
+        `${selector} is a card in a panel and does not take the row inset`,
+      );
+    }
   });
 });
 
@@ -1468,17 +1923,9 @@ describe("the panel names the folder it is showing", () => {
     assert.match(body(".chatlist-folder-name"), /text-overflow:\s*ellipsis/);
   });
 
-  test("the project name on the New chat button is pushed to the far edge", () => {
-    // `margin-left: auto` is what puts it there. It is the button's state rather
-    // than a second label, so it belongs at the end of the line where the eye
-    // finishes, and it has to truncate rather than push "New chat" off.
-    assert.match(body(".chatlist-new-project"), /margin-left:\s*auto/);
-    assert.match(body(".chatlist-new-project"), /text-overflow:\s*ellipsis/);
-  });
-
   test("and the scroll region still holds the groups", () => {
     // The groups went *inside* `.chatlist-rows` rather than beside it, so the
-    // "New chat" button above stays put while a long project's conversations
+    // folder label above stays put while a long project's conversations
     // scroll. A structure that put the label outside this box would scroll the
     // heading away with its rows.
     assert.match(body(".chatlist-rows"), /flex:\s*1/);
@@ -1604,10 +2051,20 @@ describe("permission and thinking read as one control in the settings panel", ()
 
     const foot = body(".chatlist .settings-modal .modal-actions");
     assert.match(foot, /position:\s*static/);
-    // Spans the pane: `.modal`'s padding is 18px, so the margins reach past it
-    // on both sides and below, and the row's own floor is the sidebar's edge
-    // rather than a padded box floating above it.
-    assert.match(foot, /margin:\s*12px -18px -18px/);
+    // Spans the pane: `.modal`'s padding is negated, so the margins reach past
+    // it on both sides and below, and the row's own floor is the sidebar's edge
+    // rather than a padded box floating above it. Written from the token rather
+    // than from a second set of 18s -- this rule and the centred dialog's were
+    // six copies of one number in two files.
+    assert.match(
+      foot,
+      /margin:\s*12px calc\(-1 \* var\(--pad-panel\)\) calc\(-1 \* var\(--pad-panel\)\)/,
+    );
+    assert.match(
+      body(".modal-actions"),
+      /bottom:\s*calc\(-1 \* var\(--pad-panel\)\)/,
+      "the dialog's sticky footer still cancels a hard-coded padding",
+    );
     // And it is not a second surface inside the first: `.chatlist .modal` is
     // already the frosted pane, so an opaque strip here would read as a card in
     // a card. The centred dialog keeps its own.
@@ -2049,5 +2506,107 @@ describe("the first-run panel", () => {
     );
     assert.ok(block, "the reduced-motion block is gone from the stylesheet");
     assert.match(block[1], /\.empty-mark\s*\{\s*animation:\s*none/);
+  });
+});
+
+// --- the anchored menus -----------------------------------------------------
+describe("every anchored menu is placed by measurement", () => {
+  test("the picker's two axes are declared on the attributes, not the base rule", () => {
+    // The report, in the stylesheet's terms. `.modelpicker` is `left: 0` and
+    // `top: calc(100% + 6px)` on its base rule, and its chip is in the title
+    // bar's *right-hand* cluster: measured in the running window at a 900px
+    // width with the chip at x=600, the panel ran from 600 to 920 and the last
+    // 20px of it were outside the window.
+    //
+    // The measurement now decides both axes -- see `menuPlacement.ts` -- and the
+    // contract is the one `.permchoice-menu` above already states: neither
+    // anchor on the base rule, both declared per attribute. That is what makes a
+    // menu which never got a placement render *unpositioned* rather than
+    // silently opening the wrong way; the components fall back to `down` and
+    // `start` in their markup precisely because this rule declares neither.
+    assert.doesNotMatch(body(".modelpicker"), /\b(?:top|bottom|left|right):/);
+    assert.match(body('.modelpicker[data-dir="down"]'), /top:\s*calc\(100%/);
+    assert.match(body('.modelpicker[data-dir="up"]'), /bottom:\s*calc\(100%/);
+    assert.doesNotMatch(body('.modelpicker[data-dir="down"]'), /\bbottom:/);
+    assert.doesNotMatch(body('.modelpicker[data-dir="up"]'), /\btop:/);
+    assert.match(body('.modelpicker[data-align="start"]'), /left:\s*0/);
+    assert.match(body('.modelpicker[data-align="end"]'), /right:\s*0/);
+  });
+
+  test("and the gap the cap is measured against is the one the stylesheet places with", () => {
+    // The one number in this arrangement that exists twice. `placeMenu`
+    // subtracts `MENU_GAP` from the room it measured to get the height the menu
+    // may be, while these rules are what actually put the menu that far from its
+    // trigger -- so a disagreement between the two puts the last row of a capped
+    // menu past the floor it was capped to, and it is invisible until a window
+    // is short enough for the cap to bind at all.
+    //
+    // A stylesheet cannot read a module constant, so the two are pinned to each
+    // other here instead of by construction: the token in `tokens.css` is read
+    // out of the cascade and compared with the module's own default.
+    const gap = /--menu-gap:\s*([\d.]+)px/.exec(STYLESHEET)?.[1];
+    assert.ok(gap, "`--menu-gap` is not declared");
+    assert.equal(
+      Number(gap),
+      MENU_GAP,
+      "the stylesheet's menu gap is not the one the placement subtracts",
+    );
+    for (const selector of [
+      '.modelpicker[data-dir="down"]',
+      '.modelpicker[data-dir="up"]',
+      '.permchoice-menu[data-dir="up"]',
+      '.permchoice-menu[data-dir="down"]',
+      ".budget-popover",
+      ".skills-menu",
+    ]) {
+      assert.match(
+        body(selector),
+        /calc\(100% \+ var\(--menu-gap\)\)/,
+        `${selector} spells its gap out instead of taking the token`,
+      );
+    }
+  });
+
+  test("the cap gives way from the inside, so it can never cut the menu off", () => {
+    // A cap the panel cannot honour is a cap that hides the bottom of the list.
+    // The list is the one child allowed to shrink, so `max-height` written
+    // inline from the measured room shortens it instead -- and `min-height: 0`
+    // is what lets it shrink at all, since a flex item refuses by default.
+    const list = body(".modelpicker-list");
+    assert.match(list, /flex:\s*0 1 auto/);
+    assert.match(list, /min-height:\s*0/);
+    assert.match(list, /overflow-y:\s*auto/);
+    // The field above it keeps its height: it is the one thing in there that
+    // would look broken at 22px instead of 28.
+    assert.match(body(".modelpicker-filter"), /flex:\s*none/);
+  });
+
+  test("the code viewer's local patch is folded in, and only its width is left", () => {
+    // The theme chip had the same problem as the title bar's -- it sits at the
+    // window's right edge -- and it was patched by hand with `left: auto; right:
+    // 0`. The side is measured for both chips now, so the only thing that is
+    // still this chip's own is that a theme name is short.
+    const theme = body(".code-theme .modelpicker");
+    assert.match(theme, /width:\s*232px/);
+    assert.doesNotMatch(theme, /(?:^|[\s;])(?:left|right):/);
+  });
+
+  test("the row menu opens toward the room, and scrolls when there is none", () => {
+    // The second report, and the one that hides an action rather than a label:
+    // three items opened below a click at y=417 of a 480-tall window -- the
+    // app's minimum -- where Delete landed 68px outside the client rect and
+    // there was no way to reach it. The menu is placed by `placeFixedMenu` now,
+    // which opens it upward there, and `overflow-y: auto` is the backstop for a
+    // window too short for either side: an inline cap is only usable if
+    // something scrolls.
+    //
+    // Read across every block rather than off the last one: `.rowmenu` is
+    // declared twice -- the surface in `conversation-list.css`, and the
+    // `transform-origin` its arrival needs in `surfaces.css` -- and `body()`
+    // would answer with whichever came later in the cascade.
+    assert.ok(
+      bodies(".rowmenu").some((rule) => /overflow-y:\s*auto/.test(rule)),
+      "the row menu's cap has nothing to scroll inside it",
+    );
   });
 });

@@ -34,7 +34,12 @@ export function StatusBar({
   return (
     <footer className="statusbar">
       <span className={connected ? "dot dot-ok" : "dot dot-bad"} title={connected ? "backend running" : "backend stopped"} />
-      <span>{connected ? "connected" : "disconnected"}</span>
+      {/*
+        Named, the two of them, because the narrow-window rule drops them and
+        a rule that drops "the second span" is a rule that drops something else
+        the moment this row changes -- see the 560px block in `statusbar.css`.
+      */}
+      <span className="statusbar-state">{connected ? "connected" : "disconnected"}</span>
       <span className="sep" />
       {needsProvider ? (
         <button type="button" className="linkish" onClick={onConfigure}>
@@ -47,7 +52,7 @@ export function StatusBar({
         </span>
       )}
       <span className="sep" />
-      <span>sandbox: {sandbox}</span>
+      <span className="statusbar-sandbox">sandbox: {sandbox}</span>
       {busy && (
         <>
           <span className="sep" />

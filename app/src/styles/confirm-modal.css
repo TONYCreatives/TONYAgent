@@ -24,7 +24,16 @@
      result list, so it is unaffected. */
   max-height: 100%;
   overflow-y: auto;
-  padding: 18px;
+  /*
+   * `--pad-panel`, where this was 18.
+   *
+   * This class is the root of all three dialogs *and* of the settings and search
+   * panes, which is why the inset belongs here rather than in each of them: the
+   * five surfaces that share this class had one padding between them, and 18 was
+   * a number none of the panels beside them used (the chat list held 10, the
+   * Files pane 14). Every one of them starts its content on the same edge now.
+   */
+  padding: var(--pad-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--glass-panel-strong);
@@ -109,15 +118,22 @@
  * direction: a sticky child is pinned to the scroll container's *content* box,
  * so without the negative offset the bar stops one padding-box short and the
  * content being pinned over stays visible in the strip beneath it.
+ *
+ * The three numbers that do the cancelling are written *from* `--pad-panel`
+ * rather than beside it. They were 18px literals here and 18px literals again in
+ * `settings.css` for the same bar as a sidebar pane -- six copies of one number
+ * in two files, which is the arrangement that stops being true the day the
+ * dialog's padding moves, and silently: a footer one padding-box short still
+ * looks like a footer.
  */
 .modal-actions {
   position: sticky;
-  bottom: -18px;
+  bottom: calc(-1 * var(--pad-panel));
   display: flex;
   gap: 8px;
   justify-content: flex-end;
-  margin: 12px -18px 0;
-  padding: 12px 18px 18px;
+  margin: 12px calc(-1 * var(--pad-panel)) 0;
+  padding: 12px var(--pad-panel) var(--pad-panel);
   border-top: 1px solid var(--border-soft);
   /* Matches the panel it is stuck to, so the footer does not read as an opaque
      strip inside a frosted dialog. */

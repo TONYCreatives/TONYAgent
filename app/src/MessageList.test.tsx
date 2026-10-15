@@ -242,6 +242,62 @@ describe("reasoning beside the answer", () => {
   });
 });
 
+// --- several thoughts, in the order they happened --------------------------
+/*
+ * A turn that thinks, acts, then thinks again used to stack every thought into
+ * one block at the top of the bubble, ahead of the prose and the calls they
+ * belong with. The fix gives each pass its own `ReasonRun` placed against the
+ * prose, so the transcript reads "thought this, ran that, thought this" in the
+ * order it happened rather than the order it was reported.
+ */
+describe("a turn that thinks more than once", () => {
+  // One message, built the way the reducer builds it mid-turn: the first
+  // thought sits at prose offset 0, the prose runs to the end of the first
+  // sentence, the tool call and the second thought follow it. Each carries its
+  // own placement mark, and both are still open (streaming) so the test can
+  // read what each one says. Offsets land on sentence boundaries so the prose
+  // splits into clean pieces.
+  const interleaved = message({
+    text: "Reading the file now. Done.",
+    reasonRuns: [
+      { text: "I should read the file.", after: 0, complete: false, truncated: false },
+      { text: "Now I can answer.", after: 22, complete: false, truncated: false },
+    ],
+    tools: [
+      { id: "c1", name: "read_file", status: "ok", detail: "Read a.py", after: 21 },
+    ],
+  });
+
+  test("each pass is its own panel, not one block holding every thought", async () => {
+    const container = await transcript(interleaved);
+    // Two separate panels, not one concatenated block: the whole bug in one
+    // number.
+    assert.equal(
+      all(container, ".thinking").length,
+      2,
+      "two thinking passes rendered as one block",
+    );
+  });
+
+  test("they appear in the order they happened, interleaved with the work", async () => {
+    const container = await transcript(interleaved);
+    // Walk the bubble's children in document order and confirm the sequence:
+    // think, act, think again -- each thought before the work that followed it.
+    const bubble = one(container, ".bubble-assistant")!;
+    const order = Array.from(bubble.children).map((el) => {
+      if (el.classList.contains("thinking")) {
+        const label = el.querySelector(".thinking-body");
+        return `think:${label?.textContent ?? ""}`;
+      }
+      if (el.classList.contains("tools")) return "tools";
+      return "text";
+    });
+    // The second thought (offset 19) lands after the tool (offset 18) and its
+    // prose, so it is drawn after them rather than hoisted to the top.
+    assert.deepEqual(order, ["think:I should read the file.", "text", "tools", "think:Now I can answer.", "text"]);
+  });
+});
+
 // --- the tool call budget on a card ---------------------------------------
 /*
  * The card shows where the turn stands: "Tool call 3/10". Two rules are easy
@@ -357,7 +413,10 @@ describe("the tool call budget on a card", () => {
  * was written when it was two stroked paths. Both are SVG shapes that cannot
  * carry a React handler, which is the property being asserted -- the list is
  * about reachability, not about how the glyph is drawn, so it moves with the
- * artwork rather than with the artwork's construction.
+ * artwork rather than with the artwork's construction. The pet's eyes are a
+ * `g` of two `circle`s for the same reason: the mark gained a face, and those
+ * shapes carry a handler no more than the rects do. The folder icon beside the
+ * name is a single `path`, here for the same reason.
  */
 /**
  * The panel is built from these and nothing else.
@@ -370,6 +429,9 @@ const ALLOWED_TAGS = new Set([
   "div",
   "svg",
   "rect",
+  "g",
+  "circle",
+  "path",
   "h1",
   "p",
   "ul",

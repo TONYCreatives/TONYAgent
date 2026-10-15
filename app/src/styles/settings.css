@@ -111,8 +111,10 @@
 .chatlist .settings-modal .modal-actions {
   position: static;
   flex: none;
-  margin: 12px -18px -18px;
-  padding: 12px 18px 18px;
+  /* The same three cancellations as the centred dialog's footer, from the same
+     token rather than from a second set of 18s. */
+  margin: 12px calc(-1 * var(--pad-panel)) calc(-1 * var(--pad-panel));
+  padding: 12px var(--pad-panel) var(--pad-panel);
   background: none;
 }
 
@@ -396,7 +398,8 @@
      it. */
   padding: 0 30px 0 12px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  /* A field with an edge: a stadium, like every other control in the window. */
+  border-radius: var(--radius-pill);
   background: var(--input);
   color: var(--fg);
   font: inherit;
@@ -484,7 +487,7 @@
   height: 24px;
   flex: none;
   border: 0;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-pill);
   background: none;
   color: var(--fg-mute);
   cursor: pointer;
@@ -618,7 +621,7 @@
   height: 30px;
   padding: 0 12px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   background: var(--input);
   color: var(--fg);
   font: inherit;
@@ -713,11 +716,12 @@
   border: 1px solid var(--border);
   /* The same box and the same radius as `.settings-select` and the inputs
      beside it, because it is the same kind of thing: a row in a panel of fields
-     that reports a value. It is not the stadium a `.btn` is -- picking a level
-     is not an action, and the shape is not what says so; the caret at the end
-     of the row is, and both dropdowns in this panel now draw that caret from
-     the same glyph at the same inset. */
-  border-radius: var(--radius-sm);
+     that reports a value -- so when those fields became stadiums, this did too.
+     What still separates it from a `.btn` is not the shape: it is the caret at
+     the end of the row, which is what says the value is picked rather than
+     done, and both dropdowns in this panel draw it from the same glyph at the
+     same inset. */
+  border-radius: var(--radius-pill);
   background: var(--input);
   color: var(--fg-mute);
   font: inherit;
@@ -817,13 +821,13 @@
 
 /* Over the rows above, for a trigger sitting low in the panel. */
 .permchoice-menu[data-dir="up"] {
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + var(--menu-gap));
 }
 
 /* Over the rows below, which is the common case now that the trigger is the
    panel's first control. */
 .permchoice-menu[data-dir="down"] {
-  top: calc(100% + 6px);
+  top: calc(100% + var(--menu-gap));
 }
 
 .permchoice-item {
@@ -831,6 +835,8 @@
   width: 100%;
   padding: 7px 10px;
   border: 0;
+  /* A row of a menu, so a corner -- see `.chatrow`. The one stadium here is the
+     trigger above it, which is a single control rather than a list. */
   border-radius: var(--radius-xs);
   background: none;
   color: var(--fg-mute);
@@ -894,8 +900,12 @@
  * to read the description to notice.
  */
 .permchoice-warn {
-  padding: 1px 5px;
-  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  /* It was already a stadium and did not say so: at 14px tall, a 12px radius is
+     clamped to the half of the box that makes two semicircles. The declaration
+     now matches the pixels, and a badge with an edge is a chip, which the tokens
+     list among the stadiums. */
+  border-radius: var(--radius-pill);
   background: var(--chip);
   color: var(--accent-bright);
   font-size: var(--text-2xs);
@@ -948,6 +958,11 @@
  * the control rather than as opening something else. `overflow: hidden` so the
  * first and last rows are cut by the box's own radius instead of squaring off its
  * corners.
+ *
+ * **It keeps a box corner although the trigger beside it is a stadium**, and the
+ * difference is the same one the composer field has: this box holds a stack of
+ * rows, and a pill on it would put an arc through the first and last of them.
+ * The rows inside it are the stadiums.
  */
 .permchoice-open {
   display: flex;
@@ -999,6 +1014,11 @@
  * scannable rather than something you have to read to locate yourself in.
  */
 .permchoice-list .permchoice-item {
+  /*
+   * A straight left side is half of what marks the chosen rung -- the coloured
+   * 2px itself -- and a stadium has none: on one, this border was drawn along
+   * the arc and came out as a crescent. The row is a row.
+   */
   border-left: 2px solid transparent;
   border-radius: var(--radius-xs);
 }

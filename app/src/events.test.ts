@@ -507,6 +507,68 @@ test("a turn that only thought is not dropped as an empty bubble", () => {
   assert.equal(state.messages.length, 1);
 });
 
+// --- reasoning placed in order --------------------------------------------
+//
+// A turn that thinks, acts, then thinks again used to stack every thought into
+// one block at the top, in the order they were reported rather than the order
+// they happened. These pin the runs that fix it: each pass is its own block,
+// placed against the prose, so the transcript reads "thought this, ran that,
+// thought this."
+
+test("each thinking pass becomes its own run, placed where it happened", () => {
+  let state = applyEvent(initialState, event("turn.started"));
+  // Pass one thinks, then writes a little prose, then asks for a tool.
+  state = applyEvent(state, event("reasoning.delta", { text: "Let me look." }));
+  state = applyEvent(state, event("message.delta", { text: "Checking." }));
+  state = applyEvent(state, event("reasoning.completed", { text: "Let me look." }));
+  state = applyEvent(state, event("tool.started", { id: "c1", name: "read_file" }));
+  state = applyEvent(state, event("tool.completed", { id: "c1", result: changeResult("a.py", 1, 0) }));
+  // Pass two thinks again before answering.
+  state = applyEvent(state, event("reasoning.delta", { text: "Now I know." }));
+  state = applyEvent(state, event("reasoning.completed", { text: "Now I know." }));
+
+  const runs = state.messages[0].reasonRuns ?? [];
+  assert.equal(runs.length, 2, "the two passes were not kept apart");
+  assert.equal(runs[0].text, "Let me look.");
+  assert.equal(runs[1].text, "Now I know.");
+  // The second pass began after the prose of the first, so it is placed later.
+  assert.ok(
+    runs[1].after > runs[0].after,
+    "the later thought was not placed after the earlier one's prose",
+  );
+});
+
+test("a second pass's completion does not delete the first pass's thought", () => {
+  // The latent bug: `reasoning.completed` used to overwrite the whole flat
+  // field with *this pass's* text, so the first thought vanished the moment the
+  // second one completed.
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(state, event("reasoning.delta", { text: "first" }));
+  state = applyEvent(state, event("reasoning.completed", { text: "first" }));
+  state = applyEvent(state, event("reasoning.delta", { text: "second" }));
+  state = applyEvent(state, event("reasoning.completed", { text: "second" }));
+  assert.equal(state.messages[0].reasoning, "firstsecond");
+});
+
+test("deltas that continue the open pass extend it rather than opening a new one", () => {
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(state, event("reasoning.delta", { text: "Let me " }));
+  state = applyEvent(state, event("reasoning.delta", { text: "look." }));
+  const runs = state.messages[0].reasonRuns ?? [];
+  assert.equal(runs.length, 1, "one pass's deltas became more than one run");
+  assert.equal(runs[0].text, "Let me look.");
+});
+
+test("a completion that loses its deltas still yields a placed pass", () => {
+  // A provider may send only the finished thought. It must still be shown.
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(state, event("reasoning.completed", { text: "Just the tail." }));
+  const runs = state.messages[0].reasonRuns ?? [];
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].text, "Just the tail.");
+  assert.equal(runs[0].complete, true);
+});
+
 test("an answer with no reasoning leaves the panel with nothing to render", () => {
   let state = applyEvent(initialState, event("turn.started"));
   state = applyEvent(state, event("message.delta", { text: "Just an answer." }));

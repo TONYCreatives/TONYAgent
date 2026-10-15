@@ -339,6 +339,7 @@ def test_the_prompt_carries_no_plan_when_there_is_no_plan():
     rules that went missing.
     """
     session = AgentSession(bus=EventBus())
+    session.max_tool_calls = 0  # unlimited, so the equality is mode + rules only
     system = session._messages_with_system()[0]
 
     assert session.state.render() == "", "there is a plan to be rendered"

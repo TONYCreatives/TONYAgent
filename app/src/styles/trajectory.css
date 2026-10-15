@@ -1,0 +1,257 @@
+/*
+ * The trajectory: the raw event log, full width.
+ *
+ * A debugging surface rather than a chat, so it is closer to a console than to
+ * the transcript: monospace, dense, one row per event, diffs coloured the way
+ * every diff is. It takes the whole main column -- the rail and the sidebar are
+ * not rendered in this mode (see App), so the window is one column and `.main`
+ * is pulled back to column 1, the same full-bleed move Code mode makes.
+ */
+
+.app[data-mode="trajectory"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+.app[data-mode="trajectory"] .main {
+  grid-column: 1;
+}
+
+.traj {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  color: var(--fg);
+  /* Reading this is reading prose at 12-13px; the type scale's small steps. */
+  font-family: var(--sans);
+}
+
+.traj-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--chrome);
+}
+
+.traj-head h1 {
+  margin: 0;
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.traj-count {
+  font-size: var(--text-xs);
+  color: var(--fg-mute);
+}
+
+.traj-filter {
+  flex: 1;
+  min-width: 0;
+  max-width: 420px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--input);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+
+.traj-rawtoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.traj-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px 12px 24px;
+}
+
+.traj-empty {
+  color: var(--fg-mute);
+  font-size: var(--text-sm);
+  max-width: 60ch;
+  margin: 40px auto;
+  text-align: center;
+  line-height: 1.6;
+}
+
+.traj-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.traj-row {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-xs);
+  background: var(--surface);
+  padding: 6px 10px;
+}
+
+.traj-turn {
+  background: transparent;
+  border-color: transparent;
+  text-align: center;
+}
+
+.traj-rowhead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: var(--text-xs);
+}
+
+.traj-time {
+  font-family: var(--mono);
+  color: var(--fg-mute);
+}
+
+.traj-type {
+  font-family: var(--mono);
+  color: var(--accent);
+}
+
+.traj-turnid,
+.traj-sub {
+  color: var(--fg-mute);
+}
+
+.traj-turn .traj-type {
+  color: var(--fg-dim);
+}
+
+.traj-name {
+  font-family: var(--mono);
+  color: var(--fg);
+}
+
+.traj-text,
+.traj-think {
+  font-size: var(--text-sm);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-top: 4px;
+}
+
+.traj-think {
+  color: var(--fg-mute);
+  font-style: italic;
+}
+
+.traj-args,
+.traj-output,
+.traj-rawjson {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  background: var(--bg);
+  color: var(--fg-dim);
+  overflow-x: auto;
+}
+
+.traj-error {
+  color: var(--traj-del);
+}
+
+.traj-tool {
+  margin-top: 4px;
+}
+
+.traj-status {
+  display: inline-block;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-family: var(--mono);
+}
+.traj-status.ok {
+  background: var(--traj-add-wash);
+  color: var(--traj-add);
+}
+.traj-status.err {
+  background: var(--traj-del-wash);
+  color: var(--traj-del);
+}
+.traj-status.run {
+  background: var(--raised);
+  color: var(--fg-dim);
+}
+
+.traj-change {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.traj-change-path {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--fg);
+}
+.traj-change-count {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--fg-mute);
+}
+
+/* The diff: one coloured line per row, the way every diff reads. */
+.traj-diff {
+  margin: 4px 0 0;
+  border-radius: var(--radius-xs);
+  overflow-x: auto;
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+}
+.traj-diff-add {
+  background: var(--traj-add-wash);
+  color: var(--traj-add);
+}
+.traj-diff-del {
+  background: var(--traj-del-wash);
+  color: var(--traj-del);
+}
+.traj-diff-hunk {
+  color: var(--fg-mute);
+}
+.traj-diff-ctx {
+  color: var(--fg-dim);
+}
+
+.traj-confirm,
+.traj-ask,
+.traj-sandbox,
+.traj-log {
+  font-size: var(--text-sm);
+  margin-top: 2px;
+}
+.traj-ask {
+  color: var(--fg);
+}
+.traj-sandbox {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.traj-log {
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--fg-mute);
+}

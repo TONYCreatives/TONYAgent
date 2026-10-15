@@ -62,6 +62,49 @@ export const MARK_RECTS: readonly MarkRect[] = [
   { x: 410, y: 344, width: 204, height: 512, rx: 0 },
 ];
 
+/** One eye of the pet, as its centre and radius in the artwork's units. */
+export interface MarkEye {
+  cx: number;
+  cy: number;
+  r: number;
+}
+
+/**
+ * The pet's two eyes, on the crossbar -- one shared source for the in-app mark,
+ * the desktop pet (`petcard.tsx` imports this under its own name) and
+ * `icon.svg`.
+ *
+ * They turn the mark into the app's pet: the crossbar is the head, the stem the
+ * body, and these are its face. A single definition, because two are how the
+ * window's eyes and the card's end up a pixel apart -- the drift this whole
+ * module exists to prevent, applied to the face as well as the strokes.
+ *
+ * Both sit inside the crossbar (`MARK_RECTS[0]`); `petcard.test.tsx` asserts
+ * that holds, since an eye overhanging the head reads as a wink and a wink is
+ * not something this pet means. `r` is 52 of 1024 -- 0.8px at the 16px the
+ * taskbar shows, so the face survives as two points rather than two blobs and
+ * grows with the glyph to a clear pair at the first-run hero.
+ */
+export const MARK_EYES: readonly MarkEye[] = [
+  { cx: 348, cy: 260, r: 52 },
+  { cx: 676, cy: 260, r: 52 },
+];
+
+/**
+ * The size at which the mark grows a face.
+ *
+ * Below this, `AppMark` draws the two strokes only -- a clean T. The eyes are
+ * r=52 of 1024, which is ~1.1px at the 22px the title bar draws and 0.8px at the
+ * 16px the taskbar raster shows; at those sizes two dots read as specks on a bar
+ * rather than a look, so the face is held back until there is room for it. The
+ * taskbar icon (`icon.svg`) is a separate raster that keeps the eyes at every
+ * size -- this gate is only about the one component the app draws live.
+ *
+ * 48px is where an eye becomes a clear ~4.9px circle and the crossbar is wide
+ * enough to hold two of them without crowding.
+ */
+export const MARK_FACE_AT = 48;
+
 /** The canvas the geometry above is expressed in, and `icon.svg`'s viewBox. */
 export const MARK_VIEWBOX = 1024;
 
@@ -101,6 +144,19 @@ export function AppMark({ size = 32, className }: Props) {
           rx={r.rx}
         />
       ))}
+      {/* The pet's eyes: the same `MARK_EYES` the desktop pet and the taskbar
+          icon draw, on the crossbar, carved in the surface tone rather than
+          `currentColor` so the glyph reads as a face. Drawn only at or above
+          `MARK_FACE_AT` -- below it (the 22px title bar) two such eyes are a hair
+          each and read as specks on a bar, so the small mark stays a clean T.
+          The taskbar icon is a separate raster and keeps its eyes at every size. */}
+      {size >= MARK_FACE_AT && (
+        <g fill="var(--surface, #202020)">
+          {MARK_EYES.map((eye) => (
+            <circle key={eye.cx} cx={eye.cx} cy={eye.cy} r={eye.r} />
+          ))}
+        </g>
+      )}
     </svg>
   );
 }

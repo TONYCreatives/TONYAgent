@@ -28,7 +28,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
-import { AppMark, MARK_RECTS, MARK_VIEWBOX } from "./AppMark.js";
+import { AppMark, MARK_EYES, MARK_FACE_AT, MARK_RECTS, MARK_VIEWBOX } from "./AppMark.js";
 import { FOCUSABLE, one, render } from "./test-render.js";
 
 // `tsc` emits the tests to `.tmp/` and copies no other file, so the artwork is
@@ -186,6 +186,62 @@ describe("the mark", () => {
     const container = await render(<AppMark />);
     assert.equal(one(container, "svg")!.getAttribute("fill"), "currentColor");
     assert.equal(one(container, "svg")!.getAttribute("stroke"), null);
+    // The eyes are the one carve that is not `currentColor`: they are the
+    // surface tone, the poke through the glyph that makes it a face rather than a
+    // mark with two holes. The stroke rule still holds -- an eye is a fill.
+    const strokes = one(container, "svg")!.querySelectorAll("circle[stroke]");
+    assert.equal(strokes.length, 0, "an eye is stroked, which is not an eye");
+  });
+
+  test("and the pet's eyes are the two circles the artwork draws", async () => {
+    // The face is part of the one drawing too. `MARK_EYES` are the same two eyes
+    // the desktop pet draws, and `icon.svg` carries them as circles so the rect
+    // comparison above keeps seeing only the body's two strokes. Comparing both
+    // keeps the window's eyes and the taskbar's from drifting apart -- the drift
+    // this test was written to catch, now about the face as well as the frame.
+    assert.equal(MARK_EYES.length, 2);
+    const expected = MARK_EYES.map((e) => ({
+      cx: String(e.cx),
+      cy: String(e.cy),
+      r: String(e.r),
+    }));
+
+    // At the face threshold and above, the mark is the pet -- eyes and all.
+    const container = await render(<AppMark size={MARK_FACE_AT} />);
+    const circles = [...one(container, "svg")!.querySelectorAll("circle")].map((c) => ({
+      cx: c.getAttribute("cx"),
+      cy: c.getAttribute("cy"),
+      r: c.getAttribute("r"),
+    }));
+    assert.deepEqual(circles, expected, "the mark does not draw the pet's two eyes");
+
+    const drawn = [...ARTWORK.matchAll(/<circle\b([^>]*)\/>/g)].map((m) => {
+      const attrs: Record<string, string> = {};
+      for (const a of m[1].matchAll(/([a-z-]+)="([^"]*)"/g)) attrs[a[1]] = a[2];
+      return { cx: attrs.cx ?? null, cy: attrs.cy ?? null, r: attrs.r ?? null };
+    });
+    assert.deepEqual(
+      drawn.map((d) => ({ cx: d.cx, cy: d.cy, r: d.r })),
+      expected,
+      "icon.svg draws different eyes from the mark",
+    );
+  });
+
+  test("below the face threshold it is the clean T, with no eyes", async () => {
+    // The title bar draws this at 22px. Two r=52 eyes there are a hair each and
+    // read as specks on a bar rather than a look, so the small mark holds the
+    // face back and stays the two strokes it always was. The taskbar icon is a
+    // separate raster that keeps its eyes at every size; this is only the one
+    // in-app component, drawn live.
+    const small = await render(<AppMark size={22} />);
+    const svg = one(small, "svg")!;
+    assert.equal(
+      svg.querySelectorAll("circle").length,
+      0,
+      "a mark too small for a face is drawing one",
+    );
+    // Gating the eyes gated nothing else: the strokes are still the whole mark.
+    assert.equal(svg.querySelectorAll("rect").length, MARK_RECTS.length);
   });
 
   test("the size it is asked for is the size it draws", async () => {

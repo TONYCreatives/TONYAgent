@@ -190,7 +190,7 @@
      cut off at the edge is the affordance, as it is in a browser. */
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 60%;
+  max-width: min(60%, 360px);
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -350,9 +350,9 @@
 .tab-input {
   min-width: 0;
   width: 150px;
-  padding: 2px 6px;
+  padding: 2px 10px;
   border: 1px solid var(--accent);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-pill);
   background: var(--input);
   color: var(--fg);
   font: inherit;
@@ -373,7 +373,7 @@
   height: 18px;
   flex: none;
   border: 0;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-pill);
   background: none;
   color: var(--fg-mute);
   cursor: pointer;
@@ -518,4 +518,89 @@
 
 .topbar-spacer {
   flex: 1;
+  min-width: 0;
+}
+
+/*
+ * The bar's slack belongs to the divider, the new-chat action, the mode switch,
+ * model selector and caption controls. Let the chat strip consume only what is
+ * left; on narrow windows it becomes a compact scroller instead of forcing the
+ * rest of the chrome outside the viewport. These rules intentionally follow all
+ * component defaults so the compact caps win in the cascade.
+ *
+ * 720 and 560 and 420 are the ladder in tokens.css, not numbers this file
+ * chose: it used to reflow at 720, 540 and 390 -- and the dashboard at 680 and
+ * 430, and the status bar at 560 -- so "narrow" meant six different widths in
+ * one window. Nothing else moved when the three numbers did, because each step
+ * only tightens caps that are already there.
+ */
+@media (max-width: 720px) {
+  .topbar {
+    gap: 5px;
+  }
+
+  .tabs {
+    max-width: 30%;
+  }
+
+  .tab-title {
+    max-width: 112px;
+  }
+
+  .chip {
+    max-width: 144px;
+  }
+
+  .win-btn {
+    width: 38px;
+  }
+}
+
+@media (max-width: 560px) {
+  .topbar-mark {
+    width: 40px;
+  }
+
+  .tabs {
+    max-width: 12%;
+  }
+
+  .topbar-modes {
+    gap: 0;
+    padding: 1px;
+  }
+
+  .topbar-mode {
+    height: 22px;
+    padding-inline: 7px;
+  }
+
+  .chip {
+    max-width: 104px;
+    padding-inline: 7px;
+  }
+
+  .win-btn {
+    width: 32px;
+  }
+
+  .tab-title {
+    max-width: 76px;
+  }
+}
+
+@media (max-width: 420px) {
+  .tabs-divider,
+  .tab-new {
+    display: none;
+  }
+
+  .tabs {
+    max-width: 0;
+    margin-left: 0;
+  }
+
+  .topbar-spacer {
+    flex: 1 1 0;
+  }
 }

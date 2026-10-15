@@ -31,29 +31,31 @@ meant a second catalogue implementation returning "unknown" for most fields.
 
 ### ?�� Modern Desktop UI
 - Built with **React** in a native window: the interface is HTML and CSS, rendered by the system webview with no browser around it (`pywebview`, in `src/tonyagent/window/`)
-- **Light/Dark/System themes** with pill-shaped design
+- **Dark theme** with shared design tokens for colour, spacing, typography, borders and motion
 - Real-time streaming chat with token-by-token display
 - Tool call visualization and confirmation dialogs
 - Responsive layout with collapsible sidebar
 - **Code viewer**: browse the project tree and open any file — source with syntax highlighting, images, Markdown rendered or as source, CSV/TSV as a grid. Three colour palettes (VSCode's Dark+, Light+ and Monokai). Read-only by default with a per-file toggle; **locked while a turn is running**, so a file cannot be typed into while the agent is writing it. When you do edit and save, the change is written atomically and the next message tells the agent which file and which lines changed, so its picture of your code is never stale
-- **Agent / Code switch** in the top bar. Code mode is the whole window rather than a pane: the chat rail, the tab strip and the composer are replaced by a persistent **project explorer** on the left and the editor filling the rest, so leaving the conversation for the project does not mean losing either
+- **Agent / Code switch** in the top bar. Code mode is the whole window rather than a pane: the chat rail and tab strip are replaced by a persistent **project explorer** on the left and the editor filling the rest. The same conversation and composer move into a collapsible **Assistant panel** on the right, so leaving the transcript for the project does not mean losing either
+- **Composer modes:** the composer offers the core's Chat mode first for plain conversation. Chat has no project, browser, shell, or mutation tools: nothing is read, run, or changed. Build, Plan, Mission, and Skills remain available from the same pills.
 - **Desktop pet**: a small always-on-top **circle** that says what the turn is doing right now — "Thinking", "Running read_file", "Needs your approval" — so a long turn can run while you are in another window. It is cut to a circle with a window region *and* has its system shadow turned off: the region takes the corners away, and DWM would otherwise paint the drop shadow to the window's rectangle and fill those corners back in with a dark halo. The corners are really gone — the desktop shows through, and a click there goes to whatever is behind instead of to the pet. The character is the app's own mark, and it *behaves*: it blinks, it works at a keyboard while the agent works, it hops when it wants you, and it falls asleep if nothing has happened for a while. Drag it anywhere by its artwork — the OS's own move loop, so it snaps like a normal window — and it comes back where you left it. It never takes focus (asking for attention must not steal the keyboard) and clicking it brings the app back. It is off until you turn it on from the rail
 - **Account view**: the usage panel counts what *this app* sent, which is not your provider's real total. One button opens your provider's own dashboard — activity, credits, API keys — in a browser window the app owns, with a persistent sign-in profile. It is a closed set of views, and the agent has no tool that can reach it
 
-### ?���?Rich Tool Ecosystem (32 Tools)
-| Category | Tools |
-|----------|-------|
-| **File** (8) | `read` (with `offset`/`limit`), `read_image`, `write`, `edit` (unique match, or `replace_all`), `delete_file`, `list_dir`, `sandbox_read_file`, `sandbox_list_files` |
-| **Search** (2) | `grep`, `glob` |
-| **Shell** (5) | `execute_command` (allowlist/denylist, plus `background=true` for long-running jobs), `execute_js`, `job_list`, `job_output`, `job_kill` |
-| **Network** (2) | `http_request`, `web_fetch` |
-| **Browser** (10) | `browser_navigate`, `browser_click`, `browser_type`, `browser_eval`, `browser_snapshot`, `browser_get_text`, `browser_wait_for`, `browser_scroll`, `browser_screenshot`, `set_viewport_size` |
-| **Utility** (1) | `take_screenshot` |
-| **Planning** (4) | `todo_write`, `create_goal`, `get_goal`, `update_goal` — the task list and goal are rendered into the system prompt and saved with the conversation |
+### Rich Tool Ecosystem (41 Tools)
+The core registers 41 tools across six categories. The registry is the source of truth; names here are grouped by capability.
+
+| Category | Count | Tools |
+|----------|------:|-------|
+| **File** | 8 | `read`, `read_image`, `write`, `edit`, `delete_file`, `list_dir`, `sandbox_read_file`, `sandbox_list_files` |
+| **Search** | 2 | `grep`, `glob` |
+| **Shell & jobs** | 5 | `execute_command`, `execute_js`, `job_list`, `job_output`, `job_kill` |
+| **Network** | 2 | `http_request`, `web_fetch` |
+| **Browser** | 10 | `browser_navigate`, `browser_click`, `browser_type`, `browser_eval`, `browser_snapshot`, `set_viewport_size`, `browser_get_text`, `browser_wait_for`, `browser_scroll`, `browser_screenshot` |
+| **Utility & planning** | 14 | `take_screenshot`, `todo_write`, `create_goal`, `get_goal`, `update_goal`, `ask_user_question`, `present`, `subagent`, `send_message`, `subagent_fork`, `list_agents`, `interrupt_agent`, `list_skills`, `run_skill` |
 
 ### ?�� Security-First Design
 - **API keys stored in OS keyring** (Windows Credential Manager, macOS Keychain, Linux Secret Service)
-- **Sandboxed execution** via Docker, WSL2, or Windows Sandbox
+- **Sandboxed execution** via Docker or WSL2; local mode is available with execution tools disabled. Windows Sandbox is currently a non-isolating stub and is not an available isolation backend
 - **Command allowlist/denylist** for shell operations
 - **Folder locking** during AI generation to prevent conflicts
 - **Configurable confirmation** for destructive operations
@@ -62,7 +64,7 @@ meant a second catalogue implementation returning "unknown" for most fields.
 ### ?�� Sandboxed Execution
 - **Docker backend**: Full Linux environment with network isolation and per-container limits
 - **WSL backend**: The Docker-free path -- the same sandbox server, run inside your WSL2 distro's network and PID namespaces, with the project folder live via the /mnt drive mount
-- **Windows Sandbox backend**: Native Windows isolation (in progress)
+- **Windows Sandbox**: backend stub only; it does not provide isolation and is not selected as a sandbox
 - **Resource limits**: CPU, memory, and timeout controls
 - **Persistent workspace** across sessions
 
@@ -139,10 +141,10 @@ python -m tonyagent.window     # opens the window; the core is its child process
 `tonyagent` is a package with no `__main__`, so it exits with "cannot be directly
 executed".)
 
-1. **Select a project folder** from the sidebar
-2. **Configure your LLM provider** in Settings ??Provider
-3. **Enter your API key** (securely stored in OS keyring)
-4. **Start chatting** - the agent will use tools to complete tasks!
+1. **Select a project folder** from the sidebar or Settings.
+2. **Add a provider key** in Settings; credentials are stored in the OS keyring.
+3. **Choose a model** from the title-bar model selector.
+4. **Start chatting** - the permission level and confirmation gates govern tool use.
 
 ---
 
@@ -167,8 +169,7 @@ pip install -e ".[packaging]"
 |------------|---------|
 | `pydantic>=2.5` | Data validation & settings |
 | `keyring>=24.0` | Secure credential storage |
-| `openai>=1.10`, `anthropic>=0.18`, `google-generativeai>=0.3` | LLM provider SDKs |
-| `ollama>=0.2` | Local model support |
+| `openai` (OpenAI-compatible provider transport) | OpenAI-compatible provider transport |
 | `playwright>=1.40` | Browser automation |
 | `docker>=7.0` | Sandbox container management |
 | `loguru>=0.7` | Structured logging |
@@ -178,7 +179,7 @@ pip install -e ".[packaging]"
 <details>
 <summary><b>Windows</b></summary>
 
-- Windows 10/11 Pro/Enterprise required for Windows Sandbox
+- Docker Desktop or WSL2 is needed for isolated shell and code execution; Windows Sandbox is not currently implemented
 - Docker Desktop with WSL2 backend recommended (or just WSL2 — see "Running without Docker")
 - Install Visual C++ Build Tools if building from source
 </details>
@@ -186,7 +187,7 @@ pip install -e ".[packaging]"
 <details>
 <summary><b>Linux</b></summary>
 
-- Install `tkinter` system package: `sudo apt install python3-tk` (Ubuntu/Debian)
+- Install the system webview dependencies required by `pywebview` (WebKitGTK on Linux)
 - Docker: `sudo usermod -aG docker $USER` (log out/in after)
 - Wayland: Set `GDK_BACKEND=x11` if UI issues occur
 </details>
@@ -194,34 +195,28 @@ pip install -e ".[packaging]"
 <details>
 <summary><b>macOS</b></summary>
 
-- Install via Homebrew: `brew install python-tk docker`
+- Install the `pywebview` WebKit runtime dependencies; use Docker for the supported isolated execution backend
 - Apple Silicon: Use `docker buildx` for multi-arch builds
 - Keychain access granted automatically on first run
 </details>
 
 ---
 
-## ?�️ Configuration
+## Configuration
 
-TONYAgent uses a **TOML-based configuration** with secure keyring storage for secrets.
+TONYAgent uses a **TOML-based configuration** with secure keyring storage for secrets. The current desktop interface is React in a `pywebview` window, backed by a separate headless Python core; there is no current Tkinter UI or Tauri shell.
 
 ### Configuration File
 Location: `~/.config/tonyagent/config.toml` (Linux/macOS) or `%APPDATA%\tonyagent\config.toml` (Windows)
 
 ```toml
 [provider]
-name = "openai"           # openai, anthropic, gemini, mistral, groq, openrouter, ollama, custom
-model = "gpt-4o"
-base_url = ""             # For custom endpoints
-
-[custom_provider]
-enabled = false
-name = "local"
-base_url = "http://localhost:1234/v1"
-model = "local-model"
+name = "openrouter"       # or "opencode-go"
+model = "openrouter/auto"
+base_url = ""             # Optional OpenAI-compatible endpoint
 
 [sandbox]
-type = "auto"              # auto, docker, wsl, wsb (Windows Sandbox), local
+type = "auto"              # auto, docker, wsl, local (Windows Sandbox is a stub)
 docker_image = "tonyagent/sandbox:latest"
 memory_limit = "2g"
 cpu_limit = "2"
@@ -245,7 +240,7 @@ recent = []
 lock_on_generation = true
 
 [ui]
-theme = "system"          # light, dark, system
+theme = "dark"            # current UI uses the shared dark design system
 language = "en"
 font_size = 13
 ```
@@ -254,19 +249,14 @@ font_size = 13
 Override settings via environment (useful for CI/CD):
 
 ```bash
-export TONYAGENT_PROVIDER_NAME=openai
-export TONYAGENT_PROVIDER_MODEL=gpt-4o
+export TONYAGENT_PROVIDER_NAME=openrouter
+export TONYAGENT_PROVIDER_MODEL=openrouter/auto
 export TONYAGENT_SANDBOX_TYPE=docker
 export TONYAGENT_LOG_LEVEL=DEBUG
 ```
 
 ### API Key Management
-Keys are **never written to config files**. Use the UI (Settings ??Provider ??API Key) or:
-
-```bash
-# Via keyring CLI (cross-platform)
-python -c "import keyring; keyring.set_password('tonyagent', 'openai', 'sk-...')"
-```
+Keys are **never written to config files**. Add and manage them in Settings; values are saved to the OS keyring.
 
 ---
 
@@ -274,11 +264,11 @@ python -c "import keyring; keyring.set_password('tonyagent', 'openai', 'sk-...')
 
 ### Basic Workflow
 
-1. **Open a project folder** - Click "Open Folder" in sidebar
-2. **Choose provider & model** - Settings ??Provider
-3. **Enter API key** - Securely saved to OS keyring
-4. **Start sandbox** - Click "Start Sandbox" in status bar (optional but recommended)
-5. **Chat naturally** - Describe what you want to accomplish
+1. **Choose a project folder** from the sidebar or Settings.
+2. **Add a provider key** in Settings; keys are stored in the OS keyring.
+3. **Choose a model** from the model selector in the title bar.
+4. **Start the sandbox** from Settings when you want isolated shell/code execution (Docker or WSL).
+5. **Chat naturally** - describe what you want to accomplish; the permission level and tool confirmation gates control what may run.
 
 ### Example Prompts
 
@@ -320,43 +310,43 @@ When the AI wants to execute a potentially destructive action (file deletion, sh
 
 ---
 
-## ?���?Architecture
+## Architecture
 
-```
-?��??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�??
-??                       TONYAgent (Main Process)                 ??
-?? ?��??�?�?�?�?�?�?�?�?�?�?�?�?�?? ?��??�?�?�?�?�?�?�?�?�?�?�?�?�?? ?��??�?�?�?�?�?�?�?�?�?�?�?�?�??         ??
-?? ??  UI Layer   ?? ?? Core Logic  ?? ?? Config/State??         ??
-?? ?? (Views)     ?�◄?�?? (Controller)?��??�│  (Persistence)         ??
-?? ?��??�?�?�?�?�?��??�?�?�?�?�?�?? ?��??�?�?�?�?�?��??�?�?�?�?�?�?? ?��??�?�?�?�?�?�?�?�?�?�?�?�?�??         ??
-??        ??                ??                                     ??
-??        ??                ??                                     ??
-?? ?��??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�??              ??
-?? ??          Tool Orchestrator                  ??              ??
-?? ?? (JSON schema registry, execution dispatcher)??              ??
-?? ?��??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?��??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�??              ??
-??                      ??                                        ??
-??        ?��??�?�?�?�?�?�?�?�?�?�?�?�?��??�?�?�?�?�?�?�?�?�?�?�?�??                          ??
-??        ??            ??            ??                          ??
-?? ?��??�?�?�?�?�?�?�?�?�?�???��??�?�?�?�?�?�?�?�?�?�???��??�?�?�?�?�?�?�?�?�?�??                    ??
-?? ??Provider  ???? Sandbox  ???? File     ??                    ??
-?? ??Adapter   ???? Manager  ???? System   ??                    ??
-?? ?��??�?�?�?�?�?�?�?�?�?�???��??�?�?�?�?�?�?�?�?�?�???��??�?�?�?�?�?�?�?�?�?�??                    ??
-?��??�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�?�??
+The native Python window host serves the React/Vite bundle, exposes a narrow `pywebview` bridge, and owns a headless Python core process. The bridge talks to the core over newline-delimited JSON (JSONL) on stdio.
+
+```text
+┌───────────────────────────────┐
+│ React + Vite desktop interface│
+└───────────────┬───────────────┘
+                │ pywebview bridge
+┌───────────────▼───────────────┐
+│ Python window host            │── serves app/dist/
+│ owns child-process lifecycle  │
+└───────────────┬───────────────┘
+                │ JSONL over stdio
+┌───────────────▼───────────────┐
+│ Headless AgentSession         │
+│ conversations · events · tools│
+└───────┬───────────────┬───────┘
+        │               │
+┌───────▼───────┐ ┌─────▼────────────┐
+│ OpenRouter /  │ │ Docker / WSL      │
+│ OpenCode Go   │ │ sandbox backends  │
+└───────────────┘ └──────────────────┘
 ```
 
 ### Key Modules
 
 | Module | Path | Responsibility |
 |--------|------|----------------|
-| **Window** | `src/tonyagent/window/` | The desktop shell: opens the window, serves the bundle, owns the core. `pet.py` is the status card, `account.py` the provider's dashboard, `prefs.py` the shell's own remembered settings |
-| **Interface** | `app/src/` | The React interface, built by Vite into `app/dist/` |
-| **Core** | `src/tonyagent/core/` | Conversation state, events, modes; served over JSONL by `headless/server.py` |
-| **Providers** | `src/tonyagent/providers/` | 8 LLM adapters + factory |
-| **Tools** | `src/tonyagent/tools/` | 15 tools + orchestrator |
-| **Sandbox** | `src/tonyagent/sandbox/` | Docker + WSL backends, WSB stub |
-| **Config** | `src/tonyagent/config/` | Settings, keyring, migration |
-| **Utils** | `src/tonyagent/utils/` | Logging, threading, paths |
+| **Window host** | `src/tonyagent/window/` | Native webview, frontend asset serving, JS bridge, core process and desktop integrations |
+| **Interface** | `app/src/` | React UI and shared CSS design system; Vite builds into `app/dist/` |
+| **Headless core** | `src/tonyagent/headless/` | JSONL request/event server for the agent session |
+| **Core** | `src/tonyagent/core/` | Conversations, events, permissions, tools, usage and session orchestration |
+| **Providers** | `src/tonyagent/providers/` | OpenRouter and OpenCode Go adapters |
+| **Tools** | `src/tonyagent/tools/` | Registry-derived schemas and 41 registered tool implementations |
+| **Sandbox** | `src/tonyagent/sandbox/` | Docker and WSL backends; local mode refuses sandbox-required execution; Windows Sandbox is a stub |
+| **Config** | `src/tonyagent/config/` | Settings, OS keyring integration and migration |
 
 ### Data Flow
 
@@ -424,19 +414,15 @@ tonyagent/
 
 ### Adding a New Provider
 
-1. Create `src/tonyagent/providers/newprovider.py` inheriting `BaseLLMProvider`
-2. Implement required methods: `chat_stream()`, `chat_completion()`, `list_models()`
-3. Register in `src/tonyagent/providers/registry.py`
-4. Add to `ProviderName` enum in `src/tonyagent/providers/base.py`
-5. Add tests in `tests/unit/providers/`
+1. Create a provider module under `src/tonyagent/providers/` and implement the `LLMProvider` contract.
+2. Register it with `@register_provider` and import it from `src/tonyagent/providers/__init__.py` so registration runs.
+3. Add provider and registry tests under `tests/`.
 
 ### Adding a New Tool
 
-1. Create tool class in `src/tonyagent/tools/` inheriting `BaseTool`
-2. Define `name`, `description`, `parameters` (JSON Schema)
-3. Implement `execute()` method
-4. Register in `src/tonyagent/tools/orchestrator.py`
-5. Add tests and update documentation
+1. Create a tool class under `src/tonyagent/tools/` using the existing tool base and decorator conventions.
+2. Declare its schema and execution/security metadata on the tool class; `schemas.py` derives advertised descriptors from the registry.
+3. Ensure the orchestrator/runtime gates are appropriate, then add focused tests under `tests/`.
 
 ---
 
@@ -446,12 +432,12 @@ tonyagent/
 
 | Issue | Solution |
 |-------|----------|
-| **"No module named 'tkinter'"** | Install system package: `python3-tk` (Linux), included with Python (Windows/macOS) |
+| **Webview fails to open** | Install the platform's `pywebview` runtime dependencies and inspect the window log |
 | **Docker connection failed** | Start Docker Desktop; ensure user in `docker` group (Linux) |
 | **API key not working** | Verify key in Settings; check keyring permissions; try re-entering |
 | **Sandbox won't start** | Check Docker daemon; verify image exists (`docker images`); check port conflicts |
 | **UI freezes during generation** | Normal for long operations; check logs in `~/.local/share/tonyagent/logs/` |
-| **Playwright errors** | Run `playwright install --with-deps chromium` |
+| **Playwright errors** | Install the browser runtime required by the selected sandbox backend; check the core log for the missing dependency |
 
 ### Logs
 
@@ -470,8 +456,8 @@ python -m tonyagent.window
 # Delete config (preserves keyring entries)
 rm ~/.config/tonyagent/config.toml
 
-# Full reset (including keyring)
-python -c "import keyring; keyring.delete_password('tonyagent', 'openai')"
+# Remove a saved provider key from Settings (recommended). Provider keys are
+# named OS-keyring entries and should not be guessed or reset by backend name.
 ```
 
 ---

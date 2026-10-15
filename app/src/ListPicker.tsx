@@ -31,6 +31,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useDismiss } from "./useDismiss.js";
 import { useDelayedUnmount } from "./useDelayedUnmount.js";
+import { useMenuPlacement } from "./useMenuPlacement.js";
 
 interface Props {
   /** Names the control and its popover, for a screen reader. */
@@ -81,8 +82,18 @@ export function ListPicker({
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const filterRef = useRef<HTMLInputElement | null>(null);
   const mounted = useDelayedUnmount(open);
+  // The wrapper is the chip's own box, which is what the menu is placed against,
+  // and the menu is measured for its width. It was placed against the window
+  // edge by a rule in `code-viewer.css` -- this chip sits at the window's right,
+  // so its menu hangs to the left -- and that rule is now the general answer
+  // rather than this picker's private one.
+  //
+  // Keyed on `mounted` rather than `open`, for the same reason the model picker
+  // is: this menu lingers on its way out, so its node arrives one commit later.
+  const placement = useMenuPlacement(mounted, wrapRef, menuRef);
 
   useDismiss(open, () => setOpen(false), wrapRef);
 
@@ -139,11 +150,22 @@ export function ListPicker({
 
       {mounted && (
         <div
+          ref={menuRef}
           className="modelpicker"
           role="dialog"
           aria-label={label}
           data-state={open ? "open" : "closed"}
+          data-dir={placement?.dir ?? "down"}
+          data-align={placement?.align ?? "start"}
+          style={
+            placement ? { maxHeight: `${placement.maxHeight}px` } : undefined
+          }
         >
+          {/*
+            Both attributes are the whole contract with the stylesheet, and the
+            base rule declares neither anchor -- see the same note in
+            `ModelPicker`, which is the other user of this menu.
+          */}
           <input
             ref={filterRef}
             className="modelpicker-filter"

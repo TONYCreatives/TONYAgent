@@ -1,7 +1,18 @@
 
 /* --- composer ------------------------------------------------------------ */
 .composer {
-  padding: 0 32px 16px;
+  /*
+   * `--column-edge`, not the 32 this had.
+   *
+   * The number is the same and the reason is not: 32 was this surface's own,
+   * and the transcript above it arrived at the same edge by a different route
+   * (no padding, a scrollbar gutter on both sides). Two surfaces, one edge, two
+   * derivations -- and they only agreed above 888px, where `--measure` capped
+   * both boxes. `--column-edge` is the air the transcript keeps plus the gutter
+   * it reserves, stated once, so this field and that transcript are the same
+   * box at every width. See the tokens.
+   */
+  padding: 0 var(--column-edge) 16px;
   /* Transparent, so the field's own glow shows through the glass under it
      rather than being cut off by an opaque band. */
   background: transparent;
@@ -176,7 +187,19 @@
   width: 36px;
   height: 36px;
   border: 0;
-  border-radius: var(--radius-sm);
+  /*
+   * A disc, like Send and Stop beside it.
+   *
+   * These were 12px-cornered squares, and the argument for that was rank: Send
+   * is the loudest thing in the row and the `+`, the gear and the budget were
+   * meant to read as the second rank behind it. Rank is what the *fill* says --
+   * these three are ghost buttons and Send is the accent disc -- so the shape
+   * was carrying a distinction the colour already carried, and it made the row
+   * two silhouettes: one disc and three rounded squares in a line of same-sized
+   * boxes. Every control you can see the edge of is a stadium (tokens.css), and
+   * these show theirs on hover.
+   */
+  border-radius: var(--radius-pill);
   background: transparent;
   color: var(--fg-mute);
   cursor: pointer;
@@ -340,14 +363,32 @@
 }
 
 /*
- * A read-only mode marks the composer field itself, not just the hint text.
- * The hint is at the bottom of the window and easy to miss; the field is
- * where the user is looking when they decide what to type.
+ * A read-only mode does not repaint the field, and no rule here is the way that
+ * is said -- this comment is, so the absence stays a decision rather than an
+ * omission.
+ *
+ * Chat, Plan and Skills used to tint the textarea: an opaque `color-mix` of
+ * `--input` and `--bg`, which the browser computes to `color(srgb 0.148627
+ * 0.148627 0.148627)` where Build's textarea computes to `rgba(0, 0, 0, 0)`.
+ * The tint was the *textarea's*, so it stopped at the control row: those three
+ * modes drew a grey typing area stacked on a glass one, which made the modes
+ * with the least reach the loudest composer in the window. Build and Mission
+ * showed the field's own `--glass-field` through a transparent textarea, and
+ * that is the one fill every mode has now.
+ *
+ * The state is still stated twice, without repainting anything: the lit pill in
+ * the mode group is the mode that is active, and the hint under the field spells
+ * it out in words ("Plan mode -- ..."), which is the copy a screen reader gets
+ * too. `Composer.tsx` still puts `is-readonly` on the textarea as the markup's
+ * own statement of the state rather than as a style hook, and `layout.test.ts`
+ * holds the stylesheet to having no rule for it.
+ *
+ * Removing the fill took two declarations with it, both of which existed only to
+ * hold it inside the field's radius: the pair of `calc(var(--radius-lg) - 1px)`
+ * top corners, and `border-color: var(--border)` -- which painted nothing anyway,
+ * because `.composer textarea` sets `border: 0`, so a colour on a 0-width
+ * `none`-style border is a declaration no pixel can see.
  */
-.composer-inner textarea.is-readonly {
-  border-color: var(--border);
-  background: color-mix(in srgb, var(--input) 70%, var(--bg));
-}
 
 /* --- the `/` skill menu ---------------------------------------------------- */
 /*
@@ -367,7 +408,7 @@
   position: absolute;
   left: calc(var(--column-inset) - 1px);
   right: calc(var(--column-inset) - 1px);
-  bottom: calc(100% + 6px);
+  bottom: calc(100% + var(--menu-gap));
   z-index: 6;
   margin: 0;
   padding: 4px;
@@ -394,6 +435,9 @@
   align-items: baseline;
   gap: 8px;
   padding: 6px 10px;
+  /* A corner, for the reason `.chatrow` records: this row is 712px wide in the
+     field's own measure, and a stadium at that width is a bar rather than an
+     item. */
   border-radius: var(--radius-xs);
   cursor: pointer;
   color: var(--fg-dim);
