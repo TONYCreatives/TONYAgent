@@ -22,8 +22,18 @@ from typing import Any, AsyncIterator
 
 import httpx
 
+from tonyagent import __version__ as VERSION
 from tonyagent.api.dialects import Chunk, Completion, Dialect, ReasoningSpec, Usage
 from tonyagent.api.errors import ErrorKind, KeyFormatError, KeyLengthError, LLMError
+
+#: **Who is asking.** Some gateways refuse traffic that arrives as a generic SDK or
+#: HTTP-library user agent. OpenCode Go says so explicitly -- a client should
+#: "identify itself with its own user agent, such as ``my-coding-agent/1.0``, rather
+#: than a generic SDK or HTTP-library name" -- and an unattributable request is one
+#: they cannot tell apart from a scraper, which is a thing they are entitled to
+#: refuse. Sent on every request, to every provider, because there is no gateway that
+#: is helped by being lied to about this.
+USER_AGENT = f"TONYAgent/{VERSION}"
 
 # Fallback length floor for providers that do not declare an exact length.
 # This is deliberately low: it is a last-resort sanity check, not the real
@@ -75,6 +85,9 @@ class LLMClient:
         timeout: float = 60.0,
         extra_headers: dict[str, str] | None = None,
         key_length: int | None = None,
+        user_agent: str = "",
+        session_header: str = "",
+        session_id: str = "",
     ):
         self.provider = provider
         self.api_key = normalize_key(api_key)
@@ -90,6 +103,19 @@ class LLMClient:
         # shape but the wrong length is a truncated paste, and the provider will
         # report it as an opaque 401 unless we catch it here.
         self.key_length = key_length
+        # **Who is asking, by name.** Some gateways refuse traffic from a generic
+        # SDK or HTTP-library user agent -- OpenCode Go says so in as many words
+        # ("identify itself with its own user agent") -- and a request that cannot
+        # be attributed is one they cannot tell from a scraper.
+        self.user_agent = user_agent or USER_AGENT
+        # **Which conversation this is.** A gateway that routes and caches per
+        # session asks for a stable id per conversation; the header's *name* is the
+        # gateway's business, so it arrives from the provider and nothing is sent
+        # when the provider did not ask. `session_id` is an attribute rather than a
+        # constructor argument only because the useful value -- the conversation --
+        # is known after the provider is built; see `set_session`.
+        self.session_header = session_header
+        self.session_id = session_id
         # The gateway's model list, fetched at most once per client. OpenRouter
         # answers it with several hundred entries, and a model picker that
         # opened its menu on every click would otherwise spend a request per
@@ -98,13 +124,32 @@ class LLMClient:
         self._model_entries_cache: dict[str, dict] | None = None
 
     # -- helpers -------------------------------------------------------------
+    def set_session(self, session_id: str) -> None:
+        """Point this client at a conversation, for gateways that route per session.
+
+        Called when the conversation changes rather than when the provider is built,
+        because the provider outlives any one conversation: the app re-binds a
+        provider when the *settings* change, and switches conversations far more
+        often than that.
+        """
+        self.session_id = session_id or ""
+
     def _headers(self) -> dict[str, str]:
-        return {
+        headers = {
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
+            # Named, not a library default: see `user_agent` above.
+            "User-Agent": self.user_agent,
             **self.dialect.auth_headers(self.api_key),
             **self.extra_headers,
         }
+        if self.session_header and self.session_id:
+            # An explicitly configured header wins: `extra_headers` is a settings
+            # field, and someone who set this one by hand meant it.
+            configured = {name.lower() for name in headers}
+            if self.session_header.lower() not in configured:
+                headers[self.session_header] = self.session_id
+        return headers
 
     def _url(self, stream: bool) -> str:
         return self.dialect.url(self.base_url, self.model, stream)

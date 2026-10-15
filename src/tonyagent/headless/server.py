@@ -242,6 +242,11 @@ class StdioServer:
             session.bind_provider(
                 self.session.provider_name, self.session.model, self.session.base_url
             )
+            # The replacement session carries a provider of its own, so the id has
+            # to be handed to *that* one: `_sync_provider_session` after the swap
+            # does exactly this, and this line is why the swap is not a request
+            # away from being wrong.
+            self._sync_provider_session()
         # The effort is a property of the window, not of one conversation, so
         # switching chats must not silently reset it to the model default.
         session.set_reasoning_effort(self.session.reasoning_effort)
@@ -334,6 +339,25 @@ class StdioServer:
         conversation.state = self.session.state.to_dict()
         self.conversations.save(conversation)
 
+    def _sync_provider_session(self) -> None:
+        """Tell the bound provider which conversation it is serving.
+
+        **The provider outlives the conversation, and the session header must not.**
+        OpenCode Go routes and caches per session and rejects a request without
+        `x-opencode-session`, so the id has to follow the chat rather than the
+        process -- while the provider is bound when the *settings* change, which
+        happens far less often than switching chats. Both of the places that change
+        either one call this, so the two cannot drift apart.
+
+        A provider that has no session notion is left alone: `set_session` is on the
+        shared base, and a gateway that never asked for an id never sends one.
+        """
+        provider = getattr(self.session, "provider", None)
+        setter = getattr(provider, "set_session", None)
+        if setter is None:
+            return
+        setter(self.conversation_id or "")
+
     def _load_into_session(self, conversation_id: str) -> None:
         """Replace the session with one holding a saved transcript."""
         if self.conversations is None:
@@ -360,6 +384,7 @@ class StdioServer:
         session.set_state(SessionState.from_dict(conversation.state))
         self.conversation_id = conversation_id
         self._attach_session(session)
+        self._sync_provider_session()
 
     # -- outbound ------------------------------------------------------------
     def _write(self, obj: Any) -> None:
@@ -472,6 +497,9 @@ class StdioServer:
             raise RpcError(str(exc)) from None
         if provider is None:
             raise RpcError(f"Unknown provider: {name}")
+        # Bound last, told first: a provider switched to mid-conversation must not
+        # spend one request under the previous session's id.
+        self._sync_provider_session()
 
         # Persist the choice, so the next launch starts on it instead of on a
         # default name with no provider behind it.

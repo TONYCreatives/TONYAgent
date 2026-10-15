@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Protocol
@@ -252,6 +253,13 @@ class BaseLLMProvider(ABC):
     supports_streaming: bool = True
     supports_function_calling: bool = True
 
+    #: **The gateway's own name for "which conversation is this", if it has one.**
+    #: OpenCode Go asks for a stable session id per conversation so it can route and
+    #: cache; a gateway with no such notion leaves this empty and no header is sent,
+    #: because inventing one for every vendor would be telling them something they
+    #: did not ask for. See `LLMClient.session_header`.
+    session_header: str = ""
+
     def __init__(
         self,
         api_key: str = "",
@@ -267,6 +275,15 @@ class BaseLLMProvider(ABC):
         self.extra_headers = extra_headers or {}
         self.timeout = timeout
         self.max_retries = max_retries
+        # **A session id exists from the first request, and that is deliberate.**
+        # The conversation is not known when the provider is built -- the app binds a
+        # provider when the *settings* change and switches conversations far more
+        # often -- so the fallback is one stable id per process. A gateway that
+        # rejects a missing session header gets a good one immediately rather than
+        # after whoever wires the conversation id through has finished; and
+        # `set_session` replaces it with the conversation's own id when that lands,
+        # which is what earns the per-conversation caching.
+        self.session_id = uuid.uuid4().hex
 
     @abstractmethod
     async def chat_completion(
@@ -344,8 +361,23 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 extra_headers=self.extra_headers,
                 key_prefix=self.key_prefix,
                 key_length=self.key_length,
+                session_header=self.session_header,
+                session_id=self.session_id,
             )
         return self._http
+
+    def set_session(self, session_id: str) -> None:
+        """Tell the provider which conversation its next request belongs to.
+
+        Both copies are updated because the client caches its own: it is built once
+        per provider and would otherwise keep sending the first session it ever saw,
+        which is exactly the "stable" a gateway wants *per conversation* and the
+        opposite of what it wants across them.
+        """
+        self.session_id = session_id or ""
+        client = getattr(self, "_http", None)
+        if client is not None:
+            client.set_session(self.session_id)
 
     async def chat_completion(
         self,

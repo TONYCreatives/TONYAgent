@@ -280,6 +280,69 @@ def test_a_vendor_falls_back_to_its_own_endpoint():
     assert overridden.model == "m"
 
 
+def test_the_client_names_itself_and_not_the_http_library():
+    """**OpenCode Go's own rule, and a request can be refused for breaking it.**
+
+    Its documentation asks each client to "identify itself with its own user agent,
+    such as ``my-coding-agent/1.0``, rather than a generic SDK or HTTP-library name".
+    httpx sends its own name unless told otherwise, so this is asserted rather than
+    assumed -- the failure is invisible from inside the app.
+    """
+    from tonyagent.api.client import LLMClient, USER_AGENT
+
+    client = LLMClient(
+        provider="opencode-go", api_key="k", model="m", base_url="https://x/v1", key_prefix=""
+    )
+    agent = client._headers()["User-Agent"]
+    assert agent == USER_AGENT
+    assert agent.startswith("TONYAgent/"), agent
+    assert "httpx" not in agent.lower(), "the HTTP library is introducing us"
+
+
+def test_opencode_go_always_sends_a_session_id_and_other_gateways_do_not():
+    """**This is the header whose absence rejected the request.**
+
+    Go routes and caches per session, and a request without `x-opencode-session` is
+    answered with a rejection rather than merely routed worse. A stable id exists
+    from the first request because the conversation is not known when the provider is
+    built -- the app binds a provider when the settings change and switches
+    conversations far more often -- and `set_session` narrows it afterwards.
+    """
+    import tonyagent.providers  # noqa: F401
+    from tonyagent.providers.base import provider_registry
+
+    go = provider_registry.get("opencode-go")(api_key="k")
+    headers = go.http_client()._headers()
+    assert headers["x-opencode-session"], "opencode-go sent no session id"
+    first = headers["x-opencode-session"]
+
+    # Stable across requests: a value that changed per call would defeat the routing
+    # and caching it exists for, which is worse than sending none.
+    assert go.http_client()._headers()["x-opencode-session"] == first
+
+    # And it follows the conversation once one is known.
+    go.set_session("conversation-abc")
+    assert go.http_client()._headers()["x-opencode-session"] == "conversation-abc"
+
+    # A gateway that never asked for a session id is not told one: the header's name
+    # is the vendor's business, and inventing one for everyone tells them something
+    # they did not ask for.
+    other = provider_registry.get("openrouter")(api_key="k")
+    assert "x-opencode-session" not in other.http_client()._headers()
+    assert other.http_client()._headers()["User-Agent"].startswith("TONYAgent/")
+
+
+def test_a_configured_session_header_wins_over_the_generated_one():
+    """`extra_headers` is a settings field: someone who set this by hand meant it."""
+    import tonyagent.providers  # noqa: F401
+    from tonyagent.providers.base import provider_registry
+
+    provider = provider_registry.get("opencode-go")(
+        api_key="k", extra_headers={"x-opencode-session": "mine"}
+    )
+    assert provider.http_client()._headers()["x-opencode-session"] == "mine"
+
+
 def test_no_provider_delegates_to_an_abstract_stub():
     """The bug that made five providers silently return None."""
     from tonyagent.providers.base import OpenAICompatibleProvider, provider_registry

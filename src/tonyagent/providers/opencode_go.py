@@ -33,6 +33,14 @@ class OpenCodeGoProvider(OpenAICompatibleVendor):
     #: user sees in the picker.
     name = "opencode-go"
     base_url = "https://opencode.ai/zen/go/v1"
+    #: **Required by this gateway, and the reason it answers 400 without it.**
+    #: Go's documentation asks each client to "send a stable session ID in
+    #: `x-opencode-session` for each conversation so we can optimize routing and
+    #: prompt caching", and a request without one is rejected rather than merely
+    #: routed worse. `BaseLLMProvider` supplies a stable per-process id from the
+    #: first request and `set_session` narrows it to the conversation, so this
+    #: header is never absent; see `session_header` there.
+    session_header = "x-opencode-session"
     #: Empty for the same reason `models` is: a default model id would have to
     #: be guessed from a display name. A turn sent without a model fails with
     #: the provider's own complaint, which is the honest outcome.
