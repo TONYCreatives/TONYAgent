@@ -806,6 +806,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="dump the JSONL protocol to stdout instead of rendering it",
     )
+    parser.add_argument(
+        "--plain",
+        action="store_true",
+        help="the line-mode REPL even on a terminal (no full-screen interface)",
+    )
+    parser.add_argument(
+        "--tui",
+        action="store_true",
+        help="force the full-screen interface; this is the default on a terminal",
+    )
     return parser
 
 
@@ -824,7 +834,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         if args.raw:
             return _raw_session(client, prompt)
 
-        ui = Renderer(show_reasoning=not args.hide_reasoning)
+        # Which frontend, decided here rather than in either one.
+        #
+        # The full-screen interface is the default when stdout is a terminal,
+        # because that is the case a person is actually in. It is not the
+        # default when it is a pipe: alt-screen and a cursor-addressed layout
+        # produce nothing usable in a file, and the line REPL is what makes
+        # `tony "..." > out.txt` work at all. `--plain` and `--tui` override,
+        # because "I redirected this and still got escape codes" should have an
+        # answer that is a flag rather than a bug report.
+        interactive = sys.stdout.isatty() and not args.raw
+        use_tui = interactive and not args.plain
+        if args.tui:
+            use_tui = True
+
         if args.cwd:
             # Reported rather than assumed: the core picks the project up from
             # the trust/sandbox path, and -C says which one the user meant.
@@ -834,8 +857,14 @@ def main(argv: Optional[list[str]] = None) -> int:
                     {"project": str(Path(args.cwd).resolve()), "trusted": True},
                 )
             except CoreError as exc:
-                ui.warn(f"Could not set the project folder: {exc}")
+                print(f"Could not set the project folder: {exc}", file=sys.stderr)
 
+        if use_tui:
+            from tonyagent.cli.tui import TonyApp
+
+            return TonyApp(client, initial_prompt=prompt).run()
+
+        ui = Renderer(show_reasoning=not args.hide_reasoning)
         repl = Repl(client, ui, initial_prompt=prompt)
         client.on_event = repl.handle_event
         return repl.run()

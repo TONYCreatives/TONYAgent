@@ -54,6 +54,13 @@ dev = [
     "types-tomli>=2.0.0",
     "pre-commit>=3.6.0",
 ]
+terminal = [
+    # The full-screen terminal frontend. Not a hard dependency of the package:
+    # `python -m tonyagent.cli` falls back to the line REPL when it is absent,
+    # and so does anything piped, so a headless install is not made heavier for
+    # an interface it cannot use.
+    "textual>=1.0",
+]
 packaging = [
     "pyinstaller>=6.1.0",
     "nsis>=3.0.0",

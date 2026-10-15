@@ -321,6 +321,44 @@ def ledger() -> UsageLedger:
     return _LEDGER
 
 
+def current_context(model: str = "") -> dict[str, Any]:
+    """How full the conversation is right now, as the core can honestly say.
+
+    **The numerator is the last request's `input_tokens`,** which is a real
+    measurement rather than an estimate: every turn resends the whole
+    transcript, so the input side of the most recent request *is* the context
+    as the provider saw it. Nothing here counts characters or guesses at a
+    tokenizer, because both would be a different number from the one the
+    provider will actually bill and truncate on.
+
+    **Only the most recent request counts,** and only for this model. Summing
+    the window would be spend, not context, and the two differ by orders of
+    magnitude -- which is exactly the confusion a "context" label invites, so
+    this returns a plain dict with named fields rather than a percentage that
+    would have to be taken on trust.
+
+    `input_tokens` is 0 when the provider reported no usage for the last
+    request. That is reported as ``used: 0`` with ``known: False`` rather than
+    as a guess, because a bar showing 0% for a long conversation is worse than
+    no bar: it is confidently wrong.
+    """
+    if not model:
+        return {"model": "", "used": 0, "known": False}
+
+    latest: UsageRecord | None = None
+    try:
+        for record in ledger().read():
+            if record.model == model and record.input_tokens > 0:
+                latest = record
+    except Exception as exc:  # noqa: BLE001 - a missing meter is not a failure
+        logger.warning(f"Could not read the usage ledger for context: {exc}")
+        return {"model": model, "used": 0, "known": False}
+
+    if latest is None:
+        return {"model": model, "used": 0, "known": False}
+    return {"model": model, "used": latest.input_tokens, "known": True}
+
+
 def record_request(
     *,
     provider: str,

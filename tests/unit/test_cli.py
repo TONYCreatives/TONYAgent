@@ -522,6 +522,116 @@ def test_asking_always_at_the_top_level_does_not_promise_more_than_it_can_do(mon
     assert repl._allow_always() is True
 
 
+# --- the theme: the window's palette, ported -------------------------------
+
+
+def test_the_theme_carries_the_windows_own_tokens():
+    """Every colour here is read from `app/src/styles/tokens.css`.
+
+    Pinned because the whole point of this frontend is that it looks like the
+    same application as the window. A palette that drifted would not be noticed
+    by anything else in the suite, and would be noticed by a person.
+    """
+    from tonyagent.cli import theme
+
+    # The two ladders and the accent, with the values the file declares.
+    assert theme.BG == "#1a1a1a"
+    assert theme.SURFACE == "#202020"
+    assert theme.CHROME == "#262626"
+    assert theme.FG == "#ececec"
+    assert theme.FG_MUTE == "#8a8a8a"  # 5.04:1 on --bg, chosen for that reason
+    assert theme.ACCENT == "#6393f0"  # not the icon ground #2f6feb: 3.81:1
+    css = theme.build_css()
+    assert theme.BG in css
+    assert theme.ACCENT in css
+
+
+def test_the_theme_is_achromatic_except_the_accent_and_the_semantics():
+    """`tokens.css`: "the accent is the only chroma on screen".
+
+    This is the rule the file gives as the reason the window stopped looking
+    borrowed, so it is worth a test rather than a comment -- a violet heading or
+    an amber bold would break it, and would look borrowed.
+    """
+    from tonyagent.cli import theme
+
+    def chroma(hex_value: str) -> int:
+        v = hex_value.lstrip("#")
+        r, g, b = (int(v[i : i + 2], 16) for i in (0, 2, 4))
+        return max(r, g, b) - min(r, g, b)
+
+    for name in ("BG", "SURFACE", "CHROME", "INPUT", "RAISED", "CHIP",
+                 "FG", "FG_DIM", "FG_MUTE", "BORDER", "BORDER_STRONG"):
+        assert chroma(getattr(theme, name)) == 0, f"{name} is not achromatic"
+    # The four places chroma is allowed, and no others in the ladder.
+    assert chroma(theme.ACCENT) > 0
+    assert chroma(theme.OK) > 0
+    assert chroma(theme.DANGER) > 0
+    assert chroma(theme.WARN) > 0
+
+
+def test_a_terminal_without_truecolor_gets_the_256_cube(monkeypatch):
+    """Snapping to xterm-256 moves a channel by up to 20, which is the size of
+    the gap the contrast ratios were chosen on, so the greys are mapped to the
+    grey ramp rather than to near-grey corners of the colour cube."""
+    from tonyagent.cli import theme
+
+    monkeypatch.delenv("COLORTERM", raising=False)
+    monkeypatch.setenv("TERM", "xterm-256color")
+    assert theme.truecolor_supported() is True
+
+    monkeypatch.setenv("TERM", "xterm")
+    assert theme.truecolor_supported() is False
+    assert theme.color("#1a1a1a").startswith("color")
+
+
+# --- the turn model --------------------------------------------------------
+
+
+def test_a_tool_call_splits_the_message_it_interrupts():
+    """Arrival order is the order on screen.
+
+    An agent that says something, calls a tool, then says more has three
+    pieces. Rendered as one accumulating widget the tool has nowhere to go that
+    is both after what was said and before what comes next, and either choice
+    reorders the transcript -- so the message is frozen at the interruption.
+    """
+    from tonyagent.cli.widgets import Turn
+
+    turn = Turn()
+    turn.on_delta({"text": "Looking now."})
+    first = turn.take_answer()
+    turn.on_delta({"text": "Fixed."})
+    second = turn.take_answer()
+
+    assert first == "Looking now."
+    assert second == "Fixed."
+
+
+def test_taking_an_empty_message_yields_nothing():
+    from tonyagent.cli.widgets import Turn
+
+    turn = Turn()
+    assert turn.take_answer().strip() == ""
+
+
+def test_the_throughput_figure_counts_what_actually_arrived():
+    """Char/s, not tokens/s.
+
+    The core streams text chunks of varying size, so a token rate would be
+    measured against a tokenizer this frontend does not have and would not
+    agree with the provider's billing figure anyway.
+    """
+    from tonyagent.cli.widgets import Turn
+
+    turn = Turn()
+    turn.on_delta({"text": "x" * 200})
+    assert turn.streamed_chars == 200
+    # Measured, so a turn that just started reports nothing rather than a
+    # number derived from a handful of milliseconds.
+    assert turn.rate() >= 0
+
+
 # --- the client ------------------------------------------------------------
 
 

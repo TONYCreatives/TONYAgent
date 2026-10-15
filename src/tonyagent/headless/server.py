@@ -150,6 +150,7 @@ class StdioServer:
             "key.activate": self._h_key_activate,
             "usage.summary": self._h_usage_summary,
             "state": self._h_state,
+            "context.get": self._h_context_get,
             "search": self._h_search,
             "mode.set": self._h_mode_set,
             "mode.list": self._h_mode_list,
@@ -906,6 +907,47 @@ class StdioServer:
             # core that is already serving one -- and would offer Start for a
             # sandbox that is up.
             "sandbox": self.session.sandbox_status(),
+        }
+
+    async def _h_context_get(self, params: dict) -> Any:
+        """How full the conversation is, for a frontend that draws a meter.
+
+        A method of its own rather than two keys on `state`, for the reason
+        `plan.get` documents: `state` is about the session's mode, permission
+        and sandbox, and a reader of it should not have to know about a field
+        it does not use.
+
+        Both numbers are measurements and both are allowed to be absent:
+
+        * ``used`` is the input side of the most recent request to this model,
+          which is what the provider saw as the context -- not a tokenizer's
+          guess at it, and not a sum over the window, which would be spend.
+        * ``window`` is the model's own `context_length`, from the same
+          ``/models`` response the model picker already fetches.
+
+        ``known`` is False when the provider reported no usage for the last
+        request, and ``window`` is 0 when it does not publish a context size. A
+        frontend must draw "unknown" in both cases: a bar reading 0% for a long
+        conversation is worse than no bar, because it is confidently wrong.
+        """
+        from tonyagent.core.usage import current_context
+
+        model = self.session.model
+        used = current_context(model) if model else {"used": 0, "known": False}
+
+        window = 0
+        client = getattr(self.session.provider, "http_client", None)
+        if model and client is not None:
+            try:
+                window = await client().model_context_window()
+            except Exception as exc:  # noqa: BLE001 - a missing meter is not a failure
+                logger.warning(f"Could not read the model context window: {exc}")
+
+        return {
+            "model": model,
+            "used": int(used.get("used", 0) or 0),
+            "known": bool(used.get("known", False)),
+            "window": int(window or 0),
         }
 
     def _h_plan_get(self, params: dict) -> Any:

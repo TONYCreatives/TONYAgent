@@ -290,6 +290,38 @@ class LLMClient:
         """Fetch the live model list. Also serves as an auth probe."""
         return [model_id for model_id, _ in (await self._model_entries()).items()]
 
+    async def model_context_window(self) -> int:
+        """The bound model's context window, or 0 when the provider is silent.
+
+        Read out of the ``/models`` entry that `_model_entries` already
+        fetched and cached, so this costs no request. OpenRouter reports
+        `context_length` on every model; before this existed the field arrived
+        in the response and was discarded, which left "how full is the context"
+        unanswerable even though the answer was sitting in the one response the
+        model picker already makes.
+
+        **0 means unknown, not zero.** A provider that omits the field, or a
+        dialect that names it differently, gives 0 here, and a caller that drew
+        a 0% bar from it would be confidently wrong. The window is a property of
+        the model rather than of the conversation, so it is cached separately
+        from the context size and does not change between turns.
+        """
+        model = self.model
+        if not model:
+            return 0
+        entries = await self._model_entries()
+        entry = entries.get(model)
+        if entry is None:
+            return 0
+        for key in ("context_length", "context_window", "max_context_tokens"):
+            value = entry.get(key)
+            if isinstance(value, int) and value > 0:
+                return value
+            # Some gateways report it as a string.
+            if isinstance(value, str) and value.isdigit():
+                return int(value)
+        return 0
+
     async def list_model_reasoning(self) -> dict[str, ReasoningSpec]:
         """What each listed model reports about its own thinking."""
         specs: dict[str, ReasoningSpec] = {}
