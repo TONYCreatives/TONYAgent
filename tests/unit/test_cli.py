@@ -312,6 +312,216 @@ def test_a_confirmation_offers_always_as_well_as_once():
     assert "[n] no" in out
 
 
+# --- the input loop, which used to eat the user's next command -------------
+
+
+class _StubClient:
+    """A core that answers everything and records what the frontend sends.
+
+    `during_send` is run on its own thread, which is the point. The real core
+    emits events from its reader thread while `send` is still outstanding, and
+    a stub that fires them inline would close every dialog before the frontend
+    ever woke up -- so the test would pass by never exercising the race it was
+    written for, and would equally pass a frontend that never reads at all.
+    """
+
+    def __init__(self, during_send=None, send_duration: float = 0.30) -> None:
+        self.sent: list[tuple[str, dict]] = []
+        self.notified: list[tuple[str, dict]] = []
+        self._during_send = during_send
+        self._send_duration = send_duration
+
+    def call(self, method, params=None, timeout=None):
+        if method == "send":
+            if self._during_send is not None:
+                runner, self._during_send = self._during_send, None
+                threading.Thread(target=runner, daemon=True).start()
+            # Long enough that the loop is still waiting when the events land.
+            time.sleep(self._send_duration)
+        return {}
+
+    def notify(self, method, params=None):
+        self.notified.append((method, params))
+
+
+def _make_repl(client, monkeypatch, stdin_text=""):
+    """A `Repl` wired to stubs, with no real terminal and no real core."""
+    import threading as _threading
+
+    from tonyagent.cli.repl import Repl
+
+    repl = Repl.__new__(Repl)
+    repl.client = client
+    repl.ui = Renderer(io.StringIO(), show_reasoning=False)
+    repl.running = True
+    repl.state = {}
+    repl._pending_confirm = None
+    repl._pending_ask = None
+    repl._asked = _threading.Event()
+    repl._sending = ""
+    monkeypatch.setattr(sys, "stdin", io.StringIO(stdin_text))
+    return repl
+
+
+def test_a_turn_that_asks_nothing_does_not_read_the_terminal(monkeypatch):
+    """The regression, and the reason the input loop is event-driven.
+
+    The first version polled `input()` every 200ms whether or not the core was
+    asking anything. On a turn that asked nothing it sat reading the terminal
+    and fed every line to `_route_answer` with `_pending_confirm` and
+    `_pending_ask` both empty -- so it fired a `user.respond` with an empty id
+    once per poll, until the turn ended.
+
+    It looked fine because most turns finish fast. It was stealing input the
+    whole time: on a real terminal, the next command a user typed was eaten by
+    the previous turn's answer loop instead of reaching the prompt.
+    """
+    client = _StubClient()
+    repl = _make_repl(client, monkeypatch, stdin_text="the next command\n")
+
+    repl._turn("a turn that asks nothing")
+
+    assert client.notified == [], (
+        "read the terminal with no dialog open and answered nothing"
+    )
+
+
+def test_a_question_is_answered_exactly_once(monkeypatch):
+    """The positive case: a real question still reaches the terminal.
+
+    Without this the fix above would also pass a build that simply never asked
+    anything -- which is not a REPL.
+    """
+    from tonyagent.core.events import EventType
+
+    def ask():
+        time.sleep(0.02)
+        repl.handle_event(
+            EventType.USER_ASKED.value, {"id": "q1", "question": "Which?"}
+        )
+
+    client = _StubClient(during_send=ask)
+    repl = _make_repl(client, monkeypatch, stdin_text="blue\n")
+
+    repl._turn("pick a colour")
+
+    assert client.notified == [("user.respond", {"id": "q1", "answer": "blue"})]
+
+
+def test_a_confirmation_is_answered_with_the_id_it_arrived_with(monkeypatch):
+    """The id decides where an answer goes; nothing is guessed from the text."""
+    from tonyagent.core.events import EventType
+
+    def ask():
+        time.sleep(0.02)
+        repl.handle_event(
+            EventType.CONFIRMATION_REQUESTED.value,
+            {"id": "c1", "name": "delete_file", "destructive": True},
+        )
+
+    client = _StubClient(during_send=ask)
+    repl = _make_repl(client, monkeypatch, stdin_text="y\n")
+
+    repl._turn("delete it")
+
+    assert client.notified == [("confirm.respond", {"id": "c1", "confirmed": True})]
+
+
+def test_a_dialog_that_closes_is_not_answered_afterwards(monkeypatch):
+    """A turn that ends while the key is down must not answer a stale id.
+
+    The core closes its outstanding prompts with "no" at the end of a turn, so
+    `confirmation.resolved` can land while the user is part-way through typing
+    an answer to a prompt that no longer exists. Routing that answer would put
+    a `confirm.respond` for an id the core has already retired, which reads as
+    a dropped connection rather than as the turn having ended.
+
+    The close is deliberately scheduled *after* the frontend has started
+    reading -- closing it beforehand would close every dialog before the loop
+    woke up, and the test would pass without ever reaching the race.
+    """
+    from tonyagent.core.events import EventType
+
+    reading = threading.Event()
+
+    def open_then_close_during_the_read():
+        repl.handle_event(
+            EventType.CONFIRMATION_REQUESTED.value, {"id": "c1", "name": "write"}
+        )
+        # Close it while the frontend is blocked reading the keyboard, which is
+        # the window this is about: a person reads a prompt, thinks, and the
+        # turn ends underneath them.
+        reading.wait(timeout=2)
+        time.sleep(0.05)
+        repl.handle_event(EventType.CONFIRMATION_RESOLVED.value, {"id": "c1"})
+
+    class _SlowStdin(io.StringIO):
+        """Hands over the line, but only once, after a signal.
+
+        A plain StringIO returns instantly, so the answer would be routed
+        before the close landed and the race would never actually be entered.
+        """
+
+        def readline(self, *args):
+            reading.set()
+            time.sleep(0.15)
+            return super().readline(*args)
+
+    client = _StubClient(during_send=open_then_close_during_the_read, send_duration=0.40)
+    repl = _make_repl(client, monkeypatch, stdin_text="y\n")
+    monkeypatch.setattr(sys, "stdin", _SlowStdin("y\n"))
+
+    repl._turn("write it")
+
+    assert reading.is_set(), "the frontend never read, so nothing was tested"
+    assert client.notified == [], "answered a confirmation the core had closed"
+
+
+def test_asking_always_raises_the_permission_level_not_just_the_one_call(monkeypatch):
+    """"always" is the session's level, and the test says so out loud.
+
+    Pinned because the alternative -- silently treating `a` as `y` -- would
+    look identical to a user who never re-reads the prompt, while leaving them
+    to be asked again on every tool.
+    """
+    client = _StubClient()
+    repl = _make_repl(client, monkeypatch)
+    calls = []
+
+    def fake_call(method, params=None, timeout=None):
+        calls.append((method, params))
+        if method == "permission.list":
+            return {
+                "permission": "medium",
+                "permissions": [
+                    {"name": "medium"}, {"name": "high"}, {"name": "full"}
+                ],
+            }
+        if method == "permission.set":
+            return {"name": "high"}
+        return {}
+
+    monkeypatch.setattr(repl.client, "call", fake_call)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("y\n"))
+
+    assert repl._allow_always() is True
+    assert ("permission.set", {"permission": "high"}) in calls
+
+
+def test_asking_always_at_the_top_level_does_not_promise_more_than_it_can_do(monkeypatch):
+    """At `full` there is nothing to raise, so it confirms this once and says so."""
+    client = _StubClient()
+    repl = _make_repl(client, monkeypatch)
+
+    def fake_call(method, params=None, timeout=None):
+        if method == "permission.list":
+            return {"permission": "full", "permissions": [{"name": "full"}]}
+        return {}
+
+    monkeypatch.setattr(repl.client, "call", fake_call)
+    assert repl._allow_always() is True
+
+
 # --- the client ------------------------------------------------------------
 
 

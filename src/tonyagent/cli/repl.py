@@ -34,7 +34,6 @@ from __future__ import annotations
 import argparse
 import sys
 import threading
-import time
 from collections.abc import Callable
 from pathlib import Path, PurePath
 from typing import Any, Optional
@@ -43,9 +42,15 @@ from tonyagent.cli.client import CoreClient, CoreError
 from tonyagent.cli.render import Renderer, pad_to
 from tonyagent.core.events import EventType
 
-#: How long a confirmation or question waits for a keypress, re-checking for
-#: Ctrl-C. Short enough to feel responsive, long enough not to spin.
-_INPUT_POLL_S = 0.2
+#: How long the input loop blocks on `_asked` before checking whether the turn
+#: is still running.
+#:
+#: This is a liveness backstop, not the mechanism. The loop is normally woken
+#: by `_asked` the instant a question opens; the timeout only exists so a dead
+#: worker thread cannot leave the loop waiting forever with no way to notice.
+#: It is deliberately not called a poll interval any more, because calling it
+#: that is what made the original unconditional-read version look reasonable.
+_IDLE_POLL_S = 0.25
 
 #: A turn may legitimately run for many minutes. The timeout is generous on
 #: purpose: a REPL that abandons a long build is worse than one that waits.
@@ -65,7 +70,11 @@ class Repl:
         self.initial_prompt = initial_prompt
         self.state: dict[str, Any] = {}
         self.running = True
-        self._busy = threading.Event()
+        #: Set by `handle_event` when a dialog opens, cleared once answered.
+        #: This is what the input loop waits on -- it is the only reason the
+        #: terminal is read at all, which is what keeps the loop from eating
+        #: the user's next command on a turn that asked nothing.
+        self._asked = threading.Event()
         #: The confirmation currently awaiting an answer, so Ctrl-C during one
         #: answers "no" rather than leaving a suspended turn behind.
         self._pending_confirm: Optional[str] = None
@@ -112,11 +121,10 @@ class Repl:
     def handle_event(self, kind: str, payload: dict[str, Any]) -> None:
         """Render an event, and note the ones that suspend the turn.
 
-        Called on the client's reader thread, so the two assignments below are
-        the only shared mutable state in the frontend. They are written before
-        the prompt appears, so a dialog cannot be answered before it is
-        routable -- which is the ordering that keeps `input()` from blocking on
-        a turn that is not actually waiting for anything yet.
+        Called on the client's reader thread. The ids and `_asked` below are the
+        only shared mutable state in the frontend; `_asked` is what wakes the
+        input loop, and it is set *after* the id, so a question can never be
+        answered before there is an id to answer against.
         """
         if kind == EventType.CONFIRMATION_REQUESTED.value:
             self._pending_confirm = str(payload.get("id", ""))
@@ -131,13 +139,20 @@ class Repl:
             # The dialog is closed, so an answer must not go to a stale id.
             self._pending_confirm = None
             self._pending_ask = None
+            self._asked.clear()
         self.ui.handle(kind, payload)
+        # Raised last, after the id is stored and the prompt has been drawn, so
+        # the loop that wakes on this is guaranteed to have something to route
+        # an answer to and something to show.
+        if self._pending_confirm or self._pending_ask:
+            self._asked.set()
 
     # -- the loop ------------------------------------------------------------
 
     def run(self) -> int:
         self._banner()
         self.refresh_state()
+        _install_readline()
 
         if self.initial_prompt:
             # A prompt given on the command line is one turn, not a line at
@@ -180,26 +195,39 @@ class Repl:
     def _read_until_asked(self) -> None:
         """Answer whatever the core blocks on, until the turn's reply arrives.
 
-        This is the reason the client's `send` is called from a thread rather
-        than inline: a turn can be suspended mid-flight by `ask_user_question`
-        or by a destructive tool's confirmation, and both are answered by a
-        keypress here. Reading stdin on the main thread while `send` waits on
-        the same thread is a deadlock with a UI on top, so the wait happens on
-        a worker and this loop owns the terminal.
+        This is the reason the client's `send` runs on a worker rather than
+        inline: a turn can be suspended mid-flight by `ask_user_question` or by
+        a destructive tool's confirmation, and both are answered by a keypress
+        here. Reading stdin on the main thread while `send` waits on that same
+        thread is a deadlock with a UI on top, so the wait happens on a worker
+        and this loop owns the terminal.
 
-        The 60-second timeout on both dialogs is the *core's* (`user_io` says
-        so, and it is one bound for both tools). Nothing here competes with it:
-        this loop returns when the reply lands, and a reply that never comes
-        arrives as `turn.finished` with nobody having answered.
+        **The loop waits on an event, not on the terminal.** The first version
+        polled `input()` every 200ms whether or not anything was being asked,
+        which meant a turn that asked nothing still sat reading the user's
+        next command and fed it to the core as an answer to nothing --
+        `_pending_confirm` and `_pending_ask` were both empty, so it fired a
+        `user.respond` with an empty id, once per poll, until the turn ended.
+        It looked like it worked because most turns finish fast; it was
+        stealing input the whole time.
+
+        So `handle_event` sets `_asked` when a dialog opens and this loop only
+        calls `input()` once that is set, clearing it as it goes. The terminal
+        is read exactly when there is something to read it for.
         """
         worker = threading.Thread(target=self._send_in_background, daemon=True)
         worker.start()
         try:
             while worker.is_alive():
-                if self._ask_for_input():
+                # `wait` rather than `sleep`: the loop is asleep until the
+                # reader thread says a dialog opened, so a question is answered
+                # the moment it is asked and not up to a poll interval later.
+                if not self._asked.wait(timeout=_IDLE_POLL_S):
                     continue
-                time.sleep(_INPUT_POLL_S)
+                if self._pending_confirm or self._pending_ask:
+                    self._ask_once()
         finally:
+            self._asked.clear()
             worker.join(timeout=5)
 
     def _send_in_background(self) -> None:
@@ -210,23 +238,42 @@ class Repl:
         except Exception as exc:  # noqa: BLE001 - reported, never raised at nobody
             self.ui.error(f"send failed: {exc}")
 
-    def _ask_for_input(self) -> bool:
-        """Ask the terminal for a line. True if it produced something."""
+    def _ask_once(self) -> None:
+        """Read one answer and route it to whichever dialog is *still* open.
+
+        Consumes the `_asked` signal before reading, so a dialog that closes
+        while the user is mid-keystroke does not leave it set for a turn that
+        is no longer asking anything.
+
+        **The id is captured after the read, not before.** A confirmation that
+        opens and resolves within the same few milliseconds -- the core closing
+        its own prompts at the end of a turn does exactly this -- would
+        otherwise be answered against an id that no longer exists, and the
+        reply would go into the void looking like a dropped connection. So the
+        answer is held until the loop knows which dialog is still open, and is
+        dropped if none is.
+        """
+        self._asked.clear()
+        if not (self._pending_confirm or self._pending_ask):
+            return
         try:
             answer = input(self.ui.style.yellow("  > "))
         except EOFError:
-            # The user closed the input (^D) with a turn in flight. Answering
-            # "no" to whatever is pending is the only safe reading: the core
-            # will move on with "nobody answered", which it is built for.
+            # ^D with a turn in flight. Answering "no" to whatever is pending
+            # is the only safe reading: the core carries on with "nobody
+            # answered", which it is built for.
             answer = "n"
         except KeyboardInterrupt:
             self._cancel()
             answer = "n"
         answer = answer.strip()
-        if not answer:
-            return False
-        self._route_answer(answer)
-        return True
+        # Re-checked here, after the blocking read: a turn can end, and every
+        # outstanding prompt be closed by the core, while a key is down.
+        if not (self._pending_confirm or self._pending_ask):
+            self.ui.line(self.ui.style.dim("(no longer waiting for an answer)"))
+            return
+        if answer:
+            self._route_answer(answer)
 
     def _route_answer(self, answer: str) -> None:
         """Send a typed line to whichever dialog is open.
@@ -285,7 +332,7 @@ class Repl:
 
         self.ui.blank()
         self.ui.line(
-            self.style.yellow(
+            self.ui.style.yellow(
                 f"'always' raises this session to {target} -- every tool allowed, "
                 "not just this one."
             )
@@ -296,13 +343,13 @@ class Repl:
             "",
         )
         if levels_desc:
-            self.ui.line(f"  {self.style.dim(levels_desc)}")
+            self.ui.line(f"  {self.ui.style.dim(levels_desc)}")
         try:
-            answer = input(self.style.yellow(f"  Switch to {target}? [y/N] ")).strip()
+            answer = input(self.ui.style.yellow(f"  Switch to {target}? [y/N] ")).strip()
         except (EOFError, KeyboardInterrupt):
             return False
         if answer.lower() not in {"y", "yes"}:
-            self.ui.line(self.style.dim("cancelled; confirming this once only"))
+            self.ui.line(self.ui.style.dim("cancelled; confirming this once only"))
             return False
         try:
             self.client.call("permission.set", {"permission": target})
@@ -707,6 +754,31 @@ def _as_int(text: str) -> Optional[int]:
 # --------------------------------------------------------------------------
 # Entry point
 # --------------------------------------------------------------------------
+
+
+def _install_readline() -> bool:
+    """Turn on line editing and history, if this Python has them.
+
+    Without it the prompt is raw `input()`: no arrow keys, no Ctrl-R, no
+    history across sessions. On a REPL where a turn is typed in full every
+    time, losing the up-arrow is the difference between fixing a typo and
+    retyping a paragraph -- and `/mode chat` is exactly the kind of command
+    someone types ten times a session.
+
+    Windows is the exception. `pyreadline3` provides this there, but it is not
+    a declared dependency, and importing it conditionally would make the
+    feature depend on whether an unrelated package happened to be installed --
+    a REPL that edits differently depending on the machine is worse than one
+    that plainly does not.
+    """
+    if sys.platform == "win32":
+        return False
+    try:
+        import readline  # noqa: F401  (imported for its side effect)
+    except ImportError:
+        # A Python built without readline. Legal, and not worth failing over.
+        return False
+    return True
 
 
 def build_parser() -> argparse.ArgumentParser:
