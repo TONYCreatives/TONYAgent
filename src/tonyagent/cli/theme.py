@@ -67,42 +67,36 @@ TRAJ_ADD = "#7ee2a8"
 TRAJ_DEL = "#f2a0a0"
 
 
+#: Every colour below is emitted as hex, always, on every terminal.
+#:
+#: **The first version converted to xterm-256 by hand when `COLORTERM` was
+#: unset, and produced `color234`.** That is Rich's internal spelling, not a
+#: value Textual's CSS parser accepts, so the whole stylesheet failed to parse
+#: and the interface refused to start -- on exactly the terminals the fallback
+#: was written for.
+#:
+#: It was also redundant. Rich quantises a hex colour to whatever the terminal
+#: can actually show, at draw time: a pty with no `COLORTERM` rendered
+#: `#1a1a1a` as `48;5;234` without being asked. So the conversion was doing a
+#: job already done, and doing it into a syntax the parser rejects.
+#:
+#: Hex is therefore the only spelling here, and it is correct on a truecolor
+#: terminal, on a 256-colour one, and on an 8-colour one, because in each case
+#: Rich does the reduction and the palette lands as close to the window's as
+#: the terminal allows.
+
+
 def truecolor_supported() -> bool:
     """Whether this terminal can be sent 24-bit colour.
 
-    ``COLORTERM`` is the convention, and the TERM check is the older signal
-    for terminals that do 256 but not truecolor. Both are honoured because a
-    terminal that reports one and not the other is normal, and the failure
-    mode of guessing wrong is a palette that looks like the window's but isn't.
+    Reported for diagnostics only. Nothing here branches on it: the palette is
+    hex either way, because Rich reduces it at draw time. Kept because "is
+    this terminal lying about colour?" is the first question when a palette
+    looks wrong, and the answer should not need a debugger.
     """
     if os.environ.get("COLORTERM", "").lower() in {"truecolor", "24bit"}:
         return True
     return "256color" in os.environ.get("TERM", "")
-
-
-def _hex_to_ansi(value: str) -> str:
-    """`#rrggbb` to the nearest xterm-256 index, or to grey when it is grey.
-
-    Only called when truecolor is unavailable. Grey is special-cased rather
-    than left to the cube because the whole palette is achromatic, and the
-    24-step grey ramp tracks the surface ladder far more closely than the
-    colour cube's near-grey corners do.
-    """
-    value = value.lstrip("#")
-    r, g, b = (int(value[i : i + 2], 16) for i in (0, 2, 4))
-    if r == g == b:
-        # 232 is the first grey step; the ramp runs to 255. Index 8 is the
-        # bright-black block, which would break the ladder's ordering.
-        step = round((r / 255) * 23)
-        return f"color{232 + max(0, min(23, step))}"
-    # 6x6x6 cube, indices 16..231.
-    quant = lambda c: round((c / 255) * 5)  # noqa: E731
-    return f"color{16 + 36 * quant(r) + 6 * quant(g) + quant(b)}"
-
-
-def color(value: str) -> str:
-    """A colour for Textual, degraded to 256 if this terminal cannot do more."""
-    return value if truecolor_supported() else _hex_to_ansi(value)
 
 
 #: The Textual CSS for the whole app, built from the tokens above.
@@ -112,11 +106,10 @@ def color(value: str) -> str:
 #: would be a second place for the palette to be wrong, which is the failure
 #: `tokens.css` itself documents having hit four times.
 def build_css() -> str:
-    c = color
     return f"""
     Screen {{
-        background: {c(BG)};
-        color: {c(FG)};
+        background: {BG};
+        color: {FG};
         layout: vertical;
     }}
 
@@ -125,13 +118,13 @@ def build_css() -> str:
        line length, and the sidebar is hidden on narrow terminals rather than
        squeezing the messages into a column too short to read. */
     #transcript {{
-        background: {c(BG)};
+        background: {BG};
         padding: 0 2;
         scrollbar-size-vertical: 1;
         overflow-y: auto;
     }}
     #transcript:focus {{
-        background: {c(BG)};
+        background: {BG};
     }}
 
     /* A turn's body, fenced by a left rule. This is the single most important
@@ -142,7 +135,7 @@ def build_css() -> str:
         margin: 1 0 0 0;
     }}
     .turn-rule {{
-        border-left: thick {c(ACCENT)};
+        border-left: thick {ACCENT};
         padding: 0 0 0 2;
     }}
     .answer {{
@@ -151,28 +144,28 @@ def build_css() -> str:
 
     /* A tool call: one dimmed line, the way a build log reads. */
     .tool {{
-        color: {c(FG_MUTE)};
+        color: {FG_MUTE};
         height: auto;
         text-style: none;
     }}
     .tool-done {{
-        color: {c(FG_DIM)};
+        color: {FG_DIM};
     }}
     .tool-failed {{
-        color: {c(DANGER)};
+        color: {DANGER};
     }}
 
     /* Reasoning is present but subordinate: the window dims it, and a terminal
        has no dim, so it is `--fg-mute` with a marker. */
     .reasoning {{
-        color: {c(FG_MUTE)};
+        color: {FG_MUTE};
         height: auto;
         text-style: italic;
     }}
 
     /* The per-turn footer: mode, model, elapsed, throughput. */
     .turn-footer {{
-        color: {c(FG_MUTE)};
+        color: {FG_MUTE};
         height: auto;
         margin: 0 0 1 0;
         text-style: none;
@@ -182,52 +175,52 @@ def build_css() -> str:
        here it is a bordered field, because a terminal has no elevation and a
        box is how it fakes one. */
     #composer {{
-        background: {c(INPUT)};
-        border: tall {c(BORDER)};
+        background: {INPUT};
+        border: tall {BORDER};
         height: 5;
         padding: 0 1;
     }}
     #composer:focus {{
-        border: tall {c(ACCENT)};
+        border: tall {ACCENT};
     }}
 
     /* The status bar: the window's `--topbar-h` equivalent, one line. */
     #status {{
-        background: {c(CHROME)};
-        color: {c(FG_MUTE)};
+        background: {CHROME};
+        color: {FG_MUTE};
         height: 1;
         padding: 0 2;
     }}
     #status.bound {{
-        color: {c(FG_DIM)};
+        color: {FG_DIM};
     }}
 
     /* The sidebar: mode, model, and the context meter. */
     #sidebar {{
-        background: {c(SURFACE)};
-        border-left: solid {c(BORDER)};
+        background: {SURFACE};
+        border-left: solid {BORDER};
         width: 38;
         padding: 1 1;
     }}
     .side-title {{
-        color: {c(FG)};
+        color: {FG};
         text-style: bold;
         height: auto;
     }}
     .side-label {{
-        color: {c(FG_MUTE)};
+        color: {FG_MUTE};
         height: auto;
     }}
     .side-value {{
-        color: {c(FG_DIM)};
+        color: {FG_DIM};
         height: auto;
     }}
     .side-warn {{
-        color: {c(WARN)};
+        color: {WARN};
         height: auto;
     }}
     .side-danger {{
-        color: {c(DANGER)};
+        color: {DANGER};
         height: auto;
     }}
 
@@ -235,14 +228,14 @@ def build_css() -> str:
        the page behind a modal; a terminal cannot dim, so it marks the prompt
        in the one colour it is allowed. */
     .confirm {{
-        background: {c(SURFACE)};
-        border: round {c(WARN)};
+        background: {SURFACE};
+        border: round {WARN};
         width: 64;
         height: auto;
         padding: 1 2;
     }}
     .confirm-destructive {{
-        border: round {c(DANGER)};
+        border: round {DANGER};
     }}
 
     /* A confirmation is a real dialog, centred, and it takes the keyboard.
@@ -253,11 +246,11 @@ def build_css() -> str:
         width: 56;
         height: auto;
         padding: 1 2;
-        background: {c(RAISED)};
-        border: round {c(WARN)};
+        background: {RAISED};
+        border: round {WARN};
     }}
     #confirm-dialog.confirm-destructive {{
-        border: round {c(DANGER)};
+        border: round {DANGER};
     }}
     #confirm-dialog.hidden {{
         display: none;
@@ -269,8 +262,8 @@ def build_css() -> str:
         layer: dialog;
         width: 56;
         height: 18;
-        background: {c(RAISED)};
-        border: round {c(ACCENT)};
+        background: {RAISED};
+        border: round {ACCENT};
     }}
     #picker.hidden {{
         display: none;
@@ -288,15 +281,15 @@ def build_css() -> str:
         height: auto;
         margin: 0 0 0 1;
         padding: 0 0 0 1;
-        background: {c(SURFACE)};
+        background: {SURFACE};
     }}
 
     .error {{
-        color: {c(DANGER)};
+        color: {DANGER};
         height: auto;
     }}
     .warn {{
-        color: {c(WARN)};
+        color: {WARN};
         height: auto;
     }}
     """
@@ -320,6 +313,5 @@ __all__ = [
     "ACCENT", "ACCENT_BRIGHT", "ACCENT_FG", "BG", "BORDER", "BORDER_SOFT",
     "BORDER_STRONG", "CHIP", "CHROME", "DANGER", "DANGER_FG", "FG", "FG_DIM",
     "FG_MUTE", "HOVER", "INPUT", "OK", "RAISED", "SURFACE", "TRAJ_ADD",
-    "TRAJ_DEL", "WARN", "build_css", "color", "supports_unicode",
-    "truecolor_supported",
+    "TRAJ_DEL", "WARN", "build_css", "supports_unicode", "truecolor_supported",
 ]

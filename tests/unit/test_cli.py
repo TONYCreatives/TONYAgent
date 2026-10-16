@@ -570,19 +570,82 @@ def test_the_theme_is_achromatic_except_the_accent_and_the_semantics():
     assert chroma(theme.WARN) > 0
 
 
-def test_a_terminal_without_truecolor_gets_the_256_cube(monkeypatch):
-    """Snapping to xterm-256 moves a channel by up to 20, which is the size of
-    the gap the contrast ratios were chosen on, so the greys are mapped to the
-    grey ramp rather than to near-grey corners of the colour cube."""
-    from tonyagent.cli import theme
+def test_the_stylesheet_parses(monkeypatch):
+    """The regression, and the reason this test exists.
+
+    The first version converted the palette to xterm-256 by hand whenever
+    `COLORTERM` was unset, and emitted Rich's internal spelling -- `color234`.
+    That is not a value Textual's CSS parser accepts, so the whole stylesheet
+    failed to parse and the interface refused to start on exactly the
+    terminals the fallback existed for.
+
+    It was also redundant: Rich quantises hex to whatever the terminal can show,
+    at draw time. A pty with no `COLORTERM` rendered `#1a1a1a` as `48;5;234`
+    without being asked.
+
+    So the palette is hex now, always, and this parses it to prove it -- rather
+    than asserting on the string, which is what let the bad value through.
+    """
+    pytest.importorskip("textual")
+
+    for env in ({"COLORTERM": "truecolor"}, {"TERM": "xterm-256color"}, {}):
+        for name in ("COLORTERM", "TERM"):
+            monkeypatch.delenv(name, raising=False)
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+
+        import io
+
+        from textual.css.errors import StylesheetError
+        from textual.css.stylesheet import Stylesheet
+
+        from tonyagent.cli.theme import build_css
+
+        sheet = Stylesheet()
+        source = build_css()
+        sheet.add_source(source, read_from=io.StringIO(source))
+        # `parse` raises `StylesheetError` listing every bad value, which is the
+        # failure this test exists for -- asserting on the string instead is
+        # what let `color234` through in the first place.
+        try:
+            sheet.parse()
+        except StylesheetError as exc:
+            raise AssertionError(f"stylesheet failed for {env}: {exc}") from exc
+        assert sheet.rules, "the stylesheet parsed to nothing"
+
+
+def test_no_colour_in_the_stylesheet_is_richs_spelling(monkeypatch):
+    """`color234` is Rich's internal name. Textual's parser wants hex.
+
+    Cheap and blunt on purpose: it fails on the whole class of mistake rather
+    than on the one value that happened to be wrong.
+    """
+    pytest.importorskip("textual")
 
     monkeypatch.delenv("COLORTERM", raising=False)
+    monkeypatch.setenv("TERM", "xterm")
+
+    import re
+
+    from tonyagent.cli.theme import build_css
+
+    offenders = re.findall(r"color\d+", build_css())
+    assert offenders == [], f"Rich colour names are not valid CSS: {offenders}"
+
+
+def test_truecolor_detection_is_reported_not_branched_on(monkeypatch):
+    """Diagnostics only. Rich does the reduction; nothing here branches on it."""
+    from tonyagent.cli import theme
+
+    monkeypatch.setenv("COLORTERM", "truecolor")
+    assert theme.truecolor_supported() is True
+
+    monkeypatch.delenv("COLORTERM")
     monkeypatch.setenv("TERM", "xterm-256color")
     assert theme.truecolor_supported() is True
 
-    monkeypatch.setenv("TERM", "xterm")
+    monkeypatch.setenv("TERM", "dumb")
     assert theme.truecolor_supported() is False
-    assert theme.color("#1a1a1a").startswith("color")
 
 
 # --- the turn model --------------------------------------------------------
