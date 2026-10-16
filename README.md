@@ -128,13 +128,23 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\make_shortcut.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\make_shortcut.ps1 -Destination "$env:USERPROFILE\Desktop"
 ```
 
-The shortcut points at `Start TONYAgent (Prebuilt).bat`, which is the entry point
-worth having: it rebuilds the frontend when it is behind and checks that
-`pywebview` is installed before it opens anything. From a terminal, the window on
+The shortcut points at `Start TONYAgent (Prebuilt).bat`, whose **default
+frontend is the terminal interface** — so double-clicking it opens `tony` in a
+`cmd` window. Pass `window` to that file for the webview app instead:
+
+```
+Start TONYAgent (Prebuilt).bat           the terminal interface   (default)
+Start TONYAgent (Prebuilt).bat window    the webview desktop app
+```
+
+The `window` path rebuilds the frontend when it is behind and checks that
+`pywebview` is installed before it opens anything; the terminal path needs
+neither, being pure Python from the checkout. From a terminal, either one on
 its own is:
 
 ```bash
-python -m tonyagent.window     # opens the window; the core is its child process
+python -m tonyagent.cli     # the terminal interface
+python -m tonyagent.window  # opens the window; the core is its child process
 ```
 
 (`python -m tonyagent` — which this section used to say — is not a command:

@@ -11,6 +11,34 @@ python3 -m tonyagent.cli              # from a checkout, no install
 tony                                   # if it is installed
 ```
 
+## Starting on Windows
+
+The desktop shortcut runs `Start TONYAgent (Prebuilt).bat`, and that file's
+**default frontend is this one**. Double-clicking `TONYAgent.lnk` opens the
+terminal interface in a `cmd` window.
+
+```
+Start TONYAgent (Prebuilt).bat           the terminal interface   (default)
+Start TONYAgent (Prebuilt).bat window    the webview desktop app
+```
+
+Two things about the terminal path, both of them consequences of it being a
+full-screen interface rather than a window:
+
+- **It runs in the console you launched it from, not a new one.** `start ""`
+  hands a program a fresh console and returns immediately, which is right for
+  a GUI app that detaches and wrong here: the interface draws into the console
+  it is attached to, so starting one detached opened a second window and closed
+  the first — taking the interface down before it drew a frame.
+- **It never rebuilds.** The desktop app needs a frontend bundle and a GUI
+  toolkit; this needs neither and is pure Python from the checkout, so there is
+  nothing to be behind. Only the `window` path asks `scripts\build_state.ps1`
+  what is stale.
+
+A default `cmd` window is often 80 columns, which is the compact sidebar tier.
+Widen the window past 108 columns for the full panel; the status line carries
+the context meter and the permission level either way.
+
 ## Starting
 
 | Command | What it does |

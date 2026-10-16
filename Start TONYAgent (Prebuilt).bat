@@ -2,8 +2,13 @@
 REM ==========================================================================
 REM  TONYAgent launcher
 REM
-REM  Starts the app. If the frontend is behind the source, it rebuilds first
-REM  and then opens the window.
+REM  Starts TONYAgent. Two frontends, one file:
+REM
+REM      Start TONYAgent (Prebuilt).bat           the terminal UI   (default)
+REM      Start TONYAgent (Prebuilt).bat window    the desktop app
+REM
+REM  The desktop shortcut runs this with no arguments, so double-clicking it
+REM  opens the terminal UI.
 REM
 REM  There used to be two launchers, and the difference between them was which
 REM  of three build stages each was willing to skip. There is one stage now --
@@ -22,16 +27,30 @@ REM
 REM  A launcher that silently runs last week's bundle is the failure worth
 REM  guarding against, and warning about it is that same failure with extra
 REM  steps. So the answer to "the build is behind" is to build, not to say so.
+REM
+REM  Those two frontends are not a split by build stage, which is why they did
+REM  not become two files. They differ in something a build cannot express: the
+REM  desktop app needs a frontend bundle and a GUI toolkit, and the terminal UI
+REM  needs neither -- it is pure Python from the checkout, so there is nothing to
+REM  rebuild and nothing to be behind. Only the window path asks. The terminal
+REM  path starts in about a second instead of after a build.
 REM ==========================================================================
 setlocal
 
 cd /d "%~dp0"
+REM Both, not just the first. `PYTHONIOENCODING` covers stdout and stderr;
+REM `PYTHONUTF8` puts the interpreter itself in UTF-8 mode, which is what the
+REM files on disk are read with. The interface draws box rules and a middle dot,
+REM so a console on a legacy code page does not just look wrong -- it raises.
 set PYTHONIOENCODING=utf-8
+set PYTHONUTF8=1
 
 REM The host imports `tonyagent`, which lives in src/. Set here rather than
 REM relying on an editable install: a fresh clone has no .pth file, and the
 REM failure mode is an ImportError in a console that is about to close.
 set "PYTHONPATH=%~dp0src"
+
+if /i not "%~1"=="window" goto tui
 
 REM --- what needs building? -------------------------------------------------
 REM
@@ -122,6 +141,62 @@ exit /b 1
 echo.
 echo [ERROR] The window library is not installed.
 echo         Run:  pip install pywebview
+echo.
+pause
+endlocal
+exit /b 1
+
+REM --- the terminal UI ------------------------------------------------------
+REM
+REM Reached by `goto` from the top, so everything above this line is the window
+REM path and every one of its exits has already returned.
+:tui
+where python >nul 2>&1
+if not "%ERRORLEVEL%"=="0" goto no_python
+
+REM Checked rather than left to fail. `--tui` below asks for the full-screen
+REM interface by name, and `main()` treats not getting it as an error rather
+REM than quietly falling back to the line REPL -- which is right for a flag and
+REM wrong for a desktop shortcut, where the difference between "it started" and
+REM "it started as something else" is a window you did not ask for.
+python -c "import textual" >nul 2>&1
+if not "%ERRORLEVEL%"=="0" goto no_terminal_extra
+
+echo Starting TONYAgent in this window. Close it, or press Ctrl-P for the palette.
+echo.
+REM No `start`, and that is the whole difference between the two frontends in
+REM one line. `start ""` hands the program a *new* console and returns at once,
+REM which is right for a GUI app that detaches and for nothing else: a
+REM full-screen interface draws into the console it is attached to, so starting
+REM one here opened a second window and closed this one -- taking the interface
+REM down with it before it had drawn a frame.
+python -m tonyagent.cli --tui
+set "RC=%ERRORLEVEL%"
+
+REM The window path ends here and closes. This one must not. `pause` is not
+REM politeness: it is the only thing between an exception and a console that
+REM flashes and vanishes, which reads as a crash where nothing crashed -- the
+REM exact failure the header of this file is about. The code is printed first
+REM because the pause eats the scrollback on some consoles.
+echo.
+if "%RC%"=="0" (echo TONYAgent closed normally.) else (echo TONYAgent exited with code %RC%.)
+echo Press any key to close this window.
+pause >nul
+endlocal
+exit /b %RC%
+
+:no_python
+echo.
+echo [ERROR] Python is not on PATH, so there is nothing to run TONYAgent with.
+echo.
+pause
+endlocal
+exit /b 1
+
+:no_terminal_extra
+echo.
+echo [ERROR] The terminal interface needs Textual, which is not installed:
+echo         Run:  pip install -e ".[terminal]"
 echo.
 pause
 endlocal
