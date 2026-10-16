@@ -2862,6 +2862,66 @@ def test_model_follows_the_backend_that_is_actually_running():
     asyncio.run(run())
 
 
+def test_opencode_is_launched_the_way_the_platform_can_actually_launch_it():
+    """npm's Windows install has no `.exe`, and `CreateProcess` needs one.
+
+    It installs `opencode`, `opencode.cmd` and `opencode.ps1`. `subprocess`
+    launches through `CreateProcess`, which appends `.exe` and nothing else --
+    it does not read `PATHEXT`. So the first version raised `FileNotFoundError`
+    on a machine where `opencode` worked perfectly in the shell, and
+    `opencode_available()` reported "not on PATH" for a program that was on it.
+    The symptom was invisible: `/delegate` said no, and `/model` went on showing
+    the core's three providers, so the free models looked like they did not
+    exist.
+
+    `shutil.which` reads `PATHEXT` and finds the `.cmd`; a `.cmd` is a batch
+    file, which `CreateProcess` will not run either -- so it goes through
+    `COMSPEC /c`.
+    """
+    import unittest.mock
+
+    from tonyagent.cli.delegate import opencode_argv, opencode_command
+
+    with unittest.mock.patch("tonyagent.cli.delegate.os.name", "nt"), \
+         unittest.mock.patch(
+             "tonyagent.cli.delegate.shutil.which",
+             return_value=r"C:\Users\me\AppData\Roaming\npm\opencode.CMD",
+         ), \
+         unittest.mock.patch.dict(
+             "os.environ", {"COMSPEC": r"C:\Windows\system32\cmd.exe"}
+         ):
+        prefix = opencode_command()
+        assert prefix[0].lower().endswith("cmd.exe")
+        assert prefix[1] == "/c"
+        assert prefix[2].lower().endswith("opencode.cmd")
+        argv = opencode_argv("hi", model="opencode/space-bunny-free")
+        assert argv[:3] == prefix
+        assert argv[-1] == "hi"
+
+    # A real executable needs no wrapper at all -- and on POSIX the plain name
+    # is used without consulting `which` at all, because PATH resolution there
+    # works the way subprocess expects it to.
+    with unittest.mock.patch(
+        "tonyagent.cli.delegate.shutil.which", return_value="/usr/bin/opencode"
+    ):
+        assert opencode_command() == ["opencode"]
+
+    # A real `.exe` on Windows is launched directly, with no cmd.exe in between.
+    with unittest.mock.patch("tonyagent.cli.delegate.os.name", "nt"), \
+         unittest.mock.patch(
+             "tonyagent.cli.delegate.shutil.which",
+             return_value=r"C:\tools\opencode.exe",
+         ):
+        assert opencode_command() == [r"C:\tools\opencode.exe"]
+
+    # Not installed at all: say so with the plain name and let the caller's
+    # FileNotFoundError be the message.
+    with unittest.mock.patch(
+        "tonyagent.cli.delegate.shutil.which", return_value=None
+    ):
+        assert opencode_command() == ["opencode"]
+
+
 # --- the client ------------------------------------------------------------
 
 

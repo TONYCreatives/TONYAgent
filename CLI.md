@@ -169,6 +169,9 @@ The `-free` models refuse to run outside the OpenCode client (see above), and
 that is the server deciding — no header set here changes it. The one thing that
 *is* OpenCode is the OpenCode binary, so:
 
+Works on Windows as well as Linux: npm installs `opencode.cmd`, not
+`opencode.exe`, and the delegate goes through `COMSPEC /c` to reach it.
+
 ```
 /delegate                               # pick a model, from opencode's list
 /delegate opencode/space-bunny-free     # or name one and skip the picker

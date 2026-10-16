@@ -38,7 +38,11 @@ from textual.widgets.option_list import Option
 
 from tonyagent.cli import theme
 from tonyagent.cli.client import CoreClient, CoreError
-from tonyagent.cli.delegate import OpenCodeDelegate, opencode_available
+from tonyagent.cli.delegate import (
+    OpenCodeDelegate,
+    opencode_available,
+    opencode_command,
+)
 from tonyagent.cli.render import (
     _argument_summary,
     _one_line,
@@ -1227,7 +1231,7 @@ class TonyApp(App[None]):
         """
         try:
             completed = subprocess.run(  # noqa: S603 - argv is a list
-                ["opencode", "models"],
+                [*opencode_command(), "models"],
                 capture_output=True, text=True, timeout=30, check=False,
             )
         except (OSError, subprocess.SubprocessError):

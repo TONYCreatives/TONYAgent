@@ -32,6 +32,8 @@ wrong on the exact stream this is meant to handle.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import threading
 from collections.abc import Callable, Iterator
@@ -44,6 +46,34 @@ Event = tuple[str, dict[str, Any]]
 
 class DelegateError(RuntimeError):
     """The binary could not be run, or refused the turn."""
+
+
+def opencode_command() -> list[str]:
+    """How to launch `opencode` *on this platform*, as an argv prefix.
+
+    **This is the whole reason the delegate appeared to be missing on Windows.**
+    npm installs `opencode`, `opencode.cmd` and `opencode.ps1` -- and no `.exe`.
+    `subprocess` launches through `CreateProcess`, which appends `.exe` and
+    nothing else: it does not read `PATHEXT`. So `Popen(["opencode", ...])`
+    raised `FileNotFoundError` on a machine where `opencode` worked perfectly in
+    the shell, and `opencode_available()` reported "not on PATH" for a program
+    that was on it.
+
+    `shutil.which` *does* read `PATHEXT`, so it finds the `.cmd`. A `.cmd` is a
+    batch file and `CreateProcess` will not execute one directly either -- which
+    is why the prefix is `COMSPEC /c <the .cmd>` rather than the `.cmd` alone.
+
+    On Linux and macOS this is just `["opencode"]`, because the binary is a
+    real executable there and the whole problem does not exist.
+    """
+    if os.name != "nt":
+        return ["opencode"]
+    found = shutil.which("opencode")
+    if not found:
+        return ["opencode"]  # let the caller's FileNotFoundError speak for itself
+    if not found.lower().endswith((".cmd", ".bat")):
+        return [found]
+    return [os.environ.get("COMSPEC") or "cmd.exe", "/c", found]
 
 
 def opencode_argv(
@@ -63,7 +93,7 @@ def opencode_argv(
     backend deliberately -- and the interface says so on the top bar, because
     "always auto-approve" should never be something you discover afterwards.
     """
-    argv = ["opencode", "run", "--format", "json"]
+    argv = [*opencode_command(), "run", "--format", "json"]
     if model:
         argv += ["--model", model]
     if session:
@@ -316,8 +346,8 @@ class OpenCodeDelegate:
 def opencode_available() -> bool:
     """Whether the binary can be found at all, for the mode switch to check."""
     try:
-        subprocess.run(  # noqa: S603,S607 - a version probe, no shell
-            ["opencode", "--version"],
+        subprocess.run(  # noqa: S603 - argv is a list, never a shell string
+            [*opencode_command(), "--version"],
             capture_output=True,
             timeout=10,
             check=False,
@@ -333,6 +363,7 @@ __all__ = [
     "OpenCodeDelegate",
     "opencode_argv",
     "opencode_available",
+    "opencode_command",
     "parse_stream",
     "translate",
 ]
