@@ -115,6 +115,17 @@ def truecolor_supported() -> bool:
 PROMPT_MARKER = "›"  # noqa: RUF001 - guarded by `prompt_marker`
 
 
+#: The bar in front of the open tab, standing in for a selected tab's
+#: highlight. A terminal has no tab highlight, so this is the marker that says
+#: "this one", and it degrades to `|` for the same reason the others do.
+TAB_MARKER = "▌"  # noqa: RUF001 - guarded by `tab_marker`
+
+
+def tab_marker() -> str:
+    """The tab bar where the terminal can draw it, `|` where it cannot."""
+    return TAB_MARKER if supports_unicode() else "|"
+
+
 def prompt_marker() -> str:
     """The quoting mark where the terminal can draw it, `>` where it cannot."""
     return PROMPT_MARKER if supports_unicode() else ">"
@@ -126,6 +137,16 @@ def build_css() -> str:
         background: {BG};
         color: {FG};
         layout: vertical;
+    }}
+
+    /* The open tab, at the very top: one row, always visible, above the
+       transcript and the sidebar. It is the chrome's only fixed element --
+       everything else moves with the session, and this is what tells you which
+       session it is. */
+    #topbar {{
+        background: {CHROME};
+        height: 1;
+        color: {FG_MUTE};
     }}
 
     /* The transcript. `--measure` (760px) is the window's column width; a

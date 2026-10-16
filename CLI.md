@@ -113,8 +113,11 @@ In line mode, a leading `\` sends a turn that starts with a slash:
 
 - **Your own message**, on a `--raised` chip above the agent's answer. The
   window calls it a bubble; a terminal has none, so the fill is what marks it.
-- **The open chat**, named in the sidebar, so you always know which one you are
-  in rather than having to remember.
+- **The open tab**, at the very top: the chat's name in the accent bar, with
+  the mode dimmed beside it. The chat leads because it is the tab -- it
+  identifies what is on screen, where the mode says what the agent may do.
+- **The open chat**, named in the sidebar too, so it is visible whether you are
+  looking up or across.
 - **A fenced turn.** The accent rule on the left marks where one exchange
   begins and ends. The footer sits *outside* it, because it is metadata about
   the turn rather than part of the answer.

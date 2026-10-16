@@ -42,6 +42,7 @@ from tonyagent.cli.render import (
     _one_line,
     _result_summary,
     pad_to,
+    truncate_to_width,
 )
 from tonyagent.cli.widgets import (
     ChangeHeader,
@@ -119,6 +120,14 @@ class TonyApp(App[None]):
     # -- layout --------------------------------------------------------------
 
     def compose(self) -> ComposeResult:
+        # The open tab, at the very top, above everything.
+        #
+        # **One tab, because the core holds one conversation.** There is no
+        # second session to have open, so a strip with one entry is not a
+        # pretence of tabs -- it is the name of the one that is open, in the
+        # place a person looks first. It doubles as the way into the chat list,
+        # which is why it is clickable.
+        yield Static("", id="topbar")
         with Horizontal(id="body"):
             with VerticalScroll(id="transcript"):
                 yield Static(self._welcome(), id="intro")
@@ -444,24 +453,60 @@ class TonyApp(App[None]):
         self._refresh_status()
 
     def _refresh_conversation_title(self, sidebar: Sidebar) -> None:
-        """Name the open chat in the sidebar.
+        """Name the open chat, in the top bar and in the sidebar.
 
         Read from `conversations.list` rather than cached, because `state`
         reports only the id -- and an id is not something a person can tell
-        two chats apart by. One request, only while a conversation is open.
+        two chats apart by. One request, and only while a conversation is
+        open.
         """
         conversation_id = str(self.state.get("conversation") or "")
-        if not conversation_id:
-            sidebar.set_conversation("")
-            return
-        try:
-            payload = self.client.call("conversations.list", timeout=5) or {}
-        except CoreError:
-            return
-        for row in payload.get("conversations") or []:
-            if isinstance(row, dict) and str(row.get("id")) == conversation_id:
-                sidebar.set_conversation(str(row.get("title") or "(untitled)"))
-                return
+        title = ""
+        if conversation_id:
+            try:
+                payload = self.client.call("conversations.list", timeout=5) or {}
+            except CoreError:
+                payload = {}
+            for row in payload.get("conversations") or []:
+                if isinstance(row, dict) and str(row.get("id")) == conversation_id:
+                    title = str(row.get("title") or "(untitled)")
+                    break
+        sidebar.set_conversation(title)
+        self._render_topbar(title)
+
+    def _render_topbar(self, title: str) -> None:
+        """The one open tab.
+
+        **The chat name leads, and that is a correction.** The reference this
+        was modelled on shows a single word in the tab position -- "Build" --
+        and that is a name somebody gave a conversation, not a mode. I read it
+        as the mode and put mode first, which made the tab say what the agent
+        is *allowed* to do rather than what it is *doing it about*. Those are
+        different facts and only one of them identifies the thing on screen.
+
+        So: the chat, marked with the accent bar that stands in for a selected
+        tab, then the mode dimmed beside it. One tab, because the core holds
+        one conversation -- there is no second session to have open, so this is
+        not a pretence of tabs, it is the name of the one that is.
+
+        Not clickable: a terminal reports a click by position rather than by
+        target, so a press meant for the transcript would open the chat list.
+        `/conversations` opens it, and the bar says so rather than inviting one.
+        """
+        topbar = self.query_one("#topbar", Static)
+        text = Text()
+        if title:
+            text.append(f"{theme.tab_marker()} ", style=theme.ACCENT)
+            text.append(truncate_to_width(title, 48), style=f"bold {theme.FG}")
+        else:
+            text.append(f"{theme.tab_marker()} ", style=theme.ACCENT)
+            text.append("no conversation", style=theme.FG_MUTE)
+        text.append("   ")
+        mode = str(self.state.get("mode") or "")
+        text.append(mode or "—", style=theme.FG_MUTE)
+        text.append("   ")
+        text.append("/conversations", style=theme.FG_MUTE)
+        topbar.update(text)
 
     def _refresh_context(self) -> None:
         try:

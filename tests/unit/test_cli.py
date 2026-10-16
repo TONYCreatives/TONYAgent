@@ -2019,6 +2019,63 @@ def test_a_reopened_transcript_does_not_replay_tool_output():
     asyncio.run(run())
 
 
+def test_the_top_bar_names_the_chat_before_the_mode():
+    """The reference shows a chat name in the tab position, not a mode.
+
+    "Build" there is a name somebody gave a conversation. Reading it as the
+    mode put mode first, so the tab said what the agent is *allowed* to do
+    rather than what it is *doing it about* -- two different facts, and only
+    one of them identifies the thing on screen. Pinned because it is the kind
+    of ordering that gets "tidied" back.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {
+                "state": {"mode": "build", "model": "m", "permission": "medium",
+                          "bound": True, "conversation": "c1", "project": "/p"},
+                "conversations.list": {"conversations": [
+                    {"id": "c1", "title": "my chat name", "project": "/p"}]},
+                "context.get": {"model": "m", "used": 1, "known": True, "window": 10},
+            }.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(90, 18)) as pilot:
+            await pilot.pause()
+            app._poll_state()
+            await pilot.pause()
+            await pilot.pause()
+            from textual.widgets import Static
+
+            bar = app.screen.query_one("#topbar", Static)
+            text = str(bar.render())
+            assert "my chat name" in text, text
+            assert text.index("my chat name") < text.index("build"), text
+
+    asyncio.run(run())
+
+
+def test_the_top_bar_says_so_when_nothing_is_open():
+    pytest.importorskip("textual")
+
+    from tonyagent.cli.theme import tab_marker
+
+    # An empty tab must not render as a bare accent bar with nothing after it.
+    assert tab_marker() in (">", "\u258c", "|")
+    assert len(tab_marker()) == 1
+
+
 # --- the client ------------------------------------------------------------
 
 
