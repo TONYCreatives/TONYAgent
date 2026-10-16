@@ -2922,6 +2922,45 @@ def test_opencode_is_launched_the_way_the_platform_can_actually_launch_it():
         assert opencode_command() == ["opencode"]
 
 
+def test_every_command_is_wired_and_every_handler_is_reachable():
+    """The registry and the dispatch table have to agree, in both directions.
+
+    `/delegate` was implemented, tested, documented and committed, and was
+    still "not a command". The `Command(...)` line was inserted with a
+    whitespace-sensitive string replacement whose pattern had eight leading
+    spaces where the file had four, so it replaced nothing and said nothing --
+    and `str.replace` not matching is not an error.
+
+    The handler was in the dispatch table the whole time, so the only trace was
+    one dangling key. That is exactly the shape a one-way check misses: a test
+    asserting every `Command` has a handler passes, because there was no
+    `Command` to check.
+    """
+    import inspect
+
+    from tonyagent.cli.tui import COMMANDS, TonyApp
+
+    source = inspect.getsource(TonyApp._run_command)
+    # Every name the registry can dispatch must appear in the table.
+    for command in COMMANDS:
+        assert f'"{command.run}"' in source, (
+            f"{command.name} dispatches to {command.run!r}, which is not wired"
+        )
+    # And every key in the table must be something a Command can reach --
+    # otherwise it is a handler no command can ever call.
+    wired = {
+        line.strip().split(":")[0].strip().strip('",')
+        for line in source.splitlines()
+        if line.strip().startswith('"') and ":" in line
+    }
+    for command in COMMANDS:
+        assert command.run in wired, command.run
+    for run in wired:
+        assert any(c.run == run for c in COMMANDS), (
+            f"{run!r} is handled but no command reaches it"
+        )
+
+
 # --- the client ------------------------------------------------------------
 
 

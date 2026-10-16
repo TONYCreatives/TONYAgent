@@ -1747,6 +1747,8 @@ COMMANDS: tuple[Command, ...] = (
     Command("/conversations", "Saved conversations", "show_conversations"),
     Command("/new", "Start a conversation", "new_conversation"),
     Command("/key", "Set, replace or remove a provider key", "show_keys"),
+    Command("/delegate", "Run turns through OpenCode, for its free models",
+            "toggle_delegate", "[model]"),
     Command("/quit", "Leave", "quit"),
 )
 
