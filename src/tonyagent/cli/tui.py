@@ -31,7 +31,7 @@ from typing import Any, ClassVar, Optional
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Footer, OptionList, Static, TextArea
+from textual.widgets import Footer, Input, OptionList, Static
 
 from tonyagent.cli import theme
 from tonyagent.cli.client import CoreClient, CoreError
@@ -96,7 +96,7 @@ class TonyApp(App[None]):
                 yield Static(self._welcome(), id="intro")
             yield Sidebar(id="sidebar")
         yield Static("", id="status")
-        yield TextArea(id="composer")
+        yield Input(placeholder="ask tony anything", id="composer")
         yield Footer()
         # A confirmation is the one thing that takes the keyboard, so it is a
         # real dialog rather than a line in the composer. Hidden until asked.
@@ -318,7 +318,7 @@ class TonyApp(App[None]):
         dialog.set_class(dialog.destructive, "confirm-destructive")
         dialog.set_class(not dialog.destructive, "confirm")
         dialog.remove_class("hidden")
-        self.query_one("#composer", TextArea).display = False
+        self.query_one("#composer", Input).display = False
         dialog.focus()
 
     def _open_ask(self, payload: dict[str, Any]) -> None:
@@ -331,7 +331,7 @@ class TonyApp(App[None]):
         """
         self._pending_ask = str(payload.get("id", ""))
         question = str(payload.get("question") or payload.get("text") or "")
-        composer = self.query_one("#composer", TextArea)
+        composer = self.query_one("#composer", Input)
         composer.border_title = "the agent is asking"
         composer.placeholder = question or "your answer"
         composer.display = True
@@ -342,7 +342,7 @@ class TonyApp(App[None]):
         self._pending_ask = ""
         dialog = self.query_one("#confirm-dialog", ConfirmDialog)
         dialog.add_class("hidden")
-        composer = self.query_one("#composer", TextArea)
+        composer = self.query_one("#composer", Input)
         composer.border_title = ""
         composer.placeholder = ""
         composer.display = True
@@ -407,18 +407,33 @@ class TonyApp(App[None]):
 
     def _start(self) -> None:
         if self.initial_prompt:
-            self.query_one("#composer", TextArea).text = self.initial_prompt
+            self.query_one("#composer", Input).value = self.initial_prompt
             self.initial_prompt = ""
             self._submit()
             return
-        self.query_one("#composer", TextArea).focus()
+        self.query_one("#composer", Input).focus()
+
+    def on_input_submitted(self, event: Any) -> None:
+        """Enter sends.
+
+        `Input` posts this on Enter, rather than the key arriving here. The
+        composer used to be a `TextArea`, whose Enter inserts a newline --
+        correct for a multi-line editor, and the wrong widget entirely for a
+        composer whose own docstring says a line is one turn. `Input` is the
+        single-line widget, so the convention every other terminal agent uses
+        comes from the widget rather than from a key handler that has to
+        intercept it first.
+        """
+        event.stop()
+        self._submit()
 
     def on_key(self, event: Any) -> None:
-        """Enter submits, Escape declines.
+        """Escape and the shortcuts.
 
-        Bindings are dispatched before this, so only keys no binding claimed
-        arrive here. Ctrl-C and Ctrl-D are bindings and never reach it, which
-        is what stops an interrupt mid-turn from being read as text.
+        Enter is not here: it is the composer's own `Submitted` message, and
+        re-handling it would send a turn twice. Bindings are dispatched before
+        this, so only keys no binding claimed arrive -- which is what stops
+        Ctrl-C or Ctrl-D from being read as text.
         """
         if self._pending_confirm:
             # The confirmation owns the keyboard. Anything that is not y/a/n is
@@ -428,11 +443,10 @@ class TonyApp(App[None]):
             event.stop()
             self._answer_confirm(event.key)
             return
-        if event.key == "enter" and not event.character:
-            event.stop()
-            self._submit()
-        elif event.key == "escape" and self._pending_ask:
+        if event.key == "escape" and self._pending_ask:
             self._answer("")
+        elif event.key == "escape" and self._picker_action:
+            self._close_picker()
         elif event.key == "ctrl+1":
             self._pick_mode()
         elif event.key == "ctrl+2":
@@ -441,19 +455,17 @@ class TonyApp(App[None]):
             self._pick_permission()
         elif event.key == "ctrl+4":
             self._refresh_context()
-        elif event.key == "escape" and self._picker_action:
-            self._close_picker()
 
     def _submit(self) -> None:
-        composer = self.query_one("#composer", TextArea)
-        text = composer.text.strip()
+        composer = self.query_one("#composer", Input)
+        text = composer.value.strip()
         if self._pending_ask:
-            composer.text = ""
+            composer.value = ""
             self._answer(text)
             return
         if not text:
             return
-        composer.text = ""
+        composer.value = ""
         if text.startswith("/"):
             self._slash(text)
             return
@@ -557,7 +569,7 @@ class TonyApp(App[None]):
     def _close_picker(self) -> None:
         self._picker_action = None
         self.query_one("#picker", OptionList).add_class("hidden")
-        self.query_one("#composer", TextArea).focus()
+        self.query_one("#composer", Input).focus()
 
     def on_option_list_option_selected(self, event: Any) -> None:
         option = event.option

@@ -177,7 +177,7 @@ def build_css() -> str:
     #composer {{
         background: {INPUT};
         border: tall {BORDER};
-        height: 5;
+        height: 3;
         padding: 0 1;
     }}
     #composer:focus {{

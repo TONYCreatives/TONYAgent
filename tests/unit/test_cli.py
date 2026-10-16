@@ -871,6 +871,80 @@ def test_the_terminal_extra_is_declared_but_not_required():
     assert not any("textual" in dep for dep in config["project"]["dependencies"])
 
 
+# --- the composer: Enter sends --------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_enter_sends_the_turn_and_clears_the_composer(monkeypatch):
+    """The regression.
+
+    The composer was a `TextArea`, whose Enter inserts a newline -- correct
+    for a multi-line editor, and the wrong widget for a composer whose own
+    docstring says a line is one turn. Pressing Enter just added a blank line
+    and nothing was sent.
+
+    Driven with real keystrokes through the pilot rather than by calling
+    `_submit`, because the bug was in the key path: a test that called the
+    method directly passed while the key did nothing.
+    """
+    pytest.importorskip("textual")
+
+
+    from tonyagent.cli.tui import TonyApp
+
+    sent: list[str] = []
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            if method == "send":
+                sent.append(str((params or {}).get("text", "")))
+            return {"state": {"mode": "build", "model": "m", "permission": "medium"}}
+
+        def notify(self, method, params=None):
+            return {}
+
+    app = TonyApp(_Client())
+    async with app.run_test(size=(110, 26)) as pilot:
+        await pilot.pause()
+        from textual.widgets import Input
+
+        composer = app.query_one("#composer", Input)
+        composer.focus()
+        await pilot.pause()
+
+        for char in "hello tony":
+            await pilot.press(char)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.pause()
+
+        assert sent == ["hello tony"]
+        # Cleared, so the next turn is typed into an empty field rather than
+        # below the last one.
+        assert composer.value == ""
+
+
+def test_the_composer_is_a_single_line_widget():
+    """Pinned so the choice is not silently reverted.
+
+    `Input` posts `Submitted` on Enter and the handler lives in
+    `on_input_submitted`. A `TextArea` would insert a newline instead, and
+    re-adding an Enter branch to `on_key` would send a turn twice.
+    """
+    pytest.importorskip("textual")
+
+    import inspect
+
+    from tonyagent.cli.tui import TonyApp
+
+    assert hasattr(TonyApp, "on_input_submitted")
+    # Enter must not also be handled here, or a turn goes twice.
+    assert "enter" not in inspect.getsource(TonyApp.on_key)
+
+
 # --- the client ------------------------------------------------------------
 
 
