@@ -96,6 +96,7 @@ a full-screen app is a worse place to do it than at a shell prompt.
 |---|---|
 | `/state` | Everything the core reports about itself |
 | `/key` | Set, replace or remove a provider key: `enter` edit · `tab` name · `ctrl+r` remove (confirmed) |
+| `/delegate` | Run turns through `opencode` itself, which is the only way to reach its free models |
 | `/plan` | The task list, as the model is shown it |
 | `/tools [n]` | The per-turn tool call budget · `/tools 20` to set it |
 | `/new [title]` | Start a conversation |
@@ -161,6 +162,37 @@ and the same with a valid one. The free tier is a funnel into OpenCode's own
 client, so those ids stay in the catalogue and the provider's own refusal
 stands, rather than being hidden here behind a list that looks complete and
 cannot deliver.
+
+## Reaching OpenCode's free models: `/delegate`
+
+The `-free` models refuse to run outside the OpenCode client (see above), and
+that is the server deciding — no header set here changes it. The one thing that
+*is* OpenCode is the OpenCode binary, so:
+
+```
+/delegate                # turns now run through `opencode run`
+```
+
+The top bar says `opencode · --auto` while it is on. **Two backends, not two
+providers** — and the distinction matters: OpenCode executes its own tools, so a
+provider adapter carrying its tool calls would make TONYAgent run every one of
+them a second time.
+
+What changes, plainly:
+
+- **OpenCode's agent does the work.** TONYAgent's tools, permission levels and
+  sandbox are not in the loop.
+- **`--auto` is passed, so OpenCode's tools are approved without asking.**
+  `opencode run` is non-interactive and cannot answer a permission prompt, so
+  without it a turn that reads a file dies. This is a real loosening of your
+  guardrails, which is why the bar spells it out rather than implying it.
+- **Ctrl-C twice kills the process.** There is no socket to ask politely
+  through.
+- **The context meter is a low-water mark.** OpenCode does not close its last
+  step, so the final token count is never sent; the newest real figure is from
+  the step before.
+
+What stays: your top bar, chat list, transcripts, `/trajectory`, `/usage`.
 
 ## Using an OpenCode Go key
 

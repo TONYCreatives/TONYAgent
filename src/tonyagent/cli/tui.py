@@ -25,6 +25,7 @@ directly.
 
 from __future__ import annotations
 
+import subprocess
 import threading
 from typing import Any, ClassVar, Optional
 
@@ -37,6 +38,7 @@ from textual.widgets.option_list import Option
 
 from tonyagent.cli import theme
 from tonyagent.cli.client import CoreClient, CoreError
+from tonyagent.cli.delegate import OpenCodeDelegate, opencode_available
 from tonyagent.cli.render import (
     _argument_summary,
     _one_line,
@@ -119,8 +121,15 @@ class TonyApp(App[None]):
         #: turn running right now" when the answer decides whether ctrl+c
         #: interrupts or quits.
         self._turn_open = False
+        #: The OpenCode backend, or None for the core. Two backends rather
+        #: than two providers, because OpenCode executes its own tools: see
+        #: `delegate` for why a provider adapter would run them twice.
+        self._delegate: Optional[OpenCodeDelegate] = None
         #: The column the top bar's `+` occupies, for hit-testing a click.
         self._new_chat_column: Optional[int] = None
+        #: The open chat's name, kept so the bar can be redrawn when the
+        #: backend changes without a `conversations.list` call to get it again.
+        self._topbar_title = ""
         #: What the open picker will set, so one handler serves both.
         self._picker_action: Optional[tuple[str, str, dict[str, Any]]] = None
 
@@ -479,6 +488,7 @@ class TonyApp(App[None]):
                     title = str(row.get("title") or "(untitled)")
                     break
         sidebar.set_conversation(title)
+        self._topbar_title = title
         self._render_topbar(title)
 
     def _render_topbar(self, title: str) -> None:
@@ -516,6 +526,13 @@ class TonyApp(App[None]):
         text.append("  ")
         mode = str(self.state.get("mode") or "")
         text.append(mode or "-", style=theme.FG_MUTE)
+        text.append("   ")
+        if self._delegate is not None:
+            # Named, not styled: which agent is running is the one fact a turn's
+            # transcript cannot tell you, because both backends draw the same
+            # events into the same widgets.
+            text.append("opencode", style=theme.WARN)
+            text.append(" · --auto", style=theme.FG_MUTE)
         text.append("   ")
         text.append("/conversations", style=theme.FG_MUTE)
         topbar.update(text)
@@ -749,9 +766,19 @@ class TonyApp(App[None]):
         `send` only returns when the turn is over, and a turn can run for
         minutes, so it goes to a worker. That is also what lets the composer
         answer a confirmation while the turn is still in flight.
+
+        **The delegate runs here too, and in the same place deliberately.** The
+        two backends differ in who executes the tools, not in how a turn is
+        dispatched, so keeping them at one seam means the transcript, the
+        footer and the interrupt are the same code either way -- there is no
+        second rendering path to drift.
         """
+        delegate = self._delegate
 
         def worker() -> None:
+            if delegate is not None:
+                delegate.run(text)
+                return
             try:
                 self.client.call("send", {"text": text}, timeout=TURN_TIMEOUT_S)
             except CoreError as exc:
@@ -1050,12 +1077,70 @@ class TonyApp(App[None]):
         if not (bool(self.state.get("busy")) or self._turn_open):
             self.exit()
             return
+        if self._delegate is not None:
+            # **A kill, not a request.** There is no socket here and no protocol
+            # to say "stop" through; the process is the cancellable unit. That
+            # is sharper than the core's cancel, and it is why the top bar names
+            # the backend rather than leaving it to be discovered.
+            self._delegate.interrupt()
+            self._notice("killed the opencode process", "warn")
+            return
         try:
             self.client.notify("cancel", {})
         except CoreError as exc:
             self._notice(str(exc), "error")
             return
         self._notice("cancelled", "warn")
+
+    def _toggle_delegate(self) -> None:
+        """Turn the OpenCode backend on or off.
+
+        Going on checks the binary is actually there, because a backend that
+        fails on the first message is worse than one that declines to start: the
+        failure lands in the transcript where it reads as a model problem rather
+        than a missing program.
+        """
+        if self._delegate is not None:
+            self._delegate.close()
+            self._delegate = None
+            self._notice("back to the core: your tools and permissions", "ok")
+            self._render_topbar(self._topbar_title)
+            return
+        if not opencode_available():
+            self._notice("the opencode binary is not on PATH", "error")
+            return
+        self._delegate = OpenCodeDelegate(
+            lambda kind, payload: self.call_from_thread(
+                self._apply_core_event, kind, payload
+            )
+        )
+        self._notice(
+            "opencode: its agent, its tools, --auto (no permission prompts)",
+            "warn",
+        )
+        self._render_topbar(self._topbar_title)
+
+    def _delegate_models(self) -> list[str]:
+        """Model ids for the delegate, read from OpenCode itself.
+
+        Asked of `opencode` rather than hardcoded, for the same reason
+        `providers.list` is asked of the registry: a list copied into this file
+        drifts silently the first time OpenCode renames anything, and the free
+        tier is exactly the set that moves.
+        """
+        try:
+            completed = subprocess.run(  # noqa: S603 - argv is a list
+                ["opencode", "models", "opencode"],
+                capture_output=True, text=True, timeout=20, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return []
+        found: list[str] = []
+        for row in (completed.stdout or "").splitlines():
+            token = row.strip().split()
+            if token and "/" in token[0]:
+                found.append(token[0])
+        return found
 
     def action_new_chat(self) -> None:
         """The keyboard route to the top bar's `+`, and `/new`."""
@@ -1085,6 +1170,7 @@ class TonyApp(App[None]):
             "show_conversations": self._show_conversations,
             "new_conversation": self._new_conversation,
             "show_keys": self._show_keys,
+            "toggle_delegate": self._toggle_delegate,
             "quit": self.exit,
         }.get(run)
         if handler is None:

@@ -2382,6 +2382,334 @@ def test_every_list_dialog_is_navigable_by_arrow():
     asyncio.run(run())
 
 
+# --- the OpenCode delegate --------------------------------------------------
+
+
+def _recorded_turn() -> list[str]:
+    """A real `opencode run --format json` transcript, not a hand-written one.
+
+    Recorded against `opencode/space-bunny-free` on 2026-10-16 with a prompt
+    that made it call a tool, because the interesting lines in this protocol are
+    the ones a text-only turn never produces.
+    """
+    from pathlib import Path
+
+    fixture = (
+        Path(__file__).resolve().parents[2]
+        / "tests"
+        / "fixtures"
+        / "opencode_turn.jsonl"
+    )
+    assert fixture.exists(), "the recorded turn went missing"
+    return fixture.read_text().splitlines()
+
+
+def test_the_delegate_reads_part_type_not_the_outer_type():
+    """The outer `type` and `part.type` disagree, and only one of them is right.
+
+    In the recorded turn the outer field was `step_start`, `tool_use` and
+    `step_finish` while `part.type` was `step-start`, `tool` and `step-finish`.
+    They agree on `text` and disagree on everything else -- so a parser keyed on
+    the outer field silently loses every tool call on the exact stream this
+    exists to handle. That is why `part.type` is the field read.
+    """
+    from tonyagent.cli.delegate import translate
+
+    lines = _recorded_turn()
+    outer = {json.loads(line).get("type") for line in lines if line.strip()}
+    inner = {
+        (json.loads(line).get("part") or {}).get("type")
+        for line in lines
+        if line.strip()
+    }
+    assert "tool_use" in outer, "the outer field stopped disagreeing"
+    assert "tool" in inner
+
+    kinds = [k for line in lines for k, _ in translate(line)]
+    assert "tool.started" in kinds
+    assert "tool.completed" in kinds
+    assert "message.delta" in kinds
+    assert "turn.usage" in kinds
+
+
+def test_the_delegate_reports_the_providers_own_token_counts():
+    """The context meter reads real numbers on this path too.
+
+    `step-finish` carries input/output/reasoning and cache reads. Estimating
+    here would mean the delegate path silently met a lower standard than the
+    direct one, which is the thing that makes a meter worth having at all.
+    """
+    from tonyagent.cli.delegate import parse_stream
+
+    usage = [p for k, p in parse_stream(iter(_recorded_turn())) if k == "turn.usage"]
+    assert usage, "no usage at all -- the meter would read zero"
+    assert usage[0]["input_tokens"] > 0
+    assert usage[0]["cache_read"] > 0, "the cache figure was dropped"
+
+
+def test_the_last_steps_usage_is_never_reported_and_the_meter_says_so():
+    """The recorded turn ends on text, with no closing `step-finish`.
+
+    Not a truncated recording -- the file is complete, and the final line is the
+    final answer. So the *last* step's token counts never arrive, and the newest
+    real figure the meter can hold is from the step before it. That is a
+    low-water mark, not a current one, and showing it as current would be the
+    exact failure the meter was built to avoid. It is pinned here so the
+    behaviour is a decision rather than an accident.
+    """
+    from tonyagent.cli.delegate import parse_stream
+
+    lines = _recorded_turn()
+    last = json.loads(lines[-1])
+    assert (last.get("part") or {}).get("type") == "text", "fixture changed"
+
+    events = list(parse_stream(iter(lines)))
+    assert [k for k, _ in events][-1] == "message.delta", (
+        "if OpenCode starts closing its turns this test should change"
+    )
+    # The most recent usage available is therefore not the final one, and the
+    # interface has to be able to say which step it came from.
+    assert events[-2][0] == "turn.usage"
+
+
+def test_a_completed_tool_call_is_both_started_and_completed():
+    """So the line is drawn running and then ticked, the way a core turn is.
+
+    The record arrives whole -- `opencode run` emits finished parts, not
+    progress -- so both events come from one line. Emitting only the finished
+    one would mean the tool never appeared as running; emitting only the
+    started one would mean it never stopped.
+    """
+    from tonyagent.cli.delegate import translate
+
+    tools = [
+        (k, p)
+        for line in _recorded_turn()
+        for k, p in translate(line)
+        if k.startswith("tool.")
+    ]
+    assert [k for k, _ in tools] == ["tool.started", "tool.completed"]
+    started = tools[0][1]
+    assert started["name"] == "shell"
+    assert started["arguments"] == {"command": "echo tony-probe"}
+    assert tools[1][1]["id"] == started["id"]
+
+
+def test_a_malformed_line_does_not_end_the_turn():
+    """OpenCode prints progress and warnings on the same stream as the events."""
+    from tonyagent.cli.delegate import parse_stream
+
+    lines = ["not json at all", "", "[]", '{"no":"part"}', *_recorded_turn()]
+    kinds = [k for k, _ in parse_stream(iter(lines))]
+    assert "message.delta" in kinds
+    assert "tool.started" in kinds
+
+
+def test_the_delegate_passes_auto_and_is_never_silent_about_it():
+    """`opencode run` is non-interactive, so permission prompts cannot be answered.
+
+    That makes `--auto` the difference between a working backend and one that
+    dies on the first file read. It is passed by default, and the top bar names
+    the backend -- auto-approve must be something you can see, not something you
+    find out about afterwards.
+    """
+    from tonyagent.cli.delegate import opencode_argv
+
+    argv = opencode_argv("hello", model="opencode/space-bunny-free")
+    assert "--auto" in argv
+    assert argv[:4] == ["opencode", "run", "--format", "json"]
+    assert argv[-1] == "hello", "the prompt must not be shell-interpreted"
+    assert "--auto" not in opencode_argv("hello", auto=False)
+
+
+def test_a_missing_opencode_binary_says_so_instead_of_crashing():
+    from tonyagent.cli.delegate import OpenCodeDelegate
+
+    events: list[tuple[str, dict]] = []
+    delegate = OpenCodeDelegate(lambda k, p: events.append((k, p)))
+    # A binary that cannot exist. The message has to name the fix, because
+    # "No such file or directory" sends nobody to the right place.
+    import unittest.mock
+
+    with unittest.mock.patch(
+        "subprocess.Popen", side_effect=FileNotFoundError("opencode")
+    ):
+        delegate.run("hi")
+    kinds = [k for k, _ in events]
+    assert kinds == ["turn.started", "turn.failed"]
+    assert "not on PATH" in events[-1][1]["error"]
+
+
+def test_an_opencode_refusal_arrives_on_stdout_with_no_part_and_no_stderr():
+    """Errors are top-level records on stdout -- not stderr, and not a `part`.
+
+    Measured against the real binary with a bad model id: it printed
+
+        {"type":"error","error":{"type":"provider.no-route",
+         "message":"Model unavailable: opencode/no-such-model-xyz"}}
+
+    on stdout, wrote **nothing** to stderr, and exited 1. The first version of
+    this read stderr for the reason and would have shown "opencode exited 1" --
+    the one message nobody can act on -- so the exact line is pinned here.
+
+    It is also the sharpest evidence for reading `part.type`: the outer `type`
+    vocabulary is `error`, `step_start`, `tool_use`, `step_finish`, and has
+    nothing to do with `step-start`, `tool`, `step-finish`.
+    """
+    from tonyagent.cli.delegate import translate
+
+    line = json.dumps({
+        "type": "error",
+        "timestamp": 1792126087696,
+        "sessionID": "ses_x",
+        "error": {"type": "provider.no-route",
+                  "message": "Model unavailable: opencode/no-such-model-xyz"},
+    })
+    assert translate(line) == [
+        ("turn.failed", {"error": "Model unavailable: opencode/no-such-model-xyz"})
+    ]
+    # And the part-shaped spelling of an error must not be silently dropped.
+    assert translate(json.dumps({"part": {"type": "error"}})) == []
+
+
+def test_a_non_zero_exit_with_nothing_said_says_it_said_nothing():
+    """The shape nobody expected is still a shape, and it gets its own words."""
+    from tonyagent.cli.delegate import OpenCodeDelegate
+
+    events: list[tuple[str, dict]] = []
+    delegate = OpenCodeDelegate(lambda k, p: events.append((k, p)))
+
+    import unittest.mock
+
+    proc = unittest.mock.MagicMock()
+    proc.stdout = iter([""])
+    proc.stderr.read.return_value = ""
+    proc.wait.return_value = 1
+    with unittest.mock.patch("subprocess.Popen", return_value=proc):
+        delegate.run("hi")
+    assert events[-1][0] == "turn.failed"
+    assert "without saying why" in events[-1][1]["error"]
+
+
+def test_an_error_line_stops_a_second_failure_message():
+    """One refusal, one message.
+
+    The stream says why and the exit code repeats it. Reporting both would put
+    "Model unavailable" and "opencode exited 1" in the transcript for a single
+    mistake.
+    """
+    from tonyagent.cli.delegate import OpenCodeDelegate
+
+    events: list[tuple[str, dict]] = []
+    delegate = OpenCodeDelegate(lambda k, p: events.append((k, p)))
+
+    import unittest.mock
+
+    proc = unittest.mock.MagicMock()
+    proc.stdout = iter([json.dumps({
+        "type": "error",
+        "error": {"message": "Model unavailable: opencode/nope"},
+    })])
+    proc.stderr.read.return_value = ""
+    proc.wait.return_value = 1
+    with unittest.mock.patch("subprocess.Popen", return_value=proc):
+        delegate.run("hi")
+    failures = [p["error"] for k, p in events if k == "turn.failed"]
+    assert len(failures) == 1, failures
+    assert failures[0] == "Model unavailable: opencode/nope"
+
+
+def test_the_top_bar_names_the_backend_because_the_transcript_cannot():
+    """Both backends draw the same events into the same widgets.
+
+    A delegate turn produces a text part and a tool line, and so does a core
+    turn. Reading the transcript afterwards, there is no way to tell whose agent
+    ran -- which is why the bar says so, and why `--auto` is spelled out there
+    rather than left to be discovered.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {"state": {"mode": "build", "model": "m", "permission": "medium",
+                              "bound": True}}.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(100, 20)) as pilot:
+            await pilot.pause()
+            app._poll_state()
+            await pilot.pause()
+            app._topbar_title = "a chat"
+            app._render_topbar("a chat")
+            await pilot.pause()
+            before = "\n".join(
+                s.text for s in app.screen._compositor.render_strips()
+            )
+            assert "opencode" not in before, "the marker showed with the core on"
+
+            import unittest.mock
+
+            with unittest.mock.patch(
+                "tonyagent.cli.tui.opencode_available", return_value=True
+            ):
+                app._toggle_delegate()
+            await pilot.pause()
+            after = "\n".join(
+                s.text for s in app.screen._compositor.render_strips()
+            )
+            assert "opencode" in after
+            assert "--auto" in after, "auto-approve must be visible, not implied"
+
+    asyncio.run(run())
+
+
+def test_the_delegate_is_declined_when_the_binary_is_missing():
+    """A backend that fails on the first message reads as a model problem.
+
+    Refusing to start is the honest version: the person finds out now, not from
+    a transcript that says `opencode exited 1`.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+    import unittest.mock
+
+    from tonyagent.cli.tui import TonyApp
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {"state": {"mode": "build", "model": "m", "permission": "medium",
+                              "bound": True}}.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(100, 20)) as pilot:
+            await pilot.pause()
+            with unittest.mock.patch(
+                "tonyagent.cli.tui.opencode_available", return_value=False
+            ):
+                app._toggle_delegate()
+            await pilot.pause()
+            assert app._delegate is None
+
+    asyncio.run(run())
+
+
 # --- the client ------------------------------------------------------------
 
 
