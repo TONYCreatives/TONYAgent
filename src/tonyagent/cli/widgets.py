@@ -27,6 +27,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import PurePath
 from typing import Any, ClassVar, Optional
 
 from rich.text import Text
@@ -35,7 +36,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from tonyagent.cli.render import pad_to
+from tonyagent.cli.render import pad_to, truncate_to_width
 
 # --------------------------------------------------------------------------
 # The turn model
@@ -674,6 +675,255 @@ class PickerDialog(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
+class ConversationsDialog(ModalScreen[Optional[str]]):
+    """The chat list: viewable, and every row actionable.
+
+    **`/conversations` used to print the list into the transcript**, where it
+    was unreadable and unusable -- a title scrolled past with no way to open it.
+    A list you cannot act on is a list you have no reason to ask for, so this
+    is a dialog with keys on it.
+
+    The keys are single letters rather than a menu, because the actions differ
+    per row and a row context menu in a terminal is three more keystrokes for
+    the same thing:
+
+    * `Enter` switch · `n` new · `r` rename · `y` duplicate · `d` delete
+
+    **Rename reuses the filter field** rather than opening a second input.
+    Two inputs on one screen is two focus states to explain, and the filter is
+    never wanted at the same moment as a title.
+
+    **Delete takes two presses**, the same rule as `ctrl+c`, for the same
+    reason: it is irreversible and it is one keystroke away.
+
+    Returns the conversation to switch to, or None.
+    """
+
+    #: **Ctrl chords, not letters.** The filter has focus, and `Input` consumes
+    #: printable keys as text -- so a `d` binding would either never fire or,
+    #: given priority, make "delete" untypeable in the search. `ctrl+d` is
+    #: avoided because the App binds it to quit. OpenCode's dialogs use ctrl
+    #: chords for exactly this reason.
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("ctrl+r", "rename", "rename", show=False, priority=True),
+        Binding("ctrl+y", "duplicate", "duplicate", show=False, priority=True),
+        Binding("ctrl+x", "delete", "delete", show=False, priority=True),
+        Binding("ctrl+t", "new", "new", show=False, priority=True),
+        Binding("escape", "dismiss", "close", show=True, priority=True),
+    ]
+
+    DEFAULT_CSS = """
+    ConversationsDialog { align: center middle; }
+    #conv-box {
+        width: 80;
+        height: auto;
+        max-height: 85%;
+        background: $surface;
+        border: round $accent;
+        padding: 0 1;
+    }
+    #conv-title { color: $text-muted; padding: 0 1; height: 1; }
+    #conv-filter { border: none; height: 3; background: $surface; }
+    #conv-options { height: auto; max-height: 18; background: $surface; border: none; }
+    #conv-options > .option-list--option-highlighted {
+        background: $accent 35%;
+        color: $text;
+        text-style: bold;
+    }
+    #conv-options > .option-list--option-disabled { color: $text-muted; }
+    #conv-hint { color: $text-muted; padding: 0 1; height: 1; }
+    #conv-hint.-warn { color: $warning; }
+    """
+
+    def __init__(self, conversations: Sequence[dict[str, Any]], current: str) -> None:
+        super().__init__()
+        self.rows = list(conversations)
+        self.current = current
+        #: `""` browsing, or the name of the action the next key performs.
+        self.mode = ""
+        self._delete_pending = ""
+
+    def compose(self) -> Any:
+        from textual.containers import Vertical
+
+        with Vertical(id="conv-box"):
+            yield Static("conversations", id="conv-title")
+            yield Input(placeholder="filter", id="conv-filter")
+            yield OptionList(id="conv-options")
+            yield Static("", id="conv-hint")
+
+    def on_mount(self) -> None:
+        self._rebuild("")
+        self.query_one("#conv-filter", Input).focus()
+        self._hint(
+            "enter open · ctrl+t new · ctrl+r rename · ctrl+y duplicate · "
+            "ctrl+x delete · esc close"
+        )
+
+    # -- rows ----------------------------------------------------------------
+
+    def _rebuild(self, needle: str) -> None:
+        needle = needle.strip().lower()
+        options = self.query_one("#conv-options", OptionList)
+        options.clear_options()
+
+        rows = [r for r in self.rows if not needle or needle in str(r.get("title", "")).lower()]
+        rows.sort(key=lambda r: str(r.get("updated_at") or ""), reverse=True)
+        if not rows:
+            options.add_option(Option("  nothing here", id=None, disabled=True))
+            options.highlighted = None
+            return
+
+        titles = [str(r.get("title") or "(untitled)") for r in rows]
+        width = max(len(t) for t in titles)
+        last_project: Optional[str] = None
+        for row, title in zip(rows, titles, strict=True):
+            project = str(row.get("project") or "")
+            # Grouped by folder, because a conversation belongs to one and the
+            # folder is the thing a person with several projects is scanning for.
+            if project != last_project:
+                options.add_option(
+                    Option(f"  {_short_path(project) or 'no project'}", id=None, disabled=True)
+                )
+                last_project = project
+            marker = "●" if str(row.get("id")) == self.current else " "
+            count = int(row.get("message_count", 0) or 0)
+            # A `Text` rather than markup, because the count is dimmed with a
+            # real style: the first version interpolated the hex into the
+            # prompt and the dialog rendered the literal `#8a8a8a`.
+            from rich.text import Text
+
+            from tonyagent.cli import theme
+
+            row_text = Text(f"  {marker} {pad_to(title, width)}   ")
+            row_text.append(f"{count} msg", style=theme.FG_MUTE)
+            options.add_option(Option(row_text, id=str(row.get("id"))))
+        # On the first selectable row, not row 0 -- which is a group header,
+        # and a highlighted header is unselectable and reads as a dead key.
+        for index in range(options.option_count):
+            if options.get_option_at_index(index).id:
+                options.highlighted = index
+                break
+
+    def _hint(self, text: str, warn: bool = False) -> None:
+        hint = self.query_one("#conv-hint", Static)
+        hint.update(text)
+        hint.set_class(warn, "-warn")
+
+    def _ids(self) -> list[str]:
+        options = self.query_one("#conv-options", OptionList)
+        return [o.id for o in options._options if o.id]  # noqa: SLF001 - no public walk
+
+    def _highlighted_id(self) -> Optional[str]:
+        options = self.query_one("#conv-options", OptionList)
+        index = options.highlighted
+        if index is None or index >= options.option_count:
+            return None
+        return options.get_option_at_index(index).id
+
+    def _title_of(self, conversation_id: Optional[str]) -> str:
+        for row in self.rows:
+            if str(row.get("id")) == conversation_id:
+                return str(row.get("title") or "(untitled)")
+        return "it"
+
+    # -- keys ----------------------------------------------------------------
+
+    def on_input_changed(self, event: Any) -> None:
+        if self.mode == "rename":
+            return
+        self._rebuild(event.value)
+
+    def on_input_submitted(self, event: Any) -> None:
+        event.stop()
+        if self.mode == "rename":
+            self._commit_rename(event.value)
+            return
+        chosen = self._highlighted_id()
+        if chosen:
+            self.dismiss(chosen)
+
+    def on_key(self, event: Any) -> None:
+        """Only Enter and Escape reach here; the actions are bindings.
+
+        `Input` consumes printable keys as text, which is correct for a search
+        field, so anything that is meant to be a command has to be a binding
+        with priority rather than a letter handled here.
+        """
+        key = event.key
+        if key == "escape":
+            if self.mode:
+                self._cancel_mode()
+            else:
+                self.dismiss(None)
+            event.stop()
+            return
+        if self.mode == "rename":
+            return  # the input owns every key while renaming
+
+    # -- actions, one per binding -------------------------------------------
+
+    def action_new(self) -> None:
+        self.dismiss("__new__")
+
+    def action_rename(self) -> None:
+        if self._highlighted_id():
+            self._begin_rename()
+
+    def action_duplicate(self) -> None:
+        target = self._highlighted_id()
+        if target:
+            self.dismiss(f"__duplicate__:{target}")
+
+    def action_delete(self) -> None:
+        self._ask_delete()
+
+    def _begin_rename(self) -> None:
+        target = self._highlighted_id()
+        if not target:
+            return
+        self.mode = "rename"
+        field = self.query_one("#conv-filter", Input)
+        field.value = ""
+        field.placeholder = f"new title for {self._title_of(target)}"
+        self._hint("enter saves · esc cancels", warn=True)
+
+    def _commit_rename(self, title: str) -> None:
+        target = self._highlighted_id()
+        self._cancel_mode()
+        if target and title.strip():
+            self.dismiss(f"__rename__:{target}:{title.strip()}")
+
+    def _cancel_mode(self) -> None:
+        self.mode = ""
+        self._delete_pending = ""
+        field = self.query_one("#conv-filter", Input)
+        field.placeholder = "filter"
+        self._hint("enter open · n new · r rename · y duplicate · d delete · esc close")
+
+    def _ask_delete(self) -> None:
+        target = self._highlighted_id()
+        if not target:
+            return
+        if self._delete_pending != target:
+            self._delete_pending = target
+            self._hint(
+                f"press ctrl+x again to delete {self._title_of(target)} — esc cancels",
+                warn=True,
+            )
+            return
+        self._delete_pending = ""
+        self.dismiss(f"__delete__:{target}")
+
+    def action_dismiss(self) -> None:
+        self.dismiss(None)
+
+
+def _short_path(path: str) -> str:
+    """The last component of a project path, for a group header."""
+    return PurePath(str(path or "")).name or str(path or "")
+
+
 class TurnFooter(Static):
     """The line under a turn: mode, model, how long, how fast.
 
@@ -732,6 +982,7 @@ class Sidebar(Static):
         self.model = ""
         self.permission = ""
         self.project = ""
+        self.conversation = ""
         self.used = 0
         self.window = 0
         self.known = False
@@ -743,6 +994,15 @@ class Sidebar(Static):
         self.permission = str(state.get("permission", "") or "")
         self.project = str(state.get("project", "") or "")
         self.busy = bool(state.get("busy"))
+        self.refresh()
+
+    def set_conversation(self, title: str) -> None:
+        """Which chat is open.
+
+        Truncated to the sidebar's width: a long title that wraps pushes the
+        context meter -- the number people come here for -- off the bottom.
+        """
+        self.conversation = title or ""
         self.refresh()
 
     def update_context(self, payload: dict[str, Any]) -> None:
@@ -771,6 +1031,11 @@ class Sidebar(Static):
         text.append("Permission\n", style=theme.FG_MUTE)
         text.append(self.permission or "-", style=theme.FG_DIM)
         text.append("\n\n")
+
+        if self.conversation:
+            text.append("Chat\n", style=theme.FG_MUTE)
+            text.append(truncate_to_width(self.conversation, 24), style=theme.FG)
+            text.append("\n\n")
 
         text.append("Context\n", style=theme.FG_MUTE)
         fraction = self._fraction()

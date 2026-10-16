@@ -48,6 +48,7 @@ from tonyagent.cli.widgets import (
     Command,
     CommandPalette,
     ConfirmDialog,
+    ConversationsDialog,
     DiffBlock,
     PickerDialog,
     PickerEntry,
@@ -436,9 +437,31 @@ class TonyApp(App[None]):
             self.state = self.client.call("state", timeout=5) or {}
         except CoreError:
             return
-        self.query_one("#sidebar", Sidebar).update_state(self.state)
+        sidebar = self.query_one("#sidebar", Sidebar)
+        sidebar.update_state(self.state)
+        self._refresh_conversation_title(sidebar)
         self._refresh_context()
         self._refresh_status()
+
+    def _refresh_conversation_title(self, sidebar: Sidebar) -> None:
+        """Name the open chat in the sidebar.
+
+        Read from `conversations.list` rather than cached, because `state`
+        reports only the id -- and an id is not something a person can tell
+        two chats apart by. One request, only while a conversation is open.
+        """
+        conversation_id = str(self.state.get("conversation") or "")
+        if not conversation_id:
+            sidebar.set_conversation("")
+            return
+        try:
+            payload = self.client.call("conversations.list", timeout=5) or {}
+        except CoreError:
+            return
+        for row in payload.get("conversations") or []:
+            if isinstance(row, dict) and str(row.get("id")) == conversation_id:
+                sidebar.set_conversation(str(row.get("title") or "(untitled)"))
+                return
 
     def _refresh_context(self) -> None:
         try:
@@ -1079,21 +1102,112 @@ class TonyApp(App[None]):
         self._panel("sandbox", rows)
 
     def _show_conversations(self) -> None:
+        """The chat list as a dialog, not a paragraph.
+
+        It used to print titles into the transcript, where they scrolled past
+        with no way to open one. A list you cannot act on is a list you have no
+        reason to ask for.
+        """
         try:
             payload = self.client.call("conversations.list") or {}
         except CoreError as exc:
             self._notice(str(exc), "error")
             return
-        items = payload.get("conversations") or []
-        current = str(self.state.get("conversation", ""))
-        rows = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            ident = str(item.get("id", ""))
-            title = str(item.get("title") or "(untitled)")
-            rows.append(("*" if ident == current else " ", f"{title}  {ident[:8]}"))
-        self._panel("conversations", rows or [("", "none saved")])
+        rows = [c for c in (payload.get("conversations") or []) if isinstance(c, dict)]
+        self.push_screen(
+            ConversationsDialog(rows, str(self.state.get("conversation", ""))),
+            self._conversation_chosen,
+        )
+
+    def _conversation_chosen(self, result: Optional[str]) -> None:
+        """Act on what the chat list returned.
+
+        The sentinel-prefixed values keep one dismissal channel for every
+        action, rather than a callback per action -- and there is no way to
+        confuse an id for an instruction, because ids are server-assigned and
+        contain no colons.
+        """
+        if not result:
+            return
+        if result == "__new__":
+            self._new_conversation()
+            return
+        if result.startswith("__duplicate__:"):
+            target = result.split(":", 1)[1]
+            self._call("conversations.duplicate", {"id": target}, "duplicated")
+            self._show_conversations()
+            return
+        if result.startswith("__rename__:"):
+            _, target, title = result.split(":", 2)
+            self._call("conversations.rename", {"id": target, "title": title}, "renamed")
+            self._show_conversations()
+            return
+        if result.startswith("__delete__:"):
+            target = result.split(":", 1)[1]
+            self._call("conversations.delete", {"id": target}, "deleted")
+            self._poll_state()
+            self._show_conversations()
+            return
+        self._switch_conversation(result)
+
+    def _switch_conversation(self, conversation_id: str) -> None:
+        """Open a conversation and redraw its transcript.
+
+        `conversations.switch` returns the messages, so the history is drawn
+        from that rather than asked for again -- and it is drawn, because a
+        reopened chat showing an empty transcript would read as a failed click.
+        """
+        try:
+            payload = self.client.call("conversations.switch", {"id": conversation_id})
+        except CoreError as exc:
+            self._notice(str(exc), "error")
+            return
+        self._clear_transcript()
+        title = str((payload.get("conversation") or {}).get("title") or "(untitled)")
+        self._notice(f"opened {title}", "warn")
+        for message in payload.get("messages") or []:
+            self._replay_message(message)
+        self._poll_state()
+
+    def _clear_transcript(self) -> None:
+        transcript = self.query_one("#transcript", VerticalScroll)
+        for child in list(transcript.children):
+            child.remove()
+        self.turn = None
+        self._turn_box = None
+
+    def _replay_message(self, message: Any) -> None:
+        """Draw one message from a reopened conversation."""
+        if not isinstance(message, dict):
+            return
+        role = str(message.get("role", ""))
+        content = message.get("content")
+        text = content if isinstance(content, str) else str(
+            message.get("text") or message.get("summary") or ""
+        )
+        if not text.strip():
+            return
+        from rich.markdown import Markdown
+        from rich.text import Text
+
+        transcript = self.query_one("#transcript", VerticalScroll)
+        if role in ("user", "human"):
+            widget = Static("")
+            widget.add_class("prompt")
+            widget.update(Text(f"{theme.prompt_marker()} {_one_line(text)}", style=theme.FG))
+        else:
+            widget = Static(Markdown(text))
+        transcript.mount(widget)
+
+    def _call(self, method: str, params: dict[str, Any], label: str) -> None:
+        """One request, and say what it did."""
+        try:
+            self.client.call(method, params)
+        except CoreError as exc:
+            self._notice(str(exc), "error")
+            return
+        self._notice(label, "warn")
+        self._poll_state()
 
     def _new_conversation(self) -> None:
         try:

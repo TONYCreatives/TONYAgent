@@ -80,7 +80,7 @@ frontends' command sets.
 | `/tools` | The per-turn tool call budget |
 | `/reasoning` | Thinking effort |
 | `/sandbox` | Sandbox status |
-| `/conversations` | Saved conversations |
+| `/conversations` | The chat list: grouped by folder, `enter` open · `ctrl+t` new · `ctrl+r` rename · `ctrl+y` duplicate · `ctrl+x` delete (twice) |
 | `/new` | Start a conversation |
 | `/key` | Provider keys in the OS keyring |
 | `/help` | The palette |
@@ -99,7 +99,7 @@ a full-screen app is a worse place to do it than at a shell prompt.
 | `/plan` | The task list, as the model is shown it |
 | `/tools [n]` | The per-turn tool call budget · `/tools 20` to set it |
 | `/new [title]` | Start a conversation |
-| `/conversations` | Saved conversations |
+| `/conversations` | The chat list: grouped by folder, `enter` open · `ctrl+t` new · `ctrl+r` rename · `ctrl+y` duplicate · `ctrl+x` delete (twice) |
 | `/usage` | What this app has spent |
 | `/reasoning` | Thinking effort |
 | `/sandbox` | Sandbox status |
@@ -111,6 +111,10 @@ In line mode, a leading `\` sends a turn that starts with a slash:
 
 ## What the interface shows
 
+- **Your own message**, on a `--raised` chip above the agent's answer. The
+  window calls it a bubble; a terminal has none, so the fill is what marks it.
+- **The open chat**, named in the sidebar, so you always know which one you are
+  in rather than having to remember.
 - **A fenced turn.** The accent rule on the left marks where one exchange
   begins and ends. The footer sits *outside* it, because it is metadata about
   the turn rather than part of the answer.

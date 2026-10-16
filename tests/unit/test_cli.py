@@ -1755,6 +1755,139 @@ def test_a_long_user_message_is_one_row():
     assert _one_line("x" * 200).endswith("…")
 
 
+def test_the_chat_list_actions_are_ctrl_chords_not_letters():
+    """The filter has focus, and `Input` consumes printable keys as text.
+
+    A `d` binding would either never fire or, given priority, make "delete"
+    untypeable in the search box. `ctrl+d` is avoided because the App binds it
+    to quit. OpenCode's dialogs use ctrl chords for the same reason.
+    """
+    pytest.importorskip("textual")
+
+    from textual.widgets import Input
+
+    from tonyagent.cli.widgets import ConversationsDialog
+
+    keys = {b.key for b in ConversationsDialog.BINDINGS}
+    assert {"ctrl+r", "ctrl+y", "ctrl+x", "ctrl+t"} <= keys
+    # No bare letters, and not the two the App already owns.
+    assert not any(k in {"d", "r", "y", "n", "p"} for k in keys)
+    assert "ctrl+d" not in keys, "ctrl+d is quit"
+
+    # And the filter really does take printable keys, which is why it must.
+    assert not any(b.key == "d" for b in Input.BINDINGS)
+
+
+def test_every_chat_list_action_reaches_the_app():
+    """The dialog returns a sentinel; the app turns it into one request.
+
+    Run inside `run_test` because acting on a sentinel also reports the outcome,
+    and reporting touches a widget.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+
+    convs = {"conversations": [
+        {"id": "c1", "title": "one", "project": "/p", "message_count": 3},
+        {"id": "c2", "title": "two", "project": "/p", "message_count": 9},
+    ]}
+
+    for sentinel, expected_method, params in [
+        ("__new__", "conversations.create", {}),
+        ("__duplicate__:c2", "conversations.duplicate", {"id": "c2"}),
+        ("__rename__:c2:hello", "conversations.rename", {"id": "c2", "title": "hello"}),
+        ("__delete__:c2", "conversations.delete", {"id": "c2"}),
+    ]:
+        calls: list[tuple[str, dict]] = []
+
+        class _Client:
+            on_event = None
+
+            def call(self, method, p=None, timeout=None):
+                if method in ("conversations.create", "conversations.duplicate",
+                              "conversations.rename", "conversations.delete"):
+                    calls.append((method, p))
+                    return {}
+                return {
+                    "state": {"mode": "build", "model": "m", "permission": "medium",
+                              "bound": False, "conversation": "c1"},
+                    "conversations.list": convs,
+                }.get(method, {})
+
+            def notify(self, method, params=None):
+                return {}
+
+        async def run(sentinel=sentinel) -> None:
+            app = TonyApp(_Client())
+            async with app.run_test(size=(90, 20)) as pilot:
+                await pilot.pause()
+                app._poll_state = lambda: None  # type: ignore[method-assign]
+                app._show_conversations = lambda: None  # type: ignore[method-assign]
+                app._conversation_chosen(sentinel)
+                await pilot.pause()
+
+        asyncio.run(run())
+        assert calls, f"{sentinel} sent nothing"
+        assert calls[0][0] == expected_method, calls
+        assert calls[0][1] == params, calls
+
+
+def test_switching_a_conversation_draws_its_transcript():
+    """`conversations.switch` returns the messages, and they are drawn.
+
+    A reopened chat showing an empty transcript reads as a click that did not
+    land, which is the failure the reply's own comment warns about.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            if method == "conversations.switch":
+                return {
+                    "conversation": {"id": "c1", "title": "old chat"},
+                    "messages": [
+                        {"role": "user", "content": "what did you do"},
+                        {"role": "assistant", "content": "I changed the parser"},
+                    ],
+                    "project": "/p",
+                }
+            return {"state": {"mode": "build", "model": "m", "permission": "medium",
+                              "bound": False, "conversation": "c1"}}
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(90, 22)) as pilot:
+            await pilot.pause()
+            app._poll_state = lambda: None  # type: ignore[method-assign]
+            app._switch_conversation("c1")
+            await pilot.pause()
+            await pilot.pause()
+            # Asserted on the rendered screen rather than on the widgets' contents,
+            # because that is what a person reads: a Markdown widget's repr is
+            # not its text, and asserting on internals would pass whether or
+            # not anything was actually drawn.
+            screen = " ".join(
+                strip.text for strip in app.screen._compositor.render_strips()  # noqa: SLF001
+            )
+            assert "what did you do" in screen, screen[-400:]
+            assert "I changed the parser" in screen, screen[-400:]
+
+    asyncio.run(run())
+
+
+
 # --- the client ------------------------------------------------------------
 
 
