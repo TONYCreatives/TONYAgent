@@ -113,8 +113,9 @@ In line mode, a leading `\` sends a turn that starts with a slash:
 
 - **Your own message**, on a `--raised` chip above the agent's answer. The
   window calls it a bubble; a terminal has none, so the fill is what marks it.
-- **The open tab**, at the very top: the chat's name in the accent bar, with
-  the mode dimmed beside it. The chat leads because it is the tab -- it
+- **The open tab**, at the very top: the chat's name in the accent bar, the
+  mode dimmed beside it, and a **`+` you can click** to start a new chat
+  (`Ctrl-N` or `/new` do the same). The chat leads because it is the tab -- it
   identifies what is on screen, where the mode says what the agent may do.
 - **The open chat**, named in the sidebar too, so it is visible whether you are
   looking up or across.

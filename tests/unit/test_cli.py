@@ -2076,6 +2076,81 @@ def test_the_top_bar_says_so_when_nothing_is_open():
     assert len(tab_marker()) == 1
 
 
+def test_the_new_chat_plus_is_clickable_on_exactly_one_column():
+    """A terminal reports clicks by position, so this is hit-tested to a cell.
+
+    Safe here where a button over the transcript would not be: the top bar is
+    its own row, above everything, so a click on it was always aimed at it. A
+    click on the chat title must do nothing at all.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+
+    created: list[dict] = []
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            if method == "conversations.create":
+                created.append(params or {})
+            return {
+                "state": {"mode": "build", "model": "m", "permission": "medium",
+                          "bound": True, "conversation": "c1", "project": "/p"},
+                "conversations.list": {"conversations": [
+                    {"id": "c1", "title": "a chat", "project": "/p"}]},
+                "context.get": {"model": "m", "used": 1, "known": True, "window": 10},
+            }.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(84, 16)) as pilot:
+            await pilot.pause()
+            app._poll_state()
+            await pilot.pause()
+            await pilot.pause()
+            column = app._new_chat_column
+            assert column is not None
+            assert column > 0, "the + landed at the first column"
+
+            await pilot.click("#topbar", offset=(column, 0))
+            await pilot.pause()
+            assert len(created) == 1, "clicking the + did not create a chat"
+
+            # Anywhere else on the bar does nothing.
+            await pilot.click("#topbar", offset=(2, 0))
+            await pilot.pause()
+            assert len(created) == 1, "a click on the chat title created a chat"
+
+            # And the keyboard route reaches the same thing.
+            await pilot.press("ctrl+n")
+            await pilot.pause()
+            assert len(created) == 2, "ctrl+n did not create a chat"
+
+    asyncio.run(run())
+
+
+def test_the_new_chat_key_is_bound_and_bound_nowhere_else():
+    pytest.importorskip("textual")
+
+    from textual.app import App
+    from textual.screen import Screen
+    from textual.widgets import Input
+
+    from tonyagent.cli.tui import TonyApp
+
+    keys = {b.key for b in TonyApp.BINDINGS}
+    assert "ctrl+n" in keys, "the keyboard route to the + is not bound"
+    for other in (App, Screen, Input):
+        assert "ctrl+n" not in {b.key for b in other.BINDINGS}, other.__name__
+
+
 # --- the client ------------------------------------------------------------
 
 

@@ -88,6 +88,9 @@ class TonyApp(App[None]):
         Binding("ctrl+d", "quit", "quit", show=True, priority=True),
         Binding("ctrl+q", "quit", "quit", show=False),
         Binding("ctrl+shift+p", "commands", "commands", show=True),
+        # The keyboard route to the top bar's `+`. A click is never the only
+        # way to reach a feature, and this key is bound nowhere else.
+        Binding("ctrl+n", "new_chat", "new chat", show=False),
     ]
 
     def __init__(self, client: CoreClient, initial_prompt: str = "") -> None:
@@ -114,6 +117,8 @@ class TonyApp(App[None]):
         #: turn running right now" when the answer decides whether ctrl+c
         #: interrupts or quits.
         self._turn_open = False
+        #: The column the top bar's `+` occupies, for hit-testing a click.
+        self._new_chat_column: Optional[int] = None
         #: What the open picker will set, so one handler serves both.
         self._picker_action: Optional[tuple[str, str, dict[str, Any]]] = None
 
@@ -167,7 +172,7 @@ class TonyApp(App[None]):
         """
         return (
             f"TONYAgent {self._version()} · terminal\n\n"
-            "ctrl+p commands · ctrl+c twice to interrupt · ctrl+d quit"
+            "ctrl+p commands · ctrl+n new chat · ctrl+c twice interrupts · ctrl+d quit"
         )
 
     def on_mount(self) -> None:
@@ -501,12 +506,38 @@ class TonyApp(App[None]):
         else:
             text.append(f"{theme.tab_marker()} ", style=theme.ACCENT)
             text.append("no conversation", style=theme.FG_MUTE)
-        text.append("   ")
+        text.append("  ")
+        # The column the `+` lands in, remembered so the click is hit-tested
+        # against one cell rather than against the whole bar.
+        self._new_chat_column = text.cell_len
+        text.append("+", style=theme.ACCENT)
+        text.append("  ")
         mode = str(self.state.get("mode") or "")
-        text.append(mode or "—", style=theme.FG_MUTE)
+        text.append(mode or "-", style=theme.FG_MUTE)
         text.append("   ")
         text.append("/conversations", style=theme.FG_MUTE)
         topbar.update(text)
+
+    def on_click(self, event: Any) -> None:
+        """The `+` is a button, and the click is hit-tested to one cell.
+
+        **This is safe where a click on a floating dialog would not be.** A
+        terminal reports a click by position, so a button laid over the
+        transcript is hit while the person meant the text. The top bar is its
+        own row, above everything, so a click on it was always aimed at it --
+        and the `+` occupies exactly one column, so a click anywhere else on
+        the bar does nothing at all.
+
+        `ctrl+shift+n` and `/new` do the same thing, because a click is never
+        the only way to reach a feature.
+        """
+        if event.widget is not self.query_one("#topbar", Static):
+            return
+        column = getattr(self, "_new_chat_column", None)
+        if column is None or event.offset.x != column:
+            return
+        event.stop()
+        self._new_conversation()
 
     def _refresh_context(self) -> None:
         try:
@@ -1023,6 +1054,10 @@ class TonyApp(App[None]):
             self._notice(str(exc), "error")
             return
         self._notice("cancelled", "warn")
+
+    def action_new_chat(self) -> None:
+        """The keyboard route to the top bar's `+`, and `/new`."""
+        self._new_conversation()
 
     def action_commands(self) -> None:
         """Open the palette. It used to print a notice about ctrl+p, which is
