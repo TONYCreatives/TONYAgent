@@ -1888,6 +1888,64 @@ def test_switching_a_conversation_draws_its_transcript():
 
 
 
+def test_the_chat_list_is_the_same_width_as_the_model_dialog():
+    """It was 80, and went full-bleed in a 78-column terminal.
+
+    No margin either side and the border clipped by the screen edge -- a dialog
+    that fills the width reads as a panel rather than as something laid over the
+    session, which is the difference between looking designed and not.
+    """
+    pytest.importorskip("textual")
+
+    import re
+
+    from tonyagent.cli.widgets import CommandPalette, ConversationsDialog, PickerDialog
+
+    def width_of(dialog) -> int:
+        # `[^}]*?` rather than `\s*` so a comment inside the block does not
+        # break it -- the reason for the number lives there, and will from the
+        # next edit.
+        match = re.search(r"#\w[\w-]* \{[^}]*?width: (\d+);", dialog.DEFAULT_CSS)
+        assert match, f"{dialog.__name__} sets no explicit width"
+        return int(match.group(1))
+
+    assert width_of(ConversationsDialog) == width_of(PickerDialog)
+    assert width_of(CommandPalette) == width_of(PickerDialog)
+
+
+def test_the_chat_list_states_its_way_out_on_the_title_row():
+    """`esc` against the right edge, as the model dialog does.
+
+    A hint only in the footer is one line further from the key than the model
+    dialog puts it, and this footer is long enough to wrap.
+    """
+    pytest.importorskip("textual")
+
+    import re
+
+    from tonyagent.cli.widgets import ConversationsDialog
+
+    css = ConversationsDialog.DEFAULT_CSS
+    assert "conv-head" in css
+    assert "conv-esc" in css
+    # The title takes the flexible width, or `esc` sits beside it and reads as
+    # part of the title rather than as the way out.
+    assert "width: 1fr" in css
+    # And the footer must be allowed to wrap rather than cut off mid-chord.
+    assert re.search(r"#conv-hint \{[^}]*height: auto", css) is not None
+
+
+def test_the_chat_list_footer_counts_what_it_lists():
+    pytest.importorskip("textual")
+
+    from tonyagent.cli.widgets import ConversationsDialog
+
+    two = ConversationsDialog([{"id": "a"}, {"id": "b"}], "a")
+    assert two._actions().startswith("2 chats ·")
+    one = ConversationsDialog([{"id": "a"}], "")
+    assert one._actions().startswith("1 chat ·")
+
+
 # --- the client ------------------------------------------------------------
 
 

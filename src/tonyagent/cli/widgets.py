@@ -400,7 +400,10 @@ class CommandPalette(ModalScreen[Optional[str]]):
         align: center middle;
     }
     #palette-box {
-        width: 76;
+        /* 72, with the model picker and the chat list. Every dialog in the
+           interface is the same width, so opening one from another does not
+           change the shape of the screen. */
+        width: 72;
         height: auto;
         max-height: 80%;
         background: $surface;
@@ -715,14 +718,25 @@ class ConversationsDialog(ModalScreen[Optional[str]]):
     DEFAULT_CSS = """
     ConversationsDialog { align: center middle; }
     #conv-box {
-        width: 80;
+        /* 72, the same as `PickerDialog`, and for the same reason: at 80 this
+           went full-bleed in a 78-column terminal, with no margin either side
+           and the border clipped by the screen edge. A dialog that fills the
+           width reads as a panel, not as something laid over the session --
+           which is the difference between "visual" and not. */
+        width: 72;
         height: auto;
         max-height: 85%;
         background: $surface;
         border: round $accent;
         padding: 0 1;
     }
-    #conv-title { color: $text-muted; padding: 0 1; height: 1; }
+    /* No padding of its own: the box already has it, and two of them left a
+       two-column gap before the right border. */
+    #conv-head { height: 1; padding: 0; }
+    /* The title takes the flexible width so `esc` lands against the right
+       edge rather than sitting beside the title where it reads as part of it. */
+    #conv-title { color: $text-muted; height: 1; width: 1fr; }
+    #conv-esc { color: $text-muted; height: 1; width: auto; }
     #conv-filter { border: none; height: 3; background: $surface; }
     #conv-options { height: auto; max-height: 18; background: $surface; border: none; }
     #conv-options > .option-list--option-highlighted {
@@ -731,7 +745,10 @@ class ConversationsDialog(ModalScreen[Optional[str]]):
         text-style: bold;
     }
     #conv-options > .option-list--option-disabled { color: $text-muted; }
-    #conv-hint { color: $text-muted; padding: 0 1; height: 1; }
+    /* `auto`, so the action list wraps rather than being cut off. At 72
+       columns the full list does not fit on one line, and a hint truncated
+       mid-chord is worse than one that takes two rows. */
+    #conv-hint { color: $text-muted; padding: 0 1; height: auto; }
     #conv-hint.-warn { color: $warning; }
     """
 
@@ -744,10 +761,15 @@ class ConversationsDialog(ModalScreen[Optional[str]]):
         self._delete_pending = ""
 
     def compose(self) -> Any:
-        from textual.containers import Vertical
+        from textual.containers import Horizontal, Vertical
 
         with Vertical(id="conv-box"):
-            yield Static("conversations", id="conv-title")
+            # Title and `esc` on the same row, right-aligned, the way the model
+            # dialog states its own way out. A hint only in the footer is one
+            # line further away than the key it describes.
+            with Horizontal(id="conv-head"):
+                yield Static("conversations", id="conv-title")
+                yield Static("esc", id="conv-esc")
             yield Input(placeholder="filter", id="conv-filter")
             yield OptionList(id="conv-options")
             yield Static("", id="conv-hint")
@@ -755,9 +777,14 @@ class ConversationsDialog(ModalScreen[Optional[str]]):
     def on_mount(self) -> None:
         self._rebuild("")
         self.query_one("#conv-filter", Input).focus()
-        self._hint(
-            "enter open · ctrl+t new · ctrl+r rename · ctrl+y duplicate · "
-            "ctrl+x delete · esc close"
+        self._hint(self._actions())
+
+    def _actions(self) -> str:
+        """The footer, with the count -- as `PickerDialog` does with its models."""
+        count = len(self.rows)
+        return (
+            f"{count} chat{'s' if count != 1 else ''} · enter open · ctrl+t new · "
+            "ctrl+r rename · ctrl+y duplicate · ctrl+x delete"
         )
 
     # -- rows ----------------------------------------------------------------
