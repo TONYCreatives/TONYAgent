@@ -860,9 +860,39 @@ def main(argv: Optional[list[str]] = None) -> int:
                 print(f"Could not set the project folder: {exc}", file=sys.stderr)
 
         if use_tui:
-            from tonyagent.cli.tui import TonyApp
-
-            return TonyApp(client, initial_prompt=prompt).run()
+            # `textual` is an optional extra, not a hard dependency, so it can
+            # genuinely be missing -- and it usually is, because the thing
+            # that decides whether it is needed is whether stdout is a terminal,
+            # which is only true on the machine a person is sitting at. A
+            # separate Python on that machine is a normal thing to have.
+            #
+            # So a missing one falls back to the line REPL and says so. It
+            # used to raise, which produced a traceback through the middle of
+            # the frontend for something that is not a fault at all -- and it
+            # did so *after* the core had started, so the message arrived with
+            # a live child process already attached.
+            try:
+                from tonyagent.cli.tui import TonyApp
+            except ImportError as exc:
+                hint = 'pip install -e ".[terminal]"'
+                if args.tui:
+                    # Asked for it by name, so not getting it is a failure
+                    # rather than a preference. Silently downgrading here
+                    # would report success for an interface that never ran.
+                    print(
+                        f"--tui needs the terminal extra, which is missing: {exc}\n"
+                        f"  Install it with:  {hint}",
+                        file=sys.stderr,
+                    )
+                    return 1
+                print(
+                    f"No full-screen interface here: {exc}\n"
+                    f"  Install it with:  {hint}\n"
+                    "  Falling back to the line interface.",
+                    file=sys.stderr,
+                )
+            else:
+                return TonyApp(client, initial_prompt=prompt).run()
 
         ui = Renderer(show_reasoning=not args.hide_reasoning)
         repl = Repl(client, ui, initial_prompt=prompt)

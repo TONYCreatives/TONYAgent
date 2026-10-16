@@ -741,6 +741,73 @@ def test_a_confirmation_offers_once_always_and_no():
     assert "[n] no" in text
 
 
+# --- the optional extra, and what happens without it -----------------------
+
+
+def test_a_missing_terminal_extra_falls_back_rather_than_raising(monkeypatch):
+    """`textual` is optional, and on a person's machine it usually is missing.
+
+    Whether the full-screen interface is wanted depends on whether stdout is a
+    terminal, which is only true on the machine someone is sitting at -- and a
+    separate Python on that machine is a normal thing to have. So the first
+    version's raw traceback, arriving after the core had already started, was
+    a fault reported for something that is not one.
+    """
+    import builtins
+
+    real_import = builtins.__import__
+
+    def refuse_textual(name, *args, **kwargs):
+        if name.startswith("textual"):
+            raise ImportError("No module named 'textual'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse_textual)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("/quit\n"))
+
+    from tonyagent.cli.repl import main
+
+    # Falls back to line mode: the REPL runs and /quit ends it, so this is 0
+    # rather than a traceback.
+    assert main(["--plain"]) == 0
+
+
+def test_asking_for_the_interface_by_name_is_a_failure_without_it(monkeypatch):
+    """`--tui` that silently downgrades reports success for an interface that
+    never ran, which is worse than refusing."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def refuse_textual(name, *args, **kwargs):
+        if name.startswith("textual"):
+            raise ImportError("No module named 'textual'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse_textual)
+    monkeypatch.setattr(sys, "stdin", io.StringIO(""))
+
+    from tonyagent.cli.repl import main
+
+    assert main(["--tui"]) == 1
+
+
+def test_the_terminal_extra_is_declared_but_not_required():
+    """Optional on purpose: a headless install should not be made heavier for
+    an interface it cannot use, and a piped run needs no terminal at all."""
+    import tomllib
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    with (root / "pyproject.toml").open("rb") as handle:
+        config = tomllib.load(handle)
+
+    optional = config["project"]["optional-dependencies"]
+    assert any("textual" in dep for dep in optional["terminal"])
+    # And not in the required list, which is the half that matters.
+    assert not any("textual" in dep for dep in config["project"]["dependencies"])
+
+
 # --- the client ------------------------------------------------------------
 
 
