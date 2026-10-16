@@ -64,6 +64,11 @@ SIDEBAR_MIN_WIDTH = 108
 TURN_TIMEOUT_S = 3600.0
 
 
+#: How long the second ctrl+c has to arrive. Long enough to be deliberate,
+#: short enough that a hint left on screen is not still there later.
+CONFIRM_PRESS_S = 5.0
+
+
 class TonyApp(App[None]):
     """TONYAgent, drawn as widgets."""
 
@@ -71,7 +76,7 @@ class TonyApp(App[None]):
     TITLE = "TONYAgent"
 
     BINDINGS: ClassVar[list[Binding]] = [
-        Binding("ctrl+c", "cancel", "cancel", show=True, priority=True),
+        Binding("ctrl+c", "cancel", "interrupt", show=True, priority=True),
         Binding("ctrl+d", "quit", "quit", show=True, priority=True),
         Binding("ctrl+q", "quit", "quit", show=False),
         Binding("ctrl+shift+p", "commands", "commands", show=True),
@@ -92,6 +97,15 @@ class TonyApp(App[None]):
         self._pending_ask = ""
         #: The `run` name of each row in the inline list, parallel to it.
         self._slash_runs: list[str] = []
+        #: Presses so far on ctrl+c, and the timer after which the second is
+        #: no longer wanted. See `action_cancel`.
+        self._confirm_presses = 0
+        self._confirm_timer: Any = None
+        #: True between `turn.started` and `turn.finished`. `state.busy` is
+        #: refreshed twice a second, which is far too coarse to answer "is a
+        #: turn running right now" when the answer decides whether ctrl+c
+        #: interrupts or quits.
+        self._turn_open = False
         #: What the open picker will set, so one handler serves both.
         self._picker_action: Optional[tuple[str, str, dict[str, Any]]] = None
 
@@ -137,7 +151,7 @@ class TonyApp(App[None]):
         """
         return (
             f"TONYAgent {self._version()} · terminal\n\n"
-            "ctrl+p commands · ctrl+c cancel · ctrl+d quit"
+            "ctrl+p commands · ctrl+c twice to interrupt · ctrl+d quit"
         )
 
     def on_mount(self) -> None:
@@ -240,6 +254,14 @@ class TonyApp(App[None]):
         self.call_from_thread(self._apply_core_event, kind, payload)
 
     def _apply_core_event(self, kind: str, payload: dict[str, Any]) -> None:
+        # Tracked before the early return: `turn.started` arrives before any
+        # turn widget exists, and it is the event that decides whether ctrl+c
+        # interrupts or quits.
+        if kind == "turn.started":
+            self._turn_open = True
+        elif kind in ("turn.finished", "turn.failed"):
+            self._turn_open = False
+
         turn, box = self.turn, self._turn_box
         if turn is None or box is None:
             return
@@ -854,7 +876,23 @@ class TonyApp(App[None]):
     # -- actions -------------------------------------------------------------
 
     def action_cancel(self) -> None:
+        """Two presses, and what the second does depends on the turn.
+
+        **One ctrl+c used to cancel a running turn, and one at an empty prompt
+        used to quit.** Both are destructive on a key a terminal hands out for a
+        dozen unrelated reasons -- a copy that became an interrupt, a
+        muscle-memory habit, something else on the system that claims it.
+        Losing a turn to that is what the convenience costs.
+
+        So the first press says what the second will do, and the second has
+        five seconds to arrive. The timer clears the count, so a stray press
+        leaves nothing behind to confuse the next one. This is OpenCode's
+        two-press interrupt, and the reason it is worth copying is that it is
+        not a confirmation dialog: it does not steal the turn's place on
+        screen, it just says one sentence in the transcript.
+        """
         if self._pending_confirm:
+            # A pending confirmation already owns the key: one press declines.
             self._client_call(
                 "confirm.respond", {"id": self._pending_confirm, "confirmed": False}
             )
@@ -863,12 +901,37 @@ class TonyApp(App[None]):
         if self._pending_ask:
             self._answer("")
             return
+
+        self._confirm_presses += 1
+        if self._confirm_presses >= 2:
+            self._clear_confirm()
+            self._fire_interrupt()
+            return
+
+        busy = bool(self.state.get("busy")) or self._turn_open
+        self._notice(f"press ctrl+c again to {'interrupt the turn' if busy else 'quit'}")
+        self._confirm_timer = self.set_timer(CONFIRM_PRESS_S, self._clear_confirm)
+
+    def _clear_confirm(self) -> None:
+        """Forget an unanswered press, so the next one starts over."""
+        self._confirm_presses = 0
+        timer, self._confirm_timer = self._confirm_timer, None
+        if timer is not None:
+            try:
+                timer.stop()
+            except Exception:  # noqa: BLE001 - a timer that already fired is fine
+                pass
+
+    def _fire_interrupt(self) -> None:
+        if not (bool(self.state.get("busy")) or self._turn_open):
+            self.exit()
+            return
         try:
             self.client.notify("cancel", {})
         except CoreError as exc:
             self._notice(str(exc), "error")
             return
-        self._notice("cancelled")
+        self._notice("cancelled", "warn")
 
     def action_commands(self) -> None:
         """Open the palette. It used to print a notice about ctrl+p, which is
@@ -1119,4 +1182,4 @@ COMMANDS: tuple[Command, ...] = (
 )
 
 
-__all__ = ["COMMANDS", "SIDEBAR_MIN_WIDTH", "TURN_TIMEOUT_S", "TonyApp"]
+__all__ = ["COMMANDS", "CONFIRM_PRESS_S", "SIDEBAR_MIN_WIDTH", "TURN_TIMEOUT_S", "TonyApp"]

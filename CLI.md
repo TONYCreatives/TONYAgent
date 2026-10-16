@@ -34,7 +34,7 @@ rather than a screenful of escape codes.
 | `Enter` | Send the turn / confirm the highlighted option |
 | `Esc` | Decline a question · close a picker or the inline list |
 | `↑` `↓` | Move through the inline list |
-| `Ctrl-C` | Cancel the turn · decline a confirmation · quit at an empty prompt |
+| `Ctrl-C` | **Twice** to interrupt a turn, or twice at an idle prompt to quit |
 | `Ctrl-D` | Quit |
 | `Ctrl-Q` | Quit |
 | `Ctrl-Shift-P` | The command palette · `Ctrl-P` is Textual's |
@@ -42,6 +42,12 @@ rather than a screenful of escape codes.
 | `Ctrl-2` | Model picker — type to filter; grouped by provider, with price and context size |
 | `Ctrl-3` | Permission picker |
 | `Ctrl-4` | Refresh the context meter |
+
+**`Ctrl-C` takes two presses.** The first says what the second will do --
+*"press ctrl+c again to interrupt the turn"* or *"...to quit"* -- and the
+second has five seconds to arrive. A terminal hands `Ctrl-C` out for a dozen
+unrelated reasons, and losing a turn to one of them is not a good trade for
+the keystroke.
 
 While a confirmation is open the dialog has the keyboard. **Any key that is not
 `y`, `a` or `n` is a decline** — "no" is the only safe reading of a key pressed

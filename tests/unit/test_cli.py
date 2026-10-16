@@ -1585,6 +1585,118 @@ def test_escaping_a_picker_selects_nothing():
     asyncio.run(run())
 
 
+def test_ctrl_c_takes_two_presses_and_says_what_the_second_does():
+    """A single ctrl+c used to cancel a turn, and to quit at an idle prompt.
+
+    Both are destructive on a key a terminal hands out for a dozen unrelated
+    reasons. Borrowed from OpenCode's two-press interrupt, and worth copying
+    precisely because it is *not* a confirmation dialog: it does not steal the
+    turn's place on screen, it says one sentence in the transcript.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+
+    class _Client:
+        on_event = None
+
+        def __init__(self):
+            self.cancelled = 0
+
+        def call(self, method, params=None, timeout=None):
+            if method == "state":
+                return {"mode": "build", "model": "m", "permission": "medium",
+                        "bound": False, "busy": False}
+            return {}
+
+        def notify(self, method, params=None):
+            if method == "cancel":
+                self.cancelled += 1
+
+    def last_line(app):
+        return app.screen.query_one("#transcript").children[-1].render().plain
+
+    async def idle() -> None:
+        client = _Client()
+        app = TonyApp(client)
+        async with app.run_test(size=(80, 20)) as pilot:
+            await pilot.pause()
+            app.query_one("#composer").focus()
+            await pilot.pause()
+            await pilot.press("ctrl+c")
+            await pilot.pause()
+            assert client.cancelled == 0, "one press cancelled"
+            assert app.is_running, "one press quit"
+            assert "quit" in last_line(app)
+
+    async def busy() -> None:
+        client = _Client()
+        app = TonyApp(client)
+        async with app.run_test(size=(80, 20)) as pilot:
+            await pilot.pause()
+            app.query_one("#composer").focus()
+            await pilot.pause()
+            app._turn_open = True
+            await pilot.press("ctrl+c")
+            await pilot.pause()
+            assert client.cancelled == 0, "one press cancelled a running turn"
+            assert app.is_running, "one press quit during a turn"
+            assert "interrupt" in last_line(app)
+            await pilot.press("ctrl+c")
+            await pilot.pause()
+            await pilot.pause()
+            assert client.cancelled == 1, "the second press did not interrupt"
+            assert app.is_running, "ctrl+c quit instead of interrupting"
+
+    asyncio.run(idle())
+    asyncio.run(busy())
+
+
+def test_the_confirm_window_clears_itself():
+    """A stray press leaves nothing behind to confuse the next one."""
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import CONFIRM_PRESS_S, TonyApp
+
+    assert CONFIRM_PRESS_S >= 2.0, "too short to be deliberate"
+    assert CONFIRM_PRESS_S <= 10.0, "too long for the hint to feel live"
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            if method == "state":
+                return {"mode": "build", "model": "m", "permission": "medium",
+                        "bound": False, "busy": False}
+            return {}
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(80, 20)) as pilot:
+            await pilot.pause()
+            app.query_one("#composer").focus()
+            await pilot.pause()
+            await pilot.press("ctrl+c")
+            await pilot.pause()
+            assert app._confirm_presses == 1
+            app._clear_confirm()
+            assert app._confirm_presses == 0
+            # The next press starts over rather than firing.
+            await pilot.press("ctrl+c")
+            await pilot.pause()
+            assert app._confirm_presses == 1
+            assert app.is_running
+
+    asyncio.run(run())
+
+
 # --- the client ------------------------------------------------------------
 
 
