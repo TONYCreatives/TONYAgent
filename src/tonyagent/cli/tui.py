@@ -29,6 +29,7 @@ import subprocess
 import threading
 from typing import Any, ClassVar, Optional
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -45,6 +46,7 @@ from tonyagent.cli.delegate import (
 )
 from tonyagent.cli.render import (
     _argument_summary,
+    _context_label,
     _one_line,
     _result_summary,
     pad_to,
@@ -70,11 +72,21 @@ from tonyagent.cli.widgets import (
 
 #: Below this many columns the sidebar is dropped rather than narrowed.
 #:
-#: The window's `--measure` is 760px; at roughly 8px per character that is
-#: about 95 columns of readable text. A 32-column sidebar plus a 95-column
-#: transcript needs 127, so anything under that cannot have both without the
-#: transcript becoming a column too narrow to read a line of code in.
-SIDEBAR_MIN_WIDTH = 108
+#: Under this there is no width left that keeps both a readable transcript and
+#: a panel, and everything the panel holds is carried by the status line -- see
+#: `_refresh_status`, which exists for these sizes.
+SIDEBAR_MIN_WIDTH = 80
+
+#: At and above this many columns the sidebar gets the width in the CSS.
+#:
+#: Between this and `SIDEBAR_MIN_WIDTH` it is drawn compact. **The old rule was
+#: a single threshold at 108, and 108 is wider than a plain console window is**:
+#: 1920 pixels at a readable font is about 106 columns, so the panel was
+#: invisible for exactly the people who never resize the window -- every fact in
+#: it (mode, model, permission, the context meter) and no way to know it was
+#: there. Hiding a panel rather than squeezing it is the window's rule, and it
+#: needs a window's menu bar to hide things in.
+SIDEBAR_WIDE_WIDTH = 108
 
 #: A turn may legitimately run for many minutes.
 TURN_TIMEOUT_S = 3600.0
@@ -99,6 +111,11 @@ class TonyApp(App[None]):
         # The keyboard route to the top bar's `+`. A click is never the only
         # way to reach a feature, and this key is bound nowhere else.
         Binding("ctrl+n", "new_chat", "new chat", show=False),
+        # Reading back through a turn without reaching for the wheel.
+        # `VerticalScroll` scrolls itself only while it has the focus, and the
+        # focus is in the composer, so these are done by hand.
+        Binding("pageup", "transcript_up", "page up", show=False),
+        Binding("pagedown", "transcript_down", "page down", show=False),
     ]
 
     def __init__(self, client: CoreClient, initial_prompt: str = "") -> None:
@@ -134,6 +151,28 @@ class TonyApp(App[None]):
         #: The open chat's name, kept so the bar can be redrawn when the
         #: backend changes without a `conversations.list` call to get it again.
         self._topbar_title = ""
+        #: The last `context.get` reply, kept for the status line -- below
+        #: `SIDEBAR_MIN_WIDTH` there is no sidebar and the meter is the one
+        #: number that has no other home.
+        #:
+        #: **Never called `_context`.** `textual.app.App._context` is a method
+        #: -- `run_test` opens with `with app._context():` -- and an instance
+        #: attribute of that name shadows it with a dict, so the app's own task
+        #: died of `'dict' object is not callable` before `on_mount` and every
+        #: `run_test` test hung forever on `app_ready_event`. Textual has no
+        #: `_last_context`, which is also the shape `_last_catalog` already uses.
+        self._last_context: dict[str, Any] = {}
+        #: The clickable stretches of the status line, as `(start, end,
+        #: target)` in cells. Rebuilt by every `_refresh_status`, and cell
+        #: offsets rather than character offsets because that is what a click
+        #: arrives as.
+        self._status_spans: list[tuple[int, int, str]] = []
+        #: Prompts that were actually sent, oldest first, for the up arrow.
+        #: Turns only: a slash command is typed once and lives in the palette.
+        self._history: list[str] = []
+        #: Where a browse through `_history` has got to, or None when what is
+        #: in the field is the user's own text rather than a recalled prompt.
+        self._history_at: Optional[int] = None
         #: The last `models.catalog` reply, so the delegate's rows can say
         #: which of them the core also serves. One list, two routes.
         self._last_catalog: list[Any] = []
@@ -173,12 +212,23 @@ class TonyApp(App[None]):
         self._apply_width()
 
     def _apply_width(self) -> None:
-        """Drop the sidebar on a terminal too narrow to carry it.
+        """How much room the sidebar gets -- or none at all.
 
-        The window hides its panels rather than letting them squeeze the
-        transcript, and this is the same decision at a different size.
+        Three sizes rather than two: full, compact, and gone. The compact size
+        is a real one because a console window that is 97 columns wide is a
+        normal window, not a degenerate case, and a panel that only appears on a
+        maximized 1920-pixel display is a panel most people never see.
+
+        When it is gone the status line is what remains, which is why the meter
+        and the permission level live there as well.
         """
-        self.query_one("#sidebar", Sidebar).display = self.size.width >= SIDEBAR_MIN_WIDTH
+        sidebar = self.query_one("#sidebar", Sidebar)
+        width = self.size.width
+        sidebar.display = width >= SIDEBAR_MIN_WIDTH
+        if sidebar.display:
+            # The width itself is the stylesheet's, including the compact one:
+            # a number here as well would be a second place to keep it right.
+            sidebar.set_class(width < SIDEBAR_WIDE_WIDTH, "compact")
 
     # -- the transcript ------------------------------------------------------
 
@@ -190,7 +240,9 @@ class TonyApp(App[None]):
         """
         return (
             f"TONYAgent {self._version()} · terminal\n\n"
-            "ctrl+p commands · ctrl+n new chat · ctrl+c twice interrupts · ctrl+d quit"
+            "ctrl+p commands · ctrl+n new chat · ctrl+c twice interrupts · ctrl+d quit\n"
+            "click a sidebar row for mode, model or permission · "
+            "click a tool call for its output · ↑ recalls your last prompt"
         )
 
     def on_mount(self) -> None:
@@ -464,7 +516,17 @@ class TonyApp(App[None]):
         no state-changed event; the window asks for the same thing when it
         needs it. Half a second is quick enough that the prompt never shows a
         mode the user has already changed.
+
+        **A tick that arrives once the app is stopping is a no-op.**
+        `App._shutdown` flips `_running` first and stops the app's timers last
+        -- `_close_all` closes the widget pumps in between -- so a tick queued
+        in that window reaches a screen that no longer has a `#sidebar`. The
+        query raised `NoMatches` into `app._exception`, which `run_test`
+        re-raises at exit, so a test with several app sessions in it failed on
+        the strength of a poll that had nothing left to poll.
         """
+        if not self.is_running:
+            return
         try:
             self.state = self.client.call("state", timeout=5) or {}
         except CoreError:
@@ -513,9 +575,11 @@ class TonyApp(App[None]):
         one conversation -- there is no second session to have open, so this is
         not a pretence of tabs, it is the name of the one that is.
 
-        Not clickable: a terminal reports a click by position rather than by
-        target, so a press meant for the transcript would open the chat list.
-        `/conversations` opens it, and the bar says so rather than inviting one.
+        The name itself is not a button: it sits mid-line, so a click on it
+        would have to be hit-tested to a column with nothing to aim at. The
+        sidebar's `Chat` row opens the same list with a whole row to hit
+        (`Sidebar.on_click`), and `/conversations` does it from the keyboard --
+        which is why this says where to go rather than inviting a click.
         """
         topbar = self.query_one("#topbar", Static)
         text = Text()
@@ -550,43 +614,165 @@ class TonyApp(App[None]):
         topbar.update(text)
 
     def on_click(self, event: Any) -> None:
-        """The `+` is a button, and the click is hit-tested to one cell.
+        """The clicks this app acts on, and nothing else.
 
         **This is safe where a click on a floating dialog would not be.** A
         terminal reports a click by position, so a button laid over the
-        transcript is hit while the person meant the text. The top bar is its
-        own row, above everything, so a click on it was always aimed at it --
-        and the `+` occupies exactly one column, so a click anywhere else on
-        the bar does nothing at all.
+        transcript is hit while the person meant the text. Both of these are
+        rows of the chrome -- above and below everything -- so a click there
+        was always aimed at the row, and a click anywhere else reaches the
+        transcript and is left alone.
 
-        `ctrl+shift+n` and `/new` do the same thing, because a click is never
-        the only way to reach a feature.
+        The `+` is hit-tested against a single column because the top bar is
+        one `Static`; the status line is hit-tested against per-part spans for
+        the same reason. The sidebar does its own, because it is a widget with
+        rows of its own to find (see `Sidebar.on_click`).
+
+        Every one of these has a keyboard route -- `ctrl+shift+n`, `/new`,
+        `ctrl+1`, `ctrl+2`, `ctrl+3`, `ctrl+4` -- because a click is never the
+        only way to reach a feature, and because on a terminal narrower than
+        `SIDEBAR_MIN_WIDTH` there is no sidebar to click at all.
         """
-        if event.widget is not self.query_one("#topbar", Static):
+        if event.widget is self.query_one("#topbar", Static):
+            column = getattr(self, "_new_chat_column", None)
+            if column is None or event.offset.x != column:
+                return
+            event.stop()
+            self._new_conversation()
             return
-        column = getattr(self, "_new_chat_column", None)
-        if column is None or event.offset.x != column:
-            return
-        event.stop()
-        self._new_conversation()
+        if event.widget is self.query_one("#status", Static):
+            self._click_status(event)
+
+    def _click_status(self, event: Any) -> None:
+        """Which part of the status line was clicked, by column.
+
+        The meter and the permission level are here rather than only in the
+        sidebar because the sidebar is dropped below `SIDEBAR_MIN_WIDTH` -- so
+        on a narrow terminal this is the only place either can be clicked, and
+        the only place the meter appears at all.
+        """
+        x = int(getattr(event.offset, "x", -1))
+        for start, end, target in self._status_spans:
+            if start <= x < end:
+                event.stop()
+                self._open_row(target)
+                return
+
+    def on_sidebar_picked(self, message: Sidebar.Picked) -> None:
+        """A sidebar row was clicked: open what it names."""
+        self._open_row(str(message.target))
+
+    def _open_row(self, target: str) -> bool:
+        """Open whatever a clicked row names. False if it names nothing.
+
+        One table for both the sidebar and the status line, because they name
+        the same four things and two tables would be two places for the meter
+        and the permission picker to drift apart.
+        """
+        actions = {
+            "mode": self._pick_mode,
+            "model": self._pick_model,
+            "permission": self._pick_permission,
+            "chat": self._show_conversations,
+            # The keyboard route is `ctrl+4`, and this is the same request: the
+            # core's own numbers, never a count kept here.
+            "context": self._refresh_context,
+        }
+        action = actions.get(target)
+        if action is None:
+            return False
+        action()
+        return True
 
     def _refresh_context(self) -> None:
         try:
             payload = self.client.call("context.get", timeout=5) or {}
         except CoreError:
             return
+        self._last_context = payload
         self.query_one("#sidebar", Sidebar).update_context(payload)
+        # The status line carries the same measurement, because below
+        # `SIDEBAR_MIN_WIDTH` there is no sidebar and the meter is the one
+        # number that has no other home. Without this the meter simply vanishes
+        # on a narrow terminal, which is where it would matter most.
+        self._refresh_status()
 
     def _refresh_status(self) -> None:
+        """The one line that is always on screen.
+
+        **The context meter and the permission level live here, not only in the
+        sidebar.** Everything else the sidebar holds is already duplicated --
+        mode in the top bar, model and project here -- so dropping the sidebar
+        on a narrow terminal was costing exactly two things: how full the
+        context is, and how much the agent is allowed to do. Both are things
+        people come to a status line *for*, and both were silently absent on
+        any terminal narrower than the panel's own floor.
+
+        So the sidebar is now the *expanded* view and this is the floor. The
+        numbers are the core's own -- `context.get`, never counted here -- and
+        when the core cannot measure, this says which half is missing rather
+        than drawing an empty bar at 0%.
+        """
         from tonyagent.cli.repl import _basename
 
         project = str(self.state.get("project") or "")
         left = _basename(project) if project else "no project"
         bound = bool(self.state.get("bound"))
         right = str(self.state.get("model")) if bound else "no provider bound"
+
+        # Each part carries what a click on it should open. The project name
+        # opens nothing: there is no picker for "which folder", only the
+        # sidebar's own and the `-C` flag.
+        rows: list[tuple[str, str]] = [(left, ""), (right, "model" if bound else "")]
+        permission = str(self.state.get("permission") or "")
+        if permission:
+            rows.append((permission, "permission"))
+        rows.append((self._context_summary(), "context"))
+
+        # Composed by hand rather than with `join`, because the spans have to
+        # be known: a click arrives as a column, and ` · ` is three cells.
+        line = " "
+        spans: list[tuple[int, int, str]] = []
+        for value, target in rows:
+            if not value:
+                continue
+            if line.strip():
+                line += " · "
+            start = cell_len(line)
+            line += value
+            if target:
+                spans.append((start, cell_len(line), target))
+        self._status_spans = spans
+
         status = self.query_one("#status", Static)
-        status.update(f" {left} · {right}")
+        status.update(line)
         status.set_class(bound, "bound")
+
+    def _context_summary(self) -> str:
+        """How full the context is, in as few characters as say it.
+
+        Compact because this line has to survive an 80-column terminal next to
+        the project and the model. The words are the same ones the sidebar
+        uses -- including *which* half of the measurement is missing, since
+        "unknown" without that is a shrug.
+        """
+        used = int(self._last_context.get("used") or 0)
+        window = int(self._last_context.get("window") or 0)
+        known = bool(self._last_context.get("known"))
+        if not known:
+            return (
+                "ctx unknown"
+                if not window
+                else f"ctx ?/{_context_label(window, suffix='')}"
+            )
+        if window <= 0:
+            return f"ctx {_context_label(used, suffix='')}/?"
+        if used <= 0:
+            return f"ctx 0/{_context_label(window, suffix='')}"
+        return (
+            f"ctx {_context_label(used, suffix='')}"
+            f"/{_context_label(window, suffix='')}"
+        )
 
     # -- input ---------------------------------------------------------------
 
@@ -747,6 +933,12 @@ class TonyApp(App[None]):
         elif event.key == "down" and self._slash_visible:
             self._move_slash_highlight(1)
             event.stop()
+        elif event.key in ("up", "down") and not self._pending_ask:
+            # The composer's, once the inline list is closed. A single-line
+            # `Input` has nothing to do with these keys, and a prompt already
+            # typed once is the most expensive thing in here to type twice.
+            if self._recall(-1 if event.key == "up" else 1):
+                event.stop()
         elif event.key == "ctrl+1":
             self._pick_mode()
         elif event.key == "ctrl+2":
@@ -769,8 +961,52 @@ class TonyApp(App[None]):
         if text.startswith("/"):
             self._slash(text)
             return
+        self._remember(text)
         self._begin_turn(text)
         self._send(text)
+
+    def _remember(self, text: str) -> None:
+        """Keep a sent prompt for the up arrow.
+
+        A repeat of the newest entry is not stored twice: a run of the same
+        prompt is one prompt, and up-arrowing through five copies of it is
+        worse than up-arrowing through one.
+        """
+        if not self._history or self._history[-1] != text:
+            self._history.append(text)
+        self._history_at = None
+
+    def _recall(self, direction: int) -> bool:
+        """Walk through sent prompts, as a shell does. True if it acted.
+
+        Only while the field is empty or a prompt is already recalled: with a
+        half-typed line in the field, up and down belong to whoever typed it,
+        and stealing them would lose text they were still working on. Walking
+        past the newest prompt lands on an empty field again, which is where
+        the browse started rather than a wall to be stuck against.
+        """
+        composer = self.query_one("#composer", Input)
+        if not self._history:
+            return False
+        if composer.value and self._history_at is None:
+            return False
+        if self._history_at is None and direction > 0:
+            return False
+        index = len(self._history) if self._history_at is None else self._history_at
+        index += direction
+        if index < 0:
+            return False
+        if index >= len(self._history):
+            self._history_at = None
+            composer.value = ""
+            composer.cursor_position = 0
+            return True
+        self._history_at = index
+        composer.value = self._history[index]
+        # The caret after the recalled text, so typing continues it rather than
+        # landing in front of it.
+        composer.cursor_position = len(composer.value)
+        return True
 
     def _send(self, text: str) -> None:
         """Send a turn without blocking the UI thread.
@@ -1333,6 +1569,18 @@ class TonyApp(App[None]):
             if row.strip().startswith("opencode")
         ]
 
+    def action_transcript_up(self) -> None:
+        """Page the transcript back, by key.
+
+        The scrollbar and the wheel are not always there -- a wheel is not on
+        every keyboard, and a scrollbar is one column wide in a terminal.
+        """
+        self.query_one("#transcript", VerticalScroll).scroll_page_up(animate=False)
+
+    def action_transcript_down(self) -> None:
+        """And forward again."""
+        self.query_one("#transcript", VerticalScroll).scroll_page_down(animate=False)
+
     def action_new_chat(self) -> None:
         """The keyboard route to the top bar's `+`, and `/new`."""
         self._new_conversation()
@@ -1751,25 +1999,6 @@ def _takes_argument(handler: Any) -> bool:
         return False
 
 
-def _context_label(tokens: Any) -> str:
-    """A context size in the unit people say it in.
-
-    `1048576` is a megabyte of digits; `1M` is what a person would call it.
-    Anything at or above a million is shown in millions, because rounding
-    1,048,576 down to `1048K` is the kind of accuracy nobody asked for.
-    """
-    try:
-        n = int(tokens)
-    except (TypeError, ValueError):
-        return ""
-    if n <= 0:
-        return ""
-    if n >= 1_000_000:
-        # Rounded to one decimal, not `:g`. 1048576 is 1.048576M, and `:g`
-        # printed all of them -- `1.04858M ctx`, which is more precision than
-        # the word "about" and less than anyone reads.
-        return f"{round(n / 1_000_000, 1):g}M ctx"
-    return f"{n // 1000}K ctx"
 
 
 def _message_text(content: Any) -> str:
@@ -1857,4 +2086,11 @@ COMMANDS: tuple[Command, ...] = (
 )
 
 
-__all__ = ["COMMANDS", "CONFIRM_PRESS_S", "SIDEBAR_MIN_WIDTH", "TURN_TIMEOUT_S", "TonyApp"]
+__all__ = [
+    "COMMANDS",
+    "CONFIRM_PRESS_S",
+    "SIDEBAR_MIN_WIDTH",
+    "SIDEBAR_WIDE_WIDTH",
+    "TURN_TIMEOUT_S",
+    "TonyApp",
+]

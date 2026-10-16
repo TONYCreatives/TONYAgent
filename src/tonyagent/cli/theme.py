@@ -242,12 +242,28 @@ def build_css() -> str:
         color: {FG_DIM};
     }}
 
-    /* The sidebar: mode, model, and the context meter. */
+    /* The sidebar: mode, model, and the context meter.
+
+       `height: 1fr`, and this is load-bearing. With the default `auto` the
+       panel was measured from its content *once* and not re-measured when the
+       content grew: the chat title and the context numbers arrive from the
+       core after the mount, and the two rows they add were drawn past the
+       bottom of the box the panel had already claimed. The result was a meter
+       that existed in the render and was silently clipped off screen -- the
+       one row the panel is for. A share of the column cannot go stale. */
     #sidebar {{
         background: {SURFACE};
         border-left: solid {BORDER};
         width: 38;
+        height: 1fr;
         padding: 1 1;
+    }}
+    /* The same panel at a console window's width. 23 columns of content:
+       `Permission  ctrl+3` is 16, `314,139 / 1M  31%` is 17, and the bar is 20.
+       Those are the widest rows in the panel, which is what makes 26 the
+       narrowest it can be drawn rather than merely the narrowest it can be. */
+    #sidebar.compact {{
+        width: 26;
     }}
     .side-title {{
         color: {FG};

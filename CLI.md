@@ -33,7 +33,8 @@ rather than a screenful of escape codes.
 |---|---|
 | `Enter` | Send the turn / confirm the highlighted option |
 | `Esc` | Decline a question · close a picker or the inline list |
-| `↑` `↓` | Move through the inline list |
+| `↑` `↓` | Move through the inline list · recall a prompt you already sent, when the field is empty |
+| `PageUp` `PageDown` | Scroll the transcript |
 | `Ctrl-C` | **Twice** to interrupt a turn, or twice at an idle prompt to quit |
 | `Ctrl-D` | Quit |
 | `Ctrl-Q` | Quit |
@@ -52,6 +53,33 @@ the keystroke.
 While a confirmation is open the dialog has the keyboard. **Any key that is not
 `y`, `a` or `n` is a decline** — "no" is the only safe reading of a key pressed
 while a destructive tool is waiting.
+
+`↑` is the shell's, not the list's, once the field is empty: it walks back
+through the prompts you have already sent, and `↓` walks forward again, landing
+on the empty field when you pass the newest. A field with something in it keeps
+its own keys — a recall must not overwrite a line you are still typing.
+
+## Mouse
+
+| Where | Does |
+|---|---|
+| The `+` in the top bar | Start a new chat |
+| A sidebar row's value | `mode` and `permission` open their pickers, `Chat` opens the chat list, the meter re-measures |
+| A part of the status line | The same, for the model, the permission and the meter — and the only route at all below 80 columns, where there is no sidebar |
+| A tool call's line | Unfold the output behind it, or fold it back |
+
+**Every one of these also has a key**, because a click must never be the only way
+to reach a feature and a terminal is not always a mouse: `Ctrl-1`, `Ctrl-2`,
+`Ctrl-3`, `Ctrl-4`, `Ctrl-N`, `/conversations`. The sidebar draws each of those
+keys beside the row it changes — `Model    Ctrl-2` — because the footer lists
+what `BINDINGS` holds and these are handled further down, so nothing on screen
+said the mode picker existed until they were written there. On a console that
+does not report the mouse at all, that key is the whole feature.
+
+Nothing else is clickable. The chrome is one row above and one row below
+everything, so a click there was always aimed at it; the transcript is a body of
+text, where a click is just as likely to be a selection, and it is left to the
+terminal.
 
 ## Commands
 
@@ -119,13 +147,22 @@ In line mode, a leading `\` sends a turn that starts with a slash:
   (`Ctrl-N` or `/new` do the same). The chat leads because it is the tab -- it
   identifies what is on screen, where the mode says what the agent may do.
 - **The open chat**, named in the sidebar too, so it is visible whether you are
-  looking up or across.
+  looking up or across — and the row is the mouse's way into the chat list.
+- **The panel on the right, in three sizes**: full at 108 columns, written out
+  from 80 — each row with its key (`Model    Ctrl-2`), the meter as
+  `314,139 / 1M  31%` over a twenty-cell bar — and gone below that, where the
+  status line carries the same facts. **108 is wider than a plain console
+  window**: 1920 pixels at a readable font is about 106 columns, so a rule that
+  needed 108 hid the panel from exactly the people who never resize.
 - **A fenced turn.** The accent rule on the left marks where one exchange
   begins and ends. The footer sits *outside* it, because it is metadata about
   the turn rather than part of the answer.
 - **One line per tool call**, dimmed while it runs, then a tick or a cross. A
   tool's output longer than twelve lines is truncated from the *front*, because
-  the error in a failed command is at the end.
+  the error in a failed command is at the end. **Click the line** to unfold the
+  tail of that output underneath it, and click again to fold it back. A call
+  with nothing behind the line draws no `▸` and does not open, because a marker
+  over nothing is a promise the click cannot keep.
 - **Diffs**, in `--traj-add` / `--traj-del`, on the changed lines only.
 - **The context meter** — real numbers from the core: the input side of your
   most recent request, against the model's own published `context_window`. It
@@ -310,7 +347,7 @@ nothing, so the picker draws no label, and only the second reads `Free`.
 | `ModuleNotFoundError: textual` | Install the extra: `pip install -e ".[terminal]"` |
 | Box characters are `?` | The terminal's locale is not UTF-8 |
 | No colours | `NO_COLOR` is set, or `TERM=dumb` |
-| The sidebar is missing | Terminal narrower than 108 columns — it is dropped, not squeezed |
+| The sidebar is missing | Terminal narrower than 80 columns — it is dropped, not squeezed. Written out below 108, too |
 
 ## The window's palette
 

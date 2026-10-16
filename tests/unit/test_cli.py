@@ -68,6 +68,22 @@ def test_the_entry_point_runs_without_a_display():
 
     src = str(Path(__file__).resolve().parents[2] / "src")
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "PYTHONPATH": src}
+    if os.name == "nt":
+        # `SystemRoot` and `SystemDrive` are not displays, and the Windows
+        # loader reads both for every child process. Without `SystemRoot` the
+        # child cannot even import `asyncio` -- `_overlapped` starts Winsock
+        # and answers `[WinError 10106]` -- so the test measured the platform
+        # instead of the import. Without `SystemDrive` the loader's activation
+        # cache resolves
+        # `%SystemDrive%\ProgramData\Microsoft\Windows\Caches` *relatively*
+        # and drops a literal `%SystemDrive%` directory into the working
+        # directory, which here is the repository. The display is what is
+        # being cleared; these are the platform requirements that survive it.
+        # `noqa: SIM112` -- capitalisation is not a style question here. These
+        # two are Windows' own names, spelled exactly this way, and "fixing"
+        # the warning would blank both and break every child process.
+        env["SystemRoot"] = os.environ.get("SystemRoot", "")  # noqa: SIM112
+        env["SystemDrive"] = os.environ.get("SystemDrive", "")  # noqa: SIM112
     out = subprocess.run(
         [sys.executable, "-m", "tonyagent.cli", "--help"],
         capture_output=True,
@@ -2145,6 +2161,662 @@ def test_the_new_chat_plus_is_clickable_on_exactly_one_column():
     asyncio.run(run())
 
 
+# --- the mouse: rows that open what they name -------------------------------
+
+
+def test_a_click_on_a_sidebar_row_opens_what_that_row_names():
+    """The sidebar is where the pickers are *found*.
+
+    `ctrl+1`, `ctrl+2` and `ctrl+3` open mode, model and permission, and none of
+    the three appears in the footer -- so before this, nothing on screen said
+    they existed and the only way in was the slash menu. The row worth clicking
+    is the value (`medium`), not the label above it, and the blanks between the
+    rows are not rows.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+    from tonyagent.cli.widgets import PickerDialog, Sidebar
+
+    calls: list[str] = []
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            calls.append(method)
+            return {
+                "state": {"mode": "build", "model": "kimi-k3", "permission": "medium",
+                          "bound": True, "project": "/p"},
+                "context.get": {"model": "kimi-k3", "used": 314139, "known": True,
+                                "window": 1000000},
+            }.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(120, 24)) as pilot:
+            await pilot.pause()
+            app._poll_state()
+            await pilot.pause()
+            sidebar = app.query_one("#sidebar", Sidebar)
+            rows = {target: line for line, target in sidebar._regions.items()}
+            assert {"mode", "model", "permission", "context"} <= set(rows), rows
+            assert "chat" not in rows, "no chat is open, so there is no Chat row"
+
+            await pilot.click("#sidebar", offset=(1, rows["mode"]))
+            await pilot.pause()
+            assert isinstance(app.screen, PickerDialog), "the mode row opened nothing"
+            await pilot.press("escape")
+            await pilot.pause()
+
+            # The line between two rows is not a row.
+            await pilot.click("#sidebar", offset=(1, rows["mode"] + 1))
+            await pilot.pause()
+            assert not isinstance(app.screen, PickerDialog), "a blank line opened something"
+
+            # The meter asks the core again rather than opening anything.
+            before = calls.count("context.get")
+            await pilot.click("#sidebar", offset=(1, rows["context"]))
+            await pilot.pause()
+            assert calls.count("context.get") > before, "the meter was not re-measured"
+
+            await pilot.click("#sidebar", offset=(1, rows["permission"]))
+            await pilot.pause()
+            assert isinstance(app.screen, PickerDialog), "the permission row opened nothing"
+
+    asyncio.run(run())
+
+
+def test_every_key_the_sidebar_draws_is_a_key_that_works():
+    """A hint is a promise, and this is the promise being kept.
+
+    These four chords are handled in `on_key` rather than declared in
+    `BINDINGS`, which is exactly how they came to be invisible in the first
+    place: the footer lists bindings and nothing else, so there was no way to
+    learn a mode picker existed except by typing a slash and reading the list.
+    Drawing them beside the rows only helps if they still do what the sidebar
+    says they do.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+    from tonyagent.cli.widgets import Sidebar
+
+    asked: list[str] = []
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            asked.append(method)
+            return {
+                "state": {"mode": "build", "model": "kimi-k3", "permission": "medium",
+                          "bound": True, "project": "/p"},
+                "context.get": {"model": "kimi-k3", "used": 1, "known": True,
+                                "window": 10},
+            }.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    expected = {
+        "mode": "mode.list",
+        "model": "models.catalog",
+        "permission": "permission.list",
+        "context": "context.get",
+    }
+    assert expected.keys() == Sidebar.HINTS.keys(), "a row gained or lost its key"
+
+    async def run() -> None:
+        for target, method in expected.items():
+            key = Sidebar.HINTS[target]
+            asked.clear()
+            app = TonyApp(_Client())
+            async with app.run_test(size=(120, 24)) as pilot:
+                await pilot.pause()
+                app._poll_state()
+                await pilot.pause()
+                asked.clear()  # the mount's own polling is not the key
+                await pilot.press(key)
+                await pilot.pause()
+                assert method in asked, f"{key} (the {target} hint) asked for {asked}"
+
+    asyncio.run(run())
+
+
+def test_the_sidebar_shows_the_key_beside_each_row_it_names():
+    """The chords were invisible; now they are written down where they apply.
+
+    A clickable row that says nothing about itself is one nobody clicks, and on
+    a console that does not report the mouse it is one nobody can *use*. The
+    key is the half that works everywhere, so it is drawn.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+    from tonyagent.cli.widgets import Sidebar
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {
+                "state": {"mode": "build", "model": "kimi-k3", "permission": "medium",
+                          "bound": True, "project": "/p", "conversation": ""},
+                "context.get": {"model": "kimi-k3", "used": 314139, "known": True,
+                                "window": 1000000},
+            }.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(120, 24)) as pilot:
+            await pilot.pause()
+            app._poll_state()
+            await pilot.pause()
+            rendered = app.query_one("#sidebar", Sidebar).render().plain
+            for target, key in Sidebar.HINTS.items():
+                assert key in rendered, f"{target} says nothing about {key}"
+            # And the rows are still found: the key sits beside the name rather
+            # than becoming part of it.
+            regions = app.query_one("#sidebar", Sidebar)._regions
+            assert {"mode", "model", "permission", "context"} <= set(regions.values())
+
+    asyncio.run(run())
+
+
+def test_the_sidebar_is_there_at_the_width_a_console_window_is():
+    """The panel needed 108 columns, and a console window is about 97.
+
+    Measured off the user's own screen: the welcome line wraps at 97, and 1920
+    pixels at a readable font is about 106 columns -- so a panel that only
+    appeared at 108 was invisible for everyone who never resized the window.
+    Three sizes rather than two: full, compact, and gone.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import (
+        SIDEBAR_MIN_WIDTH,
+        SIDEBAR_WIDE_WIDTH,
+        TonyApp,
+    )
+    from tonyagent.cli.widgets import Sidebar
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {"state": {}, "context.get": {}}.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def at(width: int) -> tuple[bool, bool, int]:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(width, 22)) as pilot:
+            await pilot.pause()
+            sidebar = app.query_one("#sidebar", Sidebar)
+            return sidebar.display, "compact" in sidebar.classes, sidebar.size.width
+
+    shown, compact, _ = asyncio.run(at(97))
+    assert shown, "97 columns is a console window, and the panel belongs on it"
+    assert compact, "97 is under the wide width, so it is drawn compact"
+
+    assert not asyncio.run(at(SIDEBAR_MIN_WIDTH - 1))[0], "dropped under the floor"
+
+    shown, compact, width = asyncio.run(at(SIDEBAR_WIDE_WIDTH))
+    assert shown, "shown at the wide width"
+    assert not compact, "and full size, not compact"
+    assert width > 26, f"the full panel is wider than the compact one: {width}"
+
+
+def test_the_meter_reaches_the_screen_at_the_compact_width():
+    """The panel was measured once and its late rows were clipped.
+
+    Mode, model, permission, the chat title and the context numbers all arrive
+    from the core *after* the mount, so each one makes the panel taller. With
+    an automatic height it was measured on an early frame and not again: the
+    `Context` row and the bar were in `render()` and drawn below the bottom of
+    the box the panel had already claimed. A meter that exists in a unit test
+    of the render and on no screen at all is the exact complaint this came
+    from, so this reads the compositor rather than `render()`.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+    from tonyagent.cli.widgets import Sidebar
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {}
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> str:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(97, 22)) as pilot:
+            await pilot.pause()
+            sidebar = app.query_one("#sidebar", Sidebar)
+            # The order the core answers in, and no forced relayout after it:
+            # the point is that nothing has to be nudged for the row to appear.
+            sidebar.update_state(
+                {"mode": "build", "model": "kimi-k3", "permission": "medium"}
+            )
+            await pilot.pause()
+            sidebar.set_conversation("fix the parser")
+            await pilot.pause()
+            sidebar.update_context({"used": 314139, "window": 1000000, "known": True})
+            await pilot.pause()
+            left = sidebar.region.x
+            return "\n".join(
+                "".join(segment.text for segment in strip)[left:]
+                for strip in app.screen._compositor.render_strips()  # noqa: SLF001
+            )
+
+    panel = asyncio.run(run())
+    assert "Context" in panel, panel
+    assert "314,139" in panel, panel
+    assert "31%" in panel, panel
+    assert "\u2588" in panel, "the bar was clipped off the bottom"
+
+
+def test_the_meter_survives_a_short_window():
+    """A share of a short column is less than the panel wants.
+
+    `height: 1fr` is what keeps the late rows from being clipped on a normal
+    window, and it is also why a 20-row window has a 12-row panel: the blocks
+    have to give something up, and the blanks between them are the only rows
+    carrying nothing. Without this the meter was clipped again -- silently, at
+    every height under 24, which is a small console with a large font.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+    from tonyagent.cli.widgets import Sidebar
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {}
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> str:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(97, 20)) as pilot:
+            await pilot.pause()
+            sidebar = app.query_one("#sidebar", Sidebar)
+            sidebar.update_state({"mode": "build", "model": "kimi-k3", "permission": "medium"})
+            await pilot.pause()
+            sidebar.set_conversation("fix the parser")
+            await pilot.pause()
+            sidebar.update_context({"used": 314139, "window": 1000000, "known": True})
+            await pilot.pause()
+            assert sidebar.size.height < 14, "the blanks should have to go here"
+            left = sidebar.region.x
+            return "\n".join(
+                "".join(segment.text for segment in strip)[left:]
+                for strip in app.screen._compositor.render_strips()  # noqa: SLF001
+            )
+
+    panel = asyncio.run(run())
+    assert "31%" in panel, panel
+    assert "\u2588" in panel, panel
+
+
+def test_the_compact_meter_is_one_line_that_fits_the_panel():
+    """`314,139 tokens  31% of 1,000,000` is 33 columns against 23.
+
+    Wrapped, it read `314,139 tokens  31% of` and then a bare `1,000,000` -- a
+    number under a line that promises a percentage -- with the bar pushed a row
+    further down. The same facts abbreviated fit, because `1M` is what anyone
+    calls a million.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.render import display_width
+    from tonyagent.cli.tui import TonyApp
+    from tonyagent.cli.widgets import Sidebar
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {}
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def rendered(width: int) -> tuple[list[str], int]:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(width, 22)) as pilot:
+            await pilot.pause()
+            sidebar = app.query_one("#sidebar", Sidebar)
+            sidebar.update_context({"used": 314139, "window": 1000000, "known": True})
+            await pilot.pause()
+            return sidebar.render().plain.split("\n"), sidebar.content_size.width
+
+    rows, room = asyncio.run(rendered(97))
+    over = [row for row in rows if display_width(row) > room]
+    assert not over, f"wider than the {room} columns it has: {over}"
+    assert any("1M" in row for row in rows), rows
+
+    rows, room = asyncio.run(rendered(140))
+    assert any("of 1,000,000" in row for row in rows), "the full form where it fits"
+
+
+def test_the_status_line_opens_what_its_parts_name():
+    """Under the floor there is no sidebar, so the line is what is left.
+
+    The meter and the permission level lived in the sidebar and nowhere else,
+    so on a narrow terminal the only way to either was a chord the footer never
+    mentions. The parts are hit-tested in *cells*, because that is what a click
+    arrives as and ` · ` is three of them.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import SIDEBAR_MIN_WIDTH, TonyApp
+    from tonyagent.cli.widgets import PickerDialog
+
+    calls: list[str] = []
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            calls.append(method)
+            return {
+                "state": {"mode": "build", "model": "kimi-k3", "permission": "medium",
+                          "bound": True, "project": "/home/me/Project"},
+                "context.get": {"model": "kimi-k3", "used": 314139, "known": True,
+                                "window": 1000000},
+            }.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        # One column under the floor: the only size where the status line is
+        # the whole interface. A number here rather than the constant would go
+        # stale the next time the floor moves, which it has done once already.
+        async with app.run_test(size=(SIDEBAR_MIN_WIDTH - 1, 16)) as pilot:
+            await pilot.pause()
+            app._poll_state()
+            await pilot.pause()
+            assert not app.query_one("#sidebar").display, "dropped below the floor"
+            spans = {target: (start, end) for start, end, target in app._status_spans}
+            assert {"model", "permission", "context"} <= set(spans), spans
+
+            before = calls.count("context.get")
+            await pilot.click("#status", offset=(spans["context"][0], 0))
+            await pilot.pause()
+            assert calls.count("context.get") > before, "the meter part was not re-measured"
+
+            await pilot.click("#status", offset=(spans["permission"][0], 0))
+            await pilot.pause()
+            assert isinstance(app.screen, PickerDialog), "the permission part opened nothing"
+
+    asyncio.run(run())
+
+
+def test_a_tool_line_opens_the_output_it_stands_in_for():
+    """The one line is the right default and the wrong only.
+
+    A failed command's reason is in the output that line elides, and reaching
+    it meant `/trajectory` and a scroll back through the raw frames. The line
+    says there is more with a marker, and a click unfolds the tail -- truncated
+    from the *front*, because the end is where the error is.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from textual.app import App as TextualApp
+
+    from tonyagent.cli.widgets import ToolCall, ToolLine
+
+    call = ToolCall(
+        id="t1", name="execute_command", summary="pytest -q", done=True, failed=True,
+        result="exit 1",
+        output="\n".join(f"row {index}" for index in range(30)),
+    )
+
+    class _App(TextualApp[None]):
+        def compose(self):
+            yield ToolLine(call)
+
+    async def run() -> None:
+        app = _App()
+        async with app.run_test(size=(80, 40)) as pilot:
+            line = app.query_one(ToolLine)
+            await pilot.pause()
+            collapsed = str(line.render())
+            assert "row 29" not in collapsed, "the output showed before it was asked for"
+            assert ToolLine.CLOSED_GLYPH in collapsed, "nothing says there is more"
+
+            await pilot.click(ToolLine)
+            await pilot.pause()
+            opened = str(line.render())
+            assert line.expanded
+            assert "row 29" in opened, "the click did not unfold the output"
+            assert "18 earlier lines" in opened
+            assert "row 0" not in opened, "the whole output was shown, not its tail"
+            assert ToolLine.OPEN_GLYPH in opened
+
+            await pilot.click(ToolLine)
+            await pilot.pause()
+            assert not line.expanded
+            assert "row 29" not in str(line.render())
+
+    asyncio.run(run())
+
+
+def test_a_tool_line_with_nothing_behind_it_does_not_offer_to_open():
+    """A marker with nothing behind it is a lie told by a glyph.
+
+    `result` is the one-line preview this very line draws, so a call that has
+    only a preview has nothing to unfold -- and must not hint otherwise, nor
+    swallow the click.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from textual.app import App as TextualApp
+
+    from tonyagent.cli.widgets import ToolCall, ToolLine
+
+    call = ToolCall(id="t1", name="read_file", summary="main.py", done=True,
+                    result="42 lines")
+
+    class _App(TextualApp[None]):
+        def compose(self):
+            yield ToolLine(call)
+
+    async def run() -> None:
+        app = _App()
+        async with app.run_test(size=(80, 20)) as pilot:
+            line = app.query_one(ToolLine)
+            await pilot.pause()
+            assert ToolLine.CLOSED_GLYPH not in str(line.render())
+            await pilot.click(ToolLine)
+            await pilot.pause()
+            assert not line.expanded, "a call with no output opened on a click"
+
+    asyncio.run(run())
+
+
+# --- the keyboard: less of it ----------------------------------------------
+
+
+def test_the_up_arrow_recalls_a_prompt_already_sent():
+    """Retyping a prompt is the most expensive thing in here to do by hand.
+
+    The composer is a single-line `Input`, so up and down have no caret to
+    move -- which is exactly why they are free to mean what they mean in a
+    shell, whose convention this is.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from textual.widgets import Input
+
+    from tonyagent.cli.tui import TonyApp
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {"state": {"mode": "build", "model": "m", "permission": "medium"}}
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(100, 20)) as pilot:
+            await pilot.pause()
+            composer = app.query_one("#composer", Input)
+            composer.focus()
+            await pilot.pause()
+
+            await pilot.press(*"hello tony")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert composer.value == "", "the composer did not clear"
+
+            await pilot.press("up")
+            await pilot.pause()
+            assert composer.value == "hello tony", "up did not recall the prompt"
+            # The caret after the text, so typing continues it rather than
+            # landing in front of it.
+            assert composer.cursor_position == len("hello tony")
+
+            await pilot.press("down")
+            await pilot.pause()
+            assert composer.value == "", "down did not come back to an empty field"
+
+    asyncio.run(run())
+
+
+def test_the_arrows_leave_a_half_typed_line_alone():
+    """A recall must not overwrite work in progress.
+
+    Up and down are claimed only while the field is empty, so a line somebody
+    is still editing keeps the keys it was already using.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from textual.widgets import Input
+
+    from tonyagent.cli.tui import TonyApp
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {"state": {"mode": "build", "model": "m", "permission": "medium"}}
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(100, 20)) as pilot:
+            await pilot.pause()
+            composer = app.query_one("#composer", Input)
+            composer.focus()
+            await pilot.pause()
+
+            await pilot.press(*"an older prompt")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert composer.value == ""
+
+            await pilot.press(*"draft")
+            await pilot.press("up")
+            await pilot.pause()
+            assert composer.value == "draft", "the half-typed line was replaced"
+
+    asyncio.run(run())
+
+
+def test_page_keys_scroll_the_transcript():
+    """The scrollbar and the wheel are not always there.
+
+    `VerticalScroll` scrolls itself only while it has the focus, and the focus
+    is in the composer -- so reading back through a turn meant grabbing a
+    column of the screen, or a wheel a keyboard may not have.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from textual.containers import VerticalScroll
+    from textual.widgets import Static
+
+    from tonyagent.cli.tui import TonyApp
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {"state": {"mode": "build", "model": "m", "permission": "medium"}}
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(100, 20)) as pilot:
+            await pilot.pause()
+            transcript = app.query_one("#transcript", VerticalScroll)
+            transcript.mount(Static("\n".join(f"row {index}" for index in range(200))))
+            await pilot.pause()
+            assert transcript.scroll_offset.y == 0, "the transcript started scrolled"
+
+            await pilot.press("pagedown")
+            await pilot.pause()
+            paged = transcript.scroll_offset.y
+            assert paged > 0, "pagedown did not scroll"
+
+            await pilot.press("pageup")
+            await pilot.pause()
+            assert transcript.scroll_offset.y < paged, "pageup did not scroll back"
+
+    asyncio.run(run())
+
+
 def test_the_new_chat_key_is_bound_and_bound_nowhere_else():
     pytest.importorskip("textual")
 
@@ -2522,11 +3194,32 @@ def test_the_delegate_passes_auto_and_is_never_silent_about_it():
     the backend -- auto-approve must be something you can see, not something you
     find out about afterwards.
     """
+    import os
+    import shutil
+
     from tonyagent.cli.delegate import opencode_argv
 
     argv = opencode_argv("hello", model="opencode/space-bunny-free")
     assert "--auto" in argv
-    assert argv[:4] == ["opencode", "run", "--format", "json"]
+
+    # **The launcher is platform policy, not a constant** (`opencode_command`).
+    # npm ships no .exe: where `which` finds only a `.cmd`, CreateProcess
+    # cannot run a batch file directly and the prefix is
+    # `COMSPEC /c <the .cmd>` -- the whole reason the delegate reported
+    # "not on PATH" on Windows. This assertion used to read `argv[:4] ==
+    # ["opencode", ...]`, the POSIX half of a policy that has two halves, so it
+    # failed on any machine with npm's install while `--auto` -- what the test
+    # is for -- was being checked fine.
+    found = shutil.which("opencode")
+    if os.name == "nt" and found and found.lower().endswith((".cmd", ".bat")):
+        launcher = [os.environ.get("COMSPEC") or "cmd.exe", "/c", found]
+    elif os.name == "nt" and found:
+        launcher = [found]
+    else:
+        launcher = ["opencode"]
+    assert argv[: len(launcher)] == launcher
+    at = len(launcher)
+    assert argv[at:at + 3] == ["run", "--format", "json"]
     assert argv[-1] == "hello", "the prompt must not be shell-interpreted"
     assert "--auto" not in opencode_argv("hello", auto=False)
 
@@ -2987,6 +3680,184 @@ def test_every_command_is_wired_and_every_handler_is_reachable():
         assert any(c.run == run for c in COMMANDS), (
             f"{run!r} is handled but no command reaches it"
         )
+
+
+def test_the_context_meter_survives_the_sidebar_being_dropped():
+    """Everything else in the sidebar is duplicated; two things were not.
+
+    Mode is in the top bar, model and project in the status bar. The **context
+    meter** and the **permission level** were in the sidebar and nowhere else,
+    so at 108 columns and below both silently vanished -- and both are things
+    people open a status line for. A narrower terminal is not a reason to stop
+    telling you how full the context is.
+
+    The sidebar is the expanded view now; this line is the floor.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {
+                "state": {"mode": "build", "model": "kimi-k3",
+                          "permission": "medium", "bound": True,
+                          "project": "/home/me/Project", "provider": "opencode-go"},
+                "context.get": {"model": "m", "used": 314139, "known": True,
+                                "window": 1000000},
+            }.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run(width: int) -> str:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(width, 14)) as pilot:
+            await pilot.pause()
+            app._poll_state()
+            app._refresh_context()
+            await pilot.pause()
+            await pilot.pause()
+            shown = app.query_one("#sidebar").display
+            bar = str(app.screen.query_one("#status").render())
+            return f"{shown}|{bar}"
+
+    from tonyagent.cli.tui import SIDEBAR_MIN_WIDTH
+
+    narrow = asyncio.run(run(SIDEBAR_MIN_WIDTH - 1))
+    wide = asyncio.run(run(120))
+    assert narrow.startswith("False|"), "the sidebar is dropped below the floor"
+    assert wide.startswith("True|"), "and shown at 120"
+    for label, bar in (("narrow", narrow), ("wide", wide)):
+        assert "314K/1M" in bar, f"{label}: {bar}"
+        assert "medium" in bar, f"{label}: {bar}"
+
+
+def test_the_status_line_says_which_half_of_the_context_is_unknown():
+    """A shrug is not a measurement.
+
+    `context.get` can answer with the window and no usage, or the reverse. The
+    sidebar already said which was missing; the status line has to, because on
+    a narrow terminal it is the only place the answer appears at all.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+
+    async def summary(payload: dict) -> str:
+        class _Client:
+            on_event = None
+
+            def call(self, method, params=None, timeout=None):
+                return {"state": {"mode": "build", "model": "m",
+                                  "permission": "low", "bound": True}}.get(method, {})
+
+            def notify(self, method, params=None):
+                return {}
+
+        app = TonyApp(_Client())
+        async with app.run_test(size=(90, 14)) as pilot:
+            await pilot.pause()
+            app._last_context = payload
+            # The 0.5s poll would repaint this line in the app; a test does
+            # not wait out a timer, so ask for the line directly. Reading the
+            # payload is not what redraws it -- `_refresh_status` is.
+            app._refresh_status()
+            await pilot.pause()
+            return str(app.screen.query_one("#status").render())
+
+    assert "ctx 314K/1M" in asyncio.run(
+        summary({"used": 314139, "window": 1000000, "known": True})
+    )
+    assert "ctx unknown" in asyncio.run(
+        summary({"used": 0, "window": 0, "known": False})
+    )
+    # Window known, usage not: say which one is missing.
+    assert "ctx ?/1M" in asyncio.run(
+        summary({"used": 0, "window": 1000000, "known": False})
+    )
+    assert "ctx 0/1M" in asyncio.run(
+        summary({"used": 0, "window": 1000000, "known": True})
+    )
+
+
+def test_the_app_leaves_textuals_context_method_alone():
+    """`self._context` hung every `run_test` test in this file.
+
+    `textual.app.App._context` is a method -- `run_test` opens with
+    `with app._context():` -- so an instance attribute of that name replaces
+    it with a dict. The app's own task then died of
+    `'dict' object is not callable` *before* `on_mount`, which meant
+    `app_ready_event` was never set and every test that opened `run_test`
+    waited forever instead of failing: a name collision that cost the whole
+    suite rather than one red line.
+
+    Pinned cheaply and without `run_test`, because the failure mode this
+    guards is a hang and a guard must not share it.
+    """
+    pytest.importorskip("textual")
+
+    from textual.app import App
+
+    from tonyagent.cli.tui import TonyApp
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {}
+
+        def notify(self, method, params=None):
+            return {}
+
+    app = TonyApp(_Client())
+    if hasattr(App, "_context"):  # Textual is a floor of 1.0, not a pin.
+        assert getattr(app._context, "__func__", None) is App._context, (
+            "TonyApp._context shadows Textual's `with app._context():`, "
+            "and run_test hangs forever when it does"
+        )
+
+
+def test_a_poll_that_arrives_after_shutdown_is_a_no_op():
+    """The interval outlives the widget tree by one tick.
+
+    `App._shutdown` sets `_running` first, closes the widget pumps next and
+    stops the app's own timers last, so a tick queued in that window reached
+    `query_one("#sidebar")` on a screen whose widgets were already gone and
+    raised `NoMatches` -- which lands in `app._exception`, and `run_test`
+    re-raises that at exit. It surfaced in
+    `test_every_list_dialog_is_navigable_by_arrow`, which runs four app
+    sessions and failed roughly once in several runs: timing, not that test's
+    subject.
+
+    Driven without `run_test`, because an app that is not running is exactly
+    the state under test -- `_running` is False from construction and only
+    becomes True inside the message loop.
+    """
+    pytest.importorskip("textual")
+
+    from tonyagent.cli.tui import TonyApp
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            raise AssertionError("a stopped app must not ask the core anything")
+
+        def notify(self, method, params=None):
+            return {}
+
+    app = TonyApp(_Client())
+    assert not app.is_running, "an app that never started is the state under test"
+    # Must not raise, and must not reach the core: there is no widget tree and
+    # no state left to draw into.
+    app._poll_state()
 
 
 # --- the client ------------------------------------------------------------

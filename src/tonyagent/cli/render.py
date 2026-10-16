@@ -48,6 +48,36 @@ RESULT_PREVIEW_CHARS = 160
 RESULT_MAX_LINES = 12
 
 
+def _context_label(tokens: Any, suffix: str = " ctx") -> str:
+    """A context size in the unit people say it in.
+
+    `1048576` is a megabyte of digits; `1M` is what a person would call it.
+    Anything at or above a million is shown in millions, because rounding
+    1,048,576 down to `1048K` is the kind of accuracy nobody asked for.
+
+    `suffix` is the unit word. The model picker keeps it -- `262K ctx` is a
+    row of its own there. The status line passes `""` because it already says
+    `ctx` once at the front: composed the other way the line read
+    `ctx 314K ctx/1M ctx`, the unit printed three times.
+
+    It lives here rather than beside the status line that first needed it,
+    because the sidebar needs the same abbreviation at its compact width: two
+    spellings of `1M` in one panel would be two things to keep in step.
+    """
+    try:
+        n = int(tokens)
+    except (TypeError, ValueError):
+        return ""
+    if n <= 0:
+        return ""
+    if n >= 1_000_000:
+        # Rounded to one decimal, not `:g`. 1048576 is 1.048576M, and `:g`
+        # printed all of them -- `1.04858M ctx`, which is more precision than
+        # the word "about" and less than anyone reads.
+        return f"{round(n / 1_000_000, 1):g}M{suffix}"
+    return f"{n // 1000}K{suffix}"
+
+
 def display_width(text: str) -> int:
     """How many terminal columns `text` occupies.
 

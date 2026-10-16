@@ -32,11 +32,17 @@ from typing import Any, ClassVar, Optional
 
 from rich.text import Text
 from textual.binding import Binding
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
-from tonyagent.cli.render import pad_to, truncate_to_width
+from tonyagent.cli.render import (
+    _context_label,
+    display_width,
+    pad_to,
+    truncate_to_width,
+)
 
 # --------------------------------------------------------------------------
 # The turn model
@@ -188,18 +194,35 @@ class Turn:
 
 
 class ToolLine(Static):
-    """One tool call, one line.
+    """One tool call, one line -- and the output behind it, if you click it.
 
     A tool's arguments are JSON and a pretty-printed payload in the middle of a
     transcript is how a terminal session becomes unreadable, so this collapses
     to the single argument that identifies the call. The status glyph and the
     label are dim until the call finishes, which is the same signal a build log
     gives for free.
+
+    **The one line is the right default and the wrong only.** The reason a
+    command failed is in the output that line elided, and reaching it meant
+    `/trajectory` and a scroll back through the frames. So a call with
+    something behind it says so with a `▸`, and a click trades the line for the
+    tail of the result -- from the *front* it is truncated, because the end is
+    where the error is.
     """
 
     SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
     OK_GLYPH = "✓"
     FAIL_GLYPH = "✗"
+
+    #: How much of a result an unfolded line shows. Twelve, the number the
+    #: transcript's own previews use, and for the same reason: a session where
+    #: every call is unfolded is one nobody can scan.
+    DETAIL_LINES = 12
+
+    #: The two states of the disclosure marker, so the shape of the line says
+    #: whether there is more to see without anything having to be pressed.
+    CLOSED_GLYPH = "▸"
+    OPEN_GLYPH = "▾"
 
     def __init__(self, call: ToolCall, **kwargs: Any) -> None:
         # `**kwargs` is not decoration: Textual passes `id`, `classes` and the
@@ -210,6 +233,9 @@ class ToolLine(Static):
         self.call = call
         self._frame = 0
         self._last_tick = 0.0
+        #: Whether the output is showing. Closed by default, because the
+        #: collapsed line is what makes a long session readable.
+        self.expanded = False
 
     def on_mount(self) -> None:
         self.refresh_line()
@@ -241,11 +267,60 @@ class ToolLine(Static):
         text = Text()
         text.append(f"{marker} ", style=style)
         text.append(self.call.label(), style=style)
-        if self.call.failed and self.call.result:
-            text.append("  ")
-            text.append(_one_line(self.call.result, 120), style=theme.DANGER)
+        if self.expanded:
+            text.append(f"  {self.OPEN_GLYPH}", style=theme.FG_MUTE)
+            for row in self._detail_rows():
+                text.append("\n")
+                text.append(row, style=theme.FG_DIM)
+        else:
+            if self.call.failed and self.call.result:
+                text.append("  ")
+                text.append(_one_line(self.call.result, 120), style=theme.DANGER)
+            if self.detail():
+                text.append(f"  {self.CLOSED_GLYPH}", style=theme.FG_MUTE)
         self.set_classes([css])
         self.update(text)
+
+    def detail(self) -> str:
+        """The output this line stands in for, if there is any.
+
+        `output` and `error` are what the core sends on completion. `result` is
+        not read here on purpose: it is the one-line preview already drawn, so
+        reading it would make a call with nothing behind the line look like one
+        that had something to open.
+        """
+        return self.call.output or self.call.error
+
+    def _detail_rows(self) -> list[str]:
+        """The tail of the output, indented under the line it belongs to.
+
+        Truncated with `truncate_to_width` rather than `_one_line`: collapsing
+        each row's whitespace would strip the indentation a traceback or a JSON
+        payload is read *by*.
+        """
+        rows = [truncate_to_width(row, 200).rstrip() for row in self.detail().splitlines()]
+        rows = [row for row in rows if row.strip()]
+        hidden = len(rows) - self.DETAIL_LINES
+        if hidden > 0:
+            noun = "line" if hidden == 1 else "lines"
+            rows = [f"… {hidden} earlier {noun}", *rows[-self.DETAIL_LINES :]]
+        if not rows:
+            return ["  (no output)"]
+        return [f"  {row}" for row in rows]
+
+    def on_click(self, event: Any) -> None:
+        """Open or close the output.
+
+        A line with nothing behind it does not pretend to open: the marker is
+        drawn only when there is something there, and this leaves the event
+        alone when there is not, so a click on a bare one-line call stays a
+        click on the transcript.
+        """
+        if not self.detail():
+            return
+        event.stop()
+        self.expanded = not self.expanded
+        self.refresh_line()
 
 
 class DiffBlock(Static):
@@ -1377,6 +1452,34 @@ class Sidebar(Static):
 
     BAR_WIDTH = 20
 
+    #: The key that reaches each row, drawn beside its name.
+    #:
+    #: **A clickable row that says nothing about itself is a row nobody
+    #: clicks.** Worse, these four chords appeared nowhere on screen at all: the
+    #: footer lists what `BINDINGS` holds and these are handled in `on_key`, so
+    #: there was no way to learn that a mode picker existed except by typing a
+    #: slash and reading the list. Drawing them here teaches the keys and marks
+    #: the values as things you can act on -- which is the half that works on a
+    #: terminal that does not report the mouse.
+    HINTS: ClassVar[dict[str, str]] = {
+        "mode": "ctrl+1",
+        "model": "ctrl+2",
+        "permission": "ctrl+3",
+        "context": "ctrl+4",
+    }
+
+    class Picked(Message):
+        """A click landed on a row that names something.
+
+        Posted rather than acted on here: a `Static` has no way to open a
+        picker, and posting keeps the sidebar from growing a second copy of the
+        app's wiring for what each row means.
+        """
+
+        def __init__(self, target: str) -> None:
+            self.target = target
+            super().__init__()
+
     def __init__(self, **kwargs: Any) -> None:
         # Forwards `id="sidebar"` and friends; see `ToolLine.__init__`.
         super().__init__(**kwargs)
@@ -1389,6 +1492,26 @@ class Sidebar(Static):
         self.window = 0
         self.known = False
         self.busy = False
+        #: Which line of the sidebar each click target sits on, keyed by line
+        #: because that is what a terminal reports. Rebuilt by every render:
+        #: the rows move -- `Chat` exists only while a chat is open, and the
+        #: meter grows a line when it has to say why it cannot measure.
+        self._regions: dict[int, str] = {}
+
+    def on_click(self, event: Any) -> None:
+        """Act on the row that was clicked, if it names something.
+
+        **Textual resolves a click to the widget under it**, so this only has
+        to find the row *within* the sidebar -- unlike the top bar's `+`, which
+        the app hit-tests against a column because that bar is one `Static`
+        with no rows to speak of. A blank line, or a label rather than the
+        value beneath it, does nothing.
+        """
+        target = self._regions.get(event.offset.y, "")
+        if not target:
+            return
+        event.stop()
+        self.post_message(self.Picked(target))
 
     def update_state(self, state: dict[str, Any]) -> None:
         self.mode = str(state.get("mode", "") or "")
@@ -1414,32 +1537,90 @@ class Sidebar(Static):
         self.known = bool(payload.get("known"))
         self.refresh()
 
+    def _fit(self, value: str) -> str:
+        """A value clipped to the panel rather than left to wrap.
+
+        A wrapped value pushes every row below it down, and the rows below it
+        are the meter. In the compact width a long model id is the difference
+        between four rows and seven.
+        """
+        width = self.content_size.width
+        return truncate_to_width(value, width) if width else value
+
     def _fraction(self) -> Optional[float]:
         if not self.known or not self.window or self.used <= 0:
             return None
         return min(1.0, self.used / self.window)
 
     def render(self) -> Text:
+        """The panel, in the room it has.
+
+        **Rendered twice at most, and the second time is for a short window.**
+        `height: 1fr` gives the panel a share of the column rather than letting
+        it size itself -- which is what stops the late rows from being clipped
+        -- but a share of a short column is less than the panel wants, and the
+        block a silent clip takes is the last one: the meter, the row this
+        exists for. So the roomy form is tried first and the blanks between
+        blocks are what give way, because they are the only rows carrying
+        nothing. Measured: at 24 rows and above, both forms fit.
+        """
+        text = self._draw(tight=False)
+        if self.size.height and text.plain.count("\n") + 1 > self.size.height:
+            text = self._draw(tight=True)
+        return text
+
+    def _draw(self, *, tight: bool) -> Text:
+        # Named `_draw`, not `_compose`: **`Widget._compose` is Textual's**, and
+        # a same-named method here is called by the framework with no arguments
+        # while mounting -- a `TypeError` at compose time, before anything is
+        # on screen. `_compose` is not a name this class may use.
         from tonyagent.cli import theme
 
+        # One blank row between blocks normally, none when they have to go.
+        gap = "\n" if tight else "\n\n"
         text = Text()
-        text.append(self.mode or "-", style=f"bold {theme.FG}")
-        text.append("\n\n")
 
-        text.append("Model\n", style=theme.FG_MUTE)
-        text.append(self.model or "not bound", style=theme.FG_DIM)
-        text.append("\n\n")
+        def heading(name: str, hint_key: str, *, bold: bool = False) -> None:
+            """A row's name with its key right-aligned, and the line ended.
 
-        text.append("Permission\n", style=theme.FG_MUTE)
-        text.append(self.permission or "-", style=theme.FG_DIM)
-        text.append("\n\n")
+            Right-aligned rather than run after the name: the keys then line up
+            in a column of their own, which is what makes them read as a
+            keybinding legend rather than as part of the label.
+            """
+            hint = self.HINTS.get(hint_key, "")
+            style = f"bold {theme.FG}" if bold else theme.FG_MUTE
+            if not hint:
+                text.append(f"{name}\n", style=style)
+                return
+            room = max(0, self.content_size.width - display_width(hint))
+            if not room:
+                # Before there is a width to align against -- a render taken
+                # outside a layout -- the name and its key still belong on the
+                # line rather than being dropped for want of a column count.
+                text.append(f"{name} {hint}\n", style=style)
+                return
+            # Truncated on display width, then padded to it: `pad_to` alone
+            # leaves a name that is too long sticking out past the key.
+            text.append(pad_to(truncate_to_width(name, room), room), style=style)
+            text.append(f"{hint}\n", style=theme.FG_MUTE)
+
+        heading(self._fit(self.mode or "-"), "mode", bold=True)
+        text.append(gap)
+
+        heading("Model", "model")
+        text.append(self._fit(self.model or "not bound"), style=theme.FG_DIM)
+        text.append(gap)
+
+        heading("Permission", "permission")
+        text.append(self._fit(self.permission or "-"), style=theme.FG_DIM)
+        text.append(gap)
 
         if self.conversation:
-            text.append("Chat\n", style=theme.FG_MUTE)
-            text.append(truncate_to_width(self.conversation, 24), style=theme.FG)
-            text.append("\n\n")
+            heading("Chat", "chat")
+            text.append(self._fit(self.conversation), style=theme.FG)
+            text.append(gap)
 
-        text.append("Context\n", style=theme.FG_MUTE)
+        heading("Context", "context")
         fraction = self._fraction()
 
         if fraction is None:
@@ -1452,10 +1633,47 @@ class Sidebar(Static):
             else:
                 text.append("\nno provider bound", style=theme.FG_MUTE)
         else:
-            text.append(f"{self.used:,} tokens", style=theme.FG_DIM)
-            text.append(f"  {fraction * 100:.0f}% of {self.window:,}", style=theme.FG_MUTE)
+            # Two spellings, because the panel has two widths. `314,139 tokens
+            #  31% of 1,000,000` is 33 columns and the compact panel has 23, so
+            # the long form wrapped -- and wrapped it read `314,139 tokens  31%
+            # of` followed by a bare `1,000,000`, a number under a line that
+            # promises a percentage, with the bar pushed a row further down.
+            # `1M` is what anyone calls a million; see `_context_label`.
+            percent = f"{fraction * 100:.0f}%"
+            full = f"{self.used:,} tokens  {percent} of {self.window:,}"
+            width = self.content_size.width
+            if width and display_width(full) > width:
+                text.append(
+                    f"{self.used:,} / {_context_label(self.window, '')}",
+                    style=theme.FG_DIM,
+                )
+                text.append(f"  {percent}", style=theme.FG_MUTE)
+            else:
+                text.append(f"{self.used:,} tokens", style=theme.FG_DIM)
+                text.append(f"  {percent} of {self.window:,}", style=theme.FG_MUTE)
             text.append("\n")
             text.append(self._bar(fraction, theme))
+
+        # The rows a click can act on, read back out of what was just drawn
+        # rather than counted while drawing it. A counter kept by hand drifts
+        # the first time a row grows a branch, and the branches are the reason
+        # this is not simply four fixed line numbers.
+        rows = text.plain.split("\n")
+        regions: dict[int, str] = {0: "mode"}
+        for index, row in enumerate(rows):
+            # The first word, because a row now carries its key beside the
+            # name: `Model      ctrl+2` is still the Model row.
+            stripped = row.strip()
+            label = stripped.split(" ", 1)[0] if stripped else ""
+            if label in ("Model", "Permission", "Chat"):
+                # The value sits under its label, which is the row worth
+                # clicking: "Permission" is a word, `medium` is the setting.
+                regions[index + 1] = label.lower()
+            elif label == "Context":
+                # A label, a value, and a bar when there is one -- and the last
+                # block, so everything from here down is the meter.
+                regions.update(dict.fromkeys(range(index, len(rows)), "context"))
+        self._regions = regions
         return text
 
     def _bar(self, fraction: float, theme: Any) -> Text:
