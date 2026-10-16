@@ -1183,6 +1183,174 @@ def test_every_slash_option_carries_its_run_name():
     assert "Option(command.name, command.description)" not in source
 
 
+# --- the pickers -----------------------------------------------------------
+
+
+def test_a_picker_header_has_no_id_rather_than_an_empty_one():
+    """`id=""` is a real id to an `OptionList`, so two headers collide.
+
+    Found by mounting one: `DuplicateID` at the second group header. `None` is
+    how an option says "I have no id", which is what a header is.
+    """
+    pytest.importorskip("textual")
+
+    import inspect
+
+    from tonyagent.cli.widgets import PickerDialog
+
+    source = inspect.getsource(PickerDialog._rebuild)
+    assert "id=None, disabled=True" in source
+    assert 'id=""' not in source
+
+
+def test_a_picker_puts_the_current_value_first():
+    """So the groups stay contiguous.
+
+    Left in the server's order, `low / medium / high / full` alternates between
+    two groups and the header is drawn three times for one list.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            # Dispatched on the method. A stub that returned one dict for
+            # everything looks fine until the frontend asks for `permissions`
+            # and finds a dict with `permission.list` in it instead.
+            return {
+                "state": {"mode": "build", "model": "m", "permission": "medium",
+                          "bound": True},
+                "permission.list": {
+                    "permission": "medium",
+                    "permissions": [{"name": n} for n in ("low", "medium", "high", "full")],
+                },
+            }.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(80, 22)) as pilot:
+            await pilot.pause()
+            await pilot.press("ctrl+3")
+            await pilot.pause()
+            await pilot.pause()
+            groups = [e.group for e in app.screen.entries]
+            # One contiguous run per group: `levels` appears once at the head
+            # of its run, not again after the current entry in the middle.
+            assert groups == ["current", "levels", "levels", "levels"]
+            assert app.screen.entries[0].value == "medium"
+            app.exit()
+
+    asyncio.run(run())
+
+
+def test_the_model_picker_filters_hundreds_of_models():
+    """The filter is what makes a provider's model list usable.
+
+    OpenRouter answers with several hundred. A list you have to arrow through
+    is not a small inconvenience -- it is the feature missing.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+
+    models = [f"vendor-{n}/model-{n}" for n in range(300)] + ["anthropic/claude-sonnet-4"]
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {
+                "state": {"mode": "build", "model": "anthropic/claude-sonnet-4",
+                          "permission": "medium", "bound": True, "provider": "openrouter"},
+                "models.list": {"models": models, "current": "anthropic/claude-sonnet-4"},
+            }.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(92, 26)) as pilot:
+            await pilot.pause()
+            await pilot.press("ctrl+2")
+            await pilot.pause()
+            await pilot.pause()
+            # The current model is already in the list and is not duplicated:
+            # it is lifted to the top rather than added again.
+            assert len(app.screen.entries) == len(models)
+            assert app.screen.entries[0].value == "anthropic/claude-sonnet-4"
+
+            from textual.widgets import Input
+
+            app.screen.query_one("#picker-filter", Input).value = "sonnet"
+            await pilot.pause()
+            await pilot.pause()
+            from textual.widgets import OptionList
+
+            shown = app.screen.query_one("#picker-options", OptionList).option_count
+            # One header plus one model.
+            assert shown == 2, f"{shown} rows survived the filter"
+            app.exit()
+
+    asyncio.run(run())
+
+
+def test_the_model_picker_refreshes_state_before_binding():
+    """The bind needs the provider's name, and `state` may not have been polled
+    on a cold start. An empty name fails at the core, having looked like a
+    selection the user made correctly."""
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+
+    bound: list[dict] = []
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            if method == "bind_provider":
+                bound.append(params or {})
+                return {}
+            return {
+                "state": {"mode": "build", "model": "anthropic/claude-sonnet-4",
+                          "permission": "medium", "bound": True, "provider": "openrouter"},
+                "models.list": {"models": ["anthropic/claude-sonnet-4"],
+                                "current": "anthropic/claude-sonnet-4"},
+            }.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(92, 26)) as pilot:
+            await pilot.pause()
+            await pilot.press("ctrl+2")
+            await pilot.pause()
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.pause()
+            assert bound, "nothing was bound"
+            assert bound[0].get("name") == "openrouter", bound[0]
+            app.exit()
+
+    asyncio.run(run())
+
+
 # --- the client ------------------------------------------------------------
 
 

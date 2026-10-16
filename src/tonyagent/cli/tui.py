@@ -43,6 +43,8 @@ from tonyagent.cli.widgets import (
     CommandPalette,
     ConfirmDialog,
     DiffBlock,
+    PickerDialog,
+    PickerEntry,
     Sidebar,
     ToolCall,
     ToolLine,
@@ -113,7 +115,6 @@ class TonyApp(App[None]):
         # The pickers, same reasoning: a list of models is not something to
         # type at a prompt, and re-implementing them as free text is how a
         # picker ends up offering something the core would refuse.
-        yield OptionList(id="picker", classes="hidden")
 
     def on_resize(self) -> None:
         self._apply_width()
@@ -355,7 +356,7 @@ class TonyApp(App[None]):
         composer.border_title = ""
         composer.placeholder = ""
         composer.display = True
-        self.query_one("#picker", OptionList).remove_class("hidden")
+
 
     def _show_changes(self, call: ToolCall) -> None:
         """Mount the diffs a tool produced, under its line.
@@ -571,8 +572,6 @@ class TonyApp(App[None]):
         elif event.key == "down" and self._slash_visible:
             self._move_slash_highlight(1)
             event.stop()
-        elif event.key == "escape" and self._picker_action:
-            self._close_picker()
         elif event.key == "ctrl+1":
             self._pick_mode()
         elif event.key == "ctrl+2":
@@ -668,102 +667,118 @@ class TonyApp(App[None]):
     def _open_picker(
         self,
         title: str,
-        entries: list[tuple[str, str]],
-        current: str,
+        entries: list[PickerEntry],
         action: tuple[str, str, dict[str, Any]],
+        *,
+        hint: str = "",
     ) -> None:
-        """Offer a list, with the current value marked.
+        """Offer a list, with a filter.
 
-        ``action`` is ``(label, method, param)``, so one handler serves every
-        picker and adding a fourth is one call rather than a new method. The
-        options come from the core's own list methods and never from a table
-        here: `mode.list` says explicitly that a mode the frontend cannot see
-        is a mode nobody can select, and a second table would drift.
+        ``action`` is ``(label, method, param_template)``, so one handler serves
+        every picker. The options come from the core's own list methods and
+        never from a table here: `mode.list` says explicitly that a mode the
+        frontend cannot see is a mode nobody can select, and a second table
+        would drift.
         """
-        picker = self.query_one("#picker", OptionList)
-        picker.clear_options()
-        picker.border_title = title
-        for name, detail in entries:
-            label = f"{name}  {detail}" if detail else name
-            if name == current:
-                label = f"* {label}"
-            picker.add_option(label)
         self._picker_action = action
-        picker.remove_class("hidden")
-        picker.focus()
 
-    def _close_picker(self) -> None:
-        self._picker_action = None
-        self.query_one("#picker", OptionList).add_class("hidden")
-        self.query_one("#composer", Input).focus()
+        def chosen(value: Optional[str]) -> None:
+            self._picker_action = None
+            if not value:
+                return
+            label, method, template = action
+            params = {k: (value if v is None else v) for k, v in template.items()}
+            self._set(method, params, label)
 
-    def on_option_list_option_selected(self, event: Any) -> None:
-        option = event.option
-        text = str(getattr(option, "prompt", "") or "")
-        # The mark and the detail are stripped back to the bare name, which is
-        # what the core wants as a value.
-        name = text.lstrip("* ").split("  ")[0].strip()
-        action = self._picker_action
-        self._close_picker()
-        if action is None or not name:
-            return
-        label, method, template = action
-        params = {key: (name if value is None else value) for key, value in template.items()}
-        self._set(method, params, label)
+        self.push_screen(PickerDialog(title, entries, hint=hint), chosen)
 
     def _pick_mode(self) -> None:
         payload = self.client.call("mode.list") or {}
         modes = payload.get("modes") or []
-        entries = [
-            (str(m.get("name", "")), str(m.get("description", "")))
-            for m in modes
-            if isinstance(m, dict)
-        ]
+        current = str(payload.get("mode", ""))
+        entries: list[PickerEntry] = []
+        # The current mode first, under its own heading, because "what am I in
+        # now" is the first question when opening a mode picker.
+        for name in [current] + [str(m.get("name")) for m in modes if isinstance(m, dict)]:
+            if not name or any(e.value == name for e in entries):
+                continue
+            mode = next((m for m in modes if isinstance(m, dict) and m.get("name") == name), {})
+            entries.append(PickerEntry(
+                value=name,
+                label=name,
+                group="current" if name == current else "",
+                note="·" if name == current else ("writes" if mode.get("writes") else "read only"),
+            ))
         self._open_picker(
-            "mode", entries, str(payload.get("mode", "")), ("mode", "mode.set", {"mode": None})
+            "mode", entries, ("mode", "mode.set", {"mode": None}),
+            hint="enter select · esc close",
         )
 
     def _pick_permission(self) -> None:
         payload = self.client.call("permission.list") or {}
         levels = payload.get("permissions") or []
+        current = str(payload.get("permission", ""))
+        names = [str(item.get("name", "")) for item in levels if isinstance(item, dict)]
+        # Current first, so the groups stay contiguous. Left in the server's
+        # order, `low / *medium* / high / full` alternates between two groups
+        # and the header is drawn three times for one list.
         entries = [
-            (str(item.get("name", "")), str(item.get("description", "")))
-            for item in levels
-            if isinstance(item, dict)
+            PickerEntry(value=name, label=name, group="current" if name == current else "levels",
+                        note="·" if name == current else "")
+            for name in [current] + [n for n in names if n != current]
+            if name
         ]
         self._open_picker(
-            "permission",
-            entries,
-            str(payload.get("permission", "")),
+            "permission", entries,
             ("permission", "permission.set", {"permission": None}),
+            hint="full runs commands with no sandbox · esc close",
         )
 
     def _pick_model(self) -> None:
+        """The model picker, grouped by the provider in the model id.
+
+        OpenRouter ids are `provider/model`, so the grouping comes from the id
+        itself and costs no extra request. `models.list` returns ids only --
+        it is the window's contract and adding fields to it would oblige every
+        reader to know about them -- so there is no price or context size to
+        show per row. Saying so in the hint is better than a column of blanks.
+        """
         try:
+            # Refreshed first, because the bind needs the provider's name and
+            # `state` may not have been polled yet on a cold start -- an empty
+            # name there fails at the core, having looked like a selection the
+            # user made correctly.
+            self._poll_state()
             payload = self.client.call("models.list") or {}
         except CoreError as exc:
             self._notice(str(exc), "error")
             return
-        models = payload.get("models") or []
-        entries = [
-            (
-                str(m.get("id", "")) if isinstance(m, dict) else str(m),
-                str(m.get("label", "")) if isinstance(m, dict) else "",
-            )
-            for m in models
-        ]
-        if not entries:
+        raw = payload.get("models") or []
+        current = str(payload.get("current", ""))
+        ids = [str(m.get("id", "")) if isinstance(m, dict) else str(m) for m in raw]
+        if not ids:
             self._notice("The provider returned no models.", "warn")
             return
-        # A model change is a re-bind: there is no `model.set`, and the
-        # provider is what holds the keyring entry, so the current provider's
-        # name is reused rather than switching providers by accident.
+
+        def group_of(model_id: str) -> str:
+            return model_id.split("/", 1)[0] if "/" in model_id else "other"
+
+        entries: list[PickerEntry] = []
+        if current:
+            entries.append(PickerEntry(current, current, group="current", note="·"))
+        for model_id in sorted(ids, key=lambda i: (group_of(i) != current, group_of(i), i)):
+            if model_id == current:
+                continue
+            entries.append(PickerEntry(model_id, model_id, group=group_of(model_id)))
+
+        # A model change is a re-bind: there is no `model.set`, and the provider
+        # is what holds the keyring entry, so the current provider's name is
+        # reused rather than switching providers by accident.
         provider = str(self.state.get("provider") or "")
         self._open_picker(
-            "model",
-            entries,
-            str(payload.get("current", "")),
+            "select model", entries,
             ("model", "bind_provider", {"name": provider, "model": None}),
+            hint=f"{len(ids)} models · enter select · esc close",
         )
 
     def _slash(self, line: str) -> None:

@@ -525,6 +525,150 @@ def _matches(command: Command, needle: str) -> bool:
     return needle in command.name.lower() or needle in command.description.lower()
 
 
+@dataclass(frozen=True)
+class PickerEntry:
+    """One row in a picker, with the group it belongs to."""
+
+    value: str
+    label: str
+    group: str = ""
+    #: Right-hand annotation -- a price tier, a context size, whatever the
+    #: source knows that the label does not.
+    note: str = ""
+    #: Headers are rendered as disabled rows and cannot be chosen.
+    is_header: bool = False
+
+
+class PickerDialog(ModalScreen[Optional[str]]):
+    """A titled dialog with a filter, for choosing one of many values.
+
+    **The filter is the point, not a convenience.** OpenRouter answers with
+    several hundred models and `mode.list` with five. A list you have to arrow
+    through is unusable at the first size and merely tedious at the second, so
+    the filter is what makes the picker usable at all.
+
+    Entries carry a `group` and are drawn with headers, so a long list is
+    navigable by where things are as well as by what they are called. Headers
+    are disabled options, which is how an `OptionList` expresses a row that
+    cannot be chosen -- and which is why Enter has to skip them.
+    """
+
+    DEFAULT_CSS = """
+    PickerDialog { align: center middle; }
+    #picker-box {
+        width: 72;
+        height: auto;
+        max-height: 85%;
+        background: $surface;
+        border: round $accent;
+        padding: 0 1;
+    }
+    #picker-title { color: $text-muted; padding: 0 1; height: 1; }
+    #picker-filter { border: none; height: 3; background: $surface; }
+    #picker-options {
+        height: auto;
+        max-height: 20;
+        background: $surface;
+        border: none;
+    }
+    #picker-options > .option-list--option-highlighted {
+        background: $accent 35%;
+        color: $text;
+        text-style: bold;
+    }
+    #picker-options > .option-list--option-disabled { color: $text-muted; }
+    #picker-hint { color: $text-muted; padding: 0 1; height: 1; }
+    """
+
+    def __init__(
+        self,
+        title: str,
+        entries: Sequence[PickerEntry],
+        *,
+        hint: str = "",
+    ) -> None:
+        super().__init__()
+        self.title_text = title
+        self.entries = list(entries)
+        self.hint = hint
+
+    def compose(self) -> Any:
+        from textual.containers import Vertical
+
+        with Vertical(id="picker-box"):
+            yield Static(self.title_text, id="picker-title")
+            yield Input(placeholder="filter", id="picker-filter")
+            yield OptionList(id="picker-options")
+            yield Static(self.hint or "enter select · esc close", id="picker-hint")
+
+    def on_mount(self) -> None:
+        self._rebuild("")
+        self.query_one("#picker-filter", Input).focus()
+
+    def _rebuild(self, needle: str) -> None:
+        needle = needle.strip().lower()
+        options = self.query_one("#picker-options", OptionList)
+        options.clear_options()
+
+        last_group: Optional[str] = None
+        rows = 0
+        width = max((len(e.label) for e in self.entries), default=0)
+        for entry in self.entries:
+            if needle and needle not in entry.label.lower():
+                continue
+            # A header is drawn only when the group it introduces has a visible
+            # member, so filtering never leaves "Recent" over nothing.
+            if entry.group and entry.group != last_group:
+                options.add_option(Option(f"  {entry.group}", id=None, disabled=True))
+                last_group = entry.group
+            note = f"   {entry.note}" if entry.note else ""
+            options.add_option(Option(f"  {pad_to(entry.label, width)}{note}", id=entry.value))
+            rows += 1
+
+        if rows == 0:
+            options.add_option(Option(f"nothing matches {needle!r}", id=None, disabled=True))
+        else:
+            # The highlight must not start on a group header. `OptionList`
+            # defaults it to row 0, which is always one, and a highlighted
+            # header is both misleading and un-enterable.
+            for index in range(options.option_count):
+                if options.get_option_at_index(index).id:
+                    options.highlighted = index
+                    break
+
+    def on_input_changed(self, event: Any) -> None:
+        self._rebuild(event.value)
+
+    def on_input_submitted(self, event: Any) -> None:
+        event.stop()
+        self._choose()
+
+    def on_option_list_option_selected(self, event: Any) -> None:
+        event.stop()
+        if event.option.id:
+            self.dismiss(event.option.id)
+
+    def _choose(self) -> None:
+        """Take the highlighted row, skipping headers.
+
+        The first row is a group header, so Enter on it would otherwise do
+        nothing at all -- which reads as a dead key rather than as a disabled
+        row.
+        """
+        options = self.query_one("#picker-options", OptionList)
+        count = options.option_count
+        start = options.highlighted if options.highlighted is not None else 0
+        for step in range(count):
+            option = options.get_option_at_index((start + step) % count)
+            if option.id:
+                self.dismiss(option.id)
+                return
+        self.dismiss(None)
+
+    def action_dismiss(self) -> None:
+        self.dismiss(None)
+
+
 class TurnFooter(Static):
     """The line under a turn: mode, model, how long, how fast.
 

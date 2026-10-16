@@ -39,7 +39,7 @@ rather than a screenful of escape codes.
 | `Ctrl-Q` | Quit |
 | `Ctrl-Shift-P` | The command palette · `Ctrl-P` is Textual's |
 | `Ctrl-1` | Mode picker |
-| `Ctrl-2` | Model picker |
+| `Ctrl-2` | Model picker — type to filter, grouped by provider |
 | `Ctrl-3` | Permission picker |
 | `Ctrl-4` | Refresh the context meter |
 
@@ -63,6 +63,8 @@ frontends' command sets.
 | Command | Does |
 |---|---|
 | `/mode` | Mode picker · `/mode plan` to set it directly |
+| `/model` | Model picker — search, grouped by provider · `/model <id>` to set directly |
+| `/permission` | Permission picker · `/permission high` to set it directly |
 | `/model` | Model picker · `/model <id>` to set it directly |
 | `/permission` | Permission picker · `/permission high` to set it directly |
 | `/plan` | Show the task list |
