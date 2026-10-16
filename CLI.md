@@ -179,6 +179,12 @@ that is the server deciding — no header set here changes it. The one thing tha
 model unless you made it one -- and the free tier is the entire reason to be
 here. The list comes from `opencode models`; the `-free` ones are marked.
 
+**`/model` lists the right models for whichever backend is on.** With the
+delegate running it shows what `opencode models` says and sets the delegate's
+model; otherwise it reads the core's `models.catalog`. Showing the core's three
+providers while OpenCode was the one taking the turns would be worse than
+showing nothing -- the list looks authoritative and every row in it is inert.
+
 The top bar says `opencode · <model> · --auto` while it is on. **Two backends, not two
 providers** — and the distinction matters: OpenCode executes its own tools, so a
 provider adapter carrying its tool calls would make TONYAgent run every one of

@@ -915,6 +915,14 @@ class TonyApp(App[None]):
     def _pick_model(self) -> None:
         """The model picker: grouped by provider, with price and context size.
 
+        **`/model` follows whichever backend is running.** When the delegate is
+        on it lists what `opencode models` says and sets the delegate's model;
+        otherwise it reads `models.catalog` from the core. Showing the core's
+        three providers while OpenCode is the one taking the turns is worse than
+        showing nothing -- the list looks authoritative and every row in it is
+        inert -- and it is where someone goes looking for a model they just
+        enabled.
+
         Reads `models.catalog`, which carries the provider's own `context_length`
         and `pricing` and costs no extra request over the model list.
 
@@ -924,6 +932,9 @@ class TonyApp(App[None]):
         is free, and saying so on its behalf would be the frontend deciding
         what a token costs.
         """
+        if self._delegate is not None:
+            self._pick_delegate_model()
+            return
         try:
             # Refreshed first, because the bind needs the provider's name and
             # `state` may not have been polled yet on a cold start -- an empty
@@ -1122,30 +1133,72 @@ class TonyApp(App[None]):
             return
         wanted = argument.strip()
         if not wanted:
+            # One picker, reached two ways: `/delegate` to start and `/model`
+            # to change once running. Two lists for one set of models is how a
+            # model ends up settable in one and not the other.
             entries = [
-                PickerEntry(mid, mid, note="free" if mid.endswith("-free") else "")
+                PickerEntry(
+                    mid,
+                    mid,
+                    group="free" if mid.endswith("-free") else "other",
+                    note="free" if mid.endswith("-free") else "",
+                )
                 for mid in self._delegate_models()
             ]
             if not entries:
                 self._notice("opencode listed no models", "error")
                 return
-            # Pushed directly rather than through `_open_picker`, which exists
-            # to call a *core* method with the chosen value. There is no core
-            # method here -- the model belongs to the delegate, not the session
-            # -- and routing it through one would have meant a protocol method
-            # that answers "which OpenCode model?" from a process that has
-            # never heard of OpenCode.
             self.push_screen(
                 PickerDialog(
                     "delegate model", entries,
-                    hint="enter use this model · esc cancel",
+                    hint="enter start opencode on this model · esc cancel",
                 ),
-                lambda chosen: (
-                    self._start_delegate(chosen) if chosen else None
-                ),
+                lambda chosen: (self._start_delegate(chosen) if chosen else None),
             )
             return
         self._start_delegate(wanted)
+
+    def _pick_delegate_model(self) -> None:
+        """List OpenCode's models, and set the delegate's.
+
+        Free ids are marked because they are the reason for being here and
+        nothing else in the list is free. No price is shown: OpenCode publishes
+        none per model, and the core's rule is that a model with no published
+        price gets no price label rather than a guess at one.
+        """
+        entries = [
+            PickerEntry(
+                mid,
+                mid,
+                group="free" if mid.endswith("-free") else "other",
+                note="free" if mid.endswith("-free") else "",
+            )
+            for mid in self._delegate_models()
+        ]
+        if not entries:
+            self._notice("opencode listed no models", "error")
+            return
+        self.push_screen(
+            PickerDialog(
+                "opencode model", entries,
+                hint="enter use this model · esc keep the current one",
+            ),
+            lambda chosen: (
+                self._set_delegate_model(chosen) if chosen else None
+            ),
+        )
+
+    def _set_delegate_model(self, model: str) -> None:
+        """Swap the delegate's model on a running backend.
+
+        In place rather than by restarting: the process is not up while no turn
+        is running, and rebuilding the delegate would throw away the OpenCode
+        session id -- which is the conversation.
+        """
+        assert self._delegate is not None
+        self._delegate.model = model
+        self._notice(f"opencode model: {model}", "ok")
+        self._render_topbar(self._topbar_title)
 
     def _start_delegate(self, model: str) -> None:
         self._delegate = OpenCodeDelegate(

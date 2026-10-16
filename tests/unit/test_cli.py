@@ -2786,6 +2786,82 @@ def test_a_stray_word_after_a_command_does_not_raise():
     assert _takes_argument(lambda _argument="": None) is True
 
 
+def test_model_follows_the_backend_that_is_actually_running():
+    """`/model` showed the core's three providers while OpenCode took the turns.
+
+    The list looked authoritative and every row in it was inert -- which is
+    where someone goes looking for a model they have just enabled, and is
+    exactly what happened when this was first built: `/model` was asked for the
+    free models and they were not there.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+    import unittest.mock
+
+    from tonyagent.cli.tui import TonyApp
+    from tonyagent.cli.widgets import PickerDialog
+
+    free = "opencode/space-bunny-free"
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {
+                "state": {"mode": "build", "model": "m", "permission": "medium",
+                          "bound": True, "provider": "openrouter"},
+                # The core's catalogue: real rows, and none of them usable here.
+                "models.catalog": {"current": "m", "models": [
+                    {"id": "openrouter/auto", "provider": "openrouter"},
+                ]},
+            }.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(100, 22)) as pilot:
+            await pilot.pause()
+
+            # Core on: the core's list.
+            app._pick_model()
+            await pilot.pause()
+            await pilot.pause()
+            assert isinstance(app.screen, PickerDialog)
+            app.screen.dismiss(None)
+            await pilot.pause()
+
+            with unittest.mock.patch(
+                "tonyagent.cli.tui.opencode_available", return_value=True
+            ), unittest.mock.patch.object(
+                TonyApp, "_delegate_models",
+                return_value=[free, "opencode/big-pickle"],
+            ):
+                app._toggle_delegate(free)
+                await pilot.pause()
+
+                # Delegate on: OpenCode's list, and nothing from the core.
+                app._pick_model()
+                await pilot.pause()
+                await pilot.pause()
+                assert isinstance(app.screen, PickerDialog)
+                rows = "\n".join(
+                    s.text for s in app.screen._compositor.render_strips()
+                )
+                assert free in rows
+                assert "openrouter/auto" not in rows, "the core's list leaked in"
+
+                await pilot.press(*"big-pickle")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.pause()
+                assert app._delegate.model == "opencode/big-pickle"
+
+    asyncio.run(run())
+
+
 # --- the client ------------------------------------------------------------
 
 
