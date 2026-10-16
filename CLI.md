@@ -36,7 +36,7 @@ rather than a screenful of escape codes.
 | `Ctrl-C` | Cancel the turn · decline a confirmation · quit at an empty prompt |
 | `Ctrl-D` | Quit |
 | `Ctrl-Q` | Quit |
-| `Ctrl-P` | The command sheet, in the interface |
+| `Ctrl-Shift-P` | The command palette · `Ctrl-P` is Textual's |
 | `Ctrl-1` | Mode picker |
 | `Ctrl-2` | Model picker |
 | `Ctrl-3` | Permission picker |
@@ -50,19 +50,33 @@ while a destructive tool is waiting.
 
 ### In the interface
 
+`Ctrl-Shift-P` opens a palette of all of them, filterable by typing. Every
+command below is in it. There is no longer a difference between the two
+frontends' command sets.
+
 | Command | Does |
 |---|---|
 | `/mode` | Mode picker · `/mode plan` to set it directly |
 | `/model` | Model picker · `/model <id>` to set it directly |
 | `/permission` | Permission picker · `/permission high` to set it directly |
-| `/trajectory` | How many frames this turn captured |
-| `/help` | The command sheet |
+| `/plan` | Show the task list |
+| `/state` | What the core reports about itself |
+| `/trajectory` | Frames captured this turn |
+| `/usage` | What this app has spent |
+| `/tools` | The per-turn tool call budget |
+| `/reasoning` | Thinking effort |
+| `/sandbox` | Sandbox status |
+| `/conversations` | Saved conversations |
+| `/new` | Start a conversation |
+| `/key` | Provider keys in the OS keyring |
+| `/help` | The palette |
 | `/quit`, `/exit` | Leave |
 
 ### In line mode
 
-Line mode has **nine commands the interface does not**, so it is the one to use
-when you want the long tail:
+The same commands, typed. Line mode has one extra: `/key <provider <secret>`
+*adds* a key. In the interface `/key` lists them, because typing a secret into
+a full-screen app is a worse place to do it than at a shell prompt.
 
 | Command | Does |
 |---|---|

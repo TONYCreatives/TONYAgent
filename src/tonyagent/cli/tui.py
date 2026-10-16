@@ -35,9 +35,11 @@ from textual.widgets import Footer, Input, OptionList, Static
 
 from tonyagent.cli import theme
 from tonyagent.cli.client import CoreClient, CoreError
-from tonyagent.cli.render import _argument_summary, _result_summary
+from tonyagent.cli.render import _argument_summary, _result_summary, pad_to
 from tonyagent.cli.widgets import (
     ChangeHeader,
+    Command,
+    CommandPalette,
     ConfirmDialog,
     DiffBlock,
     Sidebar,
@@ -69,7 +71,7 @@ class TonyApp(App[None]):
         Binding("ctrl+c", "cancel", "cancel", show=True, priority=True),
         Binding("ctrl+d", "quit", "quit", show=True, priority=True),
         Binding("ctrl+q", "quit", "quit", show=False),
-        Binding("ctrl+p", "commands", "commands", show=True),
+        Binding("ctrl+shift+p", "commands", "commands", show=True),
     ]
 
     def __init__(self, client: CoreClient, initial_prompt: str = "") -> None:
@@ -643,11 +645,15 @@ class TonyApp(App[None]):
     def _slash(self, line: str) -> None:
         """Slash commands.
 
-        Only the ones that are one request with no presentation go here. The
-        rest are the line-mode REPL's, and pointing at that rather than
-        reimplementing them is deliberate: two implementations of `/mode` could
-        disagree about what level is in force, which is exactly what `mode.set`
-        warns about when it returns the applied level rather than the request.
+        **The typed form and the palette go through one registry.** `/plan` and
+        choosing `/plan` from ctrl+p run the same handler, because two lists
+        are how a command ends up in one and not the other -- which is exactly
+        what happened with the nine that were line-mode only until the palette
+        existed.
+
+        The three that take an argument (`/mode plan`) are handled before the
+        registry, because there is nothing to pick from a list when the value
+        is already typed.
         """
         parts = line[1:].split(None, 1)
         command = parts[0] if parts else ""
@@ -667,13 +673,12 @@ class TonyApp(App[None]):
             self._set("bind_provider",
                       {"name": str(self.state.get("provider") or ""), "model": argument},
                       "model") if argument else self._pick_model()
-        elif command == "trajectory":
-            self._notice(f"{len(self.turn.frames) if self.turn else 0} frames captured",
-                         "warn")
         else:
-            self._notice(
-                f"/{command} is not here; /mode /model /permission", "warn"
-            )
+            match = next((c for c in COMMANDS if c.name == f"/{command}"), None)
+            if match is None:
+                self._notice(f"/{command} is not a command; ctrl+p lists them", "warn")
+                return
+            self._run_command(match.run)
 
     def _set(self, method: str, params: dict[str, Any], label: str) -> None:
         try:
@@ -705,11 +710,213 @@ class TonyApp(App[None]):
         self._notice("cancelled")
 
     def action_commands(self) -> None:
-        self._notice(
-            "ctrl+c cancel · ctrl+d quit · ctrl+p commands\n"
-            "ctrl+1 mode · ctrl+2 model · ctrl+3 permission · ctrl+4 context\n"
-            "/mode /model /permission · escape closes a picker"
+        """Open the palette. It used to print a notice about ctrl+p, which is
+        not what ctrl+p does -- the shortest possible version of the same
+        mistake, and the reason the palette is worth a test."""
+        self.push_screen(CommandPalette(COMMANDS), self._run_command)
+
+    def _run_command(self, run: Optional[str]) -> None:
+        """Do what the chosen command says."""
+        if not run:
+            return
+        handler = {
+            "pick_mode": self._pick_mode,
+            "pick_model": self._pick_model,
+            "pick_permission": self._pick_permission,
+            "pick_reasoning": self._pick_reasoning,
+            "show_plan": self._show_plan,
+            "show_state": self._show_state,
+            "show_trajectory": self._show_trajectory,
+            "show_usage": self._show_usage,
+            "show_tools": self._show_tools,
+            "show_sandbox": self._show_sandbox,
+            "show_conversations": self._show_conversations,
+            "new_conversation": self._new_conversation,
+            "show_keys": self._show_keys,
+            "quit": self.exit,
+        }.get(run)
+        if handler is None:
+            self._notice(f"{run} is listed but not wired up", "warn")
+            return
+        handler()
+
+    # -- the commands the interface did not have before ----------------------
+
+    def _panel(self, title: str, rows: list[tuple[str, str]]) -> None:
+        """Draw a titled block into the transcript.
+
+        One helper for nine commands, because they are nine renderings of the
+        same two-column thing and writing them out separately is how they end
+        up looking like nine different features.
+        """
+        self._notice("")
+        self._notice(f"{title}", "warn")
+        if not rows:
+            self._notice("  nothing to show", "warn")
+            return
+        width = max(len(label) for label, _ in rows)
+        for label, value in rows:
+            self._notice(f"  {pad_to(label, width)}  {value}")
+
+    def _show_plan(self) -> None:
+        try:
+            payload = self.client.call("plan.get") or {}
+        except CoreError as exc:
+            self._notice(str(exc), "error")
+            return
+        rendered = str(payload.get("rendered") or "").strip()
+        summary = str(payload.get("summary") or "").strip()
+        if not rendered and not summary:
+            self._notice("no plan")
+            return
+        self._notice("")
+        for line in (rendered or summary).splitlines():
+            self._notice(f"  {line}")
+
+    def _show_state(self) -> None:
+        self._poll_state()
+        rows = [
+            (
+                key,
+                str(value)
+                if not isinstance(value, (dict, list))
+                else f"<{type(value).__name__}>",
+            )
+            for key, value in sorted(self.state.items())
+        ]
+        self._panel("state", rows)
+
+    def _show_trajectory(self) -> None:
+        frames = self.turn.frames if self.turn else []
+        kinds: dict[str, int] = {}
+        for frame in frames:
+            kinds[str(frame.get("type", "?"))] = kinds.get(str(frame.get("type", "?")), 0) + 1
+        rows = [(kind, str(count)) for kind, count in sorted(kinds.items())]
+        self._panel(f"trajectory — {len(frames)} frames", rows or [("(none yet)", "")])
+
+    def _show_usage(self) -> None:
+        try:
+            payload = self.client.call("usage.summary") or {}
+        except CoreError as exc:
+            self._notice(str(exc), "error")
+            return
+        totals = payload.get("totals")
+        if not isinstance(totals, dict):
+            self._notice("no usage recorded")
+            return
+        rows = [
+            ("requests", str(totals.get("requests", 0))),
+            ("failed", str(totals.get("failed", 0))),
+            ("input tokens", str(totals.get("input_tokens", 0))),
+            ("output tokens", str(totals.get("output_tokens", 0))),
+        ]
+        self._panel(f"usage — last {payload.get('window', '?')}", rows)
+
+    def _show_tools(self) -> None:
+        try:
+            payload = self.client.call("tools.get") or {}
+        except CoreError as exc:
+            self._notice(str(exc), "error")
+            return
+        self._panel("tool budget", [("per turn", str(payload.get("label", "?")))])
+
+    def _show_sandbox(self) -> None:
+        try:
+            stats = self.client.call("sandbox.stats") or {}
+        except CoreError:
+            stats = {}
+        running = (self.state.get("sandbox") or "")
+        rows = [(key, str(value)) for key, value in stats.items()
+                if not isinstance(value, (dict, list))]
+        rows.insert(0, ("status", str(running or "unknown")))
+        self._panel("sandbox", rows)
+
+    def _show_conversations(self) -> None:
+        try:
+            payload = self.client.call("conversations.list") or {}
+        except CoreError as exc:
+            self._notice(str(exc), "error")
+            return
+        items = payload.get("conversations") or []
+        current = str(self.state.get("conversation", ""))
+        rows = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            ident = str(item.get("id", ""))
+            title = str(item.get("title") or "(untitled)")
+            rows.append(("*" if ident == current else " ", f"{title}  {ident[:8]}"))
+        self._panel("conversations", rows or [("", "none saved")])
+
+    def _new_conversation(self) -> None:
+        try:
+            self.client.call("conversations.create", {})
+        except CoreError as exc:
+            self._notice(str(exc), "error")
+            return
+        self._poll_state()
+        self._notice("new conversation", "warn")
+
+    def _show_keys(self) -> None:
+        try:
+            payload = self.client.call("key.list") or {}
+        except CoreError as exc:
+            self._notice(str(exc), "error")
+            return
+        keys = payload.get("keys") or []
+        rows = []
+        for entry in keys:
+            if isinstance(entry, dict):
+                provider = str(entry.get("provider") or entry.get("name") or "?")
+                rows.append(("*" if entry.get("active") else " ", provider))
+            else:
+                rows.append(("", str(entry)))
+        self._panel("keys", rows or [("", "none saved — /key in the line interface adds one")])
+
+    def _pick_reasoning(self) -> None:
+        try:
+            payload = self.client.call("reasoning.list") or {}
+        except CoreError as exc:
+            self._notice(str(exc), "error")
+            return
+        efforts = payload.get("efforts") or []
+        if not efforts:
+            # A model that cannot think reports no efforts; the honest thing is
+            # to say so rather than offer a choice that would be refused.
+            self._notice("this model does not report a thinking effort", "warn")
+            return
+        current = str(payload.get("effort") or payload.get("model") or "")
+        entries = [(str(e), "") for e in efforts]
+        self._open_picker(
+            "reasoning", entries, current,
+            ("reasoning", "reasoning.set", {"effort": None}),
         )
 
 
-__all__ = ["SIDEBAR_MIN_WIDTH", "TURN_TIMEOUT_S", "TonyApp"]
+#: Every command the palette offers, in the order it shows them.
+#:
+#: **One list, and it includes the line-mode commands.** Until this existed the
+#: interface had four commands and line mode had fifteen, with nine only in the
+#: latter -- so choosing a frontend was choosing which half of the commands you
+#: had. The palette is now the single place a person looks, and `action_commands`
+#: used to print a two-line notice saying what ctrl+p did, which is not what
+#: ctrl+p did.
+COMMANDS: tuple[Command, ...] = (
+    Command("/mode", "Switch mode: chat, build, plan, mission, skills", "pick_mode"),
+    Command("/model", "Switch model", "pick_model"),
+    Command("/permission", "Switch permission level", "pick_permission"),
+    Command("/plan", "Show the task list", "show_plan"),
+    Command("/state", "What the core reports about itself", "show_state"),
+    Command("/trajectory", "Frames captured this turn", "show_trajectory"),
+    Command("/usage", "What this app has spent", "show_usage"),
+    Command("/tools", "Per-turn tool call budget", "show_tools"),
+    Command("/reasoning", "How hard the model should think", "pick_reasoning"),
+    Command("/sandbox", "Sandbox status", "show_sandbox"),
+    Command("/conversations", "Saved conversations", "show_conversations"),
+    Command("/new", "Start a conversation", "new_conversation"),
+    Command("/key", "Provider keys in the OS keyring", "show_keys"),
+    Command("/quit", "Leave", "quit"),
+)
+
+
+__all__ = ["COMMANDS", "SIDEBAR_MIN_WIDTH", "TURN_TIMEOUT_S", "TonyApp"]

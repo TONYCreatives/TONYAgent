@@ -25,11 +25,16 @@ billing figure.
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from rich.text import Text
-from textual.widgets import Static
+from textual.screen import ModalScreen
+from textual.widgets import Input, OptionList, Static
+from textual.widgets.option_list import Option
+
+from tonyagent.cli.render import pad_to
 
 # --------------------------------------------------------------------------
 # The turn model
@@ -348,6 +353,176 @@ class ConfirmDialog(Static):
         text.append("[a] always    ", style=theme.WARN)
         text.append("[n] no", style=theme.DANGER)
         return text
+
+
+@dataclass(frozen=True)
+class Command:
+    """One entry in the palette.
+
+    `run` is a name rather than a callable so a command table can be built at
+    import time without capturing an instance of anything, and so the palette
+    can be shown before the app is fully wired.
+    """
+
+    name: str
+    description: str
+    run: str
+    #: Optional argument, drawn after the name in the way a usage line reads.
+    argument: str = ""
+
+
+class CommandPalette(ModalScreen[Optional[str]]):
+    """The `ctrl+p` list.
+
+    **A modal screen, not a widget over the app.** It has to take the keyboard
+    completely -- the whole point is that you can type a filter and pick from a
+    list without any of it reaching a turn -- and a `ModalScreen` is what Textual
+    provides for taking the keyboard and being dismissed cleanly. A `layer:
+    dialog` widget like the confirm dialog can be dismissed by anything behind
+    it.
+
+    **Filtering is a plain substring match over name and description, and that
+    is a choice.** Fuzzy matching finds `/perm` for `/permission`, which is
+    convenient, and also finds `/perm` for something unrelated that happens to
+    share letters. A person scanning a short list of twenty is helped more by
+    "the list is in the order I wrote it, and it only shrinks" than by a
+    matcher that reorders under them.
+
+    Returns the `run` name of the chosen command, or None.
+    """
+
+    DEFAULT_CSS = """
+    CommandPalette {
+        align: center middle;
+    }
+    #palette-box {
+        width: 76;
+        height: auto;
+        max-height: 80%;
+        background: $surface;
+        border: round $accent;
+        padding: 0 1;
+    }
+    #palette-filter {
+        border: none;
+        height: 3;
+        background: $surface;
+    }
+    #palette-list {
+        height: auto;
+        max-height: 18;
+        background: $surface;
+        border: none;
+    }
+    #palette-list > .option-list--option-highlighted {
+        background: $accent 35%;
+        color: $text;
+        text-style: bold;
+    }
+    #palette-empty {
+        color: $text-muted;
+        padding: 0 1;
+        height: 1;
+    }
+    """
+
+    def __init__(self, commands: Sequence[Command]) -> None:
+        super().__init__()
+        self.commands = list(commands)
+
+    def compose(self) -> Any:
+        from textual.containers import Vertical
+        with Vertical(id="palette-box"):
+            yield Input(placeholder="filter commands", id="palette-filter")
+            yield OptionList(id="palette-list")
+            yield Static("", id="palette-empty")
+
+    def on_mount(self) -> None:
+        self._rebuild("")
+        self.query_one("#palette-filter", Input).focus()
+
+    # -- filtering -----------------------------------------------------------
+
+    def _rebuild(self, needle: str) -> None:
+        needle = needle.strip().lower()
+        matches = [c for c in self.commands if _matches(c, needle)]
+
+        options = self.query_one("#palette-list", OptionList)
+        options.clear_options()
+        # The name column is padded on *display width*, not character count, so
+        # a description containing Korean does not push the column out of line.
+        # `Option` carries only a prompt and an id, so both columns go in the
+        # prompt -- which is also what the row looks like.
+        width = max((len(c.name) for c in matches), default=0)
+        for command in matches:
+            label = pad_to(command.name, width)
+            if command.argument:
+                label += f" {command.argument}"
+            # The id is the *run* name, not the command name: it is what the screen
+            # returns and what the caller dispatches on. An id of the command
+            # name made the palette hand back "/mode" to a table keyed by
+            # "pick_mode", so every command reported itself unwired.
+            options.add_option(Option(f"{label}   {command.description}", command.run))
+        # Keep the highlight on whatever was highlighted before, by name, so
+        # re-filtering while a selection is made does not silently move it to
+        # the top -- which would make the next Enter run something else.
+        if needle:
+            self._restore_highlight(options, matches)
+
+        empty = self.query_one("#palette-empty", Static)
+        if not matches:
+            empty.update(f"nothing matches {needle!r}")
+        else:
+            empty.update("")
+
+    def _restore_highlight(self, options: Any, matches: list[Command]) -> None:
+        """Keep the highlight where it was, matched by `run` because that is
+        what the option id carries."""
+        previous = self._highlighted_name
+        if previous is None:
+            return
+        runs = [c.run for c in matches]
+        if previous in runs:
+            options.highlighted = runs.index(previous)
+
+    @property
+    def _highlighted_name(self) -> Optional[str]:
+        options = self.query_one("#palette-list", OptionList)
+        index = options.highlighted
+        if index is None or index >= options.option_count:
+            return None
+        return options.get_option_at_index(index).id
+
+    def on_input_changed(self, event: Any) -> None:
+        self._rebuild(event.value)
+
+    def on_option_list_option_highlighted(self, event: Any) -> None:
+        self.query_one("#palette-empty").update("")
+
+    def on_input_submitted(self, event: Any) -> None:
+        """Enter runs the highlighted command, or the first one if there is no
+        highlight -- which is what a person means by pressing Enter after typing
+        a filter that narrowed to a single match."""
+        name = self._highlighted_name
+        if name is None:
+            options = self.query_one("#palette-list", OptionList)
+            if options.option_count:
+                name = options.get_option_at_index(0).id
+        event.stop()
+        self.dismiss(name)
+
+    def on_option_list_option_selected(self, event: Any) -> None:
+        event.stop()
+        self.dismiss(event.option.id)
+
+    def action_dismiss(self) -> None:
+        self.dismiss(None)
+
+
+def _matches(command: Command, needle: str) -> bool:
+    if not needle:
+        return True
+    return needle in command.name.lower() or needle in command.description.lower()
 
 
 class TurnFooter(Static):

@@ -945,6 +945,96 @@ def test_the_composer_is_a_single_line_widget():
     assert "enter" not in inspect.getsource(TonyApp.on_key)
 
 
+# --- the command palette ---------------------------------------------------
+
+
+def test_every_palette_command_is_wired_to_a_handler():
+    """A command listed but not wired reports itself rather than doing nothing.
+
+    The first version of the palette made exactly this mistake -- every entry
+    said "not wired up" -- because the option's id was the command *name* while
+    the dispatch table was keyed by `run`. The test is on the pair rather than
+    on the behaviour because the behaviour is a message in the transcript,
+    which nothing reads.
+    """
+    pytest.importorskip("textual")
+
+    import inspect
+
+    from tonyagent.cli.tui import COMMANDS, TonyApp
+
+    source = inspect.getsource(TonyApp._run_command)
+    for command in COMMANDS:
+        assert f'"{command.run}"' in source, f"{command.name} has no handler"
+
+
+def test_the_palette_lists_the_line_mode_commands_too():
+    """The gap this closed.
+
+    The interface had four commands and line mode had fifteen, nine of them
+    only in the latter -- so choosing a frontend was choosing which half of the
+    commands you had. The palette is now the single place a person looks.
+    """
+    pytest.importorskip("textual")
+
+    from tonyagent.cli.tui import COMMANDS
+
+    names = {c.name for c in COMMANDS}
+    for expected in ("/plan", "/state", "/usage", "/tools", "/reasoning",
+                     "/sandbox", "/conversations", "/new", "/key"):
+        assert expected in names, f"{expected} is line-mode only again"
+
+
+def test_a_palette_option_carries_its_run_name_not_its_command_name():
+    """The mismatch that made every command report itself unwired."""
+    pytest.importorskip("textual")
+
+    from tonyagent.cli.widgets import Command
+
+    command = Command("/mode", "Switch mode", "pick_mode")
+    assert command.name != command.run
+    # Dispatch is by `run`, so the option id must be the run name.
+    assert command.run == "pick_mode"
+
+
+def test_ctrl_p_is_ours_and_textuals_is_displaced():
+    """Textual binds ctrl+p to its own palette and it wins.
+
+    `BINDINGS` on the App are checked before an action of the same name, so
+    declaring `ctrl+p` produced Textual's palette -- listing Keys, Quit and
+    Theme -- and our handler never ran. That is exactly what was reported.
+
+    Rather than fight it, our palette is on `ctrl+shift+p` and Textual's stays
+    on `ctrl+p`, so both exist. Worth pinning because the collision is silent:
+    the app does not error, it just shows the wrong list.
+    """
+    pytest.importorskip("textual")
+
+    from tonyagent.cli.tui import TonyApp
+
+    keys = {b.key for b in TonyApp.BINDINGS}
+    assert "ctrl+shift+p" in keys, "our palette lost its key again"
+    # Plain ctrl+p is deliberately left alone; it still reaches Textual's.
+    assert "ctrl+p" not in keys
+
+
+def test_palette_filtering_is_a_substring_over_name_and_description():
+    """`plan` finds `/plan` and `/mode`, whose description mentions plan."""
+    pytest.importorskip("textual")
+
+    from tonyagent.cli.widgets import Command, _matches
+
+    plan = Command("/plan", "Show the task list", "show_plan")
+    mode = Command("/mode", "Switch mode: chat, build, plan, mission", "pick_mode")
+    tools = Command("/tools", "Per-turn tool call budget", "show_tools")
+
+    assert _matches(plan, "plan") is True
+    assert _matches(mode, "plan") is True
+    assert _matches(tools, "plan") is False
+    assert _matches(plan, "") is True
+    assert _matches(plan, "nonsense") is False
+
+
 # --- the client ------------------------------------------------------------
 
 
