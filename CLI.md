@@ -80,7 +80,7 @@ frontends' command sets.
 | `/tools` | The per-turn tool call budget |
 | `/reasoning` | Thinking effort |
 | `/sandbox` | Sandbox status |
-| `/conversations` | The chat list: grouped by folder, `enter` open · `ctrl+t` new · `ctrl+r` rename · `ctrl+y` duplicate · `ctrl+x` delete (twice) |
+| `/conversations` | The chat list: grouped by folder, `↑`/`↓` move · `enter` open · `ctrl+t` new · `ctrl+r` rename · `ctrl+y` duplicate · `ctrl+x` delete (twice) |
 | `/new` | Start a conversation |
 | `/key` | Provider keys in the OS keyring |
 | `/help` | The palette |
@@ -95,11 +95,11 @@ a full-screen app is a worse place to do it than at a shell prompt.
 | Command | Does |
 |---|---|
 | `/state` | Everything the core reports about itself |
-| `/key [provider secret]` | List keys, or save one into the OS keyring |
+| `/key` | Set, replace or remove a provider key: `enter` edit · `tab` name · `ctrl+r` remove (confirmed) |
 | `/plan` | The task list, as the model is shown it |
 | `/tools [n]` | The per-turn tool call budget · `/tools 20` to set it |
 | `/new [title]` | Start a conversation |
-| `/conversations` | The chat list: grouped by folder, `enter` open · `ctrl+t` new · `ctrl+r` rename · `ctrl+y` duplicate · `ctrl+x` delete (twice) |
+| `/conversations` | The chat list: grouped by folder, `↑`/`↓` move · `enter` open · `ctrl+t` new · `ctrl+r` rename · `ctrl+y` duplicate · `ctrl+x` delete (twice) |
 | `/usage` | What this app has spent |
 | `/reasoning` | Thinking effort |
 | `/sandbox` | Sandbox status |
@@ -131,6 +131,31 @@ In line mode, a leading `\` sends a turn that starts with a slash:
   says *unknown*, and which of the two numbers is missing, rather than drawing
   a bar at 0%.
 - **Mode, model and permission level**, always on screen.
+
+## Using an OpenCode Go key
+
+TONYAgent already speaks to **OpenCode Go** — `https://opencode.ai/zen/go/v1`,
+OpenAI-compatible, with the `x-opencode-session` header it requires. There is
+nothing to link or integrate. Its key goes in like any other:
+
+```
+/key                      # the provider list
+enter                     # pick opencode-go
+paste oc_sk_…             # masked, never echoed
+enter                     # saved to the OS keyring
+```
+
+Then `/model` lists what the subscription actually serves — the picker reads
+the live catalogue, so the TUI-only models such as `space-bunny` appear
+alongside everything else without being seeded in the source.
+
+Two things worth knowing:
+
+- **The typed key is never rendered.** Not masked-with-a-placeholder, not
+  shown-on-reveal: the core's rule is that a value on stdout is a value in a
+  log strip and a screenshot, and `key.reveal` is deliberately not wired here.
+- **`ctrl+r` removes, and confirms first.** `ctrl+x` was the first choice and it
+  is the filter field's `cut`.
 
 ## Permission levels
 

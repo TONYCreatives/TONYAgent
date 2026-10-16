@@ -373,7 +373,65 @@ class Command:
     argument: str = ""
 
 
-class CommandPalette(ModalScreen[Optional[str]]):
+class _ListScreen(ModalScreen[Any]):
+    """A modal whose list is driven from the screen, not from the list itself.
+
+    **The arrows were not reaching the list, in any of these dialogs.** Each one
+    is a filter `Input` above an `OptionList`, and the Input keeps focus so that
+    typing filters. They are *siblings*, so a keypress goes to the Input and
+    then up to the screen -- never sideways to the OptionList, which is the only
+    widget that would have moved the highlight. `down` therefore did nothing at
+    all, in the model picker, in the chat list and in the key dialog alike: the
+    first row was the only row anybody could reach.
+
+    `Input` binds neither `up` nor `down` (it binds them for nothing, being one
+    line tall), which is what makes screen-level bindings the right fix rather
+    than a fight over focus: the filter keeps the keyboard for *text* and the
+    screen takes it for *movement*.
+
+    Movement skips disabled rows, because those are the group headers, and
+    wrapping is deliberate -- a list you cannot come back up is a list you have
+    to close and reopen.
+    """
+
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("down", "cursor_down", "down", show=False),
+        Binding("up", "cursor_up", "up", show=False),
+        Binding("page_down", "cursor_down", show=False),
+        Binding("page_up", "cursor_up", show=False),
+    ]
+
+    def _list(self) -> OptionList:
+        return self.query_one(OptionList)
+
+    def _step(self, delta: int) -> None:
+        options = self._list()
+        count = options.option_count
+        if count == 0:
+            return
+        start = options.highlighted
+        if start is None:
+            options.highlighted = 0 if delta > 0 else count - 1
+            return
+        index = start
+        for _ in range(count):
+            index = (index + delta) % count
+            option = options.get_option_at_index(index)
+            if option is not None and option.id:
+                options.highlighted = index
+                return
+        # Every remaining row is a header, so there is nowhere to go. Leaving
+        # the highlight alone is better than parking it on something unenterable.
+        options.highlighted = start
+
+    def action_cursor_down(self) -> None:
+        self._step(1)
+
+    def action_cursor_up(self) -> None:
+        self._step(-1)
+
+
+class CommandPalette(_ListScreen):
     """The `ctrl+p` list.
 
     **A modal screen, not a widget over the app.** It has to take the keyboard
@@ -546,7 +604,7 @@ class PickerEntry:
     is_header: bool = False
 
 
-class PickerDialog(ModalScreen[Optional[str]]):
+class PickerDialog(_ListScreen):
     """A titled dialog with a filter, for choosing one of many values.
 
     **The filter is the point, not a convenience.** OpenRouter answers with
@@ -678,7 +736,324 @@ class PickerDialog(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
-class ConversationsDialog(ModalScreen[Optional[str]]):
+class ConfirmScreen(ModalScreen[bool]):
+    """A yes/no modal, for a decision this interface made on its own.
+
+    `ConfirmDialog` next door cannot answer this question. It is an inline
+    widget wired to `confirm.respond`, which answers a *core*-issued tool
+    confirmation by id -- and removing a stored key is neither: nothing is
+    waiting in the core, there is no id to reply to. Reusing it would have meant
+    inventing an id for a call that does not exist, so this is a separate modal
+    that answers with a bool and nothing else.
+
+    Default is **no**. A destructive key should be the one that needs a
+    deliberate second press, not the one a stray Enter accepts.
+    """
+
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("escape", "cancel", "cancel", show=True),
+        Binding("y", "accept", "yes", show=True),
+        Binding("n", "cancel", "no", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    ConfirmScreen { align: center middle; }
+    #confirm-box {
+        width: 72;
+        height: auto;
+        background: $surface;
+        border: round $error;
+        padding: 1 2;
+    }
+    #confirm-question { height: auto; }
+    #confirm-detail { color: $text-muted; height: auto; }
+    #confirm-hint { color: $text-muted; height: 1; }
+    """
+
+    def __init__(self, question: str, detail: str = "") -> None:
+        super().__init__()
+        self.question = question
+        self.detail = detail
+
+    def compose(self) -> Any:
+        from textual.containers import Vertical
+
+        with Vertical(id="confirm-box"):
+            yield Static(self.question, id="confirm-question")
+            if self.detail:
+                yield Static(self.detail, id="confirm-detail")
+            yield Static("y remove · n or esc keep it", id="confirm-hint")
+
+    def on_mount(self) -> None:
+        self.query_one("#confirm-box").focus()
+
+    def action_accept(self) -> None:
+        self.dismiss(True)
+
+    def action_cancel(self) -> None:
+        self.dismiss(False)
+
+
+@dataclass(frozen=True)
+class KeyRequest:
+    """What the key dialog is asking the caller to do.
+
+    A dialog that only ever says "here is a key" cannot delete one, and a
+    dialog that says "here is a provider" cannot either -- so the intent
+    travels with the value rather than being inferred from which field was
+    filled in. `remove` carries no secret at all, because deleting a key is
+    the one operation that must never involve holding one.
+    """
+
+    action: str
+    provider: str
+    name: str = "default"
+    key: str = ""
+
+
+class KeyDialog(_ListScreen):
+    """Set, replace and remove provider keys without leaving the TUI.
+
+    **`/key` used to be show-only.** The core has had `key.save`, `key.delete`
+    and `key.activate` for as long as it has had `key.list`, and the terminal
+    frontend called only the fourth one. So the one task a person actually
+    comes to `/key` for -- pasting a key -- was impossible from the terminal
+    and had to be done in the window. That is the gap this closes.
+
+    **The key is typed into a `password` field and never rendered.** Not
+    masked-with-a-placeholder, not shown-until-you-press-reveal: the core's own
+    `SECURITY` note above `key.save` is that a value on stdout is a value in a
+    log strip and a screenshot, and the one method that hands a secret back
+    (`key.reveal`) is deliberately not wired here. What this dialog shows is
+    *whether* a key exists, never any part of one.
+
+    Two states in one screen, because two modals for one task is one too many:
+    a list of providers, then a single masked field for the chosen one.
+    `provider/name` in that field stores a *named* key rather than replacing
+    the default, which is what makes the keyring's per-name slots reachable
+    without a third screen for them.
+
+    **`ctrl+r` removes, and that chord was not the first one tried.** `ctrl+x`
+    is the obvious choice and it is `Input`'s `cut` -- the filter field has
+    focus, so the key was consumed there and never reached the screen at all.
+    A test presses the chord rather than calling the action, because calling
+    the action would have passed while the key did nothing.
+    """
+
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("escape", "dismiss", "close", show=True),
+        Binding("ctrl+r", "remove", "remove key", show=True),
+    ]
+
+    DEFAULT_CSS = """
+    KeyDialog { align: center middle; }
+    #key-box {
+        width: 72;
+        height: auto;
+        max-height: 85%;
+        background: $surface;
+        border: round $accent;
+        padding: 0 1;
+    }
+    #key-title { color: $text-muted; padding: 0 1; height: 1; }
+    #key-filter { border: none; height: 3; background: $surface; }
+    #key-options {
+        height: auto;
+        max-height: 20;
+        background: $surface;
+        border: none;
+    }
+    #key-options > .option-list--option-highlighted {
+        background: $accent 35%;
+        color: $text;
+        text-style: bold;
+    }
+    #key-name, #key-entry {
+        border: none;
+        height: 3;
+        background: $surface;
+    }
+    #key-hint { color: $text-muted; padding: 0 1; height: 1; }
+    """
+
+    def __init__(
+        self,
+        providers: Sequence[tuple[str, bool]],
+        *,
+        keys: Optional[dict[str, list[tuple[str, bool]]]] = None,
+    ) -> None:
+        """`providers` is `(name, has_key)`, so a provider with no key is
+        visible rather than missing -- it is the row you press to add one.
+
+        `keys` is the `key.list` reply keyed by provider: each entry is
+        `(name, active)`. Keeping the active flag rather than just the names
+        is what lets one row show all of a provider's keys and still say which
+        one the next turn will actually spend.
+        """
+        super().__init__()
+        self.providers = list(providers)
+        self.keys = dict(keys or {})
+
+    def compose(self) -> Any:
+        from textual.containers import Vertical
+
+        with Vertical(id="key-box"):
+            yield Static("provider keys", id="key-title")
+            yield Input(placeholder="filter", id="key-filter")
+            yield OptionList(id="key-options")
+            yield Input(placeholder="the key", password=True, id="key-entry")
+            yield Input(placeholder="name (default)", id="key-name")
+            yield Static(
+                "enter edit · ctrl+r remove · esc close",
+                id="key-hint",
+            )
+
+    def on_mount(self) -> None:
+        self._set_state("list")
+        self._rebuild("")
+        self.query_one("#key-filter", Input).focus()
+
+    def _set_state(self, state: str) -> None:
+        """Show one of the two screens.
+
+        Both are mounted and one is hidden, rather than swapping widgets, so a
+        half-typed key is not destroyed by a rebuild and the screen's scroll
+        position survives a trip back from the field.
+        """
+        listing = state == "list"
+        self.query_one("#key-filter", Input).display = listing
+        self.query_one("#key-options", OptionList).display = listing
+        self.query_one("#key-name", Input).display = not listing
+        self.query_one("#key-entry", Input).display = not listing
+        self.query_one("#key-title", Static).update(
+            "provider keys" if listing else f"key for {self._editing}"
+        )
+        self.query_one("#key-hint", Static).update(
+            "enter edit · ctrl+r remove · esc close"
+            if listing
+            else "enter save · esc back"
+        )
+        (self.query_one("#key-filter", Input) if listing
+         else self.query_one("#key-entry", Input)).focus()
+
+    _editing = ""
+
+    def _rebuild(self, needle: str) -> None:
+        needle = needle.strip().lower()
+        options = self.query_one("#key-options", OptionList)
+        options.clear_options()
+        width = max((len(name) for name, _ in self.providers), default=0)
+        rows = 0
+        for name, has_key in self.providers:
+            if needle and needle not in name.lower():
+                continue
+            stored = self.keys.get(name) or []
+            if stored:
+                note = "   " + ", ".join(
+                    f"{'*' if active else ' '}{n}" for n, active in stored
+                )
+            elif has_key:
+                # A key this keyring can see but `key.list` did not name. The
+                # row still has to say something true about it.
+                note = "   saved"
+            else:
+                note = "   no key"
+            options.add_option(Option(f"  {pad_to(name, width)}{note}", id=name))
+            rows += 1
+        if rows == 0:
+            options.add_option(
+                Option(f"nothing matches {needle!r}", id=None, disabled=True)
+            )
+            return
+        options.highlighted = 0
+
+    def _highlighted(self) -> Optional[str]:
+        options = self.query_one("#key-options", OptionList)
+        index = options.highlighted
+        if index is None:
+            return None
+        option = options.get_option_at_index(index)
+        return str(option.id) if option and option.id else None
+
+    def on_input_changed(self, event: Any) -> None:
+        # The filter drives the list; the masked field must not filter anything,
+        # and a rebuild would wipe what was typed into it.
+        if event.input.id == "key-filter":
+            self._rebuild(event.value)
+
+    def on_input_submitted(self, event: Any) -> None:
+        event.stop()
+        if event.input.id == "key-filter":
+            self._edit()
+        elif event.input.id == "key-name":
+            # Enter saves from either field. The name is optional and prefilled,
+            # so there is no state in which Enter here should do nothing.
+            self._save(self.query_one("#key-entry", Input).value)
+        else:
+            self._save(event.value)
+
+    def on_option_list_option_selected(self, event: Any) -> None:
+        event.stop()
+        if event.option.id:
+            self._editing = str(event.option.id)
+            self._open_entry()
+
+    def _edit(self) -> None:
+        provider = self._highlighted()
+        if provider is None:
+            return
+        self._editing = provider
+        self._open_entry()
+
+    def _open_entry(self) -> None:
+        """Open the two fields for the chosen provider.
+
+        The name is prefilled with the key this provider is *currently* using,
+        so pressing straight through replaces the active one rather than
+        quietly creating a second key the turns will not spend.
+        """
+        stored = self.keys.get(self._editing) or []
+        active = next((n for n, is_active in stored if is_active), None)
+        self.query_one("#key-name", Input).value = active or "default"
+        self.query_one("#key-entry", Input).value = ""
+        self._set_state("entry")
+
+    def _save(self, raw: str) -> None:
+        """Hand the value back, with the name from its own field.
+
+        **The name is a separate field because it cannot be parsed out of the
+        key.** The first version took `provider/name` typed into the key box,
+        which is wrong in a way a test caught immediately: API keys are
+        routinely base64 and contain `/`, so the tail would have been stored as
+        a key *name* while the real name went to the provider slot. A key and
+        the label for it are two facts, and two fields is the honest count.
+        """
+        text = raw.strip()
+        if not text:
+            return
+        name = self.query_one("#key-name", Input).value.strip() or "default"
+        self.dismiss(KeyRequest("save", self._editing, name, text))
+
+    def action_remove(self) -> None:
+        provider = self._editing or self._highlighted() or ""
+        if not provider:
+            return
+        stored = [n for n, _ in (self.keys.get(provider) or [])] or ["default"]
+        # With several keys stored, the first is the one removed -- and the
+        # caller confirms before anything is deleted, so this is a proposal
+        # rather than an action.
+        self.dismiss(KeyRequest("remove", provider, stored[0]))
+
+    def action_dismiss(self) -> None:
+        # Escape from the field goes back to the list, because a person who
+        # pressed it by accident should not lose the list they were reading.
+        if self.query_one("#key-entry", Input).display:
+            self._set_state("list")
+            return
+        self.dismiss(None)
+
+
+class ConversationsDialog(_ListScreen):
     """The chat list: viewable, and every row actionable.
 
     **`/conversations` used to print the list into the transcript**, where it

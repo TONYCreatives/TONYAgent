@@ -2151,6 +2151,237 @@ def test_the_new_chat_key_is_bound_and_bound_nowhere_else():
         assert "ctrl+n" not in {b.key for b in other.BINDINGS}, other.__name__
 
 
+# --- /key: setting a provider key from inside the terminal -------------------
+
+
+def _key_app(**overrides):
+    """A TonyApp whose core answers the three calls `/key` makes."""
+    from unittest.mock import MagicMock
+
+    calls: list[tuple[str, dict]] = []
+
+    replies = {
+        "state": {"mode": "build", "model": "m", "permission": "medium",
+                  "bound": True},
+        "providers.list": {"providers": [
+            {"name": "opencode-go", "has_credentials": False},
+            {"name": "openrouter", "has_credentials": True},
+        ]},
+        "key.list": [{"provider": "openrouter", "name": "default", "active": True}],
+        "key.save": {"saved": True, "listed": True},
+        "key.delete": {"deleted": True},
+    }
+    replies.update(overrides)
+
+    client = MagicMock()
+    client.on_event = None
+
+    def call(method, params=None, timeout=None):
+        calls.append((method, params or {}))
+        return replies.get(method, {})
+
+    client.call.side_effect = call
+    from tonyagent.cli.tui import TonyApp
+
+    return TonyApp(client), calls
+
+
+def test_key_saves_from_the_tui_without_the_key_ever_being_rendered():
+    """`/key` was show-only, so adding a provider meant leaving the terminal.
+
+    The typed value goes to `key.save` and nowhere else. It is asserted absent
+    from every rendered cell, because the core's own security note is that a
+    value on stdout is a value in a log strip and a screenshot -- and a terminal
+    is the whole UI here, so there is nowhere else for it to leak *to*.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    async def run() -> None:
+        app, calls = _key_app()
+        async with app.run_test(size=(90, 22)) as pilot:
+            await pilot.pause()
+            app._poll_state()
+            await pilot.pause()
+            app._show_keys()
+            await pilot.pause()
+            await pilot.press(*"go")  # filter to opencode-go
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press(*"oc_sk_secretvalue")
+            await pilot.pause()
+            screen = "\n".join(
+                s.text for s in app.screen._compositor.render_strips()
+            )
+            assert "oc_sk_secretvalue" not in screen
+            assert app.screen.query_one("#key-entry").password
+            await pilot.press("enter")
+            await pilot.pause()
+            saved = [p for m, p in calls if m == "key.save"]
+            assert saved == [
+                {"provider": "opencode-go", "api_key": "oc_sk_secretvalue",
+                 "name": "default"}
+            ], saved
+
+    asyncio.run(run())
+
+
+def test_a_named_key_saves_under_that_name():
+    """The keyring has per-name slots, and this is what makes them reachable.
+
+    **The name is a separate field because it cannot be parsed out of the key.**
+    The first version typed `provider/name` into the key box; API keys are
+    routinely base64 and contain `/`, so the tail became the key *name* and the
+    real name went to the provider slot. This test exists to keep that from
+    coming back.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    async def run() -> None:
+        app, calls = _key_app()
+        async with app.run_test(size=(90, 22)) as pilot:
+            await pilot.pause()
+            app._show_keys()
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.press("enter")  # filter -> key field
+            await pilot.press(*"sk/live")  # a key that legitimately holds a /
+            await pilot.press("tab")  # over to the name
+            for _ in range(len("default")):
+                await pilot.press("backspace")
+            await pilot.press(*"work")
+            await pilot.press("enter")  # save from either field
+            await pilot.pause()
+            saved = [p for m, p in calls if m == "key.save"]
+            assert saved == [
+                # The `/` is the point: it stayed in the key.
+                {"provider": "opencode-go", "api_key": "sk/live", "name": "work"}
+            ], saved
+
+    asyncio.run(run())
+
+
+def test_removing_a_key_is_confirmed_and_the_chord_is_actually_reachable():
+    """`ctrl+x` was the first choice and it is `Input`'s `cut`.
+
+    The test presses the key rather than calling `action_remove`, because
+    calling the action passes whether or not the key ever arrives -- which is
+    exactly how a chord that silently does nothing gets shipped.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from textual.app import App
+    from textual.screen import Screen
+    from textual.widgets import Input, OptionList
+
+    from tonyagent.cli.widgets import KeyDialog
+
+    chords = {b.key for b in KeyDialog.BINDINGS}
+    assert "ctrl+r" in chords
+    for other in (App, Screen, Input, OptionList):
+        assert "ctrl+r" not in {b.key for b in other.BINDINGS}, other.__name__
+
+    async def run() -> None:
+        app, calls = _key_app()
+        async with app.run_test(size=(90, 22)) as pilot:
+            await pilot.pause()
+            app._show_keys()
+            await pilot.pause()
+            await pilot.press("ctrl+r")
+            await pilot.pause()
+            from tonyagent.cli.widgets import ConfirmScreen
+
+            assert isinstance(app.screen, ConfirmScreen)
+            assert not [m for m, _ in calls if m == "key.delete"]
+            await pilot.press("n")
+            await pilot.pause()
+            assert not [m for m, _ in calls if m == "key.delete"]
+            # Reopen: the dialog closed to make room for the confirmation, so
+            # declining has to leave you able to try again rather than nowhere.
+            app._show_keys()
+            await pilot.pause()
+            await pilot.press("ctrl+r")
+            await pilot.pause()
+            await pilot.press("y")
+            await pilot.pause()
+            assert [p for m, p in calls if m == "key.delete"] == [
+                {"provider": "opencode-go", "name": "default"}
+            ]
+
+    asyncio.run(run())
+
+
+def test_every_list_dialog_is_navigable_by_arrow():
+    """The arrows never reached the list in *any* of these dialogs.
+
+    Each is a filter `Input` above an `OptionList`; they are siblings, so a
+    keypress went to the Input and then up to the screen, never sideways to the
+    list. In the model picker that meant the first row was the only row anyone
+    could select. All three are asserted here because the fix is shared and a
+    shared fix can be lost on one subclass.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from textual.widgets import OptionList
+
+    from tonyagent.cli.widgets import (
+        Command,
+        CommandPalette,
+        ConversationsDialog,
+        KeyDialog,
+        PickerDialog,
+        PickerEntry,
+    )
+
+    cases = [
+        ("picker", PickerDialog("t", [PickerEntry("a", "a"), PickerEntry("b", "b"),
+                                      PickerEntry("c", "c")]), "#picker-options"),
+        ("palette", CommandPalette([Command("/a", "x", "a"), Command("/b", "y", "b"),
+                                    Command("/c", "z", "c")]), "#palette-list"),
+        ("keys", KeyDialog([("opencode-go", False), ("openrouter", True)]),
+         "#key-options"),
+        ("chats", ConversationsDialog(
+            [{"id": "c1", "title": "one", "project": "/p"},
+             {"id": "c2", "title": "two", "project": "/p"}], "c1"),
+         "#conv-options"),
+    ]
+
+    async def run() -> None:
+        for name, screen, list_id in cases:
+            app, _ = _key_app()
+            async with app.run_test(size=(90, 22)) as pilot:
+                app.push_screen(screen)
+                await pilot.pause()
+                await pilot.pause()
+                options = app.screen.query_one(list_id, OptionList)
+                enabled = [
+                    i
+                    for i in range(options.option_count)
+                    if options.get_option_at_index(i).id
+                ]
+                assert len(enabled) >= 2, f"{name}: nothing to navigate"
+                options.highlighted = enabled[0]
+                await pilot.pause()
+                await pilot.press("down")
+                await pilot.pause()
+                assert options.highlighted == enabled[1], f"{name}: down did nothing"
+                # And it wraps past the group headers to the last real row, so a
+                # long list is escapable upwards without closing the dialog.
+                await pilot.press("up", "up")
+                await pilot.pause()
+                assert options.highlighted == enabled[-1], name
+
+    asyncio.run(run())
+
+
 # --- the client ------------------------------------------------------------
 
 

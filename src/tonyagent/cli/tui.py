@@ -49,8 +49,10 @@ from tonyagent.cli.widgets import (
     Command,
     CommandPalette,
     ConfirmDialog,
+    ConfirmScreen,
     ConversationsDialog,
     DiffBlock,
+    KeyDialog,
     PickerDialog,
     PickerEntry,
     Sidebar,
@@ -1320,20 +1322,106 @@ class TonyApp(App[None]):
         self._notice("new conversation", "warn")
 
     def _show_keys(self) -> None:
+        """Set, replace and remove provider keys, from inside the TUI.
+
+        **This used to print a read-only list**, which made `/key` a thing you
+        could look at and not a thing you could do. The core has had
+        `key.save`, `key.delete` and `key.activate` all along; the frontend
+        called only `key.list`. So adding a provider meant leaving the terminal
+        for the window -- which is the whole reason somebody ends up asking
+        whether the two can be linked, when the gap is one screen wide and on
+        this side of it.
+
+        The typed value goes straight into `key.save` and is never rendered,
+        stored on the app, or put in a notice. `key.reveal` is deliberately not
+        called: the core already argues that a method returning a secret is a
+        method whose secret can end up in a screenshot, and nothing about a
+        terminal being the only UI here makes that cheaper.
+        """
+        providers: list[tuple[str, bool]] = []
+        keys: dict[str, list[tuple[str, bool]]] = {}
         try:
-            payload = self.client.call("key.list") or {}
+            listed = self.client.call("providers.list") or {}
+            for entry in listed.get("providers") or []:
+                if isinstance(entry, dict):
+                    name = str(entry.get("name") or "")
+                    if name:
+                        providers.append(
+                            (name, bool(entry.get("has_credentials")))
+                        )
+            for entry in self.client.call("key.list") or {}:
+                if isinstance(entry, dict):
+                    name = str(entry.get("provider") or "")
+                    if name:
+                        keys.setdefault(name, []).append(
+                            (str(entry.get("name") or "default"),
+                             bool(entry.get("active")))
+                        )
         except CoreError as exc:
             self._notice(str(exc), "error")
             return
-        keys = payload.get("keys") or []
-        rows = []
-        for entry in keys:
-            if isinstance(entry, dict):
-                provider = str(entry.get("provider") or entry.get("name") or "?")
-                rows.append(("*" if entry.get("active") else " ", provider))
-            else:
-                rows.append(("", str(entry)))
-        self._panel("keys", rows or [("", "none saved — /key in the line interface adds one")])
+
+        # A key can outlive the provider it was saved for. Those rows are added
+        # too, because a secret in the keyring that no screen admits to is a
+        # secret nobody can revoke.
+        known = {name for name, _ in providers}
+        providers.extend((name, True) for name in keys if name not in known)
+        if not providers:
+            self._notice("this build registers no providers", "warn")
+            return
+
+        def chosen(request: Any) -> None:
+            if request is not None:
+                self._apply_key_request(request)
+
+        self.push_screen(
+            KeyDialog(providers, keys=keys),
+            chosen,
+        )
+
+    def _apply_key_request(self, request: Any) -> None:
+        """Carry out what the key dialog asked for.
+
+        Removal asks first. It is the one branch where the dialog's `ctrl+x`
+        could destroy something a person cannot retype, and the dialog is a
+        field-and-a-list rather than a place where a destructive key should be
+        enough on its own.
+        """
+        provider = str(request.provider)
+        name = str(request.name or "default")
+        if request.action == "remove":
+            self.push_screen(
+                ConfirmScreen(
+                    "Remove this provider key?",
+                    f"{provider} / {name} -- you will need to paste it again",
+                ),
+                lambda ok: self._delete_key(provider, name) if ok else None,
+            )
+            return
+        try:
+            reply = self.client.call(
+                "key.save", {"provider": provider, "api_key": request.key, "name": name}
+            ) or {}
+        except CoreError as exc:
+            self._notice(str(exc), "error")
+            return
+        self._notice(f"saved {provider} / {name}", "ok")
+        if not reply.get("listed", True):
+            # The key *is* stored; only the name registry failed. Saying "saved"
+            # and stopping there would send the user round again to re-paste it.
+            self._notice("saved, but its name could not be recorded", "warn")
+        self._poll_state()
+
+    def _delete_key(self, provider: str, name: str) -> None:
+        try:
+            self.client.call(
+                "key.delete", {"provider": provider, "name": name}
+            )
+        except CoreError as exc:
+            self._notice(str(exc), "error")
+            return
+        self._notice(f"removed {provider} / {name}", "ok")
+        self._poll_state()
 
     def _pick_reasoning(self) -> None:
         try:
@@ -1454,7 +1542,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("/sandbox", "Sandbox status", "show_sandbox"),
     Command("/conversations", "Saved conversations", "show_conversations"),
     Command("/new", "Start a conversation", "new_conversation"),
-    Command("/key", "Provider keys in the OS keyring", "show_keys"),
+    Command("/key", "Set, replace or remove a provider key", "show_keys"),
     Command("/quit", "Leave", "quit"),
 )
 
