@@ -1177,21 +1177,42 @@ class TonyApp(App[None]):
         self._turn_box = None
 
     def _replay_message(self, message: Any) -> None:
-        """Draw one message from a reopened conversation."""
+        """Draw one message from a reopened conversation.
+
+        **The shape here is the window's, not a guess.** `showMessages` in
+        `App.tsx` is the code that already reads saved history, and it settles
+        three things this first version got wrong:
+
+        * `content` is a string *or a list of parts*, and the parts carry the
+          text. Reading it as a string only is why a reopened chat came back
+          **empty** for any conversation with an attachment -- the shape was
+          never wrong for a plain message, which is why the test passed.
+        * **`role: "tool"` rows are not replayed.** Their content is the raw
+          tool output -- a whole file for `read_file`, stdout for a command --
+          and the window's comment says why it must not be shown: restored
+          history has no tool card to put it in, so it squirts unrelated source
+          into the transcript ahead of the answer written from it.
+        * A saved message is **finished by definition**, so nothing waits on a
+          `reasoning.completed` that was sent hours ago.
+        """
         if not isinstance(message, dict):
             return
         role = str(message.get("role", ""))
-        content = message.get("content")
-        text = content if isinstance(content, str) else str(
-            message.get("text") or message.get("summary") or ""
-        )
+        if not role:
+            return
+        if role == "tool":
+            # See the module note: the assistant prose that came out of this
+            # work stays, which is what the chat is for.
+            return
+
+        text = _message_text(message.get("content"))
         if not text.strip():
             return
+
         from rich.markdown import Markdown
-        from rich.text import Text
 
         transcript = self.query_one("#transcript", VerticalScroll)
-        if role in ("user", "human"):
+        if role == "user":
             widget = Static("")
             widget.add_class("prompt")
             widget.update(Text(f"{theme.prompt_marker()} {_one_line(text)}", style=theme.FG))
@@ -1273,6 +1294,45 @@ def _context_label(tokens: Any) -> str:
         # the word "about" and less than anyone reads.
         return f"{round(n / 1_000_000, 1):g}M ctx"
     return f"{n // 1000}K ctx"
+
+
+def _message_text(content: Any) -> str:
+    """The text of a saved message, whether it is a string or a list of parts.
+
+    The port of `textFromContent` in `app/src/attachments.ts`, and the same in
+    every particular that matters:
+
+    * a string is the text;
+    * a list is a list of parts, each of which carries `.text`;
+    * **a text file arrives wrapped in `<file name="...">`**, which is wire
+      formatting for the model rather than something to put in front of the
+      person who attached it, so the wrapper comes off;
+    * parts that are not objects, or have no text, are skipped rather than
+      rendered as `None`.
+
+    Skipping a part and rendering `"None"` are not the same mistake, and the
+    window's version says which one it is making.
+    """
+    import re
+
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    pieces: list[str] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        value = part.get("text")
+        if not isinstance(value, str):
+            continue
+        unwrapped = re.sub(r"^<file name=\"[^\"]*\">\n?", "", value)
+        unwrapped = re.sub(r"\n?</file>$", "", unwrapped)
+        if unwrapped.strip():
+            pieces.append(unwrapped)
+    return "\n\n".join(pieces)
 
 
 def _price_label(pricing: Any) -> str:

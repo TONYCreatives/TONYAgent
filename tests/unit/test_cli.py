@@ -1946,6 +1946,79 @@ def test_the_chat_list_footer_counts_what_it_lists():
     assert one._actions().startswith("1 chat ·")
 
 
+def test_a_saved_message_can_be_a_list_of_parts_not_a_string():
+    """It is, and reading it as a string reopened an empty chat.
+
+    `textFromContent` in `app/src/attachments.ts` is the code that already
+    reads saved history, and this is a port of it. The test that passed a plain
+    string is why the bug survived: the shape is right for every message
+    without an attachment.
+    """
+    from tonyagent.cli.tui import _message_text
+
+    assert _message_text("plain") == "plain"
+    assert _message_text([{"text": "a"}, {"text": "b"}]) == "a\n\nb"
+    # A text file arrives wrapped for the model, not for the reader.
+    assert _message_text([{"text": '<file name="x.py">\nhello\n</file>'}]) == "hello"
+    # A part that is not text is skipped, not rendered as `None`.
+    assert _message_text([None, {"x": 1}, {"text": "ok"}]) == "ok"
+    assert _message_text(None) == ""
+    assert _message_text({"not": "a list"}) == ""
+
+
+def test_a_reopened_transcript_does_not_replay_tool_output():
+    """`role: "tool"` rows are skipped.
+
+    Their content is the raw output -- a whole file for `read_file`, stdout for
+    a command -- and `showMessages` says why it must not be shown: restored
+    history has no tool card to put it in, so replaying it squirts unrelated
+    source into the transcript ahead of the answer written from it.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            if method == "conversations.switch":
+                return {
+                    "conversation": {"id": "c1", "title": "old chat"},
+                    "messages": [
+                        {"role": "user", "content": [{"text": "read the file"}]},
+                        {"role": "tool", "content": "1  # a file\n2  # unrelated"},
+                        {"role": "assistant", "content": [{"text": "it is sorted"}]},
+                    ],
+                    "project": "/p",
+                }
+            return {"state": {"mode": "build", "model": "m", "permission": "medium",
+                              "bound": False, "conversation": "c1"}}
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(90, 22)) as pilot:
+            await pilot.pause()
+            app._poll_state = lambda: None  # type: ignore[method-assign]
+            app._switch_conversation("c1")
+            await pilot.pause()
+            await pilot.pause()
+            screen = " ".join(
+                strip.text
+                for strip in app.screen._compositor.render_strips()  # noqa: SLF001
+            )
+            assert "read the file" in screen, screen[-300:]
+            assert "it is sorted" in screen, screen[-300:]
+            assert "unrelated" not in screen, "a tool result was replayed as prose"
+
+    asyncio.run(run())
+
+
 # --- the client ------------------------------------------------------------
 
 
