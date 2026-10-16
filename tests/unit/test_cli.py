@@ -1697,6 +1697,64 @@ def test_the_confirm_window_clears_itself():
     asyncio.run(run())
 
 
+def test_the_users_own_message_appears_in_the_transcript():
+    """It did not.
+
+    The text was stored on the `Turn` and never mounted, so the transcript
+    showed the agent answering a question nobody could see. No test caught it,
+    because every one of them called `_begin_turn` and then asserted on the
+    agent's side.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from textual.widgets import Static
+
+    from tonyagent.cli.tui import TonyApp
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {"state": {"mode": "build", "model": "m", "permission": "medium",
+                              "bound": False, "busy": False}}
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(90, 20)) as pilot:
+            await pilot.pause()
+            # Sent the way a person sends one: typed into the composer.
+            app.query_one("#composer").value = "fix app.py so it exits 0"
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.pause()
+            # The composer's own text is the source of truth; the transcript's
+            # rendered content is what has to contain it.
+            rendered = " ".join(
+                str(w.render())
+                for w in app.screen.query_one("#transcript").query(Static)
+            )
+            assert "fix app.py so it exits 0" in rendered, (
+                f"the user's message is not in the transcript: {rendered!r}"
+            )
+
+    asyncio.run(run())
+
+
+def test_a_long_user_message_is_one_row():
+    """The chip is a chip. A wrapped prompt reads as part of the answer."""
+    pytest.importorskip("textual")
+
+    from tonyagent.cli.render import _one_line
+
+    assert "\n" not in _one_line("a\nb\nc")
+    assert _one_line("x" * 200).endswith("…")
+
+
 # --- the client ------------------------------------------------------------
 
 

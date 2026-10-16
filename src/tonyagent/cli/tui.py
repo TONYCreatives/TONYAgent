@@ -28,6 +28,7 @@ from __future__ import annotations
 import threading
 from typing import Any, ClassVar, Optional
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -36,7 +37,12 @@ from textual.widgets.option_list import Option
 
 from tonyagent.cli import theme
 from tonyagent.cli.client import CoreClient, CoreError
-from tonyagent.cli.render import _argument_summary, _result_summary, pad_to
+from tonyagent.cli.render import (
+    _argument_summary,
+    _one_line,
+    _result_summary,
+    pad_to,
+)
 from tonyagent.cli.widgets import (
     ChangeHeader,
     Command,
@@ -174,11 +180,28 @@ class TonyApp(App[None]):
             return "0.0.0"
 
     def _begin_turn(self, text: str) -> None:
-        """Fence a new turn and make room for its output."""
+        """Fence a new turn, and draw the question that opened it.
+
+        **The user's own message was missing entirely** -- stored on the `Turn`
+        and never mounted, so the transcript showed the agent answering a
+        question nobody could see. That is the worse half of a conversation to
+        lose, and no test asked about it, because every test drove the turn
+        directly rather than sending one.
+
+        Shaped like the window's: a chip on `--raised`, which is what
+        `transcript.css` says distinguishes it from the assistant's prose. A
+        terminal has no bubbles, so the fill and the marker carry it.
+        """
         transcript = self.query_one("#transcript", VerticalScroll)
         self.turn = Turn(text=text)
         self._turn_box = Vertical(classes="turn turn-rule")
         transcript.mount(self._turn_box)
+
+        prompt = Static("")
+        self._turn_box.mount(prompt)
+        prompt.update(Text(f"{theme.prompt_marker()} {_one_line(text)}", style=theme.FG))
+        prompt.add_class("prompt")
+
         # No id: a turn can open several messages as tools split it, and a
         # repeated id is a DuplicateIds at mount time rather than a widget.
         self._answer_widget = Static("")

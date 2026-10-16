@@ -105,6 +105,21 @@ def truecolor_supported() -> bool:
 #: come from one place. A stylesheet that repeated `#1a1a1a` in a dozen rules
 #: would be a second place for the palette to be wrong, which is the failure
 #: `tokens.css` itself documents having hit four times.
+#: The marker in front of the user's own message.
+#:
+#: A single right-pointing angle quotation mark, rather than `>`, because the
+#: two are not the same sign -- one is a quotation mark and the other an
+#: arrow -- and the point is to say "this was said, by you". `prompt_marker`
+#: degrades it, because a terminal that cannot draw it renders a literal `?`,
+#: which is worse than an arrow.
+PROMPT_MARKER = "›"  # noqa: RUF001 - guarded by `prompt_marker`
+
+
+def prompt_marker() -> str:
+    """The quoting mark where the terminal can draw it, `>` where it cannot."""
+    return PROMPT_MARKER if supports_unicode() else ">"
+
+
 def build_css() -> str:
     return f"""
     Screen {{
@@ -137,6 +152,17 @@ def build_css() -> str:
     .turn-rule {{
         border-left: thick {ACCENT};
         padding: 0 0 0 2;
+    }}
+    /* The user's own message. The window calls it a chip on `--raised`, and a
+       terminal has no bubbles, so the fill is what says "this was me" --
+       narrower than the prose under it, which is what makes it read as a chip
+       rather than as part of the answer. */
+    .prompt {{
+        background: {RAISED};
+        color: {FG};
+        height: auto;
+        margin: 0;
+        padding: 0 1;
     }}
     .answer {{
         height: auto;
@@ -339,8 +365,31 @@ def supports_unicode() -> bool:
 
 
 __all__ = [
-    "ACCENT", "ACCENT_BRIGHT", "ACCENT_FG", "BG", "BORDER", "BORDER_SOFT",
-    "BORDER_STRONG", "CHIP", "CHROME", "DANGER", "DANGER_FG", "FG", "FG_DIM",
-    "FG_MUTE", "HOVER", "INPUT", "OK", "RAISED", "SURFACE", "TRAJ_ADD",
-    "TRAJ_DEL", "WARN", "build_css", "supports_unicode", "truecolor_supported",
+    "ACCENT",
+    "ACCENT_BRIGHT",
+    "ACCENT_FG",
+    "BG",
+    "BORDER",
+    "BORDER_SOFT",
+    "BORDER_STRONG",
+    "CHIP",
+    "CHROME",
+    "DANGER",
+    "DANGER_FG",
+    "FG",
+    "FG_DIM",
+    "FG_MUTE",
+    "HOVER",
+    "INPUT",
+    "OK",
+    "PROMPT_MARKER",
+    "RAISED",
+    "SURFACE",
+    "TRAJ_ADD",
+    "TRAJ_DEL",
+    "WARN",
+    "build_css",
+    "prompt_marker",
+    "supports_unicode",
+    "truecolor_supported",
 ]
