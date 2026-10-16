@@ -134,6 +134,9 @@ class TonyApp(App[None]):
         #: The open chat's name, kept so the bar can be redrawn when the
         #: backend changes without a `conversations.list` call to get it again.
         self._topbar_title = ""
+        #: The last `models.catalog` reply, so the delegate's rows can say
+        #: which of them the core also serves. One list, two routes.
+        self._last_catalog: list[Any] = []
         #: What the open picker will set, so one handler serves both.
         self._picker_action: Optional[tuple[str, str, dict[str, Any]]] = None
 
@@ -936,9 +939,6 @@ class TonyApp(App[None]):
         is free, and saying so on its behalf would be the frontend deciding
         what a token costs.
         """
-        if self._delegate is not None:
-            self._pick_delegate_model()
-            return
         try:
             # Refreshed first, because the bind needs the provider's name and
             # `state` may not have been polled yet on a cold start -- an empty
@@ -970,31 +970,150 @@ class TonyApp(App[None]):
             return "  ".join(parts)
 
         by_id = {str(m["id"]): m for m in models}
+        # Kept so the delegate's rows can be matched against it.
+        self._last_catalog = models
+        # Asked for first, because it decides which rows exist at all: a model
+        # the core serves *and* OpenCode serves is one row naming both routes,
+        # not two rows that look like two models.
+        opencode_ids = self._opencode_model_ids()
+
+        def route_note(model_id: str) -> str:
+            # Leading space, so it reads as a suffix on the numbers rather than
+            # running into them: "Free·  also via opencode" was not a thing.
+            return "  ·  also via opencode" if model_id in opencode_ids else ""
+
         entries: list[PickerEntry] = []
         if current and current in by_id:
             # The current row carries its numbers too. Leaving them off would
             # make the model you are on the one row you cannot compare.
             entries.append(
-                PickerEntry(current, current, group="current",
-                            note=f"·  {note_for(by_id[current])}".rstrip())
+                PickerEntry(f"core:{current}", current, group="current",
+                            note=f"·  {note_for(by_id[current])}".rstrip()
+                                 + route_note(current))
             )
         for model_id in sorted(by_id, key=lambda i: (group_of(i), i)):
             if model_id == current:
                 continue
             entries.append(
-                PickerEntry(model_id, model_id, group=group_of(model_id),
-                            note=note_for(by_id[model_id]))
+                PickerEntry(f"core:{model_id}", model_id,
+                            group=_GROUP_OF_PROVIDER.get(
+                                group_of(model_id), group_of(model_id)),
+                            note=(note_for(by_id[model_id]) + route_note(model_id)).strip())
             )
 
-        # A model change is a re-bind: there is no `model.set`, and the provider
-        # is what holds the keyring entry, so the current provider's name is
-        # reused rather than switching providers by accident.
-        provider = str(self.state.get("provider") or "")
-        self._open_picker(
-            "select model", entries,
-            ("model", "bind_provider", {"name": provider, "model": None}),
-            hint=f"{len(models)} models · enter select · esc close",
+        entries.extend(
+            self._delegate_model_entries(opencode_ids, skip=set(by_id))
         )
+
+        # **Merged by group, not concatenated.** The delegate's rows are built
+        # after the core's and land after them, which put a second "OpenCode Go"
+        # heading at the bottom of the list -- the same subscription, the same
+        # heading, twice, and it read as two. Grouping first and flattening
+        # second is what makes "aligned" true rather than approximately true.
+        order = ["current", "OpenCode Go", "OpenCode Zen",
+                 "OpenCode free (client only)", "OpenRouter"]
+        by_group: dict[str, list[PickerEntry]] = {}
+        for entry in entries:
+            by_group.setdefault(entry.group, []).append(entry)
+        entries = [
+            row
+            for group in order + [g for g in by_group if g not in order]
+            for row in by_group.get(group, [])
+        ]
+
+        self.push_screen(
+            PickerDialog(
+                "select model", entries,
+                hint=(
+                    f"{len(by_id)} core · "
+                    f"{sum(1 for e in entries if e.value.startswith('delegate:'))} "
+                    "via opencode · enter select · esc close"
+                ),
+            ),
+            self._apply_model_choice,
+        )
+
+    def _apply_model_choice(self, value: Optional[str]) -> None:
+        """Send a chosen row to whichever backend can actually run it.
+
+        **The route is carried in the value, because it cannot be inferred.**
+        A row can name a model the core serves (`core:opencode-go/kimi-k3`) or
+        one only OpenCode will serve (`delegate:opencode/space-bunny-free`), and
+        picking the second has to start the delegate -- otherwise the selection
+        would be accepted, announced, and then ignored by every turn.
+
+        Picking a core model while the delegate is running turns it off, for the
+        same reason: a model that is chosen and not used is worse than one that
+        was never offered.
+        """
+        if not value:
+            return
+        if value.startswith("delegate:"):
+            self._start_delegate(value.split(":", 1)[1])
+            return
+        model_id = value.split(":", 1)[1] if ":" in value else value
+        # Polled here rather than trusted from the caller. `_pick_model` already
+        # polls, so this is belt-and-braces -- but the failure it prevents is
+        # the one the code next door warns about: an empty provider name makes
+        # `bind_provider` fail at the core, having looked like a selection the
+        # user made correctly.
+        self._poll_state()
+        if self._delegate is not None:
+            self._delegate.close()
+            self._delegate = None
+        self._set(
+            "bind_provider",
+            {"name": str(self.state.get("provider") or ""), "model": model_id},
+            "model",
+        )
+        self._render_topbar(self._topbar_title)
+
+    def _opencode_model_ids(self) -> set[str]:
+        """What `opencode models` currently lists, or nothing.
+
+        Failing quietly is the point: a missing binary, a timeout or an
+        unfamiliar output shape should cost the delegate's rows and nothing
+        else. The core's list is the one that matters, and it must still open.
+        """
+        try:
+            if not opencode_available():
+                return set()
+            return set(self._delegate_models())
+        except Exception:  # noqa: BLE001 - see above
+            return set()
+
+    def _delegate_model_entries(
+        self, opencode_ids: set[str], *, skip: set[str]
+    ) -> list[PickerEntry]:
+        """OpenCode's models the core cannot serve, as rows.
+
+        **`only` is the exclusion, and it is the point.** `opencode models`
+        returns both `opencode-go/…` and `opencode/…`, and `opencode-go` is
+        *also* a core provider serving the same ids. Adding those as rows too
+        produced `opencode-go/deepseek-v4-pro` twice -- once priced, once not --
+        which reads as two models rather than one with two ways in.
+
+        So a model the core already lists is *not* repeated here; its core row
+        gains "also via opencode" instead, and what is left is genuinely
+        OpenCode's alone. The free tier is most of that remainder, and it is
+        the only part the core cannot reach at all.
+
+        `opencode_ids` is passed in rather than fetched again: this runs inside
+        the same picker that just asked, and the second call would have been a
+        second `opencode models` for the same answer.
+        """
+        entries: list[PickerEntry] = []
+        for model_id in sorted(opencode_ids - skip):
+            prefix = model_id.split("/", 1)[0]
+            entries.append(
+                PickerEntry(
+                    f"delegate:{model_id}",
+                    model_id,
+                    group=_GROUP_OF_PROVIDER.get(prefix, prefix),
+                    note="opencode only",
+                )
+            )
+        return entries
 
     def _slash(self, line: str) -> None:
         """Slash commands.
@@ -1161,36 +1280,6 @@ class TonyApp(App[None]):
             )
             return
         self._start_delegate(wanted)
-
-    def _pick_delegate_model(self) -> None:
-        """List OpenCode's models, and set the delegate's.
-
-        Free ids are marked because they are the reason for being here and
-        nothing else in the list is free. No price is shown: OpenCode publishes
-        none per model, and the core's rule is that a model with no published
-        price gets no price label rather than a guess at one.
-        """
-        entries = [
-            PickerEntry(
-                mid,
-                mid,
-                group="free" if mid.endswith("-free") else "other",
-                note="free" if mid.endswith("-free") else "",
-            )
-            for mid in self._delegate_models()
-        ]
-        if not entries:
-            self._notice("opencode listed no models", "error")
-            return
-        self.push_screen(
-            PickerDialog(
-                "opencode model", entries,
-                hint="enter use this model · esc keep the current one",
-            ),
-            lambda chosen: (
-                self._set_delegate_model(chosen) if chosen else None
-            ),
-        )
 
     def _set_delegate_model(self, model: str) -> None:
         """Swap the delegate's model on a running backend.
@@ -1635,6 +1724,21 @@ class TonyApp(App[None]):
             "reasoning", entries, current,
             ("reasoning", "reasoning.set", {"effort": None}),
         )
+
+
+#: How a provider's models are headed in the picker.
+#:
+#: **These are services, not strings.** `opencode-go` is a core provider *and*
+#: appears in `opencode models`, so a literal `split("/")` gives two different
+#: headings for one subscription, which reads as two. And `opencode/` -- the
+#: client-only tier -- genuinely cannot be reached from the core at all, so it
+#: is a separate heading rather than a row with a footnote.
+_GROUP_OF_PROVIDER = {
+    "opencode-go": "OpenCode Go",
+    "opencode-zen": "OpenCode Zen",
+    "opencode": "OpenCode free (client only)",
+    "openrouter": "OpenRouter",
+}
 
 
 def _takes_argument(handler: Any) -> bool:

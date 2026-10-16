@@ -182,11 +182,35 @@ Works on Windows as well as Linux: npm installs `opencode.cmd`, not
 model unless you made it one -- and the free tier is the entire reason to be
 here. The list comes from `opencode models`; the `-free` ones are marked.
 
-**`/model` lists the right models for whichever backend is on.** With the
-delegate running it shows what `opencode models` says and sets the delegate's
-model; otherwise it reads the core's `models.catalog`. Showing the core's three
-providers while OpenCode was the one taking the turns would be worse than
-showing nothing -- the list looks authoritative and every row in it is inert.
+**`/model` is one list, aligned by service.** It shows the core's catalogue
+*and* `opencode models` in a single picker, under service headings:
+
+```
+current
+  opencode-go/kimi-k3            ·  262K ctx  Free  ·  also via opencode
+OpenCode Go
+  opencode-go/deepseek-v4-pro    163K ctx  $1 in · $3 out  ·  also via opencode
+  opencode-go/cat-jam-free                    opencode only
+OpenCode Zen
+  opencode-zen/claude-sonnet-5-5 1M ctx  $3 in · $15 out
+OpenCode free (client only)
+  opencode/space-bunny-free                   opencode only
+OpenRouter
+  openrouter/auto
+```
+
+Three things that list gets right, each of which was wrong first:
+
+- **Aligned, not concatenated.** `opencode models` returns both `opencode-go/…`
+  and `opencode/…`, and `opencode-go` is *also* a core provider. Appending one
+  list to the other put the same heading twice, one subscription looking like
+  two. Rows are grouped first and flattened second.
+- **One row per model, not one per route.** A model both routes serve gets one
+  row with its price and context, annotated `also via opencode` -- rather than a
+  priced row and an unpriced one, which reads as two models.
+- **Choosing a row starts the route it names.** Picking a client-only model
+  starts the delegate; picking a core model turns the delegate off. A model
+  that is chosen and then ignored by every turn is worse than one never offered.
 
 The top bar says `opencode · <model> · --auto` while it is on. **Two backends, not two
 providers** — and the distinction matters: OpenCode executes its own tools, so a

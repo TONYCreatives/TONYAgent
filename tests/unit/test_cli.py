@@ -1281,17 +1281,26 @@ def test_the_model_picker_filters_hundreds_of_models():
         def notify(self, method, params=None):
             return {}
 
+    import unittest.mock
+
     async def run() -> None:
         app = TonyApp(_Client())
         async with app.run_test(size=(92, 26)) as pilot:
             await pilot.pause()
-            await pilot.press("ctrl+2")
-            await pilot.pause()
-            await pilot.pause()
+            # OpenCode is stubbed out: `/model` also reads `opencode models`,
+            # and on a machine with OpenCode installed that added 39 real rows
+            # to a test about 301 fake ones. A test that changes size depending
+            # on what happens to be on PATH is not a test.
+            with unittest.mock.patch(
+                "tonyagent.cli.tui.opencode_available", return_value=False
+            ):
+                await pilot.press("ctrl+2")
+                await pilot.pause()
+                await pilot.pause()
             # The current model is already in the list and is not duplicated:
             # it is lifted to the top rather than added again.
             assert len(app.screen.entries) == len(models)
-            assert app.screen.entries[0].value == "anthropic/claude-sonnet-4"
+            assert app.screen.entries[0].value == "core:anthropic/claude-sonnet-4"
 
             from textual.widgets import Input
 
@@ -2786,13 +2795,18 @@ def test_a_stray_word_after_a_command_does_not_raise():
     assert _takes_argument(lambda _argument="": None) is True
 
 
-def test_model_follows_the_backend_that_is_actually_running():
-    """`/model` showed the core's three providers while OpenCode took the turns.
+def test_one_model_picker_covers_both_sources_aligned_by_service():
+    """`/model` lists the core's models and OpenCode's, under shared headings.
 
-    The list looked authoritative and every row in it was inert -- which is
-    where someone goes looking for a model they have just enabled, and is
-    exactly what happened when this was first built: `/model` was asked for the
-    free models and they were not there.
+    **They are aligned, not concatenated.** `opencode models` returns both
+    `opencode-go/…` and `opencode/…`, and `opencode-go` is *also* a core
+    provider serving the same ids. A literal `split("/")` would give two
+    headings for one subscription, which reads as two. And `opencode/` is the
+    client-only tier, which the core cannot serve at all, so it is a separate
+    heading rather than a footnote.
+
+    Rows for models both routes reach say so; rows only OpenCode can serve say
+    that too. Nothing is presented as reachable by a route that cannot run it.
     """
     pytest.importorskip("textual")
 
@@ -2802,19 +2816,27 @@ def test_model_follows_the_backend_that_is_actually_running():
     from tonyagent.cli.tui import TonyApp
     from tonyagent.cli.widgets import PickerDialog
 
-    free = "opencode/space-bunny-free"
+    core_models = [
+        {"id": "openrouter/auto", "context_length": 0, "pricing": {}},
+        # The same id OpenCode also lists -- served by both routes.
+        {"id": "opencode-go/kimi-k3", "context_length": 0, "pricing": {}},
+    ]
+    opencode_models = [
+        "opencode-go/kimi-k3",
+        "opencode/space-bunny-free",
+        "opencode/deepseek-v4.1-flash-free",
+    ]
 
     class _Client:
         on_event = None
 
         def call(self, method, params=None, timeout=None):
             return {
-                "state": {"mode": "build", "model": "m", "permission": "medium",
-                          "bound": True, "provider": "openrouter"},
-                # The core's catalogue: real rows, and none of them usable here.
-                "models.catalog": {"current": "m", "models": [
-                    {"id": "openrouter/auto", "provider": "openrouter"},
-                ]},
+                "state": {"mode": "build", "model": "openrouter/auto",
+                          "permission": "medium", "bound": True,
+                          "provider": "openrouter"},
+                "models.catalog": {"current": "openrouter/auto",
+                                   "models": core_models},
             }.get(method, {})
 
         def notify(self, method, params=None):
@@ -2822,27 +2844,13 @@ def test_model_follows_the_backend_that_is_actually_running():
 
     async def run() -> None:
         app = TonyApp(_Client())
-        async with app.run_test(size=(100, 22)) as pilot:
+        async with app.run_test(size=(110, 26)) as pilot:
             await pilot.pause()
-
-            # Core on: the core's list.
-            app._pick_model()
-            await pilot.pause()
-            await pilot.pause()
-            assert isinstance(app.screen, PickerDialog)
-            app.screen.dismiss(None)
-            await pilot.pause()
-
             with unittest.mock.patch(
                 "tonyagent.cli.tui.opencode_available", return_value=True
             ), unittest.mock.patch.object(
-                TonyApp, "_delegate_models",
-                return_value=[free, "opencode/big-pickle"],
+                TonyApp, "_delegate_models", return_value=opencode_models
             ):
-                app._toggle_delegate(free)
-                await pilot.pause()
-
-                # Delegate on: OpenCode's list, and nothing from the core.
                 app._pick_model()
                 await pilot.pause()
                 await pilot.pause()
@@ -2850,76 +2858,96 @@ def test_model_follows_the_backend_that_is_actually_running():
                 rows = "\n".join(
                     s.text for s in app.screen._compositor.render_strips()
                 )
-                assert free in rows
-                assert "openrouter/auto" not in rows, "the core's list leaked in"
 
-                await pilot.press(*"big-pickle")
+                # Both sources are in the one list.
+                assert "opencode/space-bunny-free" in rows
+                assert "opencode-go/kimi-k3" in rows
+                assert "openrouter/auto" in rows
+
+                # Aligned by service, not by literal prefix.
+                assert "OpenCode Go" in rows
+                assert "OpenCode free (client only)" in rows
+                assert rows.count("OpenCode Go") == 1, (
+                    "the same subscription headed twice -- aligned means adjacent, "
+                    "not concatenated"
+                )
+
+                # And each row says which route reaches it.
+                assert "also via opencode" in rows
+                assert "opencode only" in rows
+
+                # One row per model, not one per route. `opencode-go/kimi-k3` is
+                # served by the core and listed by OpenCode; two rows for it
+                # read as two models. The first version excluded the wrong set
+                # (`by_id - opencode_ids`, which is the core's-only models --
+                # not in OpenCode's list to begin with) and so excluded nothing.
+                assert rows.count("opencode-go/kimi-k3") == 1, rows
+
+                # Choosing a client-only model starts the delegate, rather than
+                # being accepted and then ignored by every turn.
+                await pilot.press(*"space-bunny-free")
                 await pilot.press("enter")
                 await pilot.pause()
                 await pilot.pause()
-                assert app._delegate.model == "opencode/big-pickle"
+                assert app._delegate is not None
+                assert app._delegate.model == "opencode/space-bunny-free"
 
     asyncio.run(run())
 
 
-def test_opencode_is_launched_the_way_the_platform_can_actually_launch_it():
-    """npm's Windows install has no `.exe`, and `CreateProcess` needs one.
+def test_choosing_a_core_model_turns_the_delegate_off():
+    """A model that is chosen and not used is worse than one never offered.
 
-    It installs `opencode`, `opencode.cmd` and `opencode.ps1`. `subprocess`
-    launches through `CreateProcess`, which appends `.exe` and nothing else --
-    it does not read `PATHEXT`. So the first version raised `FileNotFoundError`
-    on a machine where `opencode` worked perfectly in the shell, and
-    `opencode_available()` reported "not on PATH" for a program that was on it.
-    The symptom was invisible: `/delegate` said no, and `/model` went on showing
-    the core's three providers, so the free models looked like they did not
-    exist.
-
-    `shutil.which` reads `PATHEXT` and finds the `.cmd`; a `.cmd` is a batch
-    file, which `CreateProcess` will not run either -- so it goes through
-    `COMSPEC /c`.
+    Picking a core model while OpenCode is the backend taking the turns would
+    be accepted, announced, and then ignored -- the exact failure the single
+    picker was built to remove.
     """
+    pytest.importorskip("textual")
+
+    import asyncio
     import unittest.mock
 
-    from tonyagent.cli.delegate import opencode_argv, opencode_command
+    from tonyagent.cli.tui import TonyApp
 
-    with unittest.mock.patch("tonyagent.cli.delegate.os.name", "nt"), \
-         unittest.mock.patch(
-             "tonyagent.cli.delegate.shutil.which",
-             return_value=r"C:\Users\me\AppData\Roaming\npm\opencode.CMD",
-         ), \
-         unittest.mock.patch.dict(
-             "os.environ", {"COMSPEC": r"C:\Windows\system32\cmd.exe"}
-         ):
-        prefix = opencode_command()
-        assert prefix[0].lower().endswith("cmd.exe")
-        assert prefix[1] == "/c"
-        assert prefix[2].lower().endswith("opencode.cmd")
-        argv = opencode_argv("hi", model="opencode/space-bunny-free")
-        assert argv[:3] == prefix
-        assert argv[-1] == "hi"
+    calls: list[tuple[str, dict]] = []
 
-    # A real executable needs no wrapper at all -- and on POSIX the plain name
-    # is used without consulting `which` at all, because PATH resolution there
-    # works the way subprocess expects it to.
-    with unittest.mock.patch(
-        "tonyagent.cli.delegate.shutil.which", return_value="/usr/bin/opencode"
-    ):
-        assert opencode_command() == ["opencode"]
+    class _Client:
+        on_event = None
 
-    # A real `.exe` on Windows is launched directly, with no cmd.exe in between.
-    with unittest.mock.patch("tonyagent.cli.delegate.os.name", "nt"), \
-         unittest.mock.patch(
-             "tonyagent.cli.delegate.shutil.which",
-             return_value=r"C:\tools\opencode.exe",
-         ):
-        assert opencode_command() == [r"C:\tools\opencode.exe"]
+        def call(self, method, params=None, timeout=None):
+            calls.append((method, params or {}))
+            return {
+                "state": {"mode": "build", "model": "openrouter/auto",
+                          "permission": "medium", "bound": True,
+                          "provider": "openrouter"},
+                "models.catalog": {
+                    "current": "openrouter/auto",
+                    "models": [{"id": "openrouter/auto", "context_length": 0,
+                                "pricing": {}}],
+                },
+            }.get(method, {})
 
-    # Not installed at all: say so with the plain name and let the caller's
-    # FileNotFoundError be the message.
-    with unittest.mock.patch(
-        "tonyagent.cli.delegate.shutil.which", return_value=None
-    ):
-        assert opencode_command() == ["opencode"]
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(110, 26)) as pilot:
+            await pilot.pause()
+            with unittest.mock.patch(
+                "tonyagent.cli.tui.opencode_available", return_value=True
+            ):
+                app._toggle_delegate("opencode/space-bunny-free")
+                await pilot.pause()
+                assert app._delegate is not None
+
+                app._apply_model_choice("core:openrouter/auto")
+                await pilot.pause()
+                assert app._delegate is None
+                assert ("bind_provider",
+                        {"name": "openrouter", "model": "openrouter/auto"}) in calls
+
+    asyncio.run(run())
 
 
 def test_every_command_is_wired_and_every_handler_is_reachable():
