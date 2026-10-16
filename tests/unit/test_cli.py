@@ -1035,6 +1035,154 @@ def test_palette_filtering_is_a_substring_over_name_and_description():
     assert _matches(plan, "nonsense") is False
 
 
+# --- the inline command list ----------------------------------------------
+
+
+def test_a_slash_is_not_its_own_match():
+    """Typing `/` and getting nothing back is how a command set looks empty."""
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from textual.widgets import Input, OptionList
+
+    from tonyagent.cli.tui import COMMANDS, TonyApp
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {"state": {"mode": "build", "model": "m", "permission": "medium"}}
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(96, 24)) as pilot:
+            await pilot.pause()
+            composer = app.query_one("#composer", Input)
+            composer.focus()
+            await pilot.pause()
+            await pilot.press("/")
+            await pilot.pause()
+            menu = app.query_one("#slash-menu", OptionList)
+            assert menu.display, "typing / showed nothing"
+            assert menu.option_count == len(COMMANDS)
+            # Both columns in the row. The description was being passed as the
+            # option id once, which rendered bare names and dropped the help.
+            first = menu.get_option_at_index(0).prompt
+            assert "Switch mode" in str(first)
+
+    asyncio.run(run())
+
+
+def test_two_enters_complete_and_then_run(monkeypatch):
+    """The first Enter completes, the second submits.
+
+    Without hiding the list on an exact match, `/state ` kept matching `/state`
+    and the command never ran -- the list completed itself forever.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from textual.widgets import Input, OptionList
+
+    from tonyagent.cli.tui import TonyApp
+
+    calls: list[str] = []
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            calls.append(method)
+            return {
+                "state": {"mode": "build", "model": "m", "permission": "medium"},
+                "trajectory": {"rendered": "", "summary": ""},
+            }
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(96, 24)) as pilot:
+            await pilot.pause()
+            app.query_one("#composer", Input).focus()
+            await pilot.pause()
+            for char in "/tr":
+                await pilot.press(char)
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.query_one("#composer", Input).value == "/trajectory "
+            # The list steps aside once the name is complete.
+            assert not app.query_one("#slash-menu", OptionList).display
+
+            await pilot.press("enter")
+            await pilot.pause()
+            await pilot.pause()
+            assert "plan.get" in calls or "state" in calls
+
+    asyncio.run(run())
+
+
+def test_a_slash_inside_a_sentence_does_not_open_the_list():
+    """`read /etc/hosts` is a path, not a command.
+
+    Opening a menu over it would swallow the Enter that was meant to send the
+    turn, which is worse than no menu.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from textual.widgets import Input, OptionList
+
+    from tonyagent.cli.tui import TonyApp
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {"state": {"mode": "build", "model": "m", "permission": "medium"}}
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(96, 24)) as pilot:
+            await pilot.pause()
+            composer = app.query_one("#composer", Input)
+            composer.focus()
+            await pilot.pause()
+            composer.value = "read /etc/hosts"
+            await pilot.pause()
+            assert not app.query_one("#slash-menu", OptionList).display
+
+    asyncio.run(run())
+
+
+def test_every_slash_option_carries_its_run_name():
+    """The prompt holds both columns; the id is what dispatch uses.
+
+    The natural-looking `Option(name, description)` passes the description as
+    the id, which renders bare names and dispatches to nothing.
+    """
+    pytest.importorskip("textual")
+
+    import inspect
+
+    from tonyagent.cli.tui import TonyApp
+
+    source = inspect.getsource(TonyApp._refresh_slash_menu)
+    assert "Option(label, command.run)" in source
+    assert "Option(command.name, command.description)" not in source
+
+
 # --- the client ------------------------------------------------------------
 
 

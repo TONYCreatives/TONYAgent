@@ -32,7 +32,8 @@ rather than a screenful of escape codes.
 | Key | Does |
 |---|---|
 | `Enter` | Send the turn / confirm the highlighted option |
-| `Esc` | Decline a question · close a picker |
+| `Esc` | Decline a question · close a picker or the inline list |
+| `↑` `↓` | Move through the inline list |
 | `Ctrl-C` | Cancel the turn · decline a confirmation · quit at an empty prompt |
 | `Ctrl-D` | Quit |
 | `Ctrl-Q` | Quit |
@@ -49,6 +50,11 @@ while a destructive tool is waiting.
 ## Commands
 
 ### In the interface
+
+**Typing `/` opens the list inline**, above the composer, and keeps filtering as
+you type. `Enter` completes the highlighted command; `Enter` again runs it.
+`Esc` closes the list and leaves the text alone. Only a *leading* `/` opens it,
+so `read /etc/hosts` is still a path rather than a command.
 
 `Ctrl-Shift-P` opens a palette of all of them, filterable by typing. Every
 command below is in it. There is no longer a difference between the two

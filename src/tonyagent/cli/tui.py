@@ -32,6 +32,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Footer, Input, OptionList, Static
+from textual.widgets.option_list import Option
 
 from tonyagent.cli import theme
 from tonyagent.cli.client import CoreClient, CoreError
@@ -87,6 +88,8 @@ class TonyApp(App[None]):
         #: Empty means the composer sends turns rather than answers.
         self._pending_confirm = ""
         self._pending_ask = ""
+        #: The `run` name of each row in the inline list, parallel to it.
+        self._slash_runs: list[str] = []
         #: What the open picker will set, so one handler serves both.
         self._picker_action: Optional[tuple[str, str, dict[str, Any]]] = None
 
@@ -98,6 +101,10 @@ class TonyApp(App[None]):
                 yield Static(self._welcome(), id="intro")
             yield Sidebar(id="sidebar")
         yield Static("", id="status")
+        # The inline command list. Sits directly above the composer and is
+        # hidden until a `/` is typed, because typing `/` and getting nothing
+        # back is how a command set ends up looking empty.
+        yield OptionList(id="slash-menu", classes="hidden")
         yield Input(placeholder="ask tony anything", id="composer")
         yield Footer()
         # A confirmation is the one thing that takes the keyboard, so it is a
@@ -415,6 +422,107 @@ class TonyApp(App[None]):
             return
         self.query_one("#composer", Input).focus()
 
+    # -- the inline command list --------------------------------------------
+
+    def _slash_matches(self, text: str) -> list[Command]:
+        """The commands a partially-typed `/` could mean.
+
+        Matches on the part after the slash, and returns them in registry
+        order rather than best-first. Reordering as you type is disorienting:
+        the row you were about to press Enter on moves.
+        """
+        needle = text.lstrip("/").strip().lower()
+        return [
+            c for c in COMMANDS
+            if needle in c.name.lower().lstrip("/")
+            or needle in c.description.lower()
+        ]
+
+    def _refresh_slash_menu(self) -> None:
+        """Show the list when the composer holds a `/`, hide it otherwise.
+
+        **Only a leading slash opens it.** A `/` in the middle of a sentence is
+        a path, not a command, and opening a menu over it would swallow the
+        Enter that was meant to send the turn.
+        """
+        menu = self.query_one("#slash-menu", OptionList)
+        value = self.query_one("#composer", Input).value
+        if not value.startswith("/") or self._pending_confirm:
+            self._hide_slash_menu()
+            return
+
+        matches = self._slash_matches(value)
+        menu.clear_options()
+
+        # **Stop offering once the text exactly names a command.** Otherwise the
+        # list keeps matching its own completion: `/co` + Enter gives `/state `,
+        # which still matches `/state`, so the next Enter completed again and
+        # the command never ran. Hiding on an exact match is what makes the two
+        # Enters mean different things -- the first completes, the second runs.
+        if value.rstrip() in {c.name for c in matches}:
+            self._hide_slash_menu()
+            return
+
+        # Both columns in the prompt, and the id is the `run` name -- which is
+        # what `_accept_slash` dispatches on. Passing the description as the id
+        # (the natural-looking `Option(name, description)`) rendered a list of
+        # bare names with the help text silently discarded.
+        width = max((len(c.name) for c in matches), default=0)
+        for command in matches:
+            label = f"{pad_to(command.name, width)}   {command.description}"
+            menu.add_option(Option(label, command.run))
+        self._slash_runs = [c.run for c in matches]
+        if matches:
+            menu.highlighted = 0
+            menu.remove_class("hidden")
+            menu.display = True
+        else:
+            self._hide_slash_menu()
+
+    def _hide_slash_menu(self) -> None:
+        menu = self.query_one("#slash-menu", OptionList)
+        menu.add_class("hidden")
+        menu.display = False
+        self._slash_runs = []
+
+    @property
+    def _slash_visible(self) -> bool:
+        menu = self.query_one("#slash-menu", OptionList)
+        return menu.display and bool(self._slash_runs)
+
+    def on_input_changed(self, event: Any) -> None:
+        self._refresh_slash_menu()
+
+    def _move_slash_highlight(self, delta: int) -> None:
+        menu = self.query_one("#slash-menu", OptionList)
+        if not self._slash_runs:
+            return
+        current = menu.highlighted or 0
+        count = len(self._slash_runs)
+        # Wraps, because a list you reach the end of and have to start again
+        # is a list you stop using.
+        menu.highlighted = (current + delta) % count
+
+    def _accept_slash(self) -> bool:
+        """Put the highlighted command in the composer, rather than running it.
+
+        Completing rather than executing is the right default: `/mo` + Enter
+        gives you `/mode` with the cursor after it, so you can go on typing an
+        argument. Running it would make a typo into a state change. `Enter`
+        again submits.
+        """
+        menu = self.query_one("#slash-menu", OptionList)
+        index = menu.highlighted or 0
+        if index >= len(self._slash_runs):
+            return False
+        command = next(c for c in COMMANDS if c.run == self._slash_runs[index])
+        composer = self.query_one("#composer", Input)
+        composer.value = f"{command.name} "
+        composer.cursor_position = len(composer.value)
+        # Kept open: the argument half is still to be typed.
+        self._refresh_slash_menu()
+        return True
+
     def on_input_submitted(self, event: Any) -> None:
         """Enter sends.
 
@@ -427,6 +535,11 @@ class TonyApp(App[None]):
         intercept it first.
         """
         event.stop()
+        # The inline list claims the first Enter: it completes the command, and
+        # the second submits it. Without this, typing `/pl` and pressing Enter
+        # runs a command the person had not finished naming.
+        if self._slash_visible and self._accept_slash():
+            return
         self._submit()
 
     def on_key(self, event: Any) -> None:
@@ -447,6 +560,17 @@ class TonyApp(App[None]):
             return
         if event.key == "escape" and self._pending_ask:
             self._answer("")
+        elif event.key == "escape" and self._slash_visible:
+            # Close the list but keep the text, so a `/` that was meant as a
+            # character is still there to send.
+            self._hide_slash_menu()
+            event.stop()
+        elif event.key == "up" and self._slash_visible:
+            self._move_slash_highlight(-1)
+            event.stop()
+        elif event.key == "down" and self._slash_visible:
+            self._move_slash_highlight(1)
+            event.stop()
         elif event.key == "escape" and self._picker_action:
             self._close_picker()
         elif event.key == "ctrl+1":

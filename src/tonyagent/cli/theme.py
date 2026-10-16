@@ -256,6 +256,35 @@ def build_css() -> str:
         display: none;
     }}
 
+    /* The inline command list, above the composer.
+       *
+       * Layered and docked to the bottom rather than placed in the layout,
+       * because appearing in the layout would shrink the transcript by its own
+       * height every time a `/` was typed -- the list would push the thing you
+       * are reading. `offset` lifts it clear of the composer, the status bar
+       * and the footer, which are the four rows underneath it. */
+    #slash-menu {{
+        layer: suggest;
+        dock: bottom;
+        offset: 0 -4;
+        width: 100%;
+        height: auto;
+        max-height: 12;
+        background: {RAISED};
+        border: round {BORDER};
+    }}
+    #slash-menu.hidden {{
+        display: none;
+    }}
+    #slash-menu > .option-list--option {{
+        padding: 0 1;
+    }}
+    #slash-menu > .option-list--option-highlighted {{
+        background: {ACCENT};
+        color: {ACCENT_FG};
+        text-style: bold;
+    }}
+
     /* The pickers. Same shape as the dialog: a list the user picks from,
        rather than a value typed at a prompt and refused if it is a near miss. */
     #picker {{
