@@ -39,7 +39,7 @@ rather than a screenful of escape codes.
 | `Ctrl-Q` | Quit |
 | `Ctrl-Shift-P` | The command palette · `Ctrl-P` is Textual's |
 | `Ctrl-1` | Mode picker |
-| `Ctrl-2` | Model picker — type to filter, grouped by provider |
+| `Ctrl-2` | Model picker — type to filter; grouped by provider, with price and context size |
 | `Ctrl-3` | Permission picker |
 | `Ctrl-4` | Refresh the context meter |
 
@@ -63,7 +63,7 @@ frontends' command sets.
 | Command | Does |
 |---|---|
 | `/mode` | Mode picker · `/mode plan` to set it directly |
-| `/model` | Model picker — search, grouped by provider · `/model <id>` to set directly |
+| `/model` | Model picker — search, grouped by provider, with price and context size · `/model <id>` to set directly |
 | `/permission` | Permission picker · `/permission high` to set it directly |
 | `/model` | Model picker · `/model <id>` to set it directly |
 | `/permission` | Permission picker · `/permission high` to set it directly |
@@ -154,7 +154,13 @@ the whole protocol is drivable from a shell:
 {"method": "state"}
 {"method": "mode.set", "params": {"mode": "plan"}}
 {"method": "context.get"}
+{"method": "models.catalog"}
 ```
+
+`models.catalog` answers each model with the provider's own `context_length`
+and `pricing`, in dollars per million tokens. An entry with **no** `pricing`
+object is not the same as one priced at zero: the first means the gateway said
+nothing, so the picker draws no label, and only the second reads `Free`.
 
 ## Troubleshooting
 

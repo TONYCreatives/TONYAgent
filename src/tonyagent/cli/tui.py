@@ -735,13 +735,16 @@ class TonyApp(App[None]):
         )
 
     def _pick_model(self) -> None:
-        """The model picker, grouped by the provider in the model id.
+        """The model picker: grouped by provider, with price and context size.
 
-        OpenRouter ids are `provider/model`, so the grouping comes from the id
-        itself and costs no extra request. `models.list` returns ids only --
-        it is the window's contract and adding fields to it would oblige every
-        reader to know about them -- so there is no price or context size to
-        show per row. Saying so in the hint is better than a column of blanks.
+        Reads `models.catalog`, which carries the provider's own `context_length`
+        and `pricing` and costs no extra request over the model list.
+
+        **The labels are the provider's, not estimates.** A model it publishes
+        no price for gets no price label, which is a different thing from
+        getting "Free" -- a gateway that omits pricing has not said the model
+        is free, and saying so on its behalf would be the frontend deciding
+        what a token costs.
         """
         try:
             # Refreshed first, because the bind needs the provider's name and
@@ -749,27 +752,46 @@ class TonyApp(App[None]):
             # name there fails at the core, having looked like a selection the
             # user made correctly.
             self._poll_state()
-            payload = self.client.call("models.list") or {}
+            payload = self.client.call("models.catalog") or {}
         except CoreError as exc:
             self._notice(str(exc), "error")
             return
         raw = payload.get("models") or []
         current = str(payload.get("current", ""))
-        ids = [str(m.get("id", "")) if isinstance(m, dict) else str(m) for m in raw]
-        if not ids:
+        models = [m for m in raw if isinstance(m, dict) and m.get("id")]
+        if not models:
             self._notice("The provider returned no models.", "warn")
             return
 
         def group_of(model_id: str) -> str:
             return model_id.split("/", 1)[0] if "/" in model_id else "other"
 
+        def note_for(model: dict) -> str:
+            parts: list[str] = []
+            window = _context_label(model.get("context_length"))
+            if window:
+                parts.append(window)
+            price = _price_label(model.get("pricing"))
+            if price:
+                parts.append(price)
+            return "  ".join(parts)
+
+        by_id = {str(m["id"]): m for m in models}
         entries: list[PickerEntry] = []
-        if current:
-            entries.append(PickerEntry(current, current, group="current", note="·"))
-        for model_id in sorted(ids, key=lambda i: (group_of(i) != current, group_of(i), i)):
+        if current and current in by_id:
+            # The current row carries its numbers too. Leaving them off would
+            # make the model you are on the one row you cannot compare.
+            entries.append(
+                PickerEntry(current, current, group="current",
+                            note=f"·  {note_for(by_id[current])}".rstrip())
+            )
+        for model_id in sorted(by_id, key=lambda i: (group_of(i), i)):
             if model_id == current:
                 continue
-            entries.append(PickerEntry(model_id, model_id, group=group_of(model_id)))
+            entries.append(
+                PickerEntry(model_id, model_id, group=group_of(model_id),
+                            note=note_for(by_id[model_id]))
+            )
 
         # A model change is a re-bind: there is no `model.set`, and the provider
         # is what holds the keyring entry, so the current provider's name is
@@ -778,7 +800,7 @@ class TonyApp(App[None]):
         self._open_picker(
             "select model", entries,
             ("model", "bind_provider", {"name": provider, "model": None}),
-            hint=f"{len(ids)} models · enter select · esc close",
+            hint=f"{len(models)} models · enter select · esc close",
         )
 
     def _slash(self, line: str) -> None:
@@ -1030,6 +1052,45 @@ class TonyApp(App[None]):
             "reasoning", entries, current,
             ("reasoning", "reasoning.set", {"effort": None}),
         )
+
+
+def _context_label(tokens: Any) -> str:
+    """A context size in the unit people say it in.
+
+    `1048576` is a megabyte of digits; `1M` is what a person would call it.
+    Anything at or above a million is shown in millions, because rounding
+    1,048,576 down to `1048K` is the kind of accuracy nobody asked for.
+    """
+    try:
+        n = int(tokens)
+    except (TypeError, ValueError):
+        return ""
+    if n <= 0:
+        return ""
+    if n >= 1_000_000:
+        # Rounded to one decimal, not `:g`. 1048576 is 1.048576M, and `:g`
+        # printed all of them -- `1.04858M ctx`, which is more precision than
+        # the word "about" and less than anyone reads.
+        return f"{round(n / 1_000_000, 1):g}M ctx"
+    return f"{n // 1000}K ctx"
+
+
+def _price_label(pricing: Any) -> str:
+    """What a model costs, in the provider's own numbers.
+
+    **Absent is not free.** An entry with no `pricing` object gets no label,
+    because a gateway that publishes nothing has not said the model costs
+    nothing. Both prices zero *is* a statement, and reads as "Free".
+    """
+    if not isinstance(pricing, dict) or not pricing:
+        return ""
+    price_in = float(pricing.get("input", 0) or 0)
+    price_out = float(pricing.get("output", 0) or 0)
+    if price_in == 0 and price_out == 0:
+        return "Free"
+    if price_in == price_out:
+        return f"${price_in:g}/M"
+    return f"${price_in:g} in · ${price_out:g} out"
 
 
 #: Every command the palette offers, in the order it shows them.

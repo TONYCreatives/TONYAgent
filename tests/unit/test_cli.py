@@ -1272,7 +1272,10 @@ def test_the_model_picker_filters_hundreds_of_models():
             return {
                 "state": {"mode": "build", "model": "anthropic/claude-sonnet-4",
                           "permission": "medium", "bound": True, "provider": "openrouter"},
-                "models.list": {"models": models, "current": "anthropic/claude-sonnet-4"},
+                "models.catalog": {
+                    "models": [{"id": m, "context_length": 0, "pricing": {}} for m in models],
+                    "current": "anthropic/claude-sonnet-4",
+                },
             }.get(method, {})
 
         def notify(self, method, params=None):
@@ -1327,8 +1330,11 @@ def test_the_model_picker_refreshes_state_before_binding():
             return {
                 "state": {"mode": "build", "model": "anthropic/claude-sonnet-4",
                           "permission": "medium", "bound": True, "provider": "openrouter"},
-                "models.list": {"models": ["anthropic/claude-sonnet-4"],
-                                "current": "anthropic/claude-sonnet-4"},
+                "models.catalog": {
+                    "models": [{"id": "anthropic/claude-sonnet-4",
+                                "context_length": 200000, "pricing": {}}],
+                    "current": "anthropic/claude-sonnet-4",
+                },
             }.get(method, {})
 
         def notify(self, method, params=None):
@@ -1346,6 +1352,120 @@ def test_the_model_picker_refreshes_state_before_binding():
             await pilot.pause()
             assert bound, "nothing was bound"
             assert bound[0].get("name") == "openrouter", bound[0]
+            app.exit()
+
+    asyncio.run(run())
+
+
+# --- models.catalog: the numbers beside a model's name ---------------------
+
+
+def test_pricing_is_read_per_million_not_per_token():
+    """Providers publish per-token and everyone quotes per-million.
+
+    OpenRouter publishes `"0.000003"`; the multiplication by a million is the
+    only arithmetic here, and it is what makes the number comparable.
+    """
+    from tonyagent.api.client import _read_pricing
+
+    assert _read_pricing({"prompt": "0.000003", "completion": "0.000015"}) == {
+        "input": 3.0,
+        "output": 15.0,
+    }
+
+
+def test_absent_pricing_is_not_free():
+    """The distinction the whole label rests on.
+
+    An entry with no `pricing` block has not been said to be free -- nobody said
+    anything. Both prices zero *is* a statement.
+    """
+    from tonyagent.api.client import _read_pricing
+
+    assert _read_pricing(None) == {}
+    assert _read_pricing({}) == {}
+    assert _read_pricing({"prompt": "0", "completion": "0"}) == {"input": 0.0, "output": 0.0}
+    assert _read_pricing({"prompt": "n/a"}) == {}
+    assert _read_pricing({"prompt": True}) == {}  # a bool is not a price
+
+
+def test_a_context_length_may_arrive_as_a_string_or_as_nothing():
+    """Gateways disagree about the type, and `0` means "not stated"."""
+    from tonyagent.api.client import _as_int
+
+    assert _as_int(200000) == 200000
+    assert _as_int("128000") == 128000
+    assert _as_int(None) == 0
+    assert _as_int("") == 0
+    assert _as_int(True) == 0
+    assert _as_int(-5) == 0
+
+
+def test_a_free_model_is_labelled_free_and_an_unpriced_one_is_not():
+    from tonyagent.cli.tui import _price_label
+
+    assert _price_label({"input": 0.0, "output": 0.0}) == "Free"
+    assert _price_label({}) == ""
+    assert _price_label(None) == ""
+    assert _price_label({"input": 3.0, "output": 3.0}) == "$3/M"
+    assert _price_label({"input": 3.0, "output": 15.0}) == "$3 in · $15 out"
+
+
+def test_a_context_size_is_read_in_the_unit_a_person_uses():
+    from tonyagent.cli.tui import _context_label
+
+    assert _context_label(200000) == "200K ctx"
+    assert _context_label(128000) == "128K ctx"
+    # 1048576 is 1.048576M, and `:g` printed every digit of it.
+    assert _context_label(1048576) == "1M ctx"
+    assert _context_label(0) == ""
+    assert _context_label(None) == ""
+
+
+def test_the_picker_shows_the_numbers_and_the_current_row_included():
+    """`models.catalog`, end to end through the picker."""
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+
+    catalog = {
+        "models": [
+            {"id": "anthropic/claude-sonnet-4.5", "context_length": 200000,
+             "pricing": {"input": 3.0, "output": 15.0}},
+            {"id": "vendor/free-model", "context_length": 128000,
+             "pricing": {"input": 0.0, "output": 0.0}},
+            {"id": "vendor/unpriced", "context_length": 0, "pricing": {}},
+        ],
+        "current": "anthropic/claude-sonnet-4.5",
+    }
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {
+                "state": {"mode": "build", "model": "anthropic/claude-sonnet-4.5",
+                          "permission": "medium", "bound": True, "provider": "openrouter"},
+                "models.catalog": catalog,
+            }.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(92, 26)) as pilot:
+            await pilot.pause()
+            await pilot.press("ctrl+2")
+            await pilot.pause()
+            await pilot.pause()
+            notes = {e.label: e.note for e in app.screen.entries}
+            assert notes["anthropic/claude-sonnet-4.5"].endswith("200K ctx  $3 in · $15 out")
+            assert notes["vendor/free-model"] == "128K ctx  Free"
+            # Unpriced, unknown context: no label at all rather than a lie.
+            assert notes["vendor/unpriced"] == ""
             app.exit()
 
     asyncio.run(run())

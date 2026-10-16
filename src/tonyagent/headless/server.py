@@ -164,6 +164,7 @@ class StdioServer:
             "user.respond": self._h_user_respond,
             "trust.set": self._h_trust_set,
             "models.list": self._h_models_list,
+            "models.catalog": self._h_models_catalog,
             "tools.get": self._h_tools_get,
             "tools.set": self._h_tools_set,
             "plan.get": self._h_plan_get,
@@ -1365,6 +1366,40 @@ class StdioServer:
                 "models. Check the API key and the endpoint."
             )
         return {"models": models, "current": self.session.model}
+
+    async def _h_models_catalog(self, params: dict) -> Any:
+        """Every model with its context length and prices.
+
+        Separate from `models.list` rather than extra fields on it, for the
+        reason `plan.get` records about `state`: `models.list` is what the
+        window's picker iterates, and widening it would oblige every reader to
+        know about fields it does not use. This costs no extra request -- both
+        read the same cached `/models` entries.
+
+        Every field is optional and every zero is meaningful. `context_length`
+        of 0 means the gateway did not publish one, and an **absent `pricing`
+        object means the gateway did not publish any** -- which is not the same
+        as `{"input": 0, "output": 0}`, which means the model is free. A
+        frontend that collapses the two would label a model "Free" on the
+        strength of nobody having said anything.
+        """
+        if self.session.provider is None:
+            raise RpcError("no provider configured")
+        from tonyagent.api import LLMError
+
+        try:
+            catalog = await self.session.model_catalog()
+        except LLMError as exc:
+            # Reported rather than returned empty: an empty catalog and a
+            # failed request look identical in a picker, and only one of them
+            # is fixed by checking the key.
+            raise RpcError(str(exc)) from None
+        if not catalog:
+            raise RpcError(
+                f"{self.session.provider_name or 'This provider'} returned no model "
+                "metadata. Check the API key and the endpoint."
+            )
+        return {"models": catalog, "current": self.session.model}
 
     # -- the tool call budget ------------------------------------------------
     def _h_tools_get(self, params: dict) -> Any:

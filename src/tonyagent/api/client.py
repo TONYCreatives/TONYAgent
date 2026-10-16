@@ -62,6 +62,53 @@ def normalize_key(raw: str | None) -> str:
     return key
 
 
+def _as_int(value: Any) -> int:
+    """An integer, or 0 when the field is absent or unparseable.
+
+    Gateways are inconsistent about types -- `context_length` arrives as a
+    number from OpenRouter and as a string from some others -- so this accepts
+    both. 0 means "not stated", which the frontend is expected to render as no
+    label rather than as a number.
+    """
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return 0
+
+
+def _read_pricing(raw: Any) -> dict[str, float]:
+    """The input and output prices, in dollars per million tokens.
+
+    **Per-token to per-million is the only arithmetic here**, and it is the
+    multiplication by a million that providers quote in already -- OpenRouter
+    publishes `"0.000003"` and everyone reads it as $3/M.
+
+    Both sides are returned, and a missing side is 0 rather than an error: a
+    free tier publishes zeros for both, and some gateways omit `completion`.
+    The distinction the frontend has to keep is between *zero* (it is free) and
+    *absent* (nobody said), so an entry with no `pricing` block at all comes
+    back empty rather than as two zeros.
+    """
+    if not isinstance(raw, dict) or not raw:
+        return {}
+    out: dict[str, float] = {}
+    for key, field in (("prompt", "input"), ("completion", "output")):
+        value = raw.get(key)
+        if isinstance(value, bool) or value is None:
+            continue
+        try:
+            price = float(value)
+        except (TypeError, ValueError):
+            continue
+        if price < 0:
+            continue
+        out[field] = round(price * 1_000_000, 6)
+    return out
+
+
 @dataclass
 class Health:
     """Result of a real connectivity check."""
@@ -289,6 +336,40 @@ class LLMClient:
     async def list_models(self) -> list[str]:
         """Fetch the live model list. Also serves as an auth probe."""
         return [model_id for model_id, _ in (await self._model_entries()).items()]
+
+    async def model_catalog(self) -> list[dict]:
+        """Every model with the numbers a picker wants beside its name.
+
+        **A separate method rather than extra fields on `list_models`**, which
+        is the window's contract: it iterates that result expecting ids, and
+        widening the reply would oblige every reader to know about fields it
+        does not use. `plan.get` records the same reasoning for `state`.
+
+        **Nothing here is derived from the id and nothing is guessed.** The
+        context length is the provider's own `context_length` and the prices are
+        its own `pricing` block, converted from per-token to per-million because
+        that is the unit providers quote and the unit a person compares. A
+        model whose entry carries neither is reported with zeros and empty
+        prices, and the frontend draws no label for it -- which is *not* the
+        same as drawing "Free", because a gateway that omits pricing is not
+        telling you the model costs nothing.
+        """
+        catalog: list[dict] = []
+        for model_id, entry in (await self._model_entries()).items():
+            catalog.append(
+                {
+                    "id": model_id,
+                    "name": str(entry.get("name") or ""),
+                    "context_length": _as_int(
+                        entry.get("context_length")
+                        or entry.get("context_window")
+                        or entry.get("max_context_tokens")
+                    ),
+                    "pricing": _read_pricing(entry.get("pricing")),
+                }
+            )
+        catalog.sort(key=lambda model: str(model["id"]))
+        return catalog
 
     async def model_context_window(self) -> int:
         """The bound model's context window, or 0 when the provider is silent.

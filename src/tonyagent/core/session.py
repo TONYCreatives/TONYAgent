@@ -644,6 +644,26 @@ class AgentSession:
             raise LLMError.network(exc, self.provider_name) from exc
         return sorted(models)
 
+    async def model_catalog(self) -> list[dict]:
+        """Every model with its context length and prices, for a picker.
+
+        Same one-request, one-source discipline as `available_models`: it reads
+        the entries the client already fetched and cached, so it costs nothing
+        beyond what the model list cost. A provider with no `http_client`
+        answers with an empty list rather than raising, for the reason
+        `available_models` documents about that method.
+        """
+        provider = self.provider
+        if provider is None:
+            return []
+        factory = getattr(provider, "http_client", None)
+        if factory is None:
+            return []
+        try:
+            return await factory().model_catalog()
+        except Exception as exc:  # noqa: BLE001 - reported to the caller
+            raise LLMError.network(exc, self.provider_name) from exc
+
     def set_max_tool_calls(self, limit: int) -> int:
         """Change the per-turn tool budget. Returns what took effect.
 
