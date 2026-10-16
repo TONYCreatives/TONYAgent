@@ -2662,13 +2662,16 @@ def test_the_top_bar_names_the_backend_because_the_transcript_cannot():
             with unittest.mock.patch(
                 "tonyagent.cli.tui.opencode_available", return_value=True
             ):
-                app._toggle_delegate()
+                app._toggle_delegate("opencode/space-bunny-free")
             await pilot.pause()
             after = "\n".join(
                 s.text for s in app.screen._compositor.render_strips()
             )
             assert "opencode" in after
             assert "--auto" in after, "auto-approve must be visible, not implied"
+            # The model is named too: which agent ran, on what, under which
+            # permissions is the whole of what the transcript cannot tell you.
+            assert "space-bunny-free" in after
 
     asyncio.run(run())
 
@@ -2708,6 +2711,79 @@ def test_the_delegate_is_declined_when_the_binary_is_missing():
             assert app._delegate is None
 
     asyncio.run(run())
+
+
+def test_delegate_without_a_model_offers_a_picker_instead_of_a_default():
+    """`opencode run` with no `--model` uses OpenCode's configured default.
+
+    That default is not a free model unless you made it one, and the free tier
+    is the entire reason to be here -- so `/delegate` with no argument asks,
+    rather than quietly starting on somebody else's billing. The typed form
+    `/delegate opencode/space-bunny-free` skips the question.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+    import unittest.mock
+
+    from tonyagent.cli.tui import TonyApp
+    from tonyagent.cli.widgets import PickerDialog
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {"state": {"mode": "build", "model": "m", "permission": "medium",
+                              "bound": True}}.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(100, 22)) as pilot:
+            await pilot.pause()
+            models = ["opencode/space-bunny-free", "opencode/big-pickle",
+                      "opencode-go/space-bunny"]
+            with unittest.mock.patch(
+                "tonyagent.cli.tui.opencode_available", return_value=True
+            ), unittest.mock.patch.object(
+                TonyApp, "_delegate_models", return_value=models
+            ):
+                app._toggle_delegate()
+                await pilot.pause()
+                await pilot.pause()
+                assert isinstance(app.screen, PickerDialog)
+                assert app._delegate is None, "it started before a model was chosen"
+
+                await pilot.press(*"space-bunny-free")
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.pause()
+                assert app._delegate is not None
+                assert app._delegate.model == "opencode/space-bunny-free"
+                # And the typed form skips the picker entirely.
+                app._toggle_delegate()
+                await pilot.pause()
+                app._toggle_delegate("opencode/big-pickle")
+                await pilot.pause()
+                assert app._delegate.model == "opencode/big-pickle"
+
+    asyncio.run(run())
+
+
+def test_a_stray_word_after_a_command_does_not_raise():
+    """`/trajectory blah` must not call `_show_trajectory("blah")`.
+
+    Arguments are passed only to handlers that declare one, decided by
+    signature rather than by whether a word was typed -- otherwise every
+    argument-taking command is one typo away from a TypeError raised out of a
+    keypress handler.
+    """
+    from tonyagent.cli.tui import _takes_argument
+
+    assert _takes_argument(lambda: None) is False
+    assert _takes_argument(lambda _argument="": None) is True
 
 
 # --- the client ------------------------------------------------------------

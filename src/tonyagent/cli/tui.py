@@ -532,6 +532,11 @@ class TonyApp(App[None]):
             # transcript cannot tell you, because both backends draw the same
             # events into the same widgets.
             text.append("opencode", style=theme.WARN)
+            if self._delegate is not None and self._delegate.model:
+                text.append(
+                    f" · {truncate_to_width(self._delegate.model, 28)}",
+                    style=theme.FG_MUTE,
+                )
             text.append(" · --auto", style=theme.FG_MUTE)
         text.append("   ")
         text.append("/conversations", style=theme.FG_MUTE)
@@ -1012,7 +1017,7 @@ class TonyApp(App[None]):
             if match is None:
                 self._notice(f"/{command} is not a command; ctrl+p lists them", "warn")
                 return
-            self._run_command(match.run)
+            self._run_command(match.run, argument)
 
     def _set(self, method: str, params: dict[str, Any], label: str) -> None:
         try:
@@ -1092,13 +1097,19 @@ class TonyApp(App[None]):
             return
         self._notice("cancelled", "warn")
 
-    def _toggle_delegate(self) -> None:
-        """Turn the OpenCode backend on or off.
+    def _toggle_delegate(self, argument: str = "") -> None:
+        """Turn the OpenCode backend on or off, optionally with a model.
 
         Going on checks the binary is actually there, because a backend that
         fails on the first message is worse than one that declines to start: the
         failure lands in the transcript where it reads as a model problem rather
         than a missing program.
+
+        **A model has to be chosen, because the default is the problem.** With
+        no `--model`, `opencode run` uses whatever OpenCode has configured --
+        which is not a free model unless you made it one. The whole reason to be
+        here is the free tier, so `/delegate` with no argument opens the picker
+        rather than starting on somebody else's billing.
         """
         if self._delegate is not None:
             self._delegate.close()
@@ -1109,14 +1120,42 @@ class TonyApp(App[None]):
         if not opencode_available():
             self._notice("the opencode binary is not on PATH", "error")
             return
+        wanted = argument.strip()
+        if not wanted:
+            entries = [
+                PickerEntry(mid, mid, note="free" if mid.endswith("-free") else "")
+                for mid in self._delegate_models()
+            ]
+            if not entries:
+                self._notice("opencode listed no models", "error")
+                return
+            # Pushed directly rather than through `_open_picker`, which exists
+            # to call a *core* method with the chosen value. There is no core
+            # method here -- the model belongs to the delegate, not the session
+            # -- and routing it through one would have meant a protocol method
+            # that answers "which OpenCode model?" from a process that has
+            # never heard of OpenCode.
+            self.push_screen(
+                PickerDialog(
+                    "delegate model", entries,
+                    hint="enter use this model · esc cancel",
+                ),
+                lambda chosen: (
+                    self._start_delegate(chosen) if chosen else None
+                ),
+            )
+            return
+        self._start_delegate(wanted)
+
+    def _start_delegate(self, model: str) -> None:
         self._delegate = OpenCodeDelegate(
             lambda kind, payload: self.call_from_thread(
                 self._apply_core_event, kind, payload
-            )
+            ),
+            model=model,
         )
         self._notice(
-            "opencode: its agent, its tools, --auto (no permission prompts)",
-            "warn",
+            f"opencode · {model} · --auto (no permission prompts)", "warn",
         )
         self._render_topbar(self._topbar_title)
 
@@ -1127,20 +1166,26 @@ class TonyApp(App[None]):
         `providers.list` is asked of the registry: a list copied into this file
         drifts silently the first time OpenCode renames anything, and the free
         tier is exactly the set that moves.
+
+        **`opencode models` takes no provider argument.** The first version
+        passed one and got an exit-1 usage message parsed as an empty list,
+        which would have shown a picker with nothing in it and no reason why.
+        It prints one `provider/model` id per line and nothing else.
         """
         try:
             completed = subprocess.run(  # noqa: S603 - argv is a list
-                ["opencode", "models", "opencode"],
-                capture_output=True, text=True, timeout=20, check=False,
+                ["opencode", "models"],
+                capture_output=True, text=True, timeout=30, check=False,
             )
         except (OSError, subprocess.SubprocessError):
             return []
-        found: list[str] = []
-        for row in (completed.stdout or "").splitlines():
-            token = row.strip().split()
-            if token and "/" in token[0]:
-                found.append(token[0])
-        return found
+        if completed.returncode != 0:
+            return []
+        return [
+            row.strip()
+            for row in (completed.stdout or "").splitlines()
+            if row.strip().startswith("opencode")
+        ]
 
     def action_new_chat(self) -> None:
         """The keyboard route to the top bar's `+`, and `/new`."""
@@ -1152,7 +1197,7 @@ class TonyApp(App[None]):
         mistake, and the reason the palette is worth a test."""
         self.push_screen(CommandPalette(COMMANDS), self._run_command)
 
-    def _run_command(self, run: Optional[str]) -> None:
+    def _run_command(self, run: Optional[str], argument: str = "") -> None:
         """Do what the chosen command says."""
         if not run:
             return
@@ -1176,7 +1221,13 @@ class TonyApp(App[None]):
         if handler is None:
             self._notice(f"{run} is listed but not wired up", "warn")
             return
-        handler()
+        # Only the handlers that declare an argument are given one. Guessing
+        # from whether a string was typed would call `_show_trajectory("x")` on
+        # a stray word and raise TypeError out of the keypress handler.
+        if argument and _takes_argument(handler):
+            handler(argument)
+        else:
+            handler()
 
     # -- the commands the interface did not have before ----------------------
 
@@ -1527,6 +1578,16 @@ class TonyApp(App[None]):
             "reasoning", entries, current,
             ("reasoning", "reasoning.set", {"effort": None}),
         )
+
+
+def _takes_argument(handler: Any) -> bool:
+    """Whether a command handler accepts the typed argument."""
+    import inspect
+
+    try:
+        return bool(inspect.signature(handler).parameters)
+    except (TypeError, ValueError):
+        return False
 
 
 def _context_label(tokens: Any) -> str:

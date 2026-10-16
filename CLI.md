@@ -96,7 +96,7 @@ a full-screen app is a worse place to do it than at a shell prompt.
 |---|---|
 | `/state` | Everything the core reports about itself |
 | `/key` | Set, replace or remove a provider key: `enter` edit · `tab` name · `ctrl+r` remove (confirmed) |
-| `/delegate` | Run turns through `opencode` itself, which is the only way to reach its free models |
+| `/delegate [model]` | Run turns through `opencode` itself, which is the only way to reach its free models |
 | `/plan` | The task list, as the model is shown it |
 | `/tools [n]` | The per-turn tool call budget · `/tools 20` to set it |
 | `/new [title]` | Start a conversation |
@@ -170,10 +170,16 @@ that is the server deciding — no header set here changes it. The one thing tha
 *is* OpenCode is the OpenCode binary, so:
 
 ```
-/delegate                # turns now run through `opencode run`
+/delegate                               # pick a model, from opencode's list
+/delegate opencode/space-bunny-free     # or name one and skip the picker
 ```
 
-The top bar says `opencode · --auto` while it is on. **Two backends, not two
+**It asks which model, because the default is the problem.** With no
+`--model`, `opencode run` uses whatever OpenCode has configured -- not a free
+model unless you made it one -- and the free tier is the entire reason to be
+here. The list comes from `opencode models`; the `-free` ones are marked.
+
+The top bar says `opencode · <model> · --auto` while it is on. **Two backends, not two
 providers** — and the distinction matters: OpenCode executes its own tools, so a
 provider adapter carrying its tool calls would make TONYAgent run every one of
 them a second time.
