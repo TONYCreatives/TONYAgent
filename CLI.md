@@ -132,6 +132,36 @@ In line mode, a leading `\` sends a turn that starts with a slash:
   a bar at 0%.
 - **Mode, model and permission level**, always on screen.
 
+## OpenCode Go and OpenCode Zen are two different services
+
+They are easy to confuse and they do not share a bill.
+
+| | Go | Zen |
+|---|---|---|
+| Endpoint | `opencode.ai/zen/go/v1` | `opencode.ai/zen/v1` |
+| Key | your subscription | a separate API key |
+| Catalogue | 37 models | 86 models |
+| `space-bunny` | yes | no |
+| `space-bunny-free` | no | yes — **but unusable here, see below** |
+
+**A Go key does not pay for Zen.** Sending it authenticates, loads the
+catalogue, and then every turn answers `402 Insufficient account funds`,
+because the balance lives on the Zen account. That looks like a bug in here
+rather than an empty balance, which is why it is written down.
+
+**Zen's `-free` models refuse to run outside OpenCode.** `space-bunny-free`,
+`cat-jam-free`, `longcat-2.5-preview-free` and the rest answer:
+
+```
+403 FreeTierError: OpenCode's free tier can only be used from within OpenCode.
+```
+
+Not a missing header, not an absent key — the same with no credentials at all,
+and the same with a valid one. The free tier is a funnel into OpenCode's own
+client, so those ids stay in the catalogue and the provider's own refusal
+stands, rather than being hidden here behind a list that looks complete and
+cannot deliver.
+
 ## Using an OpenCode Go key
 
 TONYAgent already speaks to **OpenCode Go** — `https://opencode.ai/zen/go/v1`,

@@ -21,7 +21,7 @@ from tonyagent.providers.factory import ProviderFactory
 # piece of the catalogue work would have needed a second implementation that
 # returned "unknown" for most fields. OpenRouter and OpenCode Go both publish
 # real metadata, which is what makes keeping two of them the easier case.
-from tonyagent.providers import opencode_go, openrouter
+from tonyagent.providers import opencode_go, opencode_zen, openrouter
 
 __all__ = [
     "LLMProvider", "ChatMessage", "ToolSchema", "ToolChoice",

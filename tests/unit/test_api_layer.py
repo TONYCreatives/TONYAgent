@@ -241,10 +241,36 @@ def test_the_registry_is_exactly_these_providers():
     import tonyagent.providers  # noqa: F401
     from tonyagent.providers.base import provider_registry
 
-    assert provider_registry.list_providers() == ["opencode-go", "openrouter"]
+    assert provider_registry.list_providers() == [
+        "opencode-go",
+        "opencode-zen",
+        "openrouter",
+    ]
     for name in provider_registry.list_providers():
         cls = provider_registry.get(name)
         assert cls.base_url.startswith("https://"), f"{name} declares no endpoint"
+
+
+def test_zen_and_go_are_separate_services_not_one_provider_twice():
+    """Two base URLs, two keys, two bills -- so they must not collapse.
+
+    Zen is not Go with a different path. Measured: Go's `/models` answers with
+    37 ids and Zen's with 86, and a Go subscription key authenticates against
+    Zen and is then refused with `402 Insufficient account funds`, because the
+    balance lives on the Zen account. Registering Zen as another `base_url` on
+    the Go provider would have hidden that behind one row in the picker.
+    """
+    import tonyagent.providers  # noqa: F401
+    from tonyagent.providers.base import provider_registry
+
+    go = provider_registry.get("opencode-go")
+    zen = provider_registry.get("opencode-zen")
+    assert go.base_url != zen.base_url
+    assert zen.base_url == "https://opencode.ai/zen/v1"
+    assert go.base_url == "https://opencode.ai/zen/go/v1"
+    # Both are aggregators that publish a real catalogue, which is why the
+    # catalogue work has two implementations rather than six.
+    assert zen.models == [] and go.models == []
 
 
 def test_a_provider_added_without_a_key_asserts_no_format():
@@ -261,6 +287,10 @@ def test_a_provider_added_without_a_key_asserts_no_format():
     cls = provider_registry.get("opencode-go")
     assert cls.key_prefix == "", "opencode-go checks a prefix nobody verified"
     assert cls.key_length is None, "opencode-go checks a length nobody verified"
+
+    zen = provider_registry.get("opencode-zen")
+    assert zen.key_prefix == "", "opencode-zen checks a prefix nobody verified"
+    assert zen.key_length is None, "opencode-zen checks a length nobody verified"
 
 
 def test_a_vendor_falls_back_to_its_own_endpoint():
