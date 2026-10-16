@@ -37,18 +37,77 @@ from textual.widgets import Static
 
 
 @dataclass
+class FileChange:
+    """One `file_change` artifact from a tool result.
+
+    The window draws these with `--traj-add` and `--traj-del`; so does this.
+    A terminal can carry a background as well as a foreground, so the wash
+    colours are available for a diff header without inventing a second palette.
+    """
+
+    path: str
+    diff: str = ""
+    added: int = 0
+    removed: int = 0
+
+
+@dataclass
 class ToolCall:
     """One tool call, from `tool.started` to its completion."""
 
-    id: str
-    name: str
+    # `id` and `name` default so `from_result` can build one from a
+    # `tool.completed` payload, which carries the result but not the call's
+    # identity. The caller copies those two fields back onto the real call.
+    id: str = ""
+    name: str = ""
     summary: str = ""
     done: bool = False
     failed: bool = False
     result: str = ""
+    #: The full result, kept because the trajectory shows `output` and `error`
+    #: separately while the one-line summary shows a preview of both.
+    output: str = ""
+    error: str = ""
+    status: str = ""
+    changes: list[FileChange] = field(default_factory=list)
 
     def label(self) -> str:
         return f"{self.name}({self.summary})" if self.summary else self.name
+
+    @classmethod
+    def from_result(cls, payload: dict[str, Any]) -> ToolCall:
+        """Read what the core actually sends on `tool.completed`.
+
+        Mirrors `TrajectoryView.EventBody`'s `tool.completed` branch: the
+        result is an object with `status`, `output`, `error` and `artifacts`,
+        not the string the summary line wants. Reading it here rather than in
+        the widget keeps the two renderings from disagreeing about one payload.
+        """
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            return cls(result=str(result or "") if result is not None else "")
+        changes: list[FileChange] = []
+        artifacts = result.get("artifacts")
+        if isinstance(artifacts, list):
+            for artifact in artifacts:
+                if not isinstance(artifact, dict) or artifact.get("type") != "file_change":
+                    continue
+                data = artifact.get("data")
+                data = data if isinstance(data, dict) else {}
+                changes.append(
+                    FileChange(
+                        path=str(data.get("path", "")),
+                        diff=str(data.get("diff", "")),
+                        added=int(data.get("added", 0) or 0),
+                        removed=int(data.get("removed", 0) or 0),
+                    )
+                )
+        return cls(
+            status=str(result.get("status", "")),
+            output=str(result.get("output", "") or ""),
+            error=str(result.get("error", "") or ""),
+            changes=changes,
+        )
 
 
 @dataclass
@@ -61,6 +120,12 @@ class Turn:
     tools: list[ToolCall] = field(default_factory=list)
     error: str = ""
     started: float = field(default_factory=time.monotonic)
+    #: Every frame of this turn, for the trajectory view.
+    #:
+    #: Kept whole because the trajectory is the raw event log rather than a
+    #: summary of it -- the same choice `TrajectoryView` makes, for the same
+    #: reason: a summary would lose the rows nobody thought to summarise.
+    frames: list[dict[str, Any]] = field(default_factory=list)
 
     #: Deltas seen, for the throughput figure. Counted, not tokenised: the
     #: core streams text chunks of varying size, so this is characters per
@@ -174,6 +239,115 @@ class ToolLine(Static):
             text.append(_one_line(self.call.result, 120), style=theme.DANGER)
         self.set_classes([css])
         self.update(text)
+
+
+class DiffBlock(Static):
+    """A unified diff, in the window's two colours.
+
+    **Only the added and removed lines are coloured, and only two glyphs are
+    used.** A diff is mostly context, and colouring all three makes the two
+    halves hard to find in a wall of text. `trajectory.css` solves this the
+    same way -- `--traj-add` and `--traj-del` on the changed lines only.
+
+    ``+`` and ``-`` are kept rather than dropped, so a line reads correctly if
+    it is copied out of the terminal, and the glyph is a backtick rather than
+    a block so an unexpanded font still renders something.
+    """
+
+    MAX_LINES = 20
+
+    def __init__(self, change: FileChange, **kwargs: Any) -> None:
+        kwargs.setdefault("classes", "diff")
+        super().__init__(**kwargs)
+        self.change = change
+
+    def render(self) -> Text:
+        from tonyagent.cli import theme
+
+        text = Text()
+        lines = self.change.diff.splitlines()
+        shown = lines[: self.MAX_LINES]
+
+        for line in shown:
+            if line.startswith(("+++", "---")):
+                text.append(line + "\n", style=theme.FG_MUTE)
+            elif line.startswith("@@"):
+                text.append(line + "\n", style=theme.ACCENT)
+            elif line.startswith("+"):
+                text.append(line + "\n", style=theme.TRAJ_ADD)
+            elif line.startswith("-"):
+                text.append(line + "\n", style=theme.TRAJ_DEL)
+            else:
+                text.append(line + "\n", style=theme.FG_MUTE)
+
+        hidden = len(lines) - len(shown)
+        if hidden > 0:
+            text.append(f"  {hidden} more diff line{'s' if hidden != 1 else ''}",
+                        style=theme.FG_MUTE)
+        return text
+
+
+class ChangeHeader(Static):
+    """The `path  +n -n` line above a diff."""
+
+    def __init__(self, change: FileChange, **kwargs: Any) -> None:
+        kwargs.setdefault("classes", "change-head")
+        super().__init__(**kwargs)
+        self.change = change
+
+    def render(self) -> Text:
+        from tonyagent.cli import theme
+
+        text = Text()
+        text.append(self.change.path or "(unknown path)", style=theme.FG_DIM)
+        if self.change.added or self.change.removed:
+            text.append(f"  +{self.change.added}", style=theme.TRAJ_ADD)
+            text.append(f" -{self.change.removed}", style=theme.TRAJ_DEL)
+        return text
+
+
+class ConfirmDialog(Static):
+    """A blocking tool confirmation, as a dialog rather than a composer line.
+
+    **A modal is right here, and it is wrong everywhere else.** The window
+    dims the page behind its confirm dialog; a terminal cannot dim, but it can
+    take the keyboard, which is the part that matters -- an unanswered
+    confirmation is the one state where the user must not be able to type a
+    message into a turn that is waiting on a decision.
+
+    The window shows which tools may change files and is explicit about the
+    fact that this one does. So this says `destructive` in the same word, in
+    `--danger`, rather than relying on the colour alone -- a terminal that has
+    been piped through `NO_COLOR` loses the colour and must not lose the
+    warning with it.
+    """
+
+    def __init__(self, tool_name: str, summary: str, destructive: bool,
+                 **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        # Not `self.name`: `Widget.name` is a Textual property with no setter,
+        # so assigning it raises AttributeError at compose time -- which is
+        # where this first showed up.
+        self.tool_name = tool_name
+        self.summary = summary
+        self.destructive = destructive
+        self.add_class("confirm-destructive" if destructive else "confirm")
+
+    def render(self) -> Text:
+        from tonyagent.cli import theme
+
+        text = Text()
+        label = "destructive" if self.destructive else "confirm"
+        text.append(label, style=theme.DANGER if self.destructive else theme.WARN)
+        text.append("  ")
+        text.append(self.tool_name, style=f"bold {theme.FG}")
+        if self.summary:
+            text.append(f"({self.summary})", style=theme.FG_MUTE)
+        text.append("\n\n")
+        text.append("[y] once    ", style=theme.OK)
+        text.append("[a] always    ", style=theme.WARN)
+        text.append("[n] no", style=theme.DANGER)
+        return text
 
 
 class TurnFooter(Static):

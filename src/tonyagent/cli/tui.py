@@ -31,12 +31,21 @@ from typing import Any, ClassVar, Optional
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Footer, Static, TextArea
+from textual.widgets import Footer, OptionList, Static, TextArea
 
 from tonyagent.cli import theme
 from tonyagent.cli.client import CoreClient, CoreError
 from tonyagent.cli.render import _argument_summary, _result_summary
-from tonyagent.cli.widgets import Sidebar, ToolCall, ToolLine, Turn, TurnFooter
+from tonyagent.cli.widgets import (
+    ChangeHeader,
+    ConfirmDialog,
+    DiffBlock,
+    Sidebar,
+    ToolCall,
+    ToolLine,
+    Turn,
+    TurnFooter,
+)
 
 #: Below this many columns the sidebar is dropped rather than narrowed.
 #:
@@ -72,9 +81,12 @@ class TonyApp(App[None]):
         self._turn_box: Optional[Vertical] = None
         self._answer_widget: Optional[Static] = None
         self._streaming = False
-        #: The id of the confirmation or question the turn is suspended on.
+        #: Ids of the confirmation and the question the turn is suspended on.
         #: Empty means the composer sends turns rather than answers.
-        self._pending_dialog = ""
+        self._pending_confirm = ""
+        self._pending_ask = ""
+        #: What the open picker will set, so one handler serves both.
+        self._picker_action: Optional[tuple[str, str, dict[str, Any]]] = None
 
     # -- layout --------------------------------------------------------------
 
@@ -86,6 +98,13 @@ class TonyApp(App[None]):
         yield Static("", id="status")
         yield TextArea(id="composer")
         yield Footer()
+        # A confirmation is the one thing that takes the keyboard, so it is a
+        # real dialog rather than a line in the composer. Hidden until asked.
+        yield ConfirmDialog("", "", False, id="confirm-dialog", classes="hidden")
+        # The pickers, same reasoning: a list of models is not something to
+        # type at a prompt, and re-implementing them as free text is how a
+        # picker ends up offering something the core would refuse.
+        yield OptionList(id="picker", classes="hidden")
 
     def on_resize(self) -> None:
         self._apply_width()
@@ -214,6 +233,8 @@ class TonyApp(App[None]):
         turn, box = self.turn, self._turn_box
         if turn is None or box is None:
             return
+        # Kept whole, like `TrajectoryView`: the raw log, not a summary of it.
+        turn.frames.append({"type": kind, "payload": payload})
 
         if kind == "message.delta":
             turn.on_delta(payload)
@@ -251,10 +272,20 @@ class TonyApp(App[None]):
                 return
             call.done = kind == "tool.completed"
             call.failed = kind == "tool.failed"
+            # Read the real payload -- status, output, error, and any
+            # `file_change` artifacts -- rather than only the preview the
+            # one-line summary wants. The diffs come from here.
+            detail = ToolCall.from_result(payload)
+            call.status = detail.status
+            call.output = detail.output
+            call.error = detail.error
+            call.changes = detail.changes
             call.result = _result_summary(payload)
             line = self._line_for(call)
             if line is not None:
                 line.refresh_line()
+            if call.changes:
+                self._show_changes(call)
         elif kind == "turn.finished":
             self._end_turn()
         elif kind == "turn.failed":
@@ -262,14 +293,11 @@ class TonyApp(App[None]):
             self._end_turn()
             self._notice(message, "error")
         elif kind == "confirmation.requested":
-            self._open_dialog(
-                str(payload.get("id", "")), str(payload.get("name", "confirm"))
-            )
+            self._open_confirm(payload)
         elif kind == "user.asked":
-            self._open_dialog(
-                str(payload.get("id", "")),
-                str(payload.get("question") or "The agent is asking"),
-            )
+            self._open_ask(payload)
+        elif kind in ("confirmation.resolved", "user.resolved"):
+            self._close_dialog()
 
     def _line_for(self, call: ToolCall) -> Optional[ToolLine]:
         if self._turn_box is None:
@@ -279,28 +307,61 @@ class TonyApp(App[None]):
                 return widget
         return None
 
-    def _open_dialog(self, call_id: str, question: str) -> None:
-        """Ask the blocking question in the composer itself.
+    def _open_confirm(self, payload: dict[str, Any]) -> None:
+        """Show a destructive or gated tool confirmation and take the keyboard."""
+        self._pending_confirm = str(payload.get("id", ""))
+        name = str(payload.get("name", "?"))
+        dialog = self.query_one("#confirm-dialog", ConfirmDialog)
+        dialog.tool_name = name
+        dialog.summary = _argument_summary(name, payload.get("arguments"))
+        dialog.destructive = bool(payload.get("destructive"))
+        dialog.set_class(dialog.destructive, "confirm-destructive")
+        dialog.set_class(not dialog.destructive, "confirm")
+        dialog.remove_class("hidden")
+        self.query_one("#composer", TextArea).display = False
+        dialog.focus()
 
-        A modal would be the wrong shape here: the turn is suspended waiting,
-        and a dialog over it would hide the transcript the decision is about.
-        The composer already takes input, so the question goes there and the
-        transcript stays readable underneath.
+    def _open_ask(self, payload: dict[str, Any]) -> None:
+        """Show a question from `ask_user_question` or `present`.
 
-        ``call_id`` of `"confirm"` marks a yes/no rather than an open question,
-        so the answer can be routed without re-reading the event stream.
+        A question takes free text rather than yes/no, so it goes back to the
+        composer with the question as its title -- there is nothing to confirm
+        here, and a dialog that only accepted `y`/`n` would be answering a
+        question nobody asked.
         """
+        self._pending_ask = str(payload.get("id", ""))
+        question = str(payload.get("question") or payload.get("text") or "")
         composer = self.query_one("#composer", TextArea)
-        composer.border_title = "waiting for you"
-        composer.placeholder = question
+        composer.border_title = "the agent is asking"
+        composer.placeholder = question or "your answer"
+        composer.display = True
         composer.focus()
-        self._pending_dialog = call_id or "confirm"
 
     def _close_dialog(self) -> None:
+        self._pending_confirm = ""
+        self._pending_ask = ""
+        dialog = self.query_one("#confirm-dialog", ConfirmDialog)
+        dialog.add_class("hidden")
         composer = self.query_one("#composer", TextArea)
         composer.border_title = ""
         composer.placeholder = ""
-        self._pending_dialog = ""
+        composer.display = True
+        self.query_one("#picker", OptionList).remove_class("hidden")
+
+    def _show_changes(self, call: ToolCall) -> None:
+        """Mount the diffs a tool produced, under its line.
+
+        Inside the fence, because a change *is* part of what the agent did in
+        this turn. Each change gets a header and then its diff, which is the
+        order `TrajectoryView` uses and the order that reads: which file, then
+        what happened to it.
+        """
+        if self._turn_box is None:
+            return
+        for change in call.changes:
+            self._turn_box.mount(ChangeHeader(change))
+            if change.diff:
+                self._turn_box.mount(DiffBlock(change))
 
     def _notice(self, message: str, style: str = "") -> None:
         text = f"[{style}]{message}[/]" if style else message
@@ -359,27 +420,40 @@ class TonyApp(App[None]):
         arrive here. Ctrl-C and Ctrl-D are bindings and never reach it, which
         is what stops an interrupt mid-turn from being read as text.
         """
+        if self._pending_confirm:
+            # The confirmation owns the keyboard. Anything that is not y/a/n is
+            # a decline rather than a stray keystroke reaching the transcript,
+            # because "no" is the only safe reading of a key pressed while a
+            # destructive tool is waiting.
+            event.stop()
+            self._answer_confirm(event.key)
+            return
         if event.key == "enter" and not event.character:
             event.stop()
             self._submit()
-        elif event.key == "escape" and self._pending_dialog:
-            self._answer("n")
+        elif event.key == "escape" and self._pending_ask:
+            self._answer("")
         elif event.key == "ctrl+1":
-            self._set("mode.set", {"mode": "chat"}, "mode")
+            self._pick_mode()
+        elif event.key == "ctrl+2":
+            self._pick_model()
         elif event.key == "ctrl+3":
-            self._set("permission.set", {"permission": "high"}, "permission")
+            self._pick_permission()
         elif event.key == "ctrl+4":
             self._refresh_context()
+        elif event.key == "escape" and self._picker_action:
+            self._close_picker()
 
     def _submit(self) -> None:
         composer = self.query_one("#composer", TextArea)
         text = composer.text.strip()
+        if self._pending_ask:
+            composer.text = ""
+            self._answer(text)
+            return
         if not text:
             return
         composer.text = ""
-        if self._pending_dialog:
-            self._answer(text)
-            return
         if text.startswith("/"):
             self._slash(text)
             return
@@ -402,23 +476,157 @@ class TonyApp(App[None]):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _answer(self, text: str) -> None:
-        """Answer whatever the turn is suspended on."""
-        call_id = self._pending_dialog
-        self._close_dialog()
+    def _answer_confirm(self, key: str) -> None:
+        """Answer a confirmation from a keypress.
+
+        ``a`` raises the session's permission level rather than remembering one
+        tool, because `confirm.respond` takes a bool and there is no per-tool
+        allowlist in the protocol. It says so before doing it, for the same
+        reason the line REPL does: a user who believes "always" has trusted one
+        tool has in fact trusted everything for this session.
+        """
+        call_id = self._pending_confirm
         if not call_id:
             return
-        if call_id == "confirm":
-            yes = text.strip().lower() in {"y", "yes", "a", "always", "1", "true"}
-            self._client_call("confirm.respond", {"id": "", "confirmed": yes})
+        lowered = key.strip().lower()
+        if lowered in {"a", "always"} and not self._raise_permission():
             return
-        self._client_call("user.respond", {"id": call_id, "answer": text})
+        confirmed = lowered in {"y", "yes", "a", "always", "1", "true"}
+        self._client_call("confirm.respond", {"id": call_id, "confirmed": confirmed})
+
+    def _raise_permission(self) -> bool:
+        """Step the session up one level, having said what that means."""
+        listing = self.client.call("permission.list") or {}
+        levels = listing.get("permissions") or []
+        current = str(listing.get("permission", ""))
+        order = [str(item.get("name")) for item in levels if isinstance(item, dict)]
+        if current not in order or order.index(current) + 1 >= len(order):
+            self._notice("Already at the highest level; confirming this once.")
+            return True
+        target = order[order.index(current) + 1]
+        self._notice(
+            f"'always' raises this session to {target} -- every tool allowed, "
+            "not just this one.",
+            "warn",
+        )
+        self._client_call("permission.set", {"permission": target})
+        self._poll_state()
+        return True
+
+    def _answer(self, text: str) -> None:
+        """Answer an open question, or decline it with nothing."""
+        ask_id = self._pending_ask
+        self._close_dialog()
+        if not ask_id:
+            return
+        self._client_call("user.respond", {"id": ask_id, "answer": text})
 
     def _client_call(self, method: str, params: dict[str, Any]) -> None:
         try:
             self.client.call(method, params, timeout=30)
         except CoreError as exc:
             self._notice(str(exc), "error")
+
+    def _open_picker(
+        self,
+        title: str,
+        entries: list[tuple[str, str]],
+        current: str,
+        action: tuple[str, str, dict[str, Any]],
+    ) -> None:
+        """Offer a list, with the current value marked.
+
+        ``action`` is ``(label, method, param)``, so one handler serves every
+        picker and adding a fourth is one call rather than a new method. The
+        options come from the core's own list methods and never from a table
+        here: `mode.list` says explicitly that a mode the frontend cannot see
+        is a mode nobody can select, and a second table would drift.
+        """
+        picker = self.query_one("#picker", OptionList)
+        picker.clear_options()
+        picker.border_title = title
+        for name, detail in entries:
+            label = f"{name}  {detail}" if detail else name
+            if name == current:
+                label = f"* {label}"
+            picker.add_option(label)
+        self._picker_action = action
+        picker.remove_class("hidden")
+        picker.focus()
+
+    def _close_picker(self) -> None:
+        self._picker_action = None
+        self.query_one("#picker", OptionList).add_class("hidden")
+        self.query_one("#composer", TextArea).focus()
+
+    def on_option_list_option_selected(self, event: Any) -> None:
+        option = event.option
+        text = str(getattr(option, "prompt", "") or "")
+        # The mark and the detail are stripped back to the bare name, which is
+        # what the core wants as a value.
+        name = text.lstrip("* ").split("  ")[0].strip()
+        action = self._picker_action
+        self._close_picker()
+        if action is None or not name:
+            return
+        label, method, template = action
+        params = {key: (name if value is None else value) for key, value in template.items()}
+        self._set(method, params, label)
+
+    def _pick_mode(self) -> None:
+        payload = self.client.call("mode.list") or {}
+        modes = payload.get("modes") or []
+        entries = [
+            (str(m.get("name", "")), str(m.get("description", "")))
+            for m in modes
+            if isinstance(m, dict)
+        ]
+        self._open_picker(
+            "mode", entries, str(payload.get("mode", "")), ("mode", "mode.set", {"mode": None})
+        )
+
+    def _pick_permission(self) -> None:
+        payload = self.client.call("permission.list") or {}
+        levels = payload.get("permissions") or []
+        entries = [
+            (str(item.get("name", "")), str(item.get("description", "")))
+            for item in levels
+            if isinstance(item, dict)
+        ]
+        self._open_picker(
+            "permission",
+            entries,
+            str(payload.get("permission", "")),
+            ("permission", "permission.set", {"permission": None}),
+        )
+
+    def _pick_model(self) -> None:
+        try:
+            payload = self.client.call("models.list") or {}
+        except CoreError as exc:
+            self._notice(str(exc), "error")
+            return
+        models = payload.get("models") or []
+        entries = [
+            (
+                str(m.get("id", "")) if isinstance(m, dict) else str(m),
+                str(m.get("label", "")) if isinstance(m, dict) else "",
+            )
+            for m in models
+        ]
+        if not entries:
+            self._notice("The provider returned no models.", "warn")
+            return
+        # A model change is a re-bind: there is no `model.set`, and the
+        # provider is what holds the keyring entry, so the current provider's
+        # name is reused rather than switching providers by accident.
+        provider = str(self.state.get("provider") or "")
+        self._open_picker(
+            "model",
+            entries,
+            str(payload.get("current", "")),
+            ("model", "bind_provider", {"name": provider, "model": None}),
+        )
 
     def _slash(self, line: str) -> None:
         """Slash commands.
@@ -437,13 +645,22 @@ class TonyApp(App[None]):
             self.exit()
         elif command == "help":
             self.action_commands()
-        elif command == "mode" and argument:
-            self._set("mode.set", {"mode": argument}, "mode")
-        elif command == "permission" and argument:
-            self._set("permission.set", {"permission": argument}, "permission")
+        elif command == "mode":
+            self._set("mode.set", {"mode": argument}, "mode") if argument \
+                else self._pick_mode()
+        elif command == "permission":
+            self._set("permission.set", {"permission": argument}, "permission") \
+                if argument else self._pick_permission()
+        elif command == "model":
+            self._set("bind_provider",
+                      {"name": str(self.state.get("provider") or ""), "model": argument},
+                      "model") if argument else self._pick_model()
+        elif command == "trajectory":
+            self._notice(f"{len(self.turn.frames) if self.turn else 0} frames captured",
+                         "warn")
         else:
             self._notice(
-                f"/{command} is not here; ctrl+1 mode, ctrl+3 permission", "warn"
+                f"/{command} is not here; /mode /model /permission", "warn"
             )
 
     def _set(self, method: str, params: dict[str, Any], label: str) -> None:
@@ -459,8 +676,14 @@ class TonyApp(App[None]):
     # -- actions -------------------------------------------------------------
 
     def action_cancel(self) -> None:
-        if self._pending_dialog:
-            self._answer("n")
+        if self._pending_confirm:
+            self._client_call(
+                "confirm.respond", {"id": self._pending_confirm, "confirmed": False}
+            )
+            self._close_dialog()
+            return
+        if self._pending_ask:
+            self._answer("")
             return
         try:
             self.client.notify("cancel", {})
@@ -472,7 +695,8 @@ class TonyApp(App[None]):
     def action_commands(self) -> None:
         self._notice(
             "ctrl+c cancel · ctrl+d quit · ctrl+p commands\n"
-            "ctrl+1 chat mode · ctrl+3 permission high · ctrl+4 context"
+            "ctrl+1 mode · ctrl+2 model · ctrl+3 permission · ctrl+4 context\n"
+            "/mode /model /permission · escape closes a picker"
         )
 
 

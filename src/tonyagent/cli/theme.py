@@ -245,6 +245,52 @@ def build_css() -> str:
         border: round {c(DANGER)};
     }}
 
+    /* A confirmation is a real dialog, centred, and it takes the keyboard.
+       The window dims the page behind its own; a terminal cannot dim, so it
+       gets an opaque ground and a border in the one colour the state allows. */
+    #confirm-dialog {{
+        layer: dialog;
+        width: 56;
+        height: auto;
+        padding: 1 2;
+        background: {c(RAISED)};
+        border: round {c(WARN)};
+    }}
+    #confirm-dialog.confirm-destructive {{
+        border: round {c(DANGER)};
+    }}
+    #confirm-dialog.hidden {{
+        display: none;
+    }}
+
+    /* The pickers. Same shape as the dialog: a list the user picks from,
+       rather than a value typed at a prompt and refused if it is a near miss. */
+    #picker {{
+        layer: dialog;
+        width: 56;
+        height: 18;
+        background: {c(RAISED)};
+        border: round {c(ACCENT)};
+    }}
+    #picker.hidden {{
+        display: none;
+    }}
+
+    /* A file change. The header is the path and the counts; the diff below it
+       is coloured with the same `--traj-add` / `--traj-del` pair the window
+       uses, on the changed lines only -- a diff is mostly context, and
+       colouring all three makes the two halves hard to find. */
+    .change-head {{
+        height: auto;
+        margin: 0 0 0 1;
+    }}
+    .diff {{
+        height: auto;
+        margin: 0 0 0 1;
+        padding: 0 0 0 1;
+        background: {c(SURFACE)};
+    }}
+
     .error {{
         color: {c(DANGER)};
         height: auto;

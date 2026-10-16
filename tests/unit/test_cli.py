@@ -632,6 +632,115 @@ def test_the_throughput_figure_counts_what_actually_arrived():
     assert turn.rate() >= 0
 
 
+# --- the trajectory: what the core actually sends --------------------------
+
+
+def test_a_tool_result_is_read_as_a_result_not_a_string():
+    """`tool.completed` carries an object; the one-line summary wants a string.
+
+    Reading one as the other is how a diff silently disappears: the summary
+    path is satisfied by a preview of the JSON, and the trajectory path needs
+    `status`, `output`, `error` and `artifacts`, which are not in it.
+    """
+    from tonyagent.cli.widgets import ToolCall
+
+    call = ToolCall.from_result({
+        "result": {
+            "status": "success",
+            "output": "applied 1 edit",
+            "error": "",
+            "artifacts": [{
+                "type": "file_change",
+                "data": {"path": "app.py", "diff": "+x", "added": 1, "removed": 0},
+            }],
+        }
+    })
+    assert call.status == "success"
+    assert call.output == "applied 1 edit"
+    assert call.error == ""
+    assert len(call.changes) == 1
+    assert call.changes[0].path == "app.py"
+    assert call.changes[0].added == 1
+
+
+def test_a_file_change_with_no_diff_still_names_the_file():
+    """`added`/`removed` with no body happens, and the path is the useful part."""
+    from tonyagent.cli.widgets import ToolCall
+
+    call = ToolCall.from_result({
+        "result": {
+            "artifacts": [{"type": "file_change",
+                           "data": {"path": "a.py", "added": 3, "removed": 1}}],
+        }
+    })
+    assert call.changes[0].path == "a.py"
+    assert call.changes[0].removed == 1
+
+
+def test_a_tool_result_that_is_a_plain_string_still_renders():
+    """Not every tool returns the structured shape, and the summary line wants
+    the string. One is not a reason to lose the other."""
+    from tonyagent.cli.widgets import ToolCall
+
+    call = ToolCall.from_result({"result": "just text"})
+    assert call.result == "just text"
+    assert call.changes == []
+
+
+def test_a_diff_colours_only_the_changed_lines():
+    """A diff is mostly context. Colouring all three makes the two halves hard
+    to find, which is why `trajectory.css` colours only the changed ones."""
+    from tonyagent.cli import theme
+    from tonyagent.cli.widgets import DiffBlock, FileChange
+
+    diff = "--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new\n same"
+    rendered = DiffBlock(FileChange(path="a", diff=diff)).render()
+    styles = [str(span.style) for span in rendered.spans]
+
+    assert theme.TRAJ_ADD in styles, "the added line is not marked"
+    assert theme.TRAJ_DEL in styles, "the removed line is not marked"
+    assert theme.FG_MUTE in styles, "the context line is not dimmed"
+
+
+def test_a_long_diff_says_how_much_was_hidden():
+    from tonyagent.cli.widgets import DiffBlock, FileChange
+
+    diff = "\n".join(f"+line {n}" for n in range(80))
+    rendered = DiffBlock(FileChange(path="a", diff=diff)).render()
+    assert "more diff lines" in rendered.plain
+
+
+# --- the confirmation ------------------------------------------------------
+
+
+def test_a_destructive_confirmation_says_so_in_words():
+    """Not in colour alone.
+
+    `NO_COLOR` and a redirected stdout both strip the escape codes, and a
+    destructive tool that only announces itself in `--danger` would then be
+    announcing itself in nothing. The window says "destructive" for the same
+    reason.
+    """
+    from tonyagent.cli.widgets import ConfirmDialog
+
+    destructive = ConfirmDialog("delete_file", "secrets.env", True).render().plain
+    ordinary = ConfirmDialog("read", "a.py", False).render().plain
+
+    assert "destructive" in destructive
+    assert "destructive" not in ordinary
+    # And the word is still there with colour off.
+    assert "delete_file" in destructive
+
+
+def test_a_confirmation_offers_once_always_and_no():
+    from tonyagent.cli.widgets import ConfirmDialog
+
+    text = ConfirmDialog("write", "a.py", False).render().plain
+    assert "[y] once" in text
+    assert "[a] always" in text
+    assert "[n] no" in text
+
+
 # --- the client ------------------------------------------------------------
 
 
