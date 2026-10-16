@@ -27,9 +27,10 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 
 from rich.text import Text
+from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
@@ -391,6 +392,8 @@ class CommandPalette(ModalScreen[Optional[str]]):
     Returns the `run` name of the chosen command, or None.
     """
 
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "dismiss", "close", show=True)]
+
     DEFAULT_CSS = """
     CommandPalette {
         align: center middle;
@@ -552,6 +555,8 @@ class PickerDialog(ModalScreen[Optional[str]]):
     are disabled options, which is how an `OptionList` expresses a row that
     cannot be chosen -- and which is why Enter has to skip them.
     """
+
+    BINDINGS: ClassVar[list[Binding]] = [Binding("escape", "dismiss", "close", show=True)]
 
     DEFAULT_CSS = """
     PickerDialog { align: center middle; }

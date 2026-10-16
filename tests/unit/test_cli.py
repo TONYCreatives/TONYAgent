@@ -1471,6 +1471,120 @@ def test_the_picker_shows_the_numbers_and_the_current_row_included():
     asyncio.run(run())
 
 
+def test_escape_closes_both_dialogs():
+    """The regression.
+
+    Both dialogs defined `action_dismiss` and neither bound Escape to it. The
+    base `Screen` binds only tab and ctrl+c, and `Input` -- which has focus,
+    because it is the filter -- binds no Escape at all. So the key went nowhere
+    and a dialog could only be left by choosing something, which for the model
+    picker means a selection the user had not made.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+    from tonyagent.cli.widgets import CommandPalette, PickerDialog
+
+    for dialog in (PickerDialog, CommandPalette):
+        keys = {b.key for b in dialog.BINDINGS}
+        assert "escape" in keys, f"{dialog.__name__} cannot be dismissed"
+        assert any(b.action == "dismiss" for b in dialog.BINDINGS)
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            return {
+                "state": {"mode": "build", "model": "anthropic/claude-sonnet-4.5",
+                          "permission": "medium", "bound": True, "provider": "openrouter"},
+                "models.catalog": {
+                    "models": [{"id": "anthropic/claude-sonnet-4.5",
+                                "context_length": 200000, "pricing": {}}],
+                    "current": "anthropic/claude-sonnet-4.5",
+                },
+            }.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(86, 24)) as pilot:
+            await pilot.pause()
+            await pilot.press("ctrl+2")
+            await pilot.pause()
+            await pilot.pause()
+            assert type(app.screen).__name__ == "PickerDialog"
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.pause()
+            assert type(app.screen).__name__ != "PickerDialog", "escape did nothing"
+
+            await pilot.press("ctrl+shift+p")
+            await pilot.pause()
+            await pilot.pause()
+            assert type(app.screen).__name__ == "CommandPalette"
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.pause()
+            assert type(app.screen).__name__ != "CommandPalette", "escape did nothing"
+
+    asyncio.run(run())
+
+
+def test_escaping_a_picker_selects_nothing():
+    """Esc is a decline, not a choice of whatever happened to be highlighted.
+
+    Otherwise closing the picker by accident would bind the model under the
+    cursor, which is the opposite of what the key means.
+    """
+    pytest.importorskip("textual")
+
+    import asyncio
+
+    from tonyagent.cli.tui import TonyApp
+
+    bound: list[dict] = []
+
+    class _Client:
+        on_event = None
+
+        def call(self, method, params=None, timeout=None):
+            if method == "bind_provider":
+                bound.append(params or {})
+            return {
+                "state": {"mode": "build", "model": "anthropic/claude-sonnet-4.5",
+                          "permission": "medium", "bound": True, "provider": "openrouter"},
+                "models.catalog": {
+                    "models": [
+                        {"id": "anthropic/claude-sonnet-4.5", "context_length": 200000,
+                         "pricing": {}},
+                        {"id": "openai/gpt-5", "context_length": 400000, "pricing": {}},
+                    ],
+                    "current": "anthropic/claude-sonnet-4.5",
+                },
+            }.get(method, {})
+
+        def notify(self, method, params=None):
+            return {}
+
+    async def run() -> None:
+        app = TonyApp(_Client())
+        async with app.run_test(size=(86, 24)) as pilot:
+            await pilot.pause()
+            await pilot.press("ctrl+2")
+            await pilot.pause()
+            await pilot.pause()
+            await pilot.press("escape")
+            await pilot.pause()
+            await pilot.pause()
+            assert bound == [], f"escape bound a model: {bound}"
+
+    asyncio.run(run())
+
+
 # --- the client ------------------------------------------------------------
 
 
