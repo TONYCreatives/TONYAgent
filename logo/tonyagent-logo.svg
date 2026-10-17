@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!--
+    TONYAgent logo: the app's mark on black.
+
+    The geometry is `app/icons/icon.svg`'s, deliberately and exactly. This is the
+    logo and that is the icon, and a brand whose two faces are drawn separately
+    drifts apart. Two things change, both of them about the ground rather than
+    the letter:
+
+      * The tile is gone. The icon needs one -- a taskbar slot is a square that
+        has to hold its own beside other squares -- while a logo is placed on
+        whatever the page already is, and here that is black.
+      * The ground is #000000 rather than the tile's blue-to-violet gradient, so
+        the eyes read as holes cut through the crossbar instead of as dark dots
+        on a coloured field.
+
+    The numbers are the artwork's own, unchanged:
+      crossbar  x 162..862 (700 wide), y 168..344 (176 tall)
+      stem      x 410..614 (204 wide), y 344..856 (512 tall)
+      eyes      r 52, centres (348, 260) and (676, 260)
+
+    `logo/tonyagent-logo.png` is this file at 2048x2048, rendered by scaling
+    every coordinate by two. It is a render, not a second original: change the
+    geometry here and re-render, never edit the PNG.
+
+    `AppMark.tsx` draws the same two rects and two circles, and
+    `AppMark.test.tsx` holds it against `icon.svg`, so the window, the pet, the
+    icon and this logo all stay one drawing.
+  -->
+  <rect width="1024" height="1024" fill="#000000"/>
+  <rect x="162" y="168" width="700" height="176" fill="#ffffff"/>
+  <rect x="410" y="344" width="204" height="512" fill="#ffffff"/>
+  <circle cx="348" cy="260" r="52" fill="#000000"/>
+  <circle cx="676" cy="260" r="52" fill="#000000"/>
+</svg>

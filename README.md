@@ -2,6 +2,8 @@
 
 <div align="center">
 
+<img src="logo/tonyagent-logo.png" alt="TONYAgent" width="180">
+
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)
