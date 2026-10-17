@@ -10,15 +10,15 @@
 
 **A local-first desktop AI agent for automating programming tasks**
 
-[Features](#-features) • [Quick Start](#-quick-start) • [Installation](#-installation) • [Configuration](#-configuration) • [Usage](#-usage) • [Architecture](#-architecture) • [Development](#-development) • [Troubleshooting](#-troubleshooting) • [License](#-license)
+[Features](#features) • [Quick Start](#quick-start) • [Installation](#installation-1) • [Configuration](#configuration) • [Usage](#usage) • [Architecture](#architecture) • [Development](#development) • [Troubleshooting](#troubleshooting) • [License](#license)
 
 </div>
 
 ---
 
-## ✨ Features
+## Features
 
-### 🤖 Multi-Provider LLM Support
+### Multi-Provider LLM Support
 Connect to **two aggregator providers** with one OpenAI-compatible wire format:
 - **OpenRouter** (one key, most hosted models)
 - **OpenCode Go** (a second aggregator)
@@ -29,7 +29,7 @@ values. The single-vendor dialects that used to be listed here are gone: they
 answered the model list with an id and nothing else, so keeping them would have
 meant a second catalogue implementation returning "unknown" for most fields.
 
-### 🎨 Modern Desktop UI
+### Modern Desktop UI
 - Built with **React** in a native window: the interface is HTML and CSS, rendered by the system webview with no browser around it (`pywebview`, in `src/tonyagent/window/`)
 - **Dark theme** with shared design tokens for colour, spacing, typography, borders and motion
 - Real-time streaming chat with token-by-token display
@@ -41,7 +41,7 @@ meant a second catalogue implementation returning "unknown" for most fields.
 - **Desktop pet**: a small always-on-top **circle** that says what the turn is doing right now — "Thinking", "Running read_file", "Needs your approval" — so a long turn can run while you are in another window. It is cut to a circle with a window region *and* has its system shadow turned off: the region takes the corners away, and DWM would otherwise paint the drop shadow to the window's rectangle and fill those corners back in with a dark halo. The corners are really gone — the desktop shows through, and a click there goes to whatever is behind instead of to the pet. The character is the app's own mark, and it *behaves*: it blinks, it works at a keyboard while the agent works, it hops when it wants you, and it falls asleep if nothing has happened for a while. Drag it anywhere by its artwork — the OS's own move loop, so it snaps like a normal window — and it comes back where you left it. It never takes focus (asking for attention must not steal the keyboard) and clicking it brings the app back. It is off until you turn it on from the rail
 - **Account view**: the usage panel counts what *this app* sent, which is not your provider's real total. One button opens your provider's own dashboard — activity, credits, API keys — in a browser window the app owns, with a persistent sign-in profile. It is a closed set of views, and the agent has no tool that can reach it
 
-### 🛠️ Rich Tool Ecosystem (41 Tools)
+### Rich Tool Ecosystem (41 Tools)
 The core registers 41 tools across six categories. The registry is the source of truth; names here are grouped by capability.
 
 | Category | Count | Tools |
@@ -53,7 +53,7 @@ The core registers 41 tools across six categories. The registry is the source of
 | **Browser** | 10 | `browser_navigate`, `browser_click`, `browser_type`, `browser_eval`, `browser_snapshot`, `set_viewport_size`, `browser_get_text`, `browser_wait_for`, `browser_scroll`, `browser_screenshot` |
 | **Utility & planning** | 14 | `take_screenshot`, `todo_write`, `create_goal`, `get_goal`, `update_goal`, `ask_user_question`, `present`, `subagent`, `send_message`, `subagent_fork`, `list_agents`, `interrupt_agent`, `list_skills`, `run_skill` |
 
-### 🔒 Security-First Design
+### Security-First Design
 - **API keys stored in OS keyring** (Windows Credential Manager, macOS Keychain, Linux Secret Service)
 - **Sandboxed execution** via Docker or WSL2; local mode is available with execution tools disabled. Windows Sandbox is currently a non-isolating stub and is not an available isolation backend
 - **Command allowlist/denylist** for shell operations
@@ -61,7 +61,7 @@ The core registers 41 tools across six categories. The registry is the source of
 - **Configurable confirmation** for destructive operations
 - **Batched tool calls**: every mode's system prompt states that independent tool calls may be issued together in one message, and the core runs them concurrently. Requests are metered on most plans (OpenRouter's free tier allows 20 requests a minute and 1,000 a day), so a turn that reads three files spends one round trip rather than three
 
-### 📦 Sandboxed Execution
+### Sandboxed Execution
 - **Docker backend**: Full Linux environment with network isolation and per-container limits
 - **WSL backend**: The Docker-free path -- the same sandbox server, run inside your WSL2 distro's network and PID namespaces, with the project folder live via the /mnt drive mount
 - **Windows Sandbox**: backend stub only; it does not provide isolation and is not selected as a sandbox
@@ -95,7 +95,7 @@ backend to prefer.
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - **Python 3.11+**
@@ -158,7 +158,7 @@ executed".)
 
 ---
 
-## 📦 Installation
+## Installation
 
 ### From Source (Recommended)
 
@@ -212,7 +212,7 @@ pip install -e ".[packaging]"
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 TONYAgent uses a **TOML-based configuration** with secure keyring storage for secrets. The current desktop interface is React in a `pywebview` window, backed by a separate headless Python core; there is no current Tkinter UI or Tauri shell.
 
@@ -270,7 +270,7 @@ Keys are **never written to config files**. Add and manage them in Settings; val
 
 ---
 
-## 💡 Usage
+## Usage
 
 ### Basic Workflow
 
@@ -320,7 +320,7 @@ When the AI wants to execute a potentially destructive action (file deletion, sh
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 The native Python window host serves the React/Vite bundle, exposes a narrow `pywebview` bridge, and owns a headless Python core process. The bridge talks to the core over newline-delimited JSON (JSONL) on stdio.
 
@@ -368,7 +368,7 @@ The native Python window host serves the React/Vite bundle, exposes a narrow `py
 
 ---
 
-## 🛠️ Development
+## Development
 
 ### Setup
 
@@ -436,7 +436,7 @@ tonyagent/
 
 ---
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
@@ -472,7 +472,7 @@ rm ~/.config/tonyagent/config.toml
 
 ---
 
-## 📚 Related Documentation
+## Related Documentation
 
 | Document | Description |
 |----------|-------------|
@@ -483,7 +483,7 @@ rm ~/.config/tonyagent/config.toml
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/amazing-feature`
@@ -506,7 +506,7 @@ Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
 
 ---
 
-## 📄 License
+## License
 
 **MIT License** - See [LICENSE](LICENSE) for details.
 
@@ -536,7 +536,7 @@ SOFTWARE.
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - **[Pydantic](https://github.com/pydantic/pydantic)** - Data validation
 - **[Loguru](https://github.com/Delgan/loguru)** - Beautiful logging
@@ -547,8 +547,8 @@ SOFTWARE.
 
 <div align="center">
 
-**Made with ❤️ by [Tony Lee](https://github.com/tonylee)**
+**Made by [Tony Lee](https://github.com/tonylee)**
 
-⭐ Star this repo if you find it useful!
+Star this repo if you find it useful!
 
 </div>
