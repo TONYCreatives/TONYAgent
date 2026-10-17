@@ -14,7 +14,10 @@
 param(
     # Where to put it. The repository root by default, beside the launcher.
     [string]$Destination = (Split-Path -Parent $PSScriptRoot),
-    [string]$Name = 'TONYAgent.lnk'
+    [string]$Name = 'TONYAgent.lnk',
+    # Which frontend the shortcut opens. `window` is the desktop app. Pass an
+    # empty string for the launcher's own default, which is the terminal.
+    [string]$Arguments = 'window'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -44,6 +47,14 @@ $shortcut = $shell.CreateShortcut($target)
 # `pywebview` is installed before it starts anything. A shortcut straight to the
 # interpreter would be a second, worse entry point that skipped both.
 $shortcut.TargetPath = $launcher
+# `window`, because the launcher's no-argument default is the terminal
+# interface. Everything the comment above describes -- the rebuild when the
+# frontend is behind, and the `pywebview` pre-flight -- lives on the window path
+# and is skipped by the terminal one, so a shortcut that passed no argument
+# would not be doing what this file exists to do. The launcher's default is
+# right for a `cmd` window someone opened on purpose; a double-click on an icon
+# is asking for the app.
+$shortcut.Arguments = $Arguments
 # The launcher's own `cd /d "%~dp0"` handles the working directory, but this is
 # what the shortcut's Properties sheet shows, and leaving it blank shows the
 # Windows directory instead.
