@@ -30,47 +30,50 @@
  * reason the window stopped looking borrowed. The ladder used to be a warm
  * green-grey (#1c1d1c, #292b2a, #3b3e3a), counted out of a capture of the
  * reference app, and a chroma of three or four is enough to make two windows
- * read as the same window. Here the accent is the only chroma on screen, so it
- * means "this application" rather than "something coloured".
+ * read as the same window.
+ *
+ * The accent is achromatic too, and that is the later decision this file
+ * records. The window is black, white and grey, and the **only** chroma left on
+ * screen is meaning: the success dot, the danger button, the warning badge and
+ * the diff's two inks. Colour used to say "this application"; it now says only
+ * "this succeeded" or "this went wrong", which is a smaller and more useful
+ * claim -- and it is why the status colours were kept when the brand colour
+ * went.
  *
  * It also closed a real defect rather than a matter of taste: --fg-mute was
  * #7c807a, which is 4.21:1 on the old field and therefore short of the 4.5:1
  * that small text needs — and it is used at 11px and below. #8a8a8a is 5.04:1.
  *
- * --- the accent: read out of this app's own icon -------------------------
+ * --- the accent: white, and no longer read out of the icon ---------------
  *
- * `app/src-tauri/icons/icon.svg` is a white prompt on a #2f6feb ground, and
- * #2f6feb is **99.25% of the opaque, non-white pixels across the fifteen
- * raster sizes** (77.57% of all opaque pixels, the rest being the white
- * glyph). Around
- * the edge of the glyph is an antialias ramp of lighter blues — #6393f0,
- * #7da5f2, #97b7f5, #cbdbfa — and those are the icon's own values.
+ * This accent was #6393f0, and it was **derived rather than chosen**: it was
+ * the darkest step of the app icon's own antialias ramp that still cleared
+ * 4.5:1, so the window wore a colour the artwork already wore. It is white now,
+ * because the window is black, white and grey by request. That breaks the
+ * derivation deliberately, and what it costs is worth stating where the
+ * derivation used to be.
  *
- * The share was 88.7% before the mark was redrawn with flat terminals, and
- * that is the one figure here that moves with the glyph rather than with the
- * palette: a rounded cap antialiases over half its length, a square one across
- * two pixels, so the ground gained ten points of pure colour and the ramp
- * thinned out. The accent below did not move. Anyone who redraws the mark again
- * has to re-measure this line and nothing else in the section.
+ *   * The app icon still carries its blue-to-violet tile. A taskbar slot is a
+ *     square competing with other squares, and the tile is what makes it hold
+ *     its own there -- so the icon is now the one surface in this project that
+ *     is not achromatic. The logo (`logo/tonyagent-logo.svg`) is the same mark
+ *     on black with no tile, and the desktop shortcut wears that, so the
+ *     shortcut and the window agree and only the taskbar differs.
+ *   * Nothing above needed re-measuring to make the swap. The icon's ramp was
+ *     an argument for a value, not a constraint on one, and every contrast
+ *     floor in this file is met by white with more room than #6393f0 had.
  *
- * The ground itself is not the token. #2f6feb is 3.81:1 on --bg (#1a1a1a): fine
- * as a fill, short of what body-sized text needs, and this accent is also small
- * coloured text (`.permchoice-gain`, `.linkish`, the settings hints). So the
- * token is the **darkest ramp step that still clears 4.5:1**, #6393f0, at
- * 5.77:1 on the new field, with a near-black --accent-fg at 6.28:1 on top of
- * it.
+ * #ffffff is 15.9:1 on --bg (#1a1a1a) -- far clear of the 4.5:1 that the small
+ * coloured text wearing it needs -- and it is the fill of the send button, the
+ * accent button and the mode pills. --accent-fg is pure black on top of it, at
+ * 21:1.
  *
- * Two things make this worth stating rather than assuming:
- *
- *   * Both values are already in the artwork. A palette invented beside this
- *     one would not be this application's; this one ships on every icon the
- *     user sees, in the taskbar and the installer and the window frame.
- *   * The ramp is a property of the *edge* between that white and that blue,
- *     not of the glyph. Redesigning the mark left the ramp step where it was,
- *     which is why the accent is unchanged by the redraw; what the redraw did
- *     change is how much of the icon is ramp rather than ground. Anyone
- *     changing the ground must re-derive this; anyone changing the glyph only
- *     has to re-measure the percentage above.
+ * `--accent-bright` steps *down* rather than up, to a light grey, and that is
+ * the ladder bending rather than breaking: it existed as one step further along
+ * the ramp for accent-coloured text on a raised chip, and there is no step above
+ * white. It keeps its own name because its jobs are still its own -- the warning
+ * badge's legibility and the focus ring -- and because the ring has to differ
+ * from the white fill of the buttons it rings. See its declaration.
  *
  * Dark only, and declared as such. `color-scheme: dark` is what stops the
  * browser's own scrollbars, form controls and scrollbar-corner painting
@@ -155,21 +158,24 @@
   --fg-mute: #8a8a8a;
 
   /*
-   * The accent, read out of the shipped icon artwork -- see the header. The
-   * pair is the whole contract: `--accent` paints, `--accent-fg` is the ink on
-   * top of it. They are declared together because a fill picked without its
-   * foreground is how a palette ends up with two readable colours and a third
-   * that is neither.
+   * The accent, white -- see the header for what the swap costs and what it
+   * does not. The pair is the whole contract: `--accent` paints, `--accent-fg`
+   * is the ink on top of it. They are declared together because a fill picked
+   * without its foreground is how a palette ends up with two readable colours
+   * and a third that is neither.
    *
-   * Every surface that takes chroma takes `--accent`. The `.notice` tint is the
-   * one that used to spell the old sage out by hand as `rgba(186,205,169,0.1)`
-   * -- a value a swap could not reach, which is exactly what it did.
+   * Every surface that takes the accent takes `--accent`. The `.notice` tint is
+   * the one that used to spell an old sage out by hand as
+   * `rgba(186,205,169,0.1)` -- a value a swap could not reach, which is exactly
+   * what it did.
    *
-   * 5.77:1 on `--bg`, and 6.28:1 for the ink on top of it. Changing the field
-   * changed the first number and not the token: the ramp belongs to the icon.
+   * 15.9:1 on `--bg`, and 21:1 for the ink on top of it. Both clear the 4.5:1
+   * the small text wearing them needs by a wide margin; the token is white
+   * because the window is, not because white was the brightest value that
+   * happened to pass.
    */
-  --accent: #6393f0;
-  --accent-fg: #0b1020;
+  --accent: #ffffff;
+  --accent-fg: #000000;
   /*
    * The trajectory's diff and status inks: green for a line added, red for one
    * removed, each with a wash the text sits on. Tokens like everything else --
@@ -191,29 +197,34 @@
    * rules (and their contrast maths) along with it. The ramp is a *brand* move,
    * not a control move, so it lives in its own token.
    *
-   * It is the pair this palette carried and then deleted: `--accent`'s own blue
-   * rotated 36 degrees toward violet at the far end. The rotation is the one
-   * invention here -- the icon is a white prompt on a single blue -- and it is
-   * back on purpose, scoped to the wordmark and the mark's glow, the one place
-   * the app means to look like a brand. Both stops clear the *text* floor on the
-   * field (5.77:1 and 5.41:1), because the wordmark writes the ramp as text and
-   * is held to the text floor rather than the graphic one; the accent suite
-   * asserts each stop. 135 degrees -- top-left to bottom-right -- because a
-   * wordmark reads left to right and a diagonal falloff does not read as a
-   * scanline behind the letters.
+   * It was the accent's blue rotated 36 degrees toward violet, and it is white
+   * falling to grey now -- the same shape of idea, one value at each end read
+   * across the wordmark, with nothing left to rotate. It is still the only
+   * gradient in the palette and still scoped to the wordmark and the mark's
+   * glow, the one place the app means to look like a brand. Both stops clear
+   * the *text* floor on the field (15.9:1 and 5.41:1), because the wordmark
+   * writes the ramp as text and is held to the text floor rather than the
+   * graphic one; the accent suite asserts each stop. 135 degrees -- top-left to
+   * bottom-right -- because a wordmark reads left to right and a diagonal
+   * falloff does not read as a scanline behind the letters.
    */
-  --grad-accent: linear-gradient(135deg, #6393f0, #9b7cf0);
+  --grad-accent: linear-gradient(135deg, #ffffff, #b9b9b9);
   /*
-   * The glow around the first-run mark: the accent at 34%, as a drop-shadow.
+   * The glow around the first-run mark: the accent at 22%, as a drop-shadow.
    *
    * `filter: drop-shadow` rather than a gradient halo behind the glyph, because
    * a shadow hugging the strokes *is* the glow -- a radial gradient behind the
    * box would spill past the artwork's own air and read as a second, rectangular
-   * object. Held under 40% so it is atmosphere and not a second mark. Its own
-   * token so the glow and the flat fill move with the accent together, rather
-   * than the colour being written out a second time where it cannot be swapped.
+   * object. Its own token so the glow and the flat fill move with the accent
+   * together, rather than the colour being written out a second time where it
+   * cannot be swapped.
+   *
+   * 22% and not the blue's 34%: a white glow is made of the same light the glyph
+   * is, so at the old alpha it stops reading as atmosphere around a mark and
+   * starts reading as a second, blurrier one. The suite caps it at 50%; this is
+   * well inside that, and the number is set by the eye rather than by the cap.
    */
-  --accent-glow: rgb(99 147 240 / 0.34);
+  --accent-glow: rgb(255 255 255 / 0.22);
   /*
    * `--accent-bright` further down is the step that keeps *text* legible on a
    * raised chip; the fill (`--accent`), the brand ramp (`--grad-accent`) and the
@@ -227,24 +238,54 @@
    * One flat tint rather than a gradient, so a selected row is one pixel value
    * and not two. Low alpha because these sit under text, and a container bright
    * enough to be noticed is bright enough to cost the text on it its contrast.
-   */
-  --wash: rgb(99 147 240 / 0.16);
-  /*
-   * One step further up the same icon ramp, for accent-coloured *text* that
-   * sits on a surface the accent itself cannot survive.
    *
-   * `--accent` is 5.77:1 on the field, which is fine, but a badge is a small
-   * label on a raised chip rather than on the field, and there the accent is
-   * 3.6:1 — under the small-text floor. #97b7f5 is the next ramp step and is
-   * 5.4:1 on `--chip`. Same artwork, same derivation, one step along; there is
-   * no second palette here either.
+   * **The alpha is at its ceiling, and the ceiling is the timestamp.** A white
+   * wash lifts the surface it is painted on, which is the opposite of what the
+   * blue one did, so this value is bounded from above by `--fg-dim` needing
+   * 4.5:1 on that pixel: composited over `--bg` it lands at #3c3c3c and measures
+   * 4.64:1, and 0.15 is the last step that clears the floor -- 0.16 lands at
+   * #3f3f3f and fails it at 4.43:1. Raising this is not a taste decision but a
+   * contrast one, and `layout.test.ts` fails on the ratio rather than on the
+   * alpha.
+   *
+   * What that costs is the old way of telling a *selected* row from a *hovered*
+   * one. Those used to differ by hue -- the wash carried chroma and `--hover`
+   * is achromatic -- and they cannot any more, because the wash is achromatic
+   * too. They differ by lightness now, #3c3c3c against `--hover`'s #383838,
+   * which is **1.06:1**: visible when the two are side by side, and the most
+   * the text floor allows. Note how tight that is: at alpha 0.13 the wash
+   * composites to #383838 exactly, so a later tweak of one step in either
+   * direction erases the distinction rather than merely weakening it. A
+   * selection that has to read at a glance wants a second signal -- a rule, a
+   * weight change -- and that is a deliberate follow-up rather than something
+   * this token can carry.
    */
-  --accent-bright: #97b7f5;
+  --wash: rgb(255 255 255 / 0.15);
+  /*
+   * A light grey, not the accent's white, and that is the ladder bending rather
+   * than breaking.
+   *
+   * It was one step further *up* the icon's ramp, for accent-coloured text on a
+   * surface the accent itself could not survive -- a badge is a small label on
+   * a raised chip rather than on the field. White is the ceiling and there is no
+   * step above it, so the step goes down instead: #d4d4d4 is 7.3:1 on `--chip`
+   * (#3d3d3d), where #6393f0 managed 3.6:1 and white manages 10.9:1.
+   *
+   * **Why not white, when white would also pass every floor.** Because
+   * `--focus-ring` points at this token, and the ring has to differ from the
+   * fill of the buttons it rings -- the send button and the accent button are
+   * `--accent`, which is white. A white ring on a white button is 1:1 and would
+   * vanish on exactly the controls that most need marking. The suite asserts the
+   * two are different values rather than trusting the two-pixel offset that also
+   * separates them; see the focus rule for that half.
+   */
+  --accent-bright: #d4d4d4;
   /*
    * The ring a keyboard user sees. Its own name because its job is its own:
-   * the permission badge's legibility and the focus ring's are different
-   * requirements that happen to land on the same ramp step, and the day one of
-   * them moves is the day they must not move together. See the focus rule.
+   * the warning badge's legibility and the focus ring's are different
+   * requirements that happen to land on the same value, and the day one of them
+   * moves is the day they must not move together. See the focus rule, which is
+   * where the ring's one problem with a white accent is written down.
    */
   --focus-ring: var(--accent-bright);
 
@@ -652,14 +693,16 @@
    * stated here so an edge can be lit without a shadow under it.
    *
    * `--glass-blur` and `--glass-saturate` are single tokens so no panel can be
-   * frosted to a different degree than its neighbours; the saturation boost is
-   * what keeps a colour behind frosted glass from washing out to grey.
+   * frosted to a different degree than its neighbours. The saturation was 150%,
+   * which kept a colour seen through frosted glass from washing out to grey;
+   * there is no colour left behind the glass to keep, so it is 100%. A boost
+   * that cannot do anything is worse than no boost: it reads like a decision.
    */
   --glass-panel: rgb(36 36 36 / 0.75);
   --glass-panel-strong: rgb(42 42 42 / 0.82);
   --glass-edge: rgb(255 255 255 / 0.1);
   --glass-blur: 22px;
-  --glass-saturate: 150%;
+  --glass-saturate: 100%;
   /*
    * The texture, as opposed to the tint and the blur -- and now texture
    * literally rather than only by implication.
@@ -700,20 +743,24 @@
   /*
    * The field the whole window sits on, and it is not a flat fill.
    *
-   * Two very low-alpha accent glows over `--bg` -- the icon's blue top-left and
-   * the gradient's violet bottom-right -- give the frosted surfaces above them
-   * something to gather instead of a dead, even black. That gathering is what
-   * makes glass read as glass; without it a blurred panel over a flat field is
-   * just a panel.
+   * Two very low-alpha glows over `--bg` -- top-left and bottom-right -- give
+   * the frosted surfaces above them something to gather instead of a dead, even
+   * black. That gathering is what makes glass read as glass; without it a
+   * blurred panel over a flat field is just a panel.
    *
-   * Both stops are under 6% alpha on purpose. This is depth, not decoration: the
-   * moment either glow is detectable as a colour it has stopped being a shadow
-   * of the field and started competing with the accent for the one job the
-   * accent is allowed to have.
+   * Both were the accent's blue and the gradient's violet, and both are white
+   * now, at the alphas they already had. The alphas are the whole of the effect
+   * and did not need to change: what a glow has to be is *not a flat field*,
+   * and a white one does that as well as a coloured one did -- it simply stops
+   * being a second place the brand colour appears.
+   *
+   * Both stops stay under 6% on purpose. This is depth, not decoration: the
+   * moment either glow is detectable as anything but a lift in the black it has
+   * stopped being a shadow of the field and started being a surface of its own.
    */
   --app-field:
-    radial-gradient(130% 90% at 16% -10%, rgb(99 147 240 / 0.05), transparent 58%),
-    radial-gradient(120% 100% at 104% 116%, rgb(155 124 240 / 0.045), transparent 55%),
+    radial-gradient(130% 90% at 16% -10%, rgb(255 255 255 / 0.05), transparent 58%),
+    radial-gradient(120% 100% at 104% 116%, rgb(255 255 255 / 0.045), transparent 55%),
     var(--bg);
 }
 
@@ -801,16 +848,17 @@
  * mouse: the ring is for the keyboard, and a ring on every click would teach
  * people to ignore it.
  *
- * `--accent-bright` and not `--accent`, which also clears 3:1 on every surface
- * and would have been the shorter answer. `--accent` is the *fill* of the send
- * button, the accent button and the mode pills, and a ring in the same colour
- * as the control it is ringing disappears into it. `--accent-bright` is the
- * next step up the same icon ramp -- 8.6:1 on the field, 5.4:1 on the selected
- * chip -- so it is this application's colour rather than a second accent.
+ * `--accent-bright` and not `--accent`. The ring must not be the fill of the
+ * control it rings -- `--accent` is the send button, the accent button and the
+ * mode pills -- and that mattered less before this palette than it does now: the
+ * accent is white, so the ring had to step *down* to a light grey rather than up
+ * the ramp to a brighter blue. #d4d4d4 is 7.3:1 on the raised chip and 11.7:1
+ * on the field.
  *
  * The offset is positive and load bearing. Drawn at a negative offset the ring
- * would sit on the control's own fill, where it measures 1.49:1 against
- * `--accent` and vanishes on exactly the buttons that most need marking.
+ * would sit on the control's own fill, where a light grey on a white button is
+ * 1.5:1 and would vanish on exactly the buttons that most need marking. At +2px
+ * it is on the field instead.
  */
 :focus-visible {
   outline: 2px solid var(--focus-ring);

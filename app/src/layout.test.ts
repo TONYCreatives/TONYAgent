@@ -572,22 +572,21 @@ describe("the palette is ours", () => {
     assert.deepEqual(offenders, [], "raw lengths outside the scale tokens");
   });
 
-  test("the accent is this app's own, read off its own icon", () => {
-    // Pinned to a value rather than a property, and deliberately so. Every
-    // other assertion here survived the palette changing; this one exists to
-    // fail loudly when the *artwork* changes instead, because the accent is not
-    // a free parameter -- it is a value read out of app/icons/*.png
-    // and a re-drawn icon invalidates it.
-    //
-    // #2f6feb is the ground, 99.25% of the opaque non-white pixels across the
-    // fifteen raster sizes, and #6393f0 is the darkest step on its own
-    // antialias ramp that still clears 4.5:1. The ground itself is only 3.81:1
-    // on --bg (#1a1a1a) and this accent also paints small text. Both values are
-    // the icon's own, and neither moved when the mark was redrawn flat: the
-    // redraw changed how much of the icon is ground rather than ramp, which is
-    // why only the percentage in tokens.css needed re-measuring.
-    assert.equal(tokens("accent"), "#6393f0");
-    assert.equal(tokens("accent-fg"), "#0b1020");
+  test("the accent is white, and the window has no brand colour", () => {
+    // This used to pin the accent to #6393f0 and say why: the value was read
+    // out of the app icon's own antialias ramp, so it was derived rather than
+    // chosen, and a redrawn icon invalidated it. That derivation is gone on
+    // purpose -- the window is black, white and grey now -- so the assertion
+    // changed with it. What is still worth pinning is the *pair*, because a
+    // fill and the ink that sits on it are one decision rather than two.
+    assert.equal(tokens("accent"), "#ffffff");
+    assert.equal(tokens("accent-fg"), "#000000");
+    // The app icon keeps its blue-to-violet tile, because a taskbar slot is a
+    // square competing with other squares. So the window and the taskbar no
+    // longer share a colour; that is the cost of this palette, and `tokens.css`
+    // states it rather than leaving it to be discovered.
+    assert.equal(chroma(tokens("accent")!), 0, "the accent is meant to be achromatic");
+    assert.equal(chroma(tokens("accent-bright")!), 0);
   });
 
   test("the accent is legible as text, and its ink is legible on it", () => {
@@ -604,36 +603,35 @@ describe("the palette is ours", () => {
     );
   });
 
-  test("the accent and --ok are not the same hue wearing two names", () => {
-    // --ok was a green 63/765 from a green accent, so a success dot beside a
-    // filled button was a distinction of degree. Against a blue accent the same
-    // green sits on the other side of the wheel.
+  test("the only chroma left in the window is meaning", () => {
+    // This used to assert that the accent and --ok were far apart on the wheel:
+    // a blue accent and a green status dot were both "a colour", and a success
+    // dot beside a filled button had to be a distinction of kind. There is no
+    // accent hue any more, so the question moved rather than went away. What
+    // matters now is that everything carrying chroma is carrying *meaning*, and
+    // that nothing carrying the brand is.
     //
-    // Measured as an angle in HSL rather than a channel distance: comparing one
-    // RGB channel says nothing about hue, because blue is low in red and green
-    // is high in it, and a test built that way would have passed on two
-    // colours a person cannot tell apart.
-    const hue = (name: string) => {
-      const [r, g, b] = rgb(tokens(name)!)
-        .map((v) => v / 255)
-        .map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
-      const max = Math.max(r, g, b);
-      const min = Math.min(r, g, b);
-      const d = max - min;
-      if (d === 0) return 0;
-      let h: number;
-      if (max === r) h = ((g - b) / d) % 6;
-      else if (max === g) h = (b - r) / d + 2;
-      else h = (r - g) / d + 4;
-      return ((h * 60) % 360 + 360) % 360;
-    };
-    const apart = Math.abs(hue("accent") - hue("ok"));
-    const separation = Math.min(apart, 360 - apart);
-    assert.ok(
-      separation >= 60,
-      `--accent ${tokens("accent")} and --ok ${tokens("ok")} are only `
-        + `${separation.toFixed(0)} degrees apart on the wheel`,
-    );
+    // The floor of 24 is a channel spread, not a hue angle: below about that,
+    // a colour reads as grey with a cast rather than as a signal, which is the
+    // failure mode this palette would have if the status colours were faded
+    // toward the neutrals later.
+    for (const name of ["ok", "danger", "warn", "traj-add", "traj-del"]) {
+      const carried = chroma(tokens(name)!);
+      assert.ok(
+        carried >= 24,
+        `--${name} carries chroma ${carried}, too little to read as a signal`,
+      );
+    }
+    for (const name of ["accent", "accent-bright"]) {
+      assert.equal(chroma(tokens(name)!), 0, `--${name} is still carrying brand chroma`);
+    }
+    for (const name of ["wash", "accent-glow"]) {
+      assert.equal(
+        chroma(flatMasked(name)!.hex),
+        0,
+        `--${name} is still carrying brand chroma`,
+      );
+    }
   });
 
   test("no rule paints a raw colour the tokens already own", () => {
@@ -1106,11 +1104,12 @@ describe("the accent is the icon's blue; the brand carries it as one gradient", 
     assert.ok(glow.alpha > 0 && glow.alpha <= 0.5, `the glow is at alpha ${glow.alpha}`);
   });
 
-  test("the selection wash is the same blue at low alpha", () => {
+  test("the selection wash is the accent at low alpha", () => {
     // The wash carries the accent without *being* the accent -- the selected
-    // conversation, the open tab. Flat now, so a selected row is one pixel value
+    // conversation, the open tab. Flat, so a selected row is one pixel value
     // rather than a gradient's two; the alpha stays bounded because the row's
-    // ink sits on top of it.
+    // ink sits on top of it, and the ceiling it is really held to is the
+    // timestamp's contrast rather than this number.
     const wash = flatMasked("wash");
     assert.ok(wash, "--wash is not a flat rgb() colour");
     assert.ok(
@@ -1120,7 +1119,7 @@ describe("the accent is the icon's blue; the brand carries it as one gradient", 
     assert.equal(
       wash.hex.toLowerCase(),
       tokens("accent")!.toLowerCase(),
-      "the wash is not the accent's own blue",
+      "the wash is not the accent's own value",
     );
   });
 
@@ -1141,21 +1140,26 @@ describe("the accent is the icon's blue; the brand carries it as one gradient", 
     }
   });
 
-  test("a washed row is told from a hovered one by hue, not by lightness", () => {
-    // The reason the selected row is a wash rather than a flat grey step is
-    // stated in `conversation-list.css`: `--chip` sat one step off `--hover`, so
-    // "the one you are in" and "the one under the pointer" were a shade apart.
-    // Composited over `--bg` the wash is *darker* than the hover tone, about
-    // 1.1:1 by luminance, so a contrast check alone would call them the same
-    // colour. What separates them is that the wash carries chroma and `--hover`
-    // is achromatic, which is why this asserts chroma and not a ratio.
+  test("a washed row is told from a hovered one by lightness, not by hue", () => {
+    // The test the white accent forced to change its mind. It used to assert
+    // the opposite: that the wash carried chroma and `--hover` did not, which
+    // is what separated a selected row from a hovered one -- because composited
+    // over `--bg` the two are about 1.1:1 apart and no contrast check could
+    // tell them apart.
+    //
+    // An achromatic wash cannot do that, so the separation is the lightness the
+    // old comment explicitly dismissed. It is small on purpose and cannot be
+    // larger: `--fg-dim` has to clear 4.5:1 on the composited pixel, which caps
+    // the wash at #3c3c3c against `--hover`'s #383838 -- 1.06:1. This asserts
+    // the direction; the floor that sets the size is asserted immediately below,
+    // so raising the alpha to widen this gap fails there rather than here.
     assert.equal(chroma(tokens("hover")!), 0, "--hover is supposed to be achromatic");
     const wash = flatMasked("wash")!;
-    const painted = chroma(over(wash.hex, wash.alpha, tokens("bg")!));
+    assert.equal(chroma(wash.hex), 0, "the wash is supposed to be achromatic now");
+    const painted = over(wash.hex, wash.alpha, tokens("bg")!);
     assert.ok(
-      painted >= 12,
-      `the composited wash carries chroma ${painted}, which the pointer tone `
-        + "could be mistaken for in greyscale",
+      luminance(painted) > luminance(tokens("hover")!),
+      `the composited wash (${painted}) does not sit above --hover (${tokens("hover")})`,
     );
   });
 });
