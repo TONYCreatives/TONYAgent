@@ -17,6 +17,12 @@ Outputs, into app/icons/:
     icon.ico (16/24/32/48/64/256), icon.icns (macOS; unused on Windows)
 And previews, into design-preview/logos/:
     pet-icon-1024.png, pet-icon-sheet.png  (the mark at 16/32/64/256)
+And the logo, into logo/:
+    tonyagent-logo.ico (16/24/32/48/64/256) -- the same mark on black with no
+    tile, which is what the desktop shortcut shows. `logo/tonyagent-logo.png`
+    is not written here: it is `logo/tonyagent-logo.svg` rendered flat, two
+    colours and no antialiasing, because a 2048 master has no small size to
+    survive. This one is supersampled like the app icon, because 16px does.
 """
 
 from pathlib import Path
@@ -27,6 +33,7 @@ from PIL import Image, ImageChops, ImageDraw
 ROOT = Path(__file__).resolve().parent.parent
 ICONS = ROOT / "app" / "icons"
 PREVIEW = ROOT / "design-preview" / "logos"
+LOGO = ROOT / "logo"
 
 CANVAS = 1024  # the viewBox the artwork draws in
 SS = 4  # supersample factor: draw at CANVAS*SS, then downsample with LANCZOS
@@ -81,6 +88,37 @@ def build(size: int) -> Image.Image:
     return tile.resize((size, size), Image.LANCZOS)
 
 
+def build_logo(size: int) -> Image.Image:
+    """The mark on black, no tile: the logo, rasterised at `size` px.
+
+    The same two rects and two circles as `build`, and the ground is the only
+    difference. `build` puts the mark in the app's tile because a taskbar slot
+    is a square that has to hold its own beside other squares; a logo sits on
+    whatever the page already is, and on the shortcut that is black.
+
+    The eyes are filled with the ground rather than a surface tone, so on black
+    they read as holes cut through the crossbar. Supersampled like `build`,
+    because this one is rasterised for shortcut sizes where an eye is under a
+    pixel across.
+    """
+    n = CANVAS * SS
+    ground = (0, 0, 0, 255)
+    im = Image.new("RGBA", (n, n), ground)
+    draw = ImageDraw.Draw(im)
+    scale = n / CANVAS
+    for x, y, w, h in BODY:
+        draw.rectangle(
+            [x * scale, y * scale, (x + w) * scale, (y + h) * scale],
+            fill=(255, 255, 255, 255),
+        )
+    for cx, cy, r in EYES:
+        draw.ellipse(
+            [(cx - r) * scale, (cy - r) * scale, (cx + r) * scale, (cy + r) * scale],
+            fill=ground,
+        )
+    return im.resize((size, size), Image.LANCZOS)
+
+
 def sheet() -> Image.Image:
     """The mark at 16/32/64/256 on the app's field, to judge the small sizes."""
     sizes = [16, 32, 64, 256]
@@ -124,6 +162,16 @@ def main() -> None:
     build(1024).save(PREVIEW / "pet-icon-1024.png")
     sheet().save(PREVIEW / "pet-icon-sheet.png")
     print("wrote design-preview/logos/pet-icon-1024.png and pet-icon-sheet.png")
+
+    # The logo, for the desktop shortcut: the same mark, no tile, black ground.
+    # The same six frames the app icon carries, so Windows has one to pick from
+    # at every size it draws a shortcut at.
+    LOGO.mkdir(parents=True, exist_ok=True)
+    build_logo(256).save(
+        LOGO / "tonyagent-logo.ico",
+        sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (256, 256)],
+    )
+    print("wrote logo/tonyagent-logo.ico")
 
 
 if __name__ == "__main__":

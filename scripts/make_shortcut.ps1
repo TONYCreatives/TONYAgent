@@ -24,7 +24,12 @@ $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $PSScriptRoot
 $launcher = Join-Path $root 'Start TONYAgent (Prebuilt).bat'
-$icon = Join-Path $root 'app\icons\icon.ico'
+# The logo, not `app\icons\icon.ico`. They are the same mark and differ only in
+# the ground: the app icon keeps the blue-to-violet tile because a taskbar slot
+# is a square competing with other squares, while the shortcut wears the logo --
+# the mark on black. Both are generated from one geometry by
+# `scripts\gen_icons.py`, so neither can drift from the other or from the window.
+$icon = Join-Path $root 'logo\tonyagent-logo.ico'
 
 foreach ($needed in @($launcher, $icon)) {
     if (-not (Test-Path -LiteralPath $needed)) {
