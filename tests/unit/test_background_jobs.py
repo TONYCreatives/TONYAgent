@@ -488,20 +488,25 @@ async def test_background_works_through_the_fallback_setting(host, monkeypatch):
 
 
 async def test_a_denied_command_is_denied_in_the_background_too(host, monkeypatch):
-    """The allow-list and denylist run before anything is started.
+    """The denylist runs before anything is started.
 
     A background job must not be a way round the gates, which is the whole reason
     the job path is inside `execute_command` rather than a second shell tool.
+
+    The denylist, not the allow-list, because High now bypasses the allow-list on
+    purpose -- see `Permission.bypasses_command_allowlist` and the note on `_HIGH`
+    in `core/modes.py`. An off-list command at High is therefore not refused with
+    "not allowed"; it goes on to the isolation gate and is refused there for
+    wanting a sandbox. The denylist is the gate no rung lifts, so it is the one
+    that has to hold on the background path too.
     """
     monkeypatch.setattr(shell_tools.settings.tools, "fallback_to_local", False)
 
     with at("high"):
-        result = await tool("execute_command").execute(
-            "curl http://example.com", background=True
-        )
+        result = await tool("execute_command").execute("rm -rf /", background=True)
 
     assert result.status is ToolResultStatus.ERROR
-    assert "not allowed" in result.error.lower()
+    assert "denylist" in result.error.lower()
     assert jobs_registry.all() == []
 
 

@@ -127,8 +127,7 @@ frontends' command sets.
 | `/mode` | Mode picker · `/mode plan` to set it directly |
 | `/model` | Model picker — search, grouped by provider, with price and context size · `/model <id>` to set directly |
 | `/permission` | Permission picker · `/permission high` to set it directly |
-| `/model` | Model picker · `/model <id>` to set it directly |
-| `/permission` | Permission picker · `/permission high` to set it directly |
+| `/project` | Project folder picker · `/project <path>` to set it directly |
 | `/plan` | Show the task list |
 | `/state` | What the core reports about itself |
 | `/trajectory` | Frames captured this turn |
@@ -160,7 +159,7 @@ a full-screen app is a worse place to do it than at a shell prompt.
 | `/usage` | What this app has spent |
 | `/reasoning` | Thinking effort |
 | `/sandbox` | Sandbox status |
-| `/mode` `/model` `/permission` | As above |
+| `/mode` `/model` `/permission` `/project` | As above |
 | `/help` `/quit` `/exit` | As above |
 
 In line mode, a leading `\` sends a turn that starts with a slash:

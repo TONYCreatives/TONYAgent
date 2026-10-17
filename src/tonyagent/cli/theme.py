@@ -147,6 +147,7 @@ def build_css() -> str:
         background: {CHROME};
         height: 1;
         color: {FG_MUTE};
+        padding: 0 1;
     }}
 
     /* The transcript. `--measure` (760px) is the window's column width; a
@@ -155,7 +156,7 @@ def build_css() -> str:
        squeezing the messages into a column too short to read. */
     #transcript {{
         background: {BG};
-        padding: 0 2;
+        padding: 0 1;
         scrollbar-size-vertical: 1;
         overflow-y: auto;
     }}
@@ -172,7 +173,7 @@ def build_css() -> str:
     }}
     .turn-rule {{
         border-left: thick {ACCENT};
-        padding: 0 0 0 2;
+        padding: 0 0 0 1;
     }}
     /* The user's own message. The window calls it a chip on `--raised`, and a
        terminal has no bubbles, so the fill is what says "this was me" --
@@ -218,17 +219,20 @@ def build_css() -> str:
         text-style: none;
     }}
 
-    /* The composer. In the window it is an input surface with an accent rule;
-       here it is a bordered field, because a terminal has no elevation and a
-       box is how it fakes one. */
+    /* The composer. One content row in a round box: the window's input is
+       an elevated surface and a terminal has no elevation, so a thin box is
+       how it fakes one. `tall` drew a double-weight frame that read heavier
+       than the transcript and the status line combined; `round` carries the
+       same boundary in one cell weight. */
     #composer {{
         background: {INPUT};
-        border: tall {BORDER};
+        border: round {BORDER};
         height: 3;
         padding: 0 1;
+        margin-top: 1;
     }}
     #composer:focus {{
-        border: tall {ACCENT};
+        border: round {ACCENT};
     }}
 
     /* The status bar: the window's `--topbar-h` equivalent, one line. */
@@ -236,7 +240,7 @@ def build_css() -> str:
         background: {CHROME};
         color: {FG_MUTE};
         height: 1;
-        padding: 0 2;
+        padding: 0 1;
     }}
     #status.bound {{
         color: {FG_DIM};
@@ -253,7 +257,7 @@ def build_css() -> str:
        one row the panel is for. A share of the column cannot go stale. */
     #sidebar {{
         background: {SURFACE};
-        border-left: solid {BORDER};
+        border-left: solid {BORDER_SOFT};
         width: 38;
         height: 1fr;
         padding: 1 1;
@@ -324,12 +328,12 @@ def build_css() -> str:
        * Layered and docked to the bottom rather than placed in the layout,
        * because appearing in the layout would shrink the transcript by its own
        * height every time a `/` was typed -- the list would push the thing you
-       * are reading. `offset` lifts it clear of the composer, the status bar
-       * and the footer, which are the four rows underneath it. */
+       * are reading. `offset` lifts it clear of the composer, its top margin,
+       * the status bar and the footer, which are the five rows underneath it. */
     #slash-menu {{
         layer: suggest;
         dock: bottom;
-        offset: 0 -4;
+        offset: 0 -5;
         width: 100%;
         height: auto;
         max-height: 12;
@@ -383,6 +387,10 @@ def build_css() -> str:
     .warn {{
         color: {WARN};
         height: auto;
+    }}
+
+    Footer {{
+        display: none;
     }}
     """
 

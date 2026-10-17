@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import subprocess
 import threading
+import time
 from typing import Any, ClassVar, Optional
 
 from rich.cells import cell_len
@@ -34,7 +35,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Footer, Input, OptionList, Static
+from textual.widgets import Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from tonyagent.cli import theme
@@ -97,6 +98,11 @@ TURN_TIMEOUT_S = 3600.0
 CONFIRM_PRESS_S = 5.0
 
 
+def _cap(value: str) -> str:
+    """Display form: uppercase first letter, rest untouched."""
+    return value[:1].upper() + value[1:] if value else value
+
+
 class TonyApp(App[None]):
     """TONYAgent, drawn as widgets."""
 
@@ -126,6 +132,9 @@ class TonyApp(App[None]):
         self.turn: Optional[Turn] = None
         self._turn_box: Optional[Vertical] = None
         self._answer_widget: Optional[Static] = None
+        self._status_widget: Optional[Static] = None
+        self._turn_phase = ""
+        self._turn_started_at = 0.0
         self._streaming = False
         #: Ids of the confirmation and the question the turn is suspended on.
         #: Empty means the composer sends turns rather than answers.
@@ -200,7 +209,6 @@ class TonyApp(App[None]):
         # back is how a command set ends up looking empty.
         yield OptionList(id="slash-menu", classes="hidden")
         yield Input(placeholder="ask tony anything", id="composer")
-        yield Footer()
         # A confirmation is the one thing that takes the keyboard, so it is a
         # real dialog rather than a line in the composer. Hidden until asked.
         yield ConfirmDialog("", "", False, id="confirm-dialog", classes="hidden")
@@ -212,15 +220,13 @@ class TonyApp(App[None]):
         self._apply_width()
 
     def _apply_width(self) -> None:
-        """How much room the sidebar gets -- or none at all.
+        """How much room the inspector gets -- or none at all.
 
-        Three sizes rather than two: full, compact, and gone. The compact size
-        is a real one because a console window that is 97 columns wide is a
-        normal window, not a degenerate case, and a panel that only appears on a
-        maximized 1920-pixel display is a panel most people never see.
-
-        When it is gone the status line is what remains, which is why the meter
-        and the permission level live there as well.
+        Two zones: transcript | inspector. Below 80 columns the inspector is
+        gone and the status line carries state. At 80+ the inspector pins
+        (compact below 108, full at 108+). The conversation list is always a
+        dialog (`ConversationsDialog`), never a third column: a persistent nav
+        squeezes the transcript for an accelerator that a keypress reaches.
         """
         sidebar = self.query_one("#sidebar", Sidebar)
         width = self.size.width
@@ -237,12 +243,15 @@ class TonyApp(App[None]):
 
         Handing back markup from `render()` would leave the asterisks on
         screen, because markup is a Rich feature and this returns a `Text`.
+        One fact per line: a wrapped paragraph reads as a wall at 80 columns,
+        while short lines with the keys in code spans scan as a legend.
         """
         return (
             f"TONYAgent {self._version()} · terminal\n\n"
-            "ctrl+p commands · ctrl+n new chat · ctrl+c twice interrupts · ctrl+d quit\n"
-            "click a sidebar row for mode, model or permission · "
-            "click a tool call for its output · ↑ recalls your last prompt"
+            "- `ctrl+p` commands · `ctrl+n` new chat\n"
+            "- `ctrl+c` twice interrupts · `ctrl+d` quit\n"
+            "- `ctrl+1…4` mode, model, permission, context\n"
+            "- `/conversations` chats · click a tool call for its output"
         )
 
     def on_mount(self) -> None:
@@ -286,11 +295,17 @@ class TonyApp(App[None]):
         self._turn_box.mount(prompt)
         prompt.update(Text(f"{theme.prompt_marker()} {_one_line(text)}", style=theme.FG))
         prompt.add_class("prompt")
+        prompt._full_text = text  # type: ignore[attr-defined]
+        prompt._expanded = False  # type: ignore[attr-defined]
 
         # No id: a turn can open several messages as tools split it, and a
         # repeated id is a DuplicateIds at mount time rather than a widget.
         self._answer_widget = Static("")
         self._turn_box.mount(self._answer_widget)
+        self._status_widget = Static("working…", classes="turn-footer")
+        self._turn_box.mount(self._status_widget)
+        self._turn_phase = "working…"
+        self._turn_started_at = time.monotonic()
         transcript.scroll_end(animate=False)
         self._streaming = True
 
@@ -307,13 +322,40 @@ class TonyApp(App[None]):
             return
         self._answer_widget.update(Markdown(frozen.strip()))
 
+    def _set_turn_status(self, text: str) -> None:
+        """Phase line inside the open turn: sent / working / tool / done."""
+        self._turn_phase = text
+        if self._status_widget is not None:
+            try:
+                self._status_widget.update(Text(text, style=theme.FG_MUTE))
+                self.query_one("#transcript", VerticalScroll).scroll_end(
+                    animate=False
+                )
+            except Exception:  # noqa: BLE001 - transcript gone during shutdown
+                pass
+
     def _end_turn(self) -> None:
         # Freeze first, then stop streaming: the frozen widget is Markdown,
         # while `_render_answer` would write the same text as a plain stream.
         self._close_open_message()
         self._streaming = False
+        if self._status_widget is not None:
+            try:
+                self._status_widget.remove()
+            except Exception:  # noqa: BLE001 - already gone
+                pass
+            self._status_widget = None
         if self.turn is None or self._turn_box is None:
             return
+        if not self.turn.answer.strip() and not self.turn.tools:
+            # Silent backend drift (e.g. an event schema that no longer
+            # translates) otherwise looks exactly like a hang: prompt chip,
+            # nothing else. Say so instead of leaving a blank turn.
+            self._notice(
+                "the turn finished with no text and no tool calls -- "
+                "check /model and try again",
+                "warn",
+            )
         # Outside the fence, not inside it. The rule marks the turn's body; a
         # footer inside it reads as part of the answer, and the padding it
         # inherits pushes the metadata off the measure the transcript sets.
@@ -377,7 +419,10 @@ class TonyApp(App[None]):
         turn.frames.append({"type": kind, "payload": payload})
 
         if kind == "message.delta":
+            first_text = not turn.answer.strip()
             turn.on_delta(payload)
+            if first_text:
+                self._set_turn_status("answering…")
             self._render_answer()
         elif kind == "tool.started":
             call = ToolCall(
@@ -404,6 +449,7 @@ class TonyApp(App[None]):
             box.mount(ToolLine(call))
             self._answer_widget = Static("")
             box.mount(self._answer_widget)
+            self._set_turn_status(f"tool: {call.name}… ({len(turn.tools)} running)")
         elif kind in ("tool.completed", "tool.failed"):
             call = turn.tool_by_id(str(payload.get("id", "")))
             if call is None:
@@ -536,6 +582,18 @@ class TonyApp(App[None]):
         self._refresh_conversation_title(sidebar)
         self._refresh_context()
         self._refresh_status()
+        if (
+            self._turn_open
+            and self._status_widget is not None
+            and self._turn_started_at
+        ):
+            elapsed = time.monotonic() - self._turn_started_at
+            try:
+                self._status_widget.update(
+                    Text(f"{self._turn_phase} {elapsed:.0f}s", style=theme.FG_MUTE)
+                )
+            except Exception:  # noqa: BLE001 - widget gone during shutdown
+                pass
 
     def _refresh_conversation_title(self, sidebar: Sidebar) -> None:
         """Name the open chat, in the top bar and in the sidebar.
@@ -588,20 +646,19 @@ class TonyApp(App[None]):
             text.append(truncate_to_width(title, 48), style=f"bold {theme.FG}")
         else:
             text.append(f"{theme.tab_marker()} ", style=theme.ACCENT)
-            text.append("no conversation", style=theme.FG_MUTE)
-        text.append("  ")
-        # The column the `+` lands in, remembered so the click is hit-tested
-        # against one cell rather than against the whole bar.
-        self._new_chat_column = text.cell_len
-        text.append("+", style=theme.ACCENT)
-        text.append("  ")
+            text.append("No conversation", style=theme.FG_MUTE)
+        # The `+` is the new-chat affordance: one cell, accent, hit-tested to
+        # that column so a click on the title does nothing.
+        self._new_chat_column = text.cell_len + 2
+        text.append("  +", style=theme.ACCENT)
         mode = str(self.state.get("mode") or "")
-        text.append(mode or "-", style=theme.FG_MUTE)
-        text.append("   ")
+        text.append("  ·  ", style=theme.FG_MUTE)
+        text.append(_cap(mode) or "-", style=theme.FG_MUTE)
         if self._delegate is not None:
             # Named, not styled: which agent is running is the one fact a turn's
             # transcript cannot tell you, because both backends draw the same
             # events into the same widgets.
+            text.append("  ·  ", style=theme.FG_MUTE)
             text.append("opencode", style=theme.WARN)
             if self._delegate is not None and self._delegate.model:
                 text.append(
@@ -609,7 +666,7 @@ class TonyApp(App[None]):
                     style=theme.FG_MUTE,
                 )
             text.append(" · --auto", style=theme.FG_MUTE)
-        text.append("   ")
+        text.append("  ·  ", style=theme.FG_MUTE)
         text.append("/conversations", style=theme.FG_MUTE)
         topbar.update(text)
 
@@ -639,6 +696,17 @@ class TonyApp(App[None]):
                 return
             event.stop()
             self._new_conversation()
+            return
+        if "prompt" in getattr(event.widget, "classes", ()):
+            full = getattr(event.widget, "_full_text", "")
+            if full:
+                expanded = not getattr(event.widget, "_expanded", False)
+                event.widget._expanded = expanded  # type: ignore[attr-defined]
+                body = full if expanded else _one_line(full)
+                event.widget.update(
+                    Text(f"{theme.prompt_marker()} {body}", style=theme.FG)
+                )
+                event.stop()
             return
         if event.widget is self.query_one("#status", Static):
             self._click_status(event)
@@ -673,7 +741,9 @@ class TonyApp(App[None]):
             "mode": self._pick_mode,
             "model": self._pick_model,
             "permission": self._pick_permission,
+            "project": self._pick_project,
             "chat": self._show_conversations,
+            "new": self._new_conversation,
             # The keyboard route is `ctrl+4`, and this is the same request: the
             # core's own numbers, never a count kept here.
             "context": self._refresh_context,
@@ -716,22 +786,21 @@ class TonyApp(App[None]):
         from tonyagent.cli.repl import _basename
 
         project = str(self.state.get("project") or "")
-        left = _basename(project) if project else "no project"
+        left = _basename(project) if project else "No project"
         bound = bool(self.state.get("bound"))
-        right = str(self.state.get("model")) if bound else "no provider bound"
+        right = str(self.state.get("model")) if bound else "No provider bound"
 
-        # Each part carries what a click on it should open. The project name
-        # opens nothing: there is no picker for "which folder", only the
-        # sidebar's own and the `-C` flag.
-        rows: list[tuple[str, str]] = [(left, ""), (right, "model" if bound else "")]
+        # Each part carries what a click on it should open. The project chip
+        # opens the new folder picker; there is no other picker for it.
+        rows: list[tuple[str, str]] = [(left, "project"), (right, "model" if bound else "")]
         permission = str(self.state.get("permission") or "")
         if permission:
-            rows.append((permission, "permission"))
+            rows.append((_cap(permission), "permission"))
         rows.append((self._context_summary(), "context"))
 
         # Composed by hand rather than with `join`, because the spans have to
         # be known: a click arrives as a column, and ` · ` is three cells.
-        line = " "
+        line = "● working · " if self._turn_open else " "
         spans: list[tuple[int, int, str]] = []
         for value, target in rows:
             if not value:
@@ -761,16 +830,16 @@ class TonyApp(App[None]):
         known = bool(self._last_context.get("known"))
         if not known:
             return (
-                "ctx unknown"
+                "Ctx Unknown"
                 if not window
-                else f"ctx ?/{_context_label(window, suffix='')}"
+                else f"Ctx ?/{_context_label(window, suffix='')}"
             )
         if window <= 0:
-            return f"ctx {_context_label(used, suffix='')}/?"
+            return f"Ctx {_context_label(used, suffix='')}/?"
         if used <= 0:
-            return f"ctx 0/{_context_label(window, suffix='')}"
+            return f"Ctx 0/{_context_label(window, suffix='')}"
         return (
-            f"ctx {_context_label(used, suffix='')}"
+            f"Ctx {_context_label(used, suffix='')}"
             f"/{_context_label(window, suffix='')}"
         )
 
@@ -1113,6 +1182,77 @@ class TonyApp(App[None]):
 
         self.push_screen(PickerDialog(title, entries, hint=hint), chosen)
 
+    def _short_project(self) -> str:
+        """Basename of the project for the chip (full path lives in picker)."""
+        from tonyagent.cli.repl import _basename
+
+        project = str(self.state.get("project") or "")
+        return _basename(project) if project else "-"
+
+    def _pick_project(self, initial: str = "") -> None:
+        """Set the project folder from inside the TUI.
+
+        Previously startup-only via ``-C`` (``trust.set``). Offers recent
+        folders first; a typed path works too: if the filter names an
+        existing directory it is offered as the first row.
+        """
+        from pathlib import Path
+
+        from tonyagent.cli.render import _one_line
+
+        current = str(self.state.get("project") or "")
+        recent: list[str] = []
+        try:
+            from tonyagent.config.settings import settings
+
+            for entry in [settings.folder.current, *settings.folder.recent]:
+                if entry and entry not in recent:
+                    recent.append(entry)
+        except Exception:  # noqa: BLE001 - picker still works without config
+            pass
+        candidates: list[str] = []
+        for entry in [current, *recent, str(Path.cwd())]:
+            if entry and entry not in candidates:
+                candidates.append(entry)
+        needle = (initial or "").strip()
+        if needle:
+            expanded = str(Path(needle).expanduser())
+            if Path(expanded).is_dir() and expanded not in candidates:
+                candidates.insert(0, expanded)
+        entries = [
+            PickerEntry(
+                value=path,
+                label=_one_line(path, 64),
+                group="current" if path == current else ("recent" if path in recent else "this machine"),
+                note="·" if path == current else "",
+            )
+            for path in candidates
+        ]
+        self._picker_action = ("project", "trust.set", {"project": None, "trusted": True})
+
+        def chosen(value: str | None) -> None:
+            self._picker_action = None
+            if not value:
+                return
+            try:
+                result = self.client.call(
+                    "trust.set", {"project": value, "trusted": True}
+                ) or {}
+            except CoreError as exc:
+                self._notice(str(exc), "error")
+                return
+            self._notice(f"project: {result.get('project', value)}")
+            self._poll_state()
+
+        self.push_screen(
+            PickerDialog(
+                "project folder",
+                entries,
+                hint="type a path then enter uses the top row · esc close",
+            ),
+            chosen,
+        )
+
     def _pick_mode(self) -> None:
         payload = self.client.call("mode.list") or {}
         modes = payload.get("modes") or []
@@ -1126,7 +1266,7 @@ class TonyApp(App[None]):
             mode = next((m for m in modes if isinstance(m, dict) and m.get("name") == name), {})
             entries.append(PickerEntry(
                 value=name,
-                label=name,
+                label=_cap(name),
                 group="current" if name == current else "",
                 note="·" if name == current else ("writes" if mode.get("writes") else "read only"),
             ))
@@ -1144,7 +1284,7 @@ class TonyApp(App[None]):
         # order, `low / *medium* / high / full` alternates between two groups
         # and the header is drawn three times for one list.
         entries = [
-            PickerEntry(value=name, label=name, group="current" if name == current else "levels",
+            PickerEntry(value=name, label=_cap(name), group="current" if name == current else "levels",
                         note="·" if name == current else "")
             for name in [current] + [n for n in names if n != current]
             if name
@@ -1382,6 +1522,8 @@ class TonyApp(App[None]):
             self._set("bind_provider",
                       {"name": str(self.state.get("provider") or ""), "model": argument},
                       "model") if argument else self._pick_model()
+        elif command == "project":
+            self._pick_project(argument)
         else:
             match = next((c for c in COMMANDS if c.name == f"/{command}"), None)
             if match is None:
@@ -1599,6 +1741,7 @@ class TonyApp(App[None]):
             "pick_mode": self._pick_mode,
             "pick_model": self._pick_model,
             "pick_permission": self._pick_permission,
+            "pick_project": self._pick_project,
             "pick_reasoning": self._pick_reasoning,
             "show_plan": self._show_plan,
             "show_state": self._show_state,
@@ -1685,7 +1828,7 @@ class TonyApp(App[None]):
             return
         totals = payload.get("totals")
         if not isinstance(totals, dict):
-            self._notice("no usage recorded")
+            self._notice("No usage recorded")
             return
         rows = [
             ("requests", str(totals.get("requests", 0))),
@@ -1711,7 +1854,7 @@ class TonyApp(App[None]):
         running = (self.state.get("sandbox") or "")
         rows = [(key, str(value)) for key, value in stats.items()
                 if not isinstance(value, (dict, list))]
-        rows.insert(0, ("status", str(running or "unknown")))
+        rows.insert(0, ("status", str(running or "Unknown")))
         self._panel("sandbox", rows)
 
     def _show_conversations(self) -> None:
@@ -2070,6 +2213,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("/mode", "Switch mode: chat, build, plan, mission, skills", "pick_mode"),
     Command("/model", "Switch model", "pick_model"),
     Command("/permission", "Switch permission level", "pick_permission"),
+    Command("/project", "Set the project folder", "pick_project", "[path]"),
     Command("/plan", "Show the task list", "show_plan"),
     Command("/state", "What the core reports about itself", "show_state"),
     Command("/trajectory", "Frames captured this turn", "show_trajectory"),

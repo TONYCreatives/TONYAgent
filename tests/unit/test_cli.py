@@ -2086,7 +2086,7 @@ def test_the_top_bar_names_the_chat_before_the_mode():
             bar = app.screen.query_one("#topbar", Static)
             text = str(bar.render())
             assert "my chat name" in text, text
-            assert text.index("my chat name") < text.index("build"), text
+            assert text.index("my chat name") < text.index("Build"), text
 
     asyncio.run(run())
 
@@ -2432,7 +2432,7 @@ def test_the_meter_reaches_the_screen_at_the_compact_width():
             )
 
     panel = asyncio.run(run())
-    assert "Context" in panel, panel
+    assert "CONTEXT" in panel, panel
     assert "314,139" in panel, panel
     assert "31%" in panel, panel
     assert "\u2588" in panel, "the bar was clipped off the bottom"
@@ -3734,7 +3734,7 @@ def test_the_context_meter_survives_the_sidebar_being_dropped():
     assert wide.startswith("True|"), "and shown at 120"
     for label, bar in (("narrow", narrow), ("wide", wide)):
         assert "314K/1M" in bar, f"{label}: {bar}"
-        assert "medium" in bar, f"{label}: {bar}"
+        assert "Medium" in bar, f"{label}: {bar}"
 
 
 def test_the_status_line_says_which_half_of_the_context_is_unknown():
@@ -3772,17 +3772,17 @@ def test_the_status_line_says_which_half_of_the_context_is_unknown():
             await pilot.pause()
             return str(app.screen.query_one("#status").render())
 
-    assert "ctx 314K/1M" in asyncio.run(
+    assert "Ctx 314K/1M" in asyncio.run(
         summary({"used": 314139, "window": 1000000, "known": True})
     )
-    assert "ctx unknown" in asyncio.run(
+    assert "Ctx Unknown" in asyncio.run(
         summary({"used": 0, "window": 0, "known": False})
     )
     # Window known, usage not: say which one is missing.
-    assert "ctx ?/1M" in asyncio.run(
+    assert "Ctx ?/1M" in asyncio.run(
         summary({"used": 0, "window": 1000000, "known": False})
     )
-    assert "ctx 0/1M" in asyncio.run(
+    assert "Ctx 0/1M" in asyncio.run(
         summary({"used": 0, "window": 1000000, "known": True})
     )
 

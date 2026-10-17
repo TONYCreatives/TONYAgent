@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TONYAgent TUI — Redesigned IA Prototype</title>
+<style>
+:root{
+  --bg:#1a1a1a; --surface:#202020; --chrome:#262626; --input:#2b2b2b;
+  --raised:#333333; --border:#3a3a3a; --border-soft:#2e2e2e;
+  --fg:#ececec; --dim:#a8a8a8; --mute:#8a8a8a;
+  --accent:#6393f0; --accent-fg:#0b1020;
+  --ok:#a3c48a; --danger:#c9705f; --warn:#c9a45f;
+  --add:#7ee2a8; --del:#f2a0a0;
+}
+*{box-sizing:border-box}
+body{background:#0e0e0e;color:var(--fg);font:13px/1.5 "JetBrains Mono","Cascadia Code",Consolas,monospace;margin:0;padding:24px}
+.wrap{max-width:1240px;margin:0 auto}
+.toolbar{display:flex;gap:8px;margin-bottom:12px;align-items:center;color:var(--dim)}
+.toolbar button,.chipbtn{background:var(--raised);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font:inherit}
+.toolbar button.active{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:700}
+.term{background:var(--bg);border:1px solid var(--border);border-radius:10px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+/* 1: single chrome topbar */
+.topbar{display:flex;align-items:center;gap:12px;background:var(--chrome);color:var(--mute);padding:6px 12px;white-space:nowrap}
+.topbar b{color:var(--fg)}
+.topbar .conv{color:var(--fg);overflow:hidden;text-overflow:ellipsis}
+.topbar .dot{width:8px;height:8px;border-radius:50%;background:var(--ok);display:inline-block}
+.topbar .dot.busy{background:var(--warn)}
+.topbar .sp{flex:1}
+.topbar .pill{border:1px solid var(--border);border-radius:20px;padding:0 8px;color:var(--dim)}
+/* 2: three-zone body */
+.body{display:grid;grid-template-columns:220px 1fr 260px;min-height:480px}
+.term.narrow .body{grid-template-columns:1fr}
+.term.medium .body{grid-template-columns:1fr 240px}
+.term.narrow .nav,.term.medium .nav{display:none}
+.nav{background:var(--surface);border-right:1px solid var(--border);padding:10px;display:flex;flex-direction:column;gap:8px}
+.nav input{background:var(--input);border:1px solid var(--border);border-radius:6px;color:var(--fg);padding:5px 8px;font:inherit}
+.conv-list{display:flex;flex-direction:column;gap:2px}
+.conv-list .row{padding:6px 8px;border-radius:6px;color:var(--dim);display:flex;justify-content:space-between;gap:8px;cursor:pointer}
+.conv-list .row.sel{background:var(--raised);color:var(--fg);box-shadow:inset 3px 0 0 var(--accent)}
+.center{display:flex;flex-direction:column;min-width:0}
+.transcript{padding:14px 18px;overflow:hidden;flex:1}
+.turn{border-left:3px solid var(--accent);padding-left:12px;margin:0 0 16px}
+.turn .head{color:var(--mute);font-size:12px;margin-bottom:4px}
+.turn .head b{color:var(--fg)}
+.prompt{background:var(--raised);border-radius:6px;padding:6px 10px;display:inline-block;margin-bottom:8px}
+.answer{background:transparent;margin-bottom:6px}
+.answer code{background:var(--raised);padding:0 4px;border-radius:4px}
+.group{border:1px solid var(--border-soft);border-radius:6px;margin:8px 0;overflow:hidden}
+.group summary{cursor:pointer;padding:6px 10px;color:var(--dim);background:var(--surface)}
+.group summary:hover{color:var(--fg)}
+.group .toolline{padding:5px 10px;color:var(--mute);border-top:1px solid var(--border-soft);display:flex;gap:8px}
+.group .toolline.ok::before{content:"✓";color:var(--ok)}
+.group .toolline.run::before{content:"◌";color:var(--accent)}
+.diff{font-size:12px;padding:8px 10px;border-top:1px solid var(--border-soft)}
+.diff .a{color:var(--add)} .diff .d{color:var(--del)} .diff .c{color:var(--mute)}
+.reason{color:var(--mute);font-style:italic;border:1px dashed var(--border);border-radius:6px;padding:6px 10px;margin:8px 0}
+.tfooter{color:var(--mute);font-size:12px}
+/* inspector */
+.insp{background:var(--surface);border-left:1px solid var(--border);padding:12px;display:flex;flex-direction:column;gap:12px}
+.term.narrow .insp{display:none}
+.insp h4{margin:0;color:var(--mute);font-size:11px;letter-spacing:.08em;text-transform:uppercase;font-weight:400}
+.insp .card{border:1px solid var(--border-soft);border-radius:8px;padding:8px 10px;background:var(--bg)}
+.insp .kv{display:flex;justify-content:space-between;color:var(--dim);padding:2px 0}
+.insp .kv b{color:var(--fg);font-weight:400}
+.meter{height:8px;background:var(--raised);border-radius:99px;overflow:hidden;margin-top:6px}
+.meter i{display:block;height:100%;width:31%;background:var(--accent)}
+.warnline{color:var(--warn)}
+/* 3: composer dock */
+.composer{border-top:1px solid var(--border);background:var(--bg);padding:10px 12px 8px}
+.composer .box{background:var(--input);border:1px solid var(--accent);border-radius:8px;padding:8px 10px;min-height:52px;color:var(--fg)}
+.composer .box span.cur{display:inline-block;width:8px;height:15px;background:var(--accent);vertical-align:-2px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.chips{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.chipbtn{border-radius:20px;font-size:12px}
+.chipbtn.accent{background:var(--accent);color:var(--accent-fg);border-color:var(--accent)}
+/* 4: single hint bar (replaces status+Footer) */
+.hintbar{background:var(--chrome);color:var(--mute);padding:5px 12px;font-size:12px;display:flex;gap:14px}
+.hintbar kbd{background:var(--raised);border:1px solid var(--border);border-radius:4px;padding:0 5px;color:var(--fg);font:inherit;font-size:11px}
+/* 5: unified dialog */
+.overlay{position:relative}
+.modal{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.55)}
+.modal.show{display:flex}
+.dialog{width:460px;max-width:90%;background:var(--raised);border:1px solid var(--accent);border-radius:10px;padding:16px}
+.dialog.danger{border-color:var(--danger)}
+.dialog h3{margin:0 0 8px}
+.dialog p{color:var(--dim);margin:0 0 12px}
+.dialog .actions{display:flex;gap:8px;justify-content:flex-end}
+.btn{padding:6px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--fg);cursor:pointer;font:inherit}
+.btn.primary{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:700}
+.btn.dangerB{background:var(--danger);border-color:var(--danger);color:#1a0a08;font-weight:700}
+.picklist{border:1px solid var(--border);border-radius:6px;overflow:hidden;margin:8px 0}
+.picklist div{padding:6px 10px;color:var(--dim)} .picklist div.sel{background:var(--accent);color:var(--accent-fg)}
+.notes{color:var(--dim);margin-top:14px;max-width:1240px}
+.notes li{margin-bottom:4px}
+code.inline{background:#222;padding:0 5px;border-radius:4px;color:var(--fg)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="toolbar">
+    <strong style="color:#fff">TUI Redesign Prototype</strong>
+    <span>width:</span>
+    <button data-w="wide" class="active">≥108 full</button>
+    <button data-w="medium">80–107 overlay</button>
+    <button data-w="narrow">&lt;80 minimal</button>
+    <span style="flex:1"></span>
+    <button id="bConfirm">confirm dialog</button>
+    <button id="bPicker">model picker</button>
+    <button id="bPalette">command palette</button>
+  </div>
+
+  <div class="term wide overlay" id="term">
+    <div class="topbar">
+      <b>▌ TONYAgent</b>
+      <span class="conv">fix failing test <span style="color:var(--mute)">· opencode-delegate</span></span>
+      <span class="dot busy" title="busy"></span>
+      <span class="sp"></span>
+      <span class="pill">ctrl+p commands</span>
+      <span class="pill">+ new</span>
+    </div>
+    <div class="body">
+      <div class="nav">
+        <input value="search chats…" onfocus="this.value=''" aria-label="search">
+        <div class="conv-list">
+          <div class="row sel"><span>fix failing test</span><span>2m</span></div>
+          <div class="row"><span>review auth diff</span><span>1h</span></div>
+          <div class="row"><span>plan migration</span><span>1d</span></div>
+          <div class="row"><span>empty playground</span><span>3d</span></div>
+        </div>
+        <div style="color:var(--mute);font-size:12px">ctrl+b toggle · ctrl+n new chat</div>
+      </div>
+      <div class="center">
+        <div class="transcript">
+          <div class="turn">
+            <div class="head"><b>› you</b> · 14:02</div>
+            <div class="prompt">fix the failing test in cli/tui</div>
+            <div class="answer">Found it — the sidebar measured once at mount. I moved the meter into a flex share (<code>height:1fr</code>) so late <code>context.get</code> rows can’t clip.</div>
+            <details class="group" open>
+              <summary>▾ 3 tools · 0 failed — click a row for output</summary>
+              <div class="toolline ok">read <code>widgets.py:1436</code> — 42 lines</div>
+              <div class="toolline ok">edit <code>theme.py</code> — +2 −5</div>
+              <div class="toolline run">execute pytest tests/unit/test_cli.py -q</div>
+              <div class="diff"><div class="d">- height: auto  # measured once</div><div class="a">+ height: 1fr   # share of column</div><div class="c">  context 314,139 / 1M · 31%</div></div>
+            </details>
+            <details class="reason"><summary>reasoning (collapsed by default)</summary>Checked resolver spellings of loopback before refusing; fixed order-dependence in plan-mode test.</details>
+            <div class="tfooter">plan · opencode-zen · 41.2s · 88 char/s</div>
+          </div>
+          <div class="turn" style="border-color:var(--border)">
+            <div class="head"><b>› you</b> · 14:05</div>
+            <div class="prompt">/usage</div>
+            <div class="answer">See inspector → <b>Usage</b>. No separate screen needed.</div>
+            <div class="tfooter">0.4s</div>
+          </div>
+        </div>
+        <div class="composer">
+          <div class="box">/ <span class="cur"></span><span style="color:var(--mute)"> — palette filters here, same list as ctrl+p</span></div>
+          <div class="chips">
+            <button class="chipbtn">mode: plan ⌄</button>
+            <button class="chipbtn accent">model: zen ⌄</button>
+            <button class="chipbtn">perm: ask ⌄</button>
+            <button class="chipbtn">ctx 31% ▰▱▱ ⌄</button>
+            <span style="flex:1"></span>
+            <span style="color:var(--mute);font-size:12px">↑ history · esc cancel · enter send</span>
+          </div>
+        </div>
+        <div class="hintbar"><span><kbd>ctrl+c</kbd> interrupt</span><span><kbd>ctrl+p</kbd> commands</span><span><kbd>pgup/pgdn</kbd> transcript</span><span style="flex:1"></span><span>narrow: meter+permission live here</span></div>
+      </div>
+      <div class="insp">
+        <div><h4>Session</h4><div class="card"><div class="kv"><span>mode</span><b>plan · ctrl+1</b></div><div class="kv"><span>model</span><b>zen · ctrl+2</b></div><div class="kv"><span>permission</span><b>ask · ctrl+3</b></div><div class="kv"><span>project</span><b>~/TONYAgent</b></div></div></div>
+        <div><h4>Context · ctrl+4</h4><div class="card"><div class="kv"><span>used</span><b>314,139 / 1M · 31%</b></div><div class="meter"><i></i></div><div class="warnline" style="font-size:12px;margin-top:4px">summarise likely after 60%</div></div></div>
+        <div><h4>Usage</h4><div class="card"><div class="kv"><span>turn</span><b>41.2s · $0.04</b></div><div class="kv"><span>session</span><b>$1.12</b></div></div></div>
+      </div>
+    </div>
+    <div class="modal" id="mConfirm"><div class="dialog danger"><h3>Allow execute_command?</h3><p><code>pytest tests/unit/test_cli.py -q</code> · sandbox: WSL · destructive: no</p><div class="actions"><button class="btn" data-close>deny</button><button class="btn dangerB" data-close>allow once</button></div></div></div>
+    <div class="modal" id="mPicker"><div class="dialog"><h3>Model · ctrl+2</h3><input id="q" placeholder="type to filter…" style="width:100%;background:var(--input);border:1px solid var(--border);border-radius:6px;color:#fff;padding:6px 8px;font:inherit"><div class="picklist"><div class="sel">zen — reasoning, cheap</div><div>sonic — fast edits</div><div>custom… — base_url override</div></div><div class="actions"><button class="btn" data-close>esc</button><button class="btn primary" data-close>select</button></div></div></div>
+    <div class="modal" id="mPalette"><div class="dialog"><h3>Commands · ctrl+p</h3><div class="picklist"><div class="sel">/usage — show spend</div><div>/plan — show active plan</div><div>/sandbox — attach backend</div><div>/new — new conversation</div></div><div class="actions"><button class="btn" data-close>esc</button></div></div></div>
+  </div>
+
+  <ul class="notes">
+    <li><b>Chrome:</b> one <code class="inline">topbar</code> + one <code class="inline">hintbar</code>. Generic Textual <code class="inline">Footer</code> removed.</li>
+    <li><b>Zones:</b> <code class="inline">nav | transcript | inspector</code>. &lt;80: transcript only. 80–107: inspector as overlay (<code class="inline">ctrl+.</code>). ≥108: pinned as above.</li>
+    <li><b>Composer:</b> multiline + chips (mode/model/perm/context) open the same pickers; <code class="inline">/</code> filters the same palette as <code class="inline">ctrl+p</code>.</li>
+    <li><b>Transcript:</b> turn card with header, tool group collapsed to one line, diff on changed lines only, reasoning collapsed, <code class="inline">TurnFooter</code> kept.</li>
+    <li><b>Dialogs:</b> one size/border/focus system — confirm / picker / palette share it (toggle above).</li>
+  </ul>
+</div>
+<script>
+const term=document.getElementById('term');
+document.querySelectorAll('.toolbar [data-w]').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.toolbar [data-w]').forEach(x=>x.classList.remove('active'));
+  b.classList.add('active'); term.className='term '+b.dataset.w+' overlay';
+});
+const map={bConfirm:'mConfirm',bPicker:'mPicker',bPalette:'mPalette'};
+Object.entries(map).forEach(([b,m])=>document.getElementById(b).onclick=()=>document.getElementById(m).classList.add('show'));
+document.querySelectorAll('[data-close]').forEach(b=>b.onclick=e=>e.target.closest('.modal').classList.remove('show'));
+document.querySelectorAll('.modal').forEach(m=>m.onclick=e=>{if(e.target===m)m.classList.remove('show')});
+</script>
+</body>
+</html>

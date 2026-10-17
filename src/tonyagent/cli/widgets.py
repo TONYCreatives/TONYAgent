@@ -44,6 +44,15 @@ from tonyagent.cli.render import (
     truncate_to_width,
 )
 
+
+def _cap(value: str) -> str:
+    """Display form: uppercase first letter, rest untouched.
+
+    Mode and permission arrive lowercase (`build`, `medium`); model ids,
+    paths and titles keep their own case and bypass this.
+    """
+    return value[:1].upper() + value[1:] if value else value
+
 # --------------------------------------------------------------------------
 # The turn model
 # --------------------------------------------------------------------------
@@ -381,7 +390,7 @@ class ChangeHeader(Static):
         from tonyagent.cli import theme
 
         text = Text()
-        text.append(self.change.path or "(unknown path)", style=theme.FG_DIM)
+        text.append(self.change.path or "(Unknown path)", style=theme.FG_DIM)
         if self.change.added or self.change.removed:
             text.append(f"  +{self.change.added}", style=theme.TRAJ_ADD)
             text.append(f" -{self.change.removed}", style=theme.TRAJ_DEL)
@@ -1260,7 +1269,7 @@ class ConversationsDialog(_ListScreen):
             # folder is the thing a person with several projects is scanning for.
             if project != last_project:
                 options.add_option(
-                    Option(f"  {_short_path(project) or 'no project'}", id=None, disabled=True)
+                    Option(f"  {_short_path(project) or 'No project'}", id=None, disabled=True)
                 )
                 last_project = project
             marker = "●" if str(row.get("id")) == self.current else " "
@@ -1537,15 +1546,42 @@ class Sidebar(Static):
         self.known = bool(payload.get("known"))
         self.refresh()
 
-    def _fit(self, value: str) -> str:
+    def _fit(self, value: str, indent: int = 2) -> str:
         """A value clipped to the panel rather than left to wrap.
 
         A wrapped value pushes every row below it down, and the rows below it
         are the meter. In the compact width a long model id is the difference
-        between four rows and seven.
+        between four rows and seven. `indent` reserves the two leading spaces
+        the value row carries, so the fit matches what is actually drawn.
         """
         width = self.content_size.width
-        return truncate_to_width(value, width) if width else value
+        if width:
+            width = max(1, width - indent)
+            return truncate_to_width(value, width) if width else value
+        return value
+
+    def _fit_path(self, value: str, indent: int = 2) -> str:
+        """A path clipped from the front, keeping the tail that names it.
+
+        End-truncation keeps `C:\\Users\\...` and drops the folder name, which
+        is the one part that distinguishes projects. Front-truncation keeps
+        `…\\Project`, which is what the status line and picker already show.
+        """
+        width = self.content_size.width
+        if width:
+            width = max(1, width - indent)
+        if not width or display_width(value) <= width:
+            return value
+        # Walk from the tail until the width (minus the ellipsis) is filled.
+        tail: list[str] = []
+        used = 0
+        for char in reversed(value):
+            step = display_width(char)
+            if used + step > width - 1:
+                break
+            tail.append(char)
+            used += step
+        return "…" + "".join(reversed(tail))
 
     def _fraction(self) -> Optional[float]:
         if not self.known or not self.window or self.used <= 0:
@@ -1580,15 +1616,17 @@ class Sidebar(Static):
         gap = "\n" if tight else "\n\n"
         text = Text()
 
-        def heading(name: str, hint_key: str, *, bold: bool = False) -> None:
-            """A row's name with its key right-aligned, and the line ended.
+        def heading(name: str, hint_key: str) -> None:
+            """A section label with its key right-aligned, and the line ended.
 
-            Right-aligned rather than run after the name: the keys then line up
-            in a column of their own, which is what makes them read as a
-            keybinding legend rather than as part of the label.
+            Uppercase muted label, dimmed key: the label says what the block
+            is, the value below says what it holds. Right-aligned rather than
+            run after the name: the keys then line up in a column of their own,
+            which is what makes them read as a keybinding legend rather than as
+            part of the label.
             """
             hint = self.HINTS.get(hint_key, "")
-            style = f"bold {theme.FG}" if bold else theme.FG_MUTE
+            style = theme.FG_MUTE
             if not hint:
                 text.append(f"{name}\n", style=style)
                 return
@@ -1604,34 +1642,48 @@ class Sidebar(Static):
             text.append(pad_to(truncate_to_width(name, room), room), style=style)
             text.append(f"{hint}\n", style=theme.FG_MUTE)
 
-        heading(self._fit(self.mode or "-"), "mode", bold=True)
+        def value_row(val: str, style: str) -> None:
+            text.append("  ", style=style)
+            text.append(f"{self._fit(val)}\n", style=style)
+
+        heading("MODE", "mode")
+        value_row(_cap(self.mode) or "-", theme.FG)
         text.append(gap)
 
-        heading("Model", "model")
-        text.append(self._fit(self.model or "not bound"), style=theme.FG_DIM)
+        heading("MODEL", "model")
+        text.append("  ", style=theme.FG)
+        text.append(f"{self._fit(self.model or 'Not bound')}\n", style=theme.FG)
         text.append(gap)
 
-        heading("Permission", "permission")
-        text.append(self._fit(self.permission or "-"), style=theme.FG_DIM)
+        heading("PERMISSION", "permission")
+        value_row(_cap(self.permission) or "-", theme.FG)
         text.append(gap)
 
-        if self.conversation:
-            heading("Chat", "chat")
-            text.append(self._fit(self.conversation), style=theme.FG)
+        if not tight:
+            heading("PROJECT", "project")
+            text.append("  ", style=theme.FG_MUTE)
+            text.append(f"{self._fit_path(self.project or 'No folder')}\n", style=theme.FG_MUTE)
             text.append(gap)
 
-        heading("Context", "context")
+        if self.conversation and not tight:
+            heading("CHAT", "chat")
+            value_row(self.conversation, theme.FG)
+            text.append(gap)
+
+        heading("CONTEXT", "context")
         fraction = self._fraction()
 
         if fraction is None:
             # Not "0%": the honest statement is that the number is not
-            # available, and saying why costs one line.
-            text.append("unknown", style=theme.WARN)
+            # available, and saying why costs one line. Muted, not warning:
+            # an unmeasured meter is the normal state on a fresh session,
+            # not something that needs the eye.
+            text.append("  Unknown\n", style=theme.FG_MUTE)
             if self.model:
-                text.append("\n")
-                text.append(self._why_unknown(), style=theme.FG_MUTE)
+                text.append("  ", style=theme.FG_MUTE)
+                text.append(f"{_cap(self._why_unknown())}\n", style=theme.FG_MUTE)
             else:
-                text.append("\nno provider bound", style=theme.FG_MUTE)
+                text.append("  No provider bound\n", style=theme.FG_MUTE)
         else:
             # Two spellings, because the panel has two widths. `314,139 tokens
             #  31% of 1,000,000` is 33 columns and the compact panel has 23, so
@@ -1642,7 +1694,8 @@ class Sidebar(Static):
             percent = f"{fraction * 100:.0f}%"
             full = f"{self.used:,} tokens  {percent} of {self.window:,}"
             width = self.content_size.width
-            if width and display_width(full) > width:
+            text.append("  ", style=theme.FG_DIM)
+            if width and display_width(full) + 2 > width:
                 text.append(
                     f"{self.used:,} / {_context_label(self.window, '')}",
                     style=theme.FG_DIM,
@@ -1652,6 +1705,7 @@ class Sidebar(Static):
                 text.append(f"{self.used:,} tokens", style=theme.FG_DIM)
                 text.append(f"  {percent} of {self.window:,}", style=theme.FG_MUTE)
             text.append("\n")
+            text.append("  ", style=theme.FG_MUTE)
             text.append(self._bar(fraction, theme))
 
         # The rows a click can act on, read back out of what was just drawn
@@ -1659,17 +1713,19 @@ class Sidebar(Static):
         # the first time a row grows a branch, and the branches are the reason
         # this is not simply four fixed line numbers.
         rows = text.plain.split("\n")
-        regions: dict[int, str] = {0: "mode"}
+        regions: dict[int, str] = {0: "mode", 1: "mode"}
         for index, row in enumerate(rows):
             # The first word, because a row now carries its key beside the
-            # name: `Model      ctrl+2` is still the Model row.
+            # name: `MODEL      ctrl+2` is still the MODEL row. Uppercase
+            # labels, case-insensitive match so the click map survives.
             stripped = row.strip()
-            label = stripped.split(" ", 1)[0] if stripped else ""
-            if label in ("Model", "Permission", "Chat"):
+            label = stripped.split(" ", 1)[0].upper() if stripped else ""
+            if label in ("MODEL", "PERMISSION", "PROJECT", "CHAT"):
                 # The value sits under its label, which is the row worth
-                # clicking: "Permission" is a word, `medium` is the setting.
+                # clicking: "PERMISSION" is a word, `medium` is the setting.
+                regions[index] = label.lower()
                 regions[index + 1] = label.lower()
-            elif label == "Context":
+            elif label == "CONTEXT":
                 # A label, a value, and a bar when there is one -- and the last
                 # block, so everything from here down is the meter.
                 regions.update(dict.fromkeys(range(index, len(rows)), "context"))
@@ -1703,6 +1759,48 @@ class Sidebar(Static):
         if not self.window:
             return "model publishes no window"
         return ""
+
+
+class NavRail(Static):
+    """The left nav: conversation accelerator for the redesigned layout.
+
+    A thin column, not a second sidebar: the chat list dialog remains the
+    route, this only shows recent titles. Posts ``Sidebar.Picked`` with
+    ``chat``/``new`` so the app reuses one dispatch table.
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.titles: list[str] = []
+        self.active = ""
+        self._regions: dict[int, str] = {}
+
+    def set_conversations(self, titles: list[str], active: str = "") -> None:
+        self.titles = list(titles[:8])
+        self.active = active or ""
+        self.refresh()
+
+    def on_click(self, event: Any) -> None:
+        target = self._regions.get(event.offset.y, "")
+        if not target:
+            return
+        event.stop()
+        self.post_message(Sidebar.Picked(target))
+
+    def render(self) -> Text:
+        from tonyagent.cli import theme
+
+        text = Text()
+        text.append("Chats\n", style=theme.FG_MUTE)
+        self._regions = {}
+        for i, title in enumerate(self.titles or ["(no chats yet)"]):
+            mark = theme.tab_marker() + " " if title == self.active else "  "
+            style = f"bold {theme.FG}" if title == self.active else theme.FG_DIM
+            text.append(mark + title[:20] + "\n", style=style)
+            self._regions[i + 1] = "chat"
+        text.append("\n+ new  ctrl+n\n", style=theme.FG_MUTE)
+        self._regions[len(self._regions) + 1] = "new"
+        return text
 
 
 def _one_line(text: str, limit: int) -> str:

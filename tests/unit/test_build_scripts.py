@@ -361,7 +361,12 @@ def test_the_batch_finishes_by_pointing_at_the_launcher(tmp_path):
 
 
 def test_the_launcher_starts_without_building_when_the_tree_is_current(tmp_path):
-    done = _run(_launcher_fixture(tmp_path))
+    # `window` explicitly, because every test in this section asserts the window
+    # path: the pywebview pre-flight, `Started.`, and a stubbed `pythonw`. The
+    # launcher's no-argument default is the terminal interface, which the fixture
+    # does not stub -- it runs the real `python -m tonyagent.cli --tui`, and a
+    # forced full-screen interface on a captured stdout never returns.
+    done = _run(_launcher_fixture(tmp_path), "window")
 
     assert done.returncode == 0, done.stdout + done.stderr
     assert "STUB-start" in done.stdout
@@ -376,7 +381,7 @@ def test_the_launcher_rebuilds_what_is_stale_before_starting(tmp_path):
     root = _launcher_fixture(tmp_path).parent
     _write(root / "app/src/Composer.tsx", "edited")
 
-    done = _run(root / "launcher.bat")
+    done = _run(root / "launcher.bat", "window")
 
     assert done.returncode == 0, done.stdout + done.stderr
     assert "The frontend is behind the source" in done.stdout
@@ -390,7 +395,7 @@ def test_the_launcher_still_starts_the_previous_build_when_the_rebuild_fails(tmp
     root = _launcher_fixture(tmp_path, fail_frontend=True).parent
     _write(root / "app/src/Composer.tsx", "edited")
 
-    done = _run(root / "launcher.bat")
+    done = _run(root / "launcher.bat", "window")
 
     assert done.returncode == 0, done.stdout + done.stderr
     assert "The rebuild failed" in done.stdout
@@ -402,7 +407,7 @@ def test_the_launcher_says_so_when_there_is_no_frontend(tmp_path):
     root = _launcher_fixture(tmp_path).parent
     (root / OUTPUT).unlink()
 
-    done = _run(root / "launcher.bat")
+    done = _run(root / "launcher.bat", "window")
 
     # The stub "rebuilds" and still produces nothing, because the bundle it would
     # have produced is not this test's business. The launcher has to notice that
@@ -420,7 +425,7 @@ def test_the_launcher_says_so_when_the_window_library_is_missing(tmp_path):
     launcher = launcher.replace("cmd /c exit 0", "cmd /c exit 1")
     (root / "launcher.bat").write_bytes(launcher.encode("utf-8"))
 
-    done = _run(root / "launcher.bat")
+    done = _run(root / "launcher.bat", "window")
 
     assert "STUB-start" not in done.stdout
     assert "pip install pywebview" in done.stdout
