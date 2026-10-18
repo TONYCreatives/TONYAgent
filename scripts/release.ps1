@@ -118,9 +118,6 @@ then authenticate with `gh auth login`.
 $releaseArgs = @('release', 'create', $tag, $msi, '--title', "TONYAgent $version")
 if ($Prerelease) { $releaseArgs += '--prerelease' }
 if ($NotesFile) { $releaseArgs += @('--notes-file', $NotesFile) } else { $releaseArgs += '--generate-notes' }
-# Idempotent: re-running after a failed upload should fix the release rather
-# than refuse because it already exists.
-$releaseArgs += '--clobber'
 
 if ($DryRun) {
     Write-Host ''
@@ -137,7 +134,16 @@ if ($LASTEXITCODE -ne 0) { Fail 'could not push the tag' }
 
 Step 'Publishing the release'
 & gh @releaseArgs
-if ($LASTEXITCODE -ne 0) { Fail 'gh could not create the release' }
+if ($LASTEXITCODE -ne 0) {
+    # **A release that already exists is a re-run, not a failure.** `create`
+    # has no `--clobber` -- that belongs to `upload` -- so the second run of
+    # this script is answered by attaching the installer to the release that is
+    # already there. Which is what a failed upload needs, and what re-running
+    # after a fixed build needs.
+    Write-Host '  the release exists already; attaching the installer to it'
+    & gh release upload $tag $msi --clobber
+    if ($LASTEXITCODE -ne 0) { Fail 'gh could not attach the installer' }
+}
 
 Write-Host ''
 Write-Host "Released $tag with $(Split-Path -Leaf $msi)" -ForegroundColor Green
