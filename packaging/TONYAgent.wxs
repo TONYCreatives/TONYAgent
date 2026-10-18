@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The installer for TONYAgent.
+
+  **Per-machine, and that was measured rather than assumed.** The first version
+  of this file asked for `Scope="perUser"`, on the reasoning that the app's
+  state is per-user (the keyring is, by construction). On a real machine whose
+  user is in the Administrators group, Windows Installer installed it
+  machine-wide anyway: the install log shows it *deleting* `ALLUSERS=2` and
+  *ignoring* `MSIINSTALLPERUSER` ("not valid for UAC compliant package"), so the
+  Add/Remove entry went to HKLM while the files went to the user's own
+  `%LOCALAPPDATA%`. Registration and program disagreed about who owned the
+  install.
+
+  So the scope is stated as what it actually is. Files go to Program Files,
+  registration goes to HKLM, and the two cannot drift. Nothing about the app's
+  data changes: conversations, settings and API keys still live in the running
+  user's profile, which is what makes a shared machine work.
+
+  **Files are harvested, not listed.** Every file in the PyInstaller output is
+  installed by the `<Files>` element below, which globs the build directory.
+  Writing them out by hand would be a list that goes stale silently the first
+  time a dependency adds a DLL, and the failure is a program that installs
+  cleanly and then cannot start.
+
+  **The icon is set twice on purpose.** `ARPPRODUCTICON` is what Add/Remove
+  Programs shows; the two `<Icon>` entries are what the Start Menu shortcut and
+  the window's own caption use. They are the same file, and WiX needs each
+  reference named separately.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="TONYAgent"
+    Manufacturer="TONYCreatives"
+    Version="$(var.ProductVersion)"
+    UpgradeCode="8f3c1d42-7a5e-4b19-9c8d-2e6f0a4b7c31"
+    Scope="perMachine"
+    Compressed="yes"
+    InstallerVersion="500">
+
+    <!--
+      Upgrades replace the previous version rather than sitting beside it. A
+      stable `UpgradeCode` is the whole mechanism: without it Windows treats
+      every build as a different product and the user accumulates copies.
+    -->
+    <MajorUpgrade
+      AllowSameVersionUpgrades="yes"
+      DowngradeErrorMessage="A newer version of TONYAgent is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="TonyAgentIcon" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="TonyAgentIcon" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPCOMMENTS" Value="A local-first desktop AI agent." />
+    <!--
+      What Add/Remove Programs shows as the install location, and what its
+      "Open file location" jumps to. Without it the entry has a name and a size
+      and nowhere to point, because an MSI does not otherwise record where its
+      own INSTALLFOLDER landed.
+
+      **Set by a custom action rather than as a Property**, and that is not a
+      stylistic choice: a value in the Property table is never formatted, so
+      the first version of this line put the literal text `[INSTALLFOLDER]` in
+      Add/Remove Programs. `SetProperty` runs it through the formatter during
+      the execute sequence, which is the point at which INSTALLFOLDER is known.
+    -->
+    <SetProperty
+      Id="ARPINSTALLLOCATION"
+      Value="[INSTALLFOLDER]"
+      After="CostFinalize"
+      Sequence="execute" />
+
+    <!--
+      No launch condition, deliberately. An MSI cannot be installed anywhere but
+      Windows, so "requires Windows" is not a check, it is a restatement, and
+      the first version of this file wrote it inverted (`NOT VersionNT`, which
+      is true *off* Windows) and refused to install on the one platform the
+      installer runs on. A condition that can only ever be one answer is a
+      condition that exists to fail.
+    -->
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="TONYAgent" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppShortcutFolder" Name="TONYAgent" />
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="TONYAgent" Level="1">
+      <ComponentGroupRef Id="ProgramFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <!--
+      `Directory` on the group rather than a `DirectoryRef` around it: a
+      `ComponentGroup` is a top-level element that names the directory its
+      harvested files go into, not something a directory can contain.
+    -->
+    <ComponentGroup Id="ProgramFiles" Directory="INSTALLFOLDER">
+      <!--
+        The whole PyInstaller output. `$(var.BuildDir)` is passed in by the
+        build script; a missing directory is a build error rather than an
+        installer that installs nothing.
+      -->
+      <Files Include="$(var.BuildDir)\**\*" />
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <DirectoryRef Id="AppShortcutFolder">
+      <Component Id="StartMenuShortcut" Guid="b7d2f4a8-5c31-4e6b-8d09-1f2a3c4d5e60">
+        <Shortcut
+          Id="StartMenuLink"
+          Name="TONYAgent"
+          Description="TONYAgent - a local AI agent"
+          Target="[INSTALLFOLDER]TONYAgent.exe"
+          WorkingDirectory="INSTALLFOLDER"
+          Icon="TonyAgentIcon" />
+        <RemoveFolder Id="RemoveAppShortcutFolder" On="uninstall" />
+        <!--
+          The component's key path. A shortcut is not a file that can be
+          versioned, so the component needs something real to be "installed"
+          by, and the user's own registry hive is the conventional choice.
+        -->
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\TONYCreatives\TONYAgent"
+          Name="installed"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+  </Fragment>
+
+  <Fragment>
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Guid="c1a8e5b3-9d47-4f2a-b6c8-3e7f1a2b4d59">
+        <Shortcut
+          Id="DesktopLink"
+          Name="TONYAgent"
+          Description="TONYAgent - a local AI agent"
+          Target="[INSTALLFOLDER]TONYAgent.exe"
+          WorkingDirectory="INSTALLFOLDER"
+          Icon="TonyAgentIcon" />
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\TONYCreatives\TONYAgent"
+          Name="desktop_shortcut"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+  </Fragment>
+</Wix>

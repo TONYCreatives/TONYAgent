@@ -12,11 +12,23 @@ The failure is loud but easy to miss in the wrong place --
 harness in ``scripts/`` calls ``host.main()`` directly, so the one entry point
 the launcher, the docs and every instruction in this repository actually name
 was the one path nothing exercised. The launcher found it in a second.
+
+**``--core`` is the installed build's second half.** A frozen executable has no
+``python -m`` to spawn: ``sys.executable`` is the app itself, so the core is
+reached by re-running that same file with this flag and dispatching here.
+Everything below the argument is the ordinary host.
 """
 
 from __future__ import annotations
 
-from tonyagent.window.host import main
+import sys
 
 if __name__ == "__main__":
+    if "--core" in sys.argv[1:]:
+        from tonyagent.headless.server import main as core_main
+
+        raise SystemExit(core_main())
+
+    from tonyagent.window.host import main
+
     raise SystemExit(main())

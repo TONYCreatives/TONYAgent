@@ -399,6 +399,23 @@ def sibling_page(page: str, name: str) -> str:
     return f"{head}/{name}" if head else name
 
 
+def bundle_root() -> Path | None:
+    """Where an installed build keeps its data, or None when running from source.
+
+    PyInstaller unpacks a onedir build beside the executable and points
+    ``sys._MEIPASS`` at it. That is where the frontend and the icons are put, so
+    the two `default_dist`/`app_icon` readers below stay one line each instead of
+    each knowing how a frozen app is laid out.
+
+    ``frozen`` and not the presence of ``_MEIPASS``: the attribute is PyInstaller's
+    and could in principle be set by something else, while ``sys.frozen`` is the
+    interpreter's own statement that it is running a bundled program.
+    """
+    if not getattr(sys, "frozen", False):
+        return None
+    return Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+
+
 def default_dist() -> Path:
     """The built frontend, found relative to this file rather than to the cwd.
 
@@ -406,7 +423,15 @@ def default_dist() -> Path:
     by a double-clicked launcher, whose working directory is whatever the shell
     that spawned it had, so a relative path would make the app work from one
     shortcut and not from another.
+
+    **Bundled first, when frozen.** An installed build has no ``app/dist`` three
+    directories above anything -- it has the copy the installer put beside the
+    executable, which is the only one the user is entitled to have modified or
+    to have removed.
     """
+    bundled = bundle_root()
+    if bundled is not None:
+        return bundled / "app" / "dist"
     return Path(__file__).resolve().parents[3] / "app" / "dist"
 
 
@@ -422,7 +447,12 @@ def app_icon() -> str | None:
     a window with the default icon is a cosmetic difference, and refusing to open
     over one would turn that into no app at all. Same judgement as the corners.
     """
-    icon = Path(__file__).resolve().parents[3] / "app" / "icons" / "icon.ico"
+    bundled = bundle_root()
+    icon = (
+        bundled / "app" / "icons" / "icon.ico"
+        if bundled is not None
+        else Path(__file__).resolve().parents[3] / "app" / "icons" / "icon.ico"
+    )
     return str(icon) if icon.is_file() else None
 
 

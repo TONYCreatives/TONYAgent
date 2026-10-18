@@ -635,3 +635,72 @@ def test_the_root_window_walk_survives_a_handle_it_cannot_place():
     from tonyagent.window import win32
 
     assert win32.root_window(0) == 0
+
+
+# --- the installed build -----------------------------------------------------
+def test_a_frozen_host_uses_the_bundle_beside_the_executable(monkeypatch, tmp_path):
+    """The installed app has no `app/dist` three directories above anything.
+
+    PyInstaller unpacks a onedir build and points `sys._MEIPASS` at it, which is
+    where the installer put the frontend and the icons. Both readers have to
+    prefer that copy: the checkout's is not necessarily on the machine at all,
+    and if it is, it is not the one the user installed.
+    """
+    from tonyagent.window import host
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    # `app_icon` returns None for a file that is not there (a missing icon is
+    # cosmetic, not fatal), so the bundle has to actually contain one.
+    icon = tmp_path / "app" / "icons" / "icon.ico"
+    icon.parent.mkdir(parents=True)
+    icon.write_bytes(b"icon")
+
+    assert host.bundle_root() == tmp_path
+    assert host.default_dist() == tmp_path / "app" / "dist"
+    assert host.app_icon() == str(icon)
+
+
+def test_an_unfrozen_host_still_walks_up_to_the_checkout(monkeypatch):
+    """Running from source is unchanged, and that is the common case."""
+    from tonyagent.window import host
+
+    monkeypatch.delattr(sys, "frozen", raising=False)
+
+    assert host.bundle_root() is None
+    assert host.default_dist() == REPO / "app" / "dist"
+
+
+def test_a_frozen_core_is_the_same_executable_with_a_flag(monkeypatch):
+    """**The installed build has no `python -m` to spawn.**
+
+    `sys.executable` is the app itself, so the core is reached by re-running it
+    with `--core` and dispatching in `window.__main__`. Without this the frozen
+    host would ask the same file for a module and get a second window instead of
+    a core.
+    """
+    from tonyagent.window import core
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    argv = core.default_argv()
+
+    assert argv == [sys.executable, "--core"]
+    assert "-m" not in argv, "a frozen build cannot be asked for a module"
+
+
+def test_a_frozen_core_does_not_inherit_a_pythonpath(monkeypatch):
+    """A stale PYTHONPATH could shadow the bundled modules with another checkout.
+
+    The from-source path needs one (the launcher's cwd is wherever the shell
+    was), and the installed one must not have one, which is the opposite
+    requirement and why the two branches exist.
+    """
+    from tonyagent.window import core
+
+    monkeypatch.setenv("PYTHONPATH", r"C:\some\other\checkout\src")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert "PYTHONPATH" not in core.source_env()
+
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    env = core.source_env()
+    assert env["PYTHONPATH"].startswith(str(REPO / "src"))

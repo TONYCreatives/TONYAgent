@@ -162,7 +162,27 @@ executed".)
 
 ## Installation
 
-### From Source (Recommended)
+### From an Installer (Windows)
+
+`Build Installer.bat` produces `build\installer\TONYAgent-<version>.msi`, which
+installs the program to `Program Files`, adds a Start Menu entry and a desktop
+shortcut, and registers an uninstaller in Apps & Features. Python does not have
+to be installed on the target machine: the interpreter, the frontend and the
+WebView2 bindings are all inside the bundle. The WebView2 *runtime* is a Windows
+component that ships with Windows 10 and 11; the installer does not carry one.
+
+It needs two tools on the *build* machine, installed once:
+
+```bash
+python -m pip install pyinstaller
+dotnet tool install --global wix --version 5.0.2
+```
+
+**WiX 5 rather than the newest WiX.** WiX 7 refuses to run until its Open Source
+Maintenance Fee EULA is accepted, which is a licensing decision rather than a
+build step; WiX 5 is the same authoring schema and asks for nothing.
+
+### From Source (Recommended for Development)
 
 ```bash
 # Standard installation

@@ -242,7 +242,7 @@ class CoreProcess:
 
 
 def default_argv() -> list[str]:
-    """How to start the core from source.
+    """How to start the core.
 
     ``-u`` because a buffered stdout is a stdout that arrives in four-kilobyte
     clumps, which turns a token stream into a stutter; the child is a pipe, so
@@ -251,7 +251,15 @@ def default_argv() -> list[str]:
     ``-m tonyagent.headless.server`` rather than an import, because the core is
     an asyncio program that owns its own stdin and stdout, and there is no
     reason to run two event loops in one process to save a fork.
+
+    **Frozen, the same file is the core.** An installed build has no
+    ``python -m`` to reach for: ``sys.executable`` *is* the app, so the core is
+    the same executable run with ``--core``, which `window.__main__` dispatches
+    on. Without this the installed app would try to spawn
+    ``TONYAgent.exe -m tonyagent.headless.server`` and get a second window.
     """
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--core"]
     return [sys.executable, "-u", "-m", "tonyagent.headless.server"]
 
 
@@ -262,8 +270,15 @@ def source_env() -> dict[str, str]:
     double-clicked ``.bat``, whose working directory and ``PYTHONPATH`` are
     whatever that shell had, and a core that cannot import itself dies with a
     traceback on a stderr nobody is reading.
+
+    **Not set when frozen.** There is no ``src`` beside an installed build to
+    point at, and a stale ``PYTHONPATH`` inherited from the machine could put
+    some other checkout's modules in front of the bundled ones.
     """
     env = dict(os.environ)
+    if getattr(sys, "frozen", False):
+        env.pop("PYTHONPATH", None)
+        return env
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     src = os.path.join(root, "src")
     existing = env.get("PYTHONPATH", "")
