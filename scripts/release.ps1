@@ -66,7 +66,7 @@ $dirty
 "@
 }
 
-$branch = (git rev-parse --abbrev-ref HEAD).Trim()
+$branch = (git rev-parse --abbrev-ref HEAD | Out-String).Trim()
 if ($branch -ne 'master' -and $branch -ne 'main') {
     Write-Host "  note: releasing from '$branch' rather than master" -ForegroundColor Yellow
 }
@@ -89,7 +89,10 @@ if (-not $DryRun -and -not (Test-Path -LiteralPath $msi)) {
 }
 
 # --- the tag ----------------------------------------------------------------
-$existing = (git tag --list $tag).Trim()
+# `| Out-String` and then Trim: `git tag --list` prints nothing for a tag that
+# does not exist, and `.Trim()` on a null throws. Found by the second release --
+# the first one had the tag already, so the branch was never taken.
+$existing = (git tag --list $tag | Out-String).Trim()
 if ($existing) {
     Write-Host "  tag $tag already exists; leaving it where it is"
 } elseif ($DryRun) {
