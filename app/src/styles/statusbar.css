@@ -4,7 +4,9 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
+  /* The bar's height, as a token: the conversation panel and its scrim stop
+     above it, so the number has two readers and one home. */
+  height: var(--statusbar-h);
   min-width: 0;
   padding: 0 12px;
   border-top: 1px solid var(--glass-edge);

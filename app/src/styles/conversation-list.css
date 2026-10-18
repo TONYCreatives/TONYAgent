@@ -43,7 +43,14 @@
   top: var(--topbar-h);
   /* x=0, over the rail: the two are one sidebar at two widths -- see above. */
   left: 0;
-  bottom: 0;
+  /* And it stops on the status bar rather than at the window's edge. It used to
+     be `bottom: 0`, which painted this panel's footer -- Search and Settings --
+     across the bar's left 224px and hid the connection state under them; the
+     scrim below did the same to the rest. The rail is worth covering and the
+     bar is not: the bar is the one surface that says whether the app is
+     connected. `--statusbar-h` is the bar's own height, so the two cannot
+     disagree. */
+  bottom: var(--statusbar-h);
   z-index: 4;
   display: flex;
   flex-direction: column;
@@ -403,7 +410,10 @@
  */
 .chatlist-scrim {
   position: absolute;
-  inset: var(--topbar-h) 0 0 var(--rail-w);
+  /* `inset: top right bottom left`, and the bottom is the status bar's height
+     for the same reason the panel's is: the scrim dims what it covers, and the
+     bar is not part of the transcript it is dimming. */
+  inset: var(--topbar-h) 0 var(--statusbar-h) var(--rail-w);
   z-index: 3;
   background: rgba(8, 8, 8, 0.35);
   backdrop-filter: blur(1.5px);

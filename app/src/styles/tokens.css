@@ -81,8 +81,9 @@
  *
  * --- the geometry ----------------------------------------------------------
  *
- * Five numbers, and they are five tokens: `--rail-w`, `--list-w`, `--topbar-h`,
- * `--measure` and `--column-inset`. Each is declared once, in `:root`, with the
+ * Six numbers, and they are six tokens: `--rail-w`, `--list-w`, `--topbar-h`,
+ * `--statusbar-h`, `--measure` and `--column-inset`. Each is declared once, in
+ * `:root`, with the
  * reason it has the value it has; nothing is repeated here, because a comment
  * that restates a token is a second place for the token to be wrong, and this
  * file has now had four passes of exactly that happen to it.
@@ -494,6 +495,26 @@
      caption buttons that fill it. Taller than the reference's 44 because the
      chip moved up here out of the composer and the bar now has to hold it. */
   --topbar-h: 52px;
+  /*
+   * The window's lower edge, and it is a token because two overlays have to
+   * stop above it rather than for the bar's own sake.
+   *
+   * The conversation panel and its scrim are `position: absolute` and used to
+   * run to `bottom: 0`, which put both of them over the bar: the panel painted
+   * its own footer across the bar's left 224px and hid the connection state,
+   * and the scrim dimmed the remainder. Measured in the running window rather
+   * than reasoned about -- `elementsFromPoint` at the bar's left corner
+   * returned `chatlist-foot` first, with `statusbar-state` underneath it.
+   *
+   * Covering the *rail* is deliberate: the rail is the collapsed state of one
+   * sidebar and this panel is the expanded state, so the panel covers the
+   * strip. Covering the bar is not. The bar is chrome, and it is the one
+   * surface that says whether the app is connected at all.
+   *
+   * 26px is what the bar already measured, so naming it moves no pixels; it
+   * only gives the panel a number to read instead of a second copy of 26.
+   */
+  --statusbar-h: 26px;
 
   /*
    * Radius, by what the shape is rather than by how round it looks.

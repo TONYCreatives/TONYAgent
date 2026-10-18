@@ -1211,11 +1211,36 @@ describe("the conversation list floats over the transcript", () => {
     // this panel is the expanded state, so the panel covers the strip rather
     // than sitting to its right. See the panel's own comment.
     assert.match(body(".chatlist"), /left:\s*0\b/);
-    assert.match(body(".chatlist"), /bottom:\s*0\b/);
+    // And it stops on the status bar rather than at the window's edge. It was
+    // `bottom: 0`, which painted this panel's footer across the bar's left
+    // 224px and hid the connection state underneath it. Read through the token
+    // so the panel and the bar cannot disagree about how tall the bar is.
+    assert.match(body(".chatlist"), /bottom:\s*var\(--statusbar-h\)/);
     // `absolute` with no `grid-column`/`grid-row`: those would be inert, and
     // inert declarations are how a rule ends up documenting an arrangement that
     // stopped existing.
     assert.doesNotMatch(body(".chatlist"), /grid-/);
+  });
+
+  test("the panel and its scrim stop above the status bar", () => {
+    // The bug this closes, and it was measured in the running window rather
+    // than reasoned about: the panel ran to `bottom: 0`, so with the sidebar
+    // open its own footer sat on the bar's row. `elementsFromPoint` at the
+    // bar's left corner returned `chatlist-foot` first with `statusbar-state`
+    // underneath it, so the bar's left 224px -- the connection state -- was
+    // simply not visible.
+    //
+    // Both overlays read the token the bar's own height is declared with, so a
+    // future change to that height moves all three together rather than leaving
+    // one of them behind. The scrim's exact inset is pinned in its own suite
+    // below, which is the place that knows why it stops at the rail.
+    assert.match(body(".chatlist"), /bottom:\s*var\(--statusbar-h\)/);
+    // And the bar's height is that token, not a second copy of the number.
+    // `baseBody` and not `body`: the narrow-window block for `.statusbar` comes
+    // later in the cascade and has no height in it, which is what `body` would
+    // have read.
+    assert.match(baseBody(".statusbar"), /height:\s*var\(--statusbar-h\)/);
+    assert.match(STYLESHEET, /--statusbar-h:\s*26px/);
   });
 
   test("and it is the reference's width, pinned to the rail's right edge", () => {
@@ -2285,7 +2310,15 @@ describe("the conversation panel dims what is behind it", () => {
     // width. Covering the rail would put the two buttons a user reaches for
     // mid-turn behind a backdrop they have to dismiss first, and the panel is
     // anchored to the rail precisely so the rail stays operable.
-    assert.match(body(".chatlist-scrim"), /inset:\s*var\(--topbar-h\) 0 0 var\(--rail-w\)/);
+    //
+    // The bottom edge is the status bar's height for the mirror-image reason.
+    // The rail is worth covering and the bar is not: the bar is the one surface
+    // that says whether the app is connected. Asserted as the whole inset, so
+    // moving either edge has to be a decision rather than a drift.
+    assert.match(
+      body(".chatlist-scrim"),
+      /inset:\s*var\(--topbar-h\) 0 var\(--statusbar-h\) var\(--rail-w\)/,
+    );
   });
 
   test("and it starts below the title bar, like the panel it dims", () => {
