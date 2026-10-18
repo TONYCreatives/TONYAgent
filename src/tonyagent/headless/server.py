@@ -1706,8 +1706,13 @@ def configure_stdio() -> None:
             reconfigure(encoding="utf-8", errors=errors)
         except (ValueError, OSError):  # pragma: no cover -- platform specific
             pass
-    logger.remove()
-    logger.add(sys.stderr, level="INFO", colorize=False)
+    # The core's log, on disk as well as in the pipe. `colorize=False` because
+    # this stderr is read by the app's log strip, not by a terminal -- see
+    # `setup_logging`, which is where the file, its rotation and its retention
+    # are defined rather than repeated here.
+    from tonyagent.utils.logging import setup_logging
+
+    setup_logging(colorize=False)
 
 
 def build_session() -> AgentSession:

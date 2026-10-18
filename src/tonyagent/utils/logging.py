@@ -9,8 +9,20 @@ from loguru import logger
 from tonyagent.config.settings import settings
 
 
-def setup_logging() -> None:
-    """Configure application logging."""
+def setup_logging(*, colorize: bool = True) -> None:
+    """Configure application logging.
+
+    **Called by the core, which is the process whose failures need a file.** It
+    used to be exported and called by nothing at all: the host has its own
+    ``window.log`` for startup failures, and the core's stderr goes to the app's
+    log strip, which is a strip in a window rather than something to read after
+    the fact. So a keyring warning, a provider error or a turn that died left
+    nothing on disk -- and diagnosing the keyring problem this release fixes
+    took a temporary probe and two rebuilds for exactly that reason.
+
+    ``colorize`` is off for the core. Its stderr is a pipe the app reads, not a
+    terminal, so ANSI codes would arrive in the log strip as literal escapes.
+    """
     # Remove default handler
     logger.remove()
 
@@ -25,7 +37,7 @@ def setup_logging() -> None:
             "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | "
             "<level>{message}</level>"
         ),
-        colorize=True,
+        colorize=colorize,
         backtrace=True,
         diagnose=True,
     )
