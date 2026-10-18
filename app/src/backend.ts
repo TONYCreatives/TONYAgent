@@ -121,6 +121,16 @@ export interface CoreMethods {
    */
   "models.list": Record<string, never>;
   /**
+   * Every model with its catalog facts: display name, context window, max
+   * output tokens, input modalities and wire protocol.
+   *
+   * Read from the same cached `/models` entries as `models.list`, so it costs
+   * no extra request. Rows for models the curator knows nothing about carry
+   * zeros and empty lists -- the picker draws no label for those, which is
+   * not the same as drawing a wrong one.
+   */
+  "models.catalog": Record<string, never>;
+  /**
    * Store an API key in the OS keyring under a name.
    *
    * The key goes out on stdin and the reply carries only the provider and the

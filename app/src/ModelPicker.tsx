@@ -32,6 +32,15 @@ export interface ModelList {
   current: string;
 }
 
+/** One row of `models.catalog`, keyed by model id. */
+export interface ModelDetails {
+  name: string;
+  context_length: number;
+  max_tokens: number;
+  input_modalities: string[];
+  protocol: string;
+}
+
 interface Props {
   /** The bound model's id, as the core last reported it. */
   model: string;
@@ -41,6 +50,13 @@ interface Props {
   disabled: boolean;
   /** The list, or null while it has not been read yet. */
   list: ModelList | null;
+  /**
+   * Catalog facts by model id, or null when not read.
+   *
+   * Optional: rows without an entry render exactly as before (id only), so a
+   * provider the catalog knows nothing about loses nothing.
+   */
+  details?: Record<string, ModelDetails> | null;
   /** Set when the list could not be read, so the menu can say why. */
   error: string | null;
   onOpen: () => void;
@@ -57,14 +73,18 @@ interface Props {
  * structure the list has; sorting alphabetically would bury the free models
  * among the paid ones and hide which vendor a name belongs to at a glance.
  */
-export function matchingModels(models: string[], filter: string): string[] {
+export function matchingModels(
+  models: string[],
+  filter: string,
+  details?: Record<string, ModelDetails> | null,
+): string[] {
   const needle = filter.trim().toLowerCase();
   if (!needle) return models;
   // Every whitespace-separated term must appear, so "claude sonnet" narrows
   // rather than widening. Matching on the whole string would find nothing.
   const terms = needle.split(/\s+/);
   return models.filter((id) => {
-    const haystack = id.toLowerCase();
+    const haystack = `${id} ${details?.[id]?.name ?? ""}`.toLowerCase();
     return terms.every((term) => haystack.includes(term));
   });
 }
@@ -75,11 +95,40 @@ function shortName(id: string): string {
   return slash === -1 ? id : id.slice(slash + 1);
 }
 
+/** A token count as a picker label: 1048576 becomes "1M", 131072 "131K". */
+function countLabel(n: number): string {
+  if (!n || n <= 0) return "";
+  if (n >= 1000000) return `${parseFloat((n / 1000000).toFixed(1))}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}K`;
+  return `${n}`;
+}
+
+/**
+ * One detail line for a row, or "" when nothing is known.
+ *
+ * Chat is the default protocol and gets no badge -- a row for every model
+ * saying "Chat" would be noise. The id leads the line when a display name
+ * replaced it above, because the id is what gets bound on click.
+ */
+function detailLine(id: string, d: ModelDetails): string {
+  const parts: string[] = [];
+  if (d.name && d.name !== id && d.name !== shortName(id)) parts.push(id);
+  const ctx = countLabel(d.context_length);
+  if (ctx) parts.push(`${ctx} ctx`);
+  const out = countLabel(d.max_tokens);
+  if (out) parts.push(`${out} out`);
+  if (d.input_modalities.includes("image")) parts.push("image");
+  if (d.protocol === "responses") parts.push("Responses");
+  else if (d.protocol === "messages") parts.push("Messages API");
+  return parts.join(" · ");
+}
+
 export function ModelPicker({
   model,
   busy,
   disabled,
   list,
+  details = null,
   error,
   onOpen,
   onClose,
@@ -154,7 +203,10 @@ export function ModelPicker({
   }, [open]);
 
   const models = list?.models ?? [];
-  const shown = useMemo(() => matchingModels(models, filter), [models, filter]);
+  const shown = useMemo(
+    () => matchingModels(models, filter, details),
+    [models, filter, details],
+  );
 
   function toggle() {
     if (open) {
@@ -240,33 +292,44 @@ export function ModelPicker({
             </p>
           ) : (
             <ul className="modelpicker-list" role="listbox" aria-label="Models">
-              {shown.map((id) => (
-                <li key={id}>
-                  <button
-                    type="button"
-                    className={`modelpicker-item${id === model ? " is-current" : ""}`}
-                    role="option"
-                    aria-selected={id === model}
-                    onClick={() => choose(id)}
-                  >
-                    {/*
-                      The vendor is shown separately because the id is
-                      namespaced and the vendor is the part that tells you
-                      whether you are about to switch to a different family of
-                      model.
-                    */}
-                    <span className="modelpicker-vendor">
-                      {id.includes("/") ? id.slice(0, id.indexOf("/")) : ""}
-                    </span>
-                    <span className="modelpicker-name">{shortName(id)}</span>
-                    {id === model && (
-                      <span className="modelpicker-current" aria-hidden="true">
-                        &#10003;
+              {shown.map((id) => {
+                const fact = details?.[id];
+                const line = fact ? detailLine(id, fact) : "";
+                return (
+                  <li key={id}>
+                    <button
+                      type="button"
+                      className={`modelpicker-item${id === model ? " is-current" : ""}`}
+                      role="option"
+                      aria-selected={id === model}
+                      onClick={() => choose(id)}
+                    >
+                      {/*
+                        The vendor is shown separately because the id is
+                        namespaced and the vendor is the part that tells you
+                        whether you are about to switch to a different family of
+                        model.
+                      */}
+                      <span className="modelpicker-vendor">
+                        {id.includes("/") ? id.slice(0, id.indexOf("/")) : ""}
                       </span>
-                    )}
-                  </button>
-                </li>
-              ))}
+                      <span className="modelpicker-text">
+                        <span className="modelpicker-name">
+                          {fact?.name || shortName(id)}
+                        </span>
+                        {line && (
+                          <span className="modelpicker-detail">{line}</span>
+                        )}
+                      </span>
+                      {id === model && (
+                        <span className="modelpicker-current" aria-hidden="true">
+                          &#10003;
+                        </span>
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

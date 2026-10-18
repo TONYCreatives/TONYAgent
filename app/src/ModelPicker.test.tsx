@@ -22,7 +22,7 @@ import { describe, test } from "node:test";
 
 import { useState } from "react";
 
-import { ModelPicker, matchingModels, type ModelList } from "./ModelPicker.js";
+import { ModelPicker, matchingModels, type ModelDetails, type ModelList } from "./ModelPicker.js";
 import { all, click, one, pointerDown, press, render, setValue, texts, wait } from "./test-render.js";
 
 const MODELS = [
@@ -402,5 +402,69 @@ describe("dismissing the model menu", () => {
     assert.deepEqual(chosen(), ["anthropic/claude-sonnet-4.5"]);
     await wait(250);
     assert.equal(menu(container), null, "the choice did not close the menu");
+  });
+});
+
+// --- catalog detail lines ----------------------------------------------------
+describe("catalog detail lines", () => {
+  const details: Record<string, ModelDetails> = {
+    "kimi-k3": {
+      name: "Kimi K3",
+      context_length: 1048576,
+      max_tokens: 131072,
+      input_modalities: ["text", "image"],
+      protocol: "chat",
+    },
+    "muse-spark-1.3-contributor": {
+      name: "Muse Spark 1.3 Contributor",
+      context_length: 1048576,
+      max_tokens: 131072,
+      input_modalities: ["text", "image"],
+      protocol: "responses",
+    },
+  };
+
+  const catalogued = () =>
+    render(
+      <ModelPicker
+        model="kimi-k3"
+        busy={false}
+        disabled={false}
+        list={{ models: ["kimi-k3", "muse-spark-1.3-contributor", "glm-5.3"], current: "kimi-k3" }}
+        details={details}
+        error={null}
+        onOpen={() => {}}
+        onClose={() => {}}
+        onChange={() => {}}
+        onLoad={() => {}}
+      />,
+    );
+
+  test("the filter matches display names, not only ids", () => {
+    assert.deepEqual(matchingModels(["kimi-k3", "glm-5.3"], "kimi k3", details), [
+      "kimi-k3",
+    ]);
+  });
+
+  test("rows show the display name and the facts", async () => {
+    const container = await catalogued();
+    await click(chip(container));
+    const rows = texts(container, ".modelpicker-item").map((t) => t ?? "");
+    assert.match(rows[0], /Kimi K3/);
+    assert.match(rows[0], /1M ctx/);
+    assert.match(rows[0], /131K out/);
+    assert.match(rows[0], /image/);
+    assert.match(rows[1], /Muse Spark 1\.3 Contributor/);
+    assert.match(rows[1], /Responses/);
+  });
+
+  test("rows without facts render id-only, as before", async () => {
+    // glm-5.3 has no entry: no display name to show and no facts to line up,
+    // so it renders exactly what it rendered before the catalog existed.
+    const container = await catalogued();
+    await click(chip(container));
+    const rows = texts(container, ".modelpicker-item").map((t) => t ?? "");
+    assert.match(rows[2], /glm-5\.3/);
+    assert.equal(all(container, ".modelpicker-detail").length, 2);
   });
 });

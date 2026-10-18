@@ -253,7 +253,7 @@
 
 .modelpicker-item {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 7px;
   width: 100%;
   /* The 12px inset is kept although the rows are boxes again: the filter above
@@ -301,6 +301,27 @@
   min-width: 0;
   flex: 1;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * The text column: display name above, facts below. A column rather than two
+ * rows because the check and the vendor stay one row tall beside it either
+ * way -- only the name grows a second line, and only when the catalog knew
+ * the model.
+ */
+.modelpicker-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.modelpicker-detail {
+  overflow: hidden;
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

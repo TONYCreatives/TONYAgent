@@ -33,7 +33,7 @@ import {
   toWire,
   type PendingAttachment,
 } from "./attachments.js";
-import { ModelPicker, type ModelList } from "./ModelPicker.js";
+import { ModelPicker, type ModelDetails, type ModelList } from "./ModelPicker.js";
 import { Overlay } from "./Overlay.js";
 import { QuestionDialog } from "./QuestionDialog.js";
 import { SearchPanel, type SearchMatch } from "./SearchPanel.js";
@@ -168,6 +168,17 @@ export function App({
    */
   const [modelList, setModelList] = useState<ModelList | null>(null);
   const [modelListError, setModelListError] = useState<string | null>(null);
+  /**
+   * Catalog facts by model id, for the picker's detail lines.
+   *
+   * Read beside the list from the same cached entries, so it costs no extra
+   * request. Null when unread or unreadable -- rows then render id-only, which
+   * is what they did before the catalog existed.
+   */
+  const [modelDetails, setModelDetails] = useState<Record<
+    string,
+    ModelDetails
+  > | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversation, setConversation] = useState("");
   /**
@@ -1006,6 +1017,34 @@ export function App({
         current?: string;
       };
       setModelList({ models: listed.models ?? [], current: listed.current ?? "" });
+      try {
+        const catalog = (await backend.call("models.catalog")) as {
+          models?: Array<{
+            id?: string;
+            name?: string;
+            context_length?: number;
+            max_tokens?: number;
+            input_modalities?: string[];
+            protocol?: string;
+          }>;
+        };
+        const details: Record<string, ModelDetails> = {};
+        for (const row of catalog.models ?? []) {
+          if (!row || typeof row.id !== "string" || !row.id) continue;
+          details[row.id] = {
+            name: row.name ?? "",
+            context_length: row.context_length ?? 0,
+            max_tokens: row.max_tokens ?? 0,
+            input_modalities: row.input_modalities ?? [],
+            protocol: row.protocol ?? "",
+          };
+        }
+        setModelDetails(details);
+      } catch {
+        // The list is the contract; facts are enrichment. A catalog failure
+        // leaves id-only rows rather than failing the menu.
+        setModelDetails(null);
+      }
     } catch (error: unknown) {
       setModelList(null);
       setModelListError(error instanceof Error ? error.message : String(error));
@@ -2020,6 +2059,7 @@ export function App({
               busy={state.busy}
               disabled={!connected}
               list={modelList}
+              details={modelDetails}
               error={modelListError}
               onOpen={() => {}}
               onClose={() => {}}
