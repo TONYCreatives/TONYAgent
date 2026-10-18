@@ -475,13 +475,19 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
           title="Close sidebar"
           aria-label="Close sidebar"
         >
+          {/*
+            The rail's toggle in the sidebar's other state, so it is the rail's
+            own frame at the rail's own size -- see `glyph` in `IconRail`. It was
+            18px against the rail's 17, which is two drawings of one control at
+            two sizes; both are 20 now.
+          */}
           <svg
-            width="18"
-            height="18"
+            width="20"
+            height="20"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
-            strokeWidth="1.7"
+            strokeWidth="2"
             strokeLinecap="round"
             strokeLinejoin="round"
             aria-hidden="true"
@@ -817,7 +823,10 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
           title="Search project"
           aria-label="Search project"
         >
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          {/* The rail's Search, one rung lower: the same drawing at the same
+              size, because it is the same control in the sidebar's other
+              state. */}
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16zM21 21l-4.3-4.3" />
           </svg>
         </button>
@@ -829,7 +838,7 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
           title={updateAvailable ? "Settings \u2014 a new version is available" : "Settings"}
           aria-label="Settings"
         >
-          <Gear />
+          <Gear size={20} />
           {/* The same mark the rail's gear carries, for the same reason. */}
           {updateAvailable && <span className="rail-dot" aria-hidden="true" />}
         </button>

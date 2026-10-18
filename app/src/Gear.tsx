@@ -24,7 +24,14 @@
  */
 
 interface Props {
-  /** Width and height in CSS pixels. */
+  /**
+   * Width and height in CSS pixels.
+   *
+   * Defaults to 17, which is the composer's row: its neighbours there are text
+   * chips, so the gear is sized to their cap height rather than to a rail
+   * button. The rail and the sidebar's foot pass 20, which is the size every
+   * other glyph in those buttons is drawn at.
+   */
   size?: number;
 }
 

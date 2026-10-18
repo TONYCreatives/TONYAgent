@@ -58,22 +58,33 @@ interface Props {
  *
  * A function returning a node rather than a component wrapping children, and the
  * difference is not stylistic: the gear is a *solid* silhouette and cannot be
- * nested inside this svg. A nested `<svg width="17">` is sized in the parent's
- * user units, so inside a `viewBox="0 0 24 24"` it would come out 17/24 of the
+ * nested inside this svg. A nested `<svg width="20">` is sized in the parent's
+ * user units, so inside a `viewBox="0 0 24 24"` it would come out 20/24 of the
  * box. So every entry carries a complete node and this is how the stroked ones
  * are built.
+ *
+ * **20px and a 2px stroke, up from 17 and 1.7.** The target is 44px, so 17 was
+ * 39% of it -- a small mark floating in a big disc -- while the sidebar's foot
+ * was already 17 in 38px, which is 45%. 20 in 44 is that same 45%, so the two
+ * states of one sidebar fill their buttons alike.
+ *
+ * The stroke is in the frame's own units, so what lands on screen is
+ * `strokeWidth * size / 24`. 2 at 20px draws 1.67px against 1.2px before, and
+ * that is the half of "bigger and thicker" a size alone cannot do: a glyph that
+ * grew 18% and kept its stroke would draw 1.42px -- the same 18% more line -- and
+ * read exactly as thin as it does now.
  *
  * Inline SVG so the rail needs no icon dependency or network fetch.
  */
 function glyph(children: ReactNode): ReactNode {
   return (
     <svg
-      width="17"
-      height="17"
+      width="20"
+      height="20"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.7"
+      strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
@@ -228,7 +239,10 @@ export function IconRail({
    */
   const settings: Item = {
     key: "settings",
-    icon: <Gear />,
+    // The same 20px the stroked entries above are drawn at. The gear is a solid
+    // silhouette rather than a frame with a stroke, so it carries its own size
+    // -- see `Gear`, which is drawn at 17px in the composer's row and 20 here.
+    icon: <Gear size={20} />,
     label: "Settings",
     // The dot says a version is waiting without the panel being opened; the
     // tooltip says what the mark means, because a dot on a gear is not
