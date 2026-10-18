@@ -685,6 +685,43 @@ describe("what the update check says", () => {
     );
   });
 
+  test("the install controls are on the version card, not a card of their own", async () => {
+    // It was a second `settings-group` headed Install, and the heading was the
+    // problem: "which version am I running" and "do I want the new one" are one
+    // question read twice. The second card also only existed while an update
+    // did, which is exactly when the first one is being read.
+    const withUpdate = answer({
+      available: true,
+      asset: { name: "TONYAgent-0.2.0.msi", size: 1, digest: "sha256:x", url: "u" },
+    });
+    const container = await render(
+      panel({
+        update: withUpdate,
+        updateReady: {
+          ok: true,
+          reason: "",
+          path: "C:/u/TONYAgent-0.2.0.msi",
+          name: "TONYAgent-0.2.0.msi",
+          size: 1,
+        },
+      }),
+    );
+    await click(tab(container, "App"));
+
+    // Still two headings, and no Install among them -- with an update waiting,
+    // which is the state that used to add the third.
+    assert.deepEqual(headings(container), ["Desktop pet", "Version"]);
+
+    // And the press that runs it is inside that card, under the version it
+    // belongs to rather than beside a heading of its own.
+    const version = section(container, "Version");
+    assert.match(version.textContent ?? "", /is downloaded and verified/i);
+    assert.ok(
+      all(version, ".btn").some((b) => /install and restart/i.test(b.textContent ?? "")),
+      "the install button is not on the version card",
+    );
+  });
+
   test("while the installer is being fetched, it says so and offers nothing to run", async () => {
     // The fetch now starts on its own, so this is the state the panel is in for
     // the few seconds after a check finds something. Two things have to be true
@@ -701,7 +738,7 @@ describe("what the update check says", () => {
     );
     await click(tab(container, "App"));
 
-    const install = section(container, "Install");
+    const install = section(container, "Version");
     assert.match(install.textContent ?? "", /fetching the installer/i);
     assert.equal(
       all(container, ".btn").some((b) => /install and restart/i.test(b.textContent ?? "")),

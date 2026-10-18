@@ -908,45 +908,35 @@ export function SettingsPanel({
                   <pre>{update.notes}</pre>
                 </details>
               )}
-              <div className="settings-row">
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => onCheckUpdate(true)}
-                  disabled={updateChecking || !connected}
-                >
-                  {updateChecking ? "Checking\u2026" : "Check for updates"}
-                </button>
-                <button type="button" className="btn" onClick={onOpenReleases}>
-                  Release notes
-                </button>
-              </div>
-            </section>
+              {/*
+                **The install half is this card's, not a card of its own.**
 
-            {update?.available && (
-              <section className="settings-group">
-                <h3>Install</h3>
-                {/*
-                  **One press, not three.** The check finds the release and the
-                  fetch starts by itself -- see `checkUpdate` in App.tsx, which
-                  asks for the installer the moment it knows which one -- so the
-                  only step left here is the one that has to be a decision: run
-                  it.
+                It was a second `settings-group` headed Install, and the heading
+                was the problem: "which version am I running" and "do I want the
+                new one" are one question read twice, so two cards meant two
+                headings for one answer -- and the second card only existed while
+                an update did, which is exactly when the first is being read.
 
-                  The *reporting* is still split, even though the presses are
-                  not. A fetch fails for its own reasons (offline, a digest that
-                  did not match) and the install is refused for others (this is a
-                  source checkout, or there is no installer yet), and the two say
-                  different things. The button below is therefore a retry as
-                  often as it is a first attempt, which is why it stays a plain
-                  button rather than becoming a link.
+                So the download and the install sit under the version they belong
+                to, in the order they happen: what this is, what is available,
+                what was fetched, and the one press that runs it. The check row
+                stays last, because it is the pair of tools for looking again and
+                it is on this card whether or not there is anything to install.
 
-                  A release with no `.msi` attached is answered before the button
-                  is drawn rather than after the fetch fails: the check already
-                  knows, and offering a control that cannot work is the thing
-                  this panel avoids everywhere else.
-                */}
-                {!update.asset ? (
+                The *reporting* is still split even though the presses are not. A
+                fetch fails for its own reasons (offline, a digest that did not
+                match) and an install is refused for others (this is a source
+                checkout, or there is no installer yet), and the two say
+                different things. That is also why the download button survives
+                as a plain control: it is a retry as often as a first attempt.
+
+                A release with no `.msi` attached is answered before the button is
+                drawn rather than after the fetch fails: the check already knows,
+                and offering a control that cannot work is the thing this panel
+                avoids everywhere else.
+              */}
+              {update?.available &&
+                (!update.asset ? (
                   <p className="settings-value">
                     That release has no installer attached, so there is nothing
                     to download. Use "Release notes" to see the release itself.
@@ -996,9 +986,21 @@ export function SettingsPanel({
                       </button>
                     </div>
                   </>
-                )}
-              </section>
-            )}
+                ))}
+              <div className="settings-row">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => onCheckUpdate(true)}
+                  disabled={updateChecking || !connected}
+                >
+                  {updateChecking ? "Checking\u2026" : "Check for updates"}
+                </button>
+                <button type="button" className="btn" onClick={onOpenReleases}>
+                  Release notes
+                </button>
+              </div>
+            </section>
           </>
         )}
       </div>
