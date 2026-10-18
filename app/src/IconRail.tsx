@@ -41,6 +41,16 @@ interface Props {
   /** Whether the desktop pet's card is on screen. */
   petOpen: boolean;
   onPet: () => void;
+  /**
+   * Whether a newer version is waiting to be installed.
+   *
+   * The rail's job here is only to say *that* there is one: the answer, the
+   * release notes and the button all live in the settings panel's App tab, and a
+   * second copy of them in a strip of icons would be a worse place to read any
+   * of it. A mark on the gear is the whole contribution -- without it the update
+   * is only discoverable by opening the panel and looking.
+   */
+  updateAvailable: boolean;
 }
 
 /**
@@ -102,6 +112,22 @@ interface Item {
    */
   icon: ReactNode;
   label: string;
+  /**
+   * A tooltip that says more than the label does, for a button whose mark needs
+   * explaining.
+   *
+   * **`aria-label` stays the label.** A mark is decoration on a control that is
+   * already named, and a screen reader given "Settings — a new version is
+   * available" as the *name* would lose the word it navigates the rail by.
+   */
+  hint?: string;
+  /**
+   * A dot in the corner.
+   *
+   * Distinct from `badge`, which carries a count: this is a yes-or-no, so it is
+   * a disc with nothing in it rather than a number that happens to be small.
+   */
+  dot?: boolean;
   onClick: () => void;
   disabled: boolean;
   active?: boolean;
@@ -121,6 +147,7 @@ export function IconRail({
   onDashboard,
   petOpen,
   onPet,
+  updateAvailable,
 }: Props) {
   // No Sandbox entry. It used to sit directly above Settings and open the same
   // panel, so two labels led to one destination and neither could be the obvious
@@ -203,6 +230,11 @@ export function IconRail({
     key: "settings",
     icon: <Gear />,
     label: "Settings",
+    // The dot says a version is waiting without the panel being opened; the
+    // tooltip says what the mark means, because a dot on a gear is not
+    // self-explaining.
+    hint: updateAvailable ? "Settings \u2014 a new version is available" : undefined,
+    dot: updateAvailable,
     onClick: onSettings,
     disabled: !connected,
   };
@@ -215,11 +247,12 @@ export function IconRail({
       className={`rail-btn${item.active ? " is-active" : ""}`}
       onClick={item.onClick}
       disabled={item.disabled}
-      title={item.label}
+      title={item.hint ?? item.label}
       aria-label={item.label}
     >
       {item.icon}
       {item.badge !== undefined && <span className="rail-badge">{item.badge}</span>}
+      {item.dot && <span className="rail-dot" aria-hidden="true" />}
     </button>
   );
 

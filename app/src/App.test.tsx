@@ -1830,3 +1830,149 @@ test("no stylesheet comment is rendered as text", async () => {
     "a comment is being rendered as text",
   );
 });
+
+// --- the update flow, driven through the window ----------------------------
+/**
+ * The window's half of the update: it asks, and then it fetches by itself.
+ *
+ * **This is the wiring that had no test at all.** The panel is covered in
+ * `SettingsPanel.test.tsx`, but over hand-made props -- so nothing checked that a
+ * check finding a release actually starts the download, or that the rail ever
+ * learns there is one. Both are one line in `App.tsx` and both are what the user
+ * sees: the difference between "it noticed" and "there is a button".
+ */
+describe("the window fetches a new version by itself", () => {
+  const RELEASE = {
+    current: "0.1.0",
+    latest: "0.2.0",
+    tag: "v0.2.0",
+    available: true,
+    prerelease: false,
+    notes: "What changed.",
+    published_at: "2026-01-01T00:00:00Z",
+    url: "https://example.invalid/release",
+    asset: {
+      name: "TONYAgent-0.2.0.msi",
+      size: 30,
+      digest: "sha256:x",
+      url: "https://example.invalid/a.msi",
+    },
+    checked_at: 1,
+    cached: false,
+    reason: "",
+  };
+  const FETCHED = {
+    ok: true,
+    reason: "",
+    path: "C:/u/TONYAgent-0.2.0.msi",
+    name: "TONYAgent-0.2.0.msi",
+    size: 30,
+    version: "0.2.0",
+  };
+  /** The same answer from a machine that is already current. */
+  const CURRENT = {
+    ...RELEASE,
+    latest: "0.1.0",
+    tag: "v0.1.0",
+    available: false,
+    asset: null,
+  };
+
+  const times = (transport: FakeTransport, method: string) =>
+    transport.methods().filter((m) => m === method).length;
+
+  /** Open Settings on the App tab, where the version and the button live. */
+  const openAppTab = async (c: HTMLElement) => {
+    await click(one(c, '.rail-btn[aria-label="Settings"]')!);
+    for (let i = 0; i < 50 && !one(c, ".modal"); i++) await wait(20);
+    await click(
+      all(c, ".settings-tab").find((b) => (b.textContent ?? "").trim() === "App")!,
+    );
+  };
+
+  const buttonSaying = (c: HTMLElement, text: RegExp) =>
+    all(c, ".btn").find((b) => text.test(b.textContent ?? ""));
+
+  test("a release is fetched without being asked", async () => {
+    const { transport, container } = await mount({
+      "update.check": RELEASE,
+      "update.download": FETCHED,
+    });
+    await wait(150);
+
+    assert.equal(times(transport, "update.check"), 1, "the boot check never ran");
+    assert.equal(
+      times(transport, "update.download"),
+      1,
+      "the installer was not fetched on its own, so applying an update is still two presses",
+    );
+    assert.equal(
+      all(container, ".rail-dot").length,
+      1,
+      "the rail says nothing about the version that is waiting",
+    );
+  });
+
+  test("the fetched installer is then one press", async () => {
+    const { container } = await mount({
+      "update.check": RELEASE,
+      "update.download": FETCHED,
+    });
+    await wait(150);
+    await openAppTab(container);
+
+    assert.ok(
+      buttonSaying(container, /install and restart/i),
+      "the verified installer cannot be run from the panel",
+    );
+  });
+
+  test("a current install downloads nothing and marks nothing", async () => {
+    const { transport, container } = await mount({
+      "update.check": CURRENT,
+      "update.download": FETCHED,
+    });
+    await wait(150);
+
+    assert.equal(times(transport, "update.download"), 0, "fetched an installer for no reason");
+    assert.equal(all(container, ".rail-dot").length, 0);
+  });
+
+  test("a check that failed fetches nothing and marks nothing", async () => {
+    // A failed check has not learned that a newer release exists, which is the
+    // one thing this feature must never assume. Nothing to fetch, and nothing to
+    // mark -- a dot here would be the rail claiming an answer nobody got.
+    const { transport, container } = await mount({
+      "update.check": { ...CURRENT, tag: "", reason: "offline" },
+      "update.download": FETCHED,
+    });
+    await wait(150);
+
+    assert.equal(times(transport, "update.download"), 0);
+    assert.equal(all(container, ".rail-dot").length, 0);
+  });
+
+  test("checking again does not fetch the same release twice", async () => {
+    // The guard that keeps a second check from pulling 30 MB that is already
+    // verified on disk. Driven through the panel's own button, because the boot
+    // check runs once and the ref only has to survive one more press to be doing
+    // its job.
+    const { transport, container } = await mount({
+      "update.check": RELEASE,
+      "update.download": FETCHED,
+    });
+    await wait(150);
+    assert.equal(times(transport, "update.download"), 1);
+
+    await openAppTab(container);
+    await click(buttonSaying(container, /check for updates/i)!);
+    await wait(150);
+
+    assert.equal(times(transport, "update.check"), 2, "the button did not check");
+    assert.equal(
+      times(transport, "update.download"),
+      1,
+      "a second check fetched the same release again",
+    );
+  });
+});

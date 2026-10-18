@@ -51,7 +51,8 @@ interface Overrides {
   petOpen?: boolean;
   onPet?: () => void;
   update?: UpdateAnswer | null;
-  updateBusy?: boolean;
+  updateChecking?: boolean;
+  updateFetching?: boolean;
   updateReady?: UpdateDownload | null;
   onCheckUpdate?: (force: boolean) => void;
   onDownloadUpdate?: () => void;
@@ -84,7 +85,8 @@ function panel(overrides: Overrides = {}) {
       petOpen={overrides.petOpen ?? false}
       onPet={overrides.onPet ?? noop}
       update={overrides.update ?? null}
-      updateBusy={overrides.updateBusy ?? false}
+      updateChecking={overrides.updateChecking ?? false}
+      updateFetching={overrides.updateFetching ?? false}
       updateReady={overrides.updateReady ?? null}
       onCheckUpdate={overrides.onCheckUpdate ?? noop}
       onDownloadUpdate={overrides.onDownloadUpdate ?? noop}
@@ -681,6 +683,59 @@ describe("what the update check says", () => {
     assert.ok(
       all(after, ".btn").some((b) => /install and restart/i.test(b.textContent ?? "")),
     );
+  });
+
+  test("while the installer is being fetched, it says so and offers nothing to run", async () => {
+    // The fetch now starts on its own, so this is the state the panel is in for
+    // the few seconds after a check finds something. Two things have to be true
+    // at once: the wait is visible, and there is no button that would run a file
+    // that is not verified yet.
+    const container = await render(
+      panel({
+        update: answer({
+          available: true,
+          asset: { name: "TONYAgent-0.2.0.msi", size: 1, digest: "sha256:x", url: "u" },
+        }),
+        updateFetching: true,
+      }),
+    );
+    await click(tab(container, "App"));
+
+    const install = section(container, "Install");
+    assert.match(install.textContent ?? "", /fetching the installer/i);
+    assert.equal(
+      all(container, ".btn").some((b) => /install and restart/i.test(b.textContent ?? "")),
+      false,
+      "offered to install a file that has not arrived",
+    );
+
+    const download = all(container, ".btn").find((b) =>
+      /downloading/i.test(b.textContent ?? ""),
+    ) as HTMLButtonElement | undefined;
+    assert.ok(download, "the fetch is not visible anywhere");
+    assert.equal(download.disabled, true, "the fetch can be started twice");
+  });
+
+  test("a fetch that failed is a retry, not a dead end", async () => {
+    // The button is a plain control because it is a retry as often as it is a
+    // first attempt: the fetch ran on its own, failed, and this is the way back.
+    const container = await render(
+      panel({
+        update: answer({
+          available: true,
+          asset: { name: "TONYAgent-0.2.0.msi", size: 1, digest: "sha256:x", url: "u" },
+        }),
+        updateReady: { ok: false, reason: "offline", path: "", name: "", size: 0 },
+      }),
+    );
+    await click(tab(container, "App"));
+
+    assert.match(container.textContent ?? "", /could not be completed/i);
+    const download = all(container, ".btn").find((b) =>
+      /download the installer/i.test(b.textContent ?? ""),
+    ) as HTMLButtonElement | undefined;
+    assert.ok(download, "there is no way to try the download again");
+    assert.equal(download.disabled, false, "the retry is disabled, so the failure is final");
   });
 
   test("a digest mismatch is reported as one, not as a failed download", async () => {

@@ -158,6 +158,15 @@ interface Props {
   onSearch: () => void;
   onSettings: () => void;
   /**
+   * Whether a newer version is waiting, for the mark on this foot's gear.
+   *
+   * The same fact `IconRail` is given, and here for the same reason the two
+   * buttons are here at all: this foot *is* the rail while the sidebar covers
+   * it, so a mark that only existed on the rail would disappear exactly when
+   * this foot is what the user is looking at.
+   */
+  updateAvailable: boolean;
+  /**
    * Which half of the sidebar is showing.
    *
    * The Files tree was its own panel on the other edge of the window; it is a
@@ -255,6 +264,7 @@ export function ConversationList({
   onDuplicate,
   onSearch,
   onSettings,
+  updateAvailable,
   pane,
   onPaneChange,
   files,
@@ -816,10 +826,12 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
           className="chatlist-act"
           onClick={onSettings}
           disabled={!connected}
-          title="Settings"
+          title={updateAvailable ? "Settings \u2014 a new version is available" : "Settings"}
           aria-label="Settings"
         >
           <Gear />
+          {/* The same mark the rail's gear carries, for the same reason. */}
+          {updateAvailable && <span className="rail-dot" aria-hidden="true" />}
         </button>
       </div>
     </nav>

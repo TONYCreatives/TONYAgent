@@ -99,6 +99,7 @@ async function renderList(
   active = "",
   open = true,
   project = "",
+  updateAvailable = false,
 ): Promise<HTMLElement> {
   calls = {
     onDismiss: () => {
@@ -146,6 +147,7 @@ async function renderList(
       onChooseFolder={() => {}}
       onOpenFile={() => {}}
       hasProject={false}
+      updateAvailable={updateAvailable}
       {...calls}
     />,
   );
@@ -202,6 +204,31 @@ describe("the sidebar's foot", () => {
     // buttons the rail also carries.
     assert.equal(all(container, ".chatlist-foot button").length, 2);
   });
+
+  test("the gear carries the update mark, because this foot is the rail here", async () => {
+    // The rail is hidden while this panel is open, so a mark that only lived on
+    // the rail would vanish exactly when these two buttons are the ones on
+    // screen. Same mark, same class, same fact -- the foot is the rail's stand-in
+    // and says the same things.
+    const container = await renderList([conversation()], "", true, "", true);
+    const gear = one(container, '.chatlist-act[aria-label="Settings"]')!;
+
+    assert.ok(one(gear, ".rail-dot"), "a waiting version is unmarked in the foot");
+    assert.match(gear.getAttribute("title") ?? "", /new version is available/i);
+    // The name is still the name: the mark is decoration on a named control, and
+    // a screen reader given the sentence would lose the word it navigates by.
+    assert.equal(gear.getAttribute("aria-label"), "Settings");
+    // And it is on the one entry that leads to the button that installs, not on
+    // the one beside it.
+    assert.equal(
+      one(container, '.chatlist-act[aria-label="Search project"] .rail-dot'),
+      null,
+      "the mark is on the wrong button",
+    );
+
+    const plain = await renderList([conversation()]);
+    assert.equal(all(plain, ".rail-dot").length, 0, "the mark is drawn with nothing waiting");
+  });
 });
 
 
@@ -254,6 +281,7 @@ describe("the panel reports which way it is moving", () => {
         onChooseFolder={() => {}}
         onOpenFile={() => {}}
         hasProject={false}
+        updateAvailable={false}
         {...calls}
       />,
     );
@@ -289,6 +317,7 @@ describe("the scrim behind the panel", () => {
         onChooseFolder={() => {}}
         onOpenFile={() => {}}
         hasProject={false}
+        updateAvailable={false}
         {...calls}
       />,
     );

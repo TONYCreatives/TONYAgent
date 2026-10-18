@@ -1338,6 +1338,24 @@ describe("the rail is a full-height strip down the left edge", () => {
     // would be a promise the layout cannot keep.
     assert.doesNotMatch(body(".rail"), /transition/);
   });
+
+  test("the update mark hangs from the top, clear of where the sidebar stops", () => {
+    // The rail runs to the window's bottom edge and its gear sits 14px above
+    // that, while the sidebar -- which covers the rail while it is open -- stops
+    // 26px above it. So the rail button's bottom 12px is on screen even with the
+    // panel over the rail, and a mark anchored to the *bottom* corner leaked out
+    // below the panel: measured in the running app, the dot's box ended 6px past
+    // the sidebar's edge and its ring 8px, which is a stray white half-disc
+    // sitting on the status bar with no gear around it.
+    //
+    // Asserted as the *anchor* rather than as a pixel offset: what has to stay
+    // true is that the mark hangs from the top of its target, which is the half
+    // the sidebar cannot uncover. A `bottom` here is the leak coming back,
+    // whatever number is beside it.
+    const dot = body(".rail-dot");
+    assert.match(dot, /top:\s*\d+px/);
+    assert.doesNotMatch(dot, /bottom:/);
+  });
 });
 
 // --- the measure ------------------------------------------------------------

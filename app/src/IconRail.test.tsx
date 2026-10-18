@@ -42,6 +42,7 @@ async function renderRail(over: Partial<React.ComponentProps<typeof IconRail>> =
       onDashboard={() => {}}
       petOpen={false}
       onPet={() => {}}
+      updateAvailable={false}
       {...over}
     />,
   );
@@ -298,5 +299,56 @@ describe("the rail draws no mark of its own", () => {
       "rail-btn",
       "something is above the rail's first control again",
     );
+  });
+});
+
+describe("the update marker on the gear", () => {
+  test("a waiting version puts a mark on Settings and nowhere else", async () => {
+    // The point of the mark is that the update is discoverable without opening
+    // the panel, so it has to be *visible* -- and it has to be on the one entry
+    // whose panel says what to do about it. A mark on Search would say a version
+    // is waiting and then send you somewhere with nothing to press.
+    const container = await renderRail({ updateAvailable: true });
+
+    assert.equal(
+      all(container, ".rail-dot").length,
+      1,
+      "the rail drew no mark, or drew more than one",
+    );
+    assert.ok(
+      one(settingsButton(container), ".rail-dot"),
+      "the mark is not on the settings gear",
+    );
+  });
+
+  test("nothing waiting, no mark", async () => {
+    const container = await renderRail({ updateAvailable: false });
+    assert.equal(all(container, ".rail-dot").length, 0);
+  });
+
+  test("the dot is not a count, and does not take the button's name", async () => {
+    // Two things this must not become. A `.rail-badge` is the count beside Stop,
+    // and an update is not a number of anything. And the name has to stay
+    // "Settings": the mark is decoration on a named control, and a screen reader
+    // given the whole sentence as the name would lose the word the rail is
+    // navigated by -- the tooltip carries the explanation instead.
+    const container = await renderRail({ updateAvailable: true });
+    const button = settingsButton(container);
+
+    assert.equal(all(button, ".rail-badge").length, 0, "the mark is a count");
+    assert.equal(button.getAttribute("aria-label"), "Settings");
+    assert.match(button.getAttribute("title") ?? "", /new version is available/i);
+    assert.equal(one(button, ".rail-dot")!.getAttribute("aria-hidden"), "true");
+  });
+
+  test("a mark and a count can sit on one button without colliding", async () => {
+    // The badge goes in the button's corner and the dot inside the target, so
+    // both can be true at once. Asserted because "put the dot in the corner
+    // too" is the obvious way to write this, and it would overlap the number.
+    const container = await renderRail({ busy: true, messageCount: 3, updateAvailable: true });
+    const stop = one(container, '.rail-btn[aria-label="Stop generating"]')!;
+
+    assert.ok(one(stop, ".rail-badge"), "the count left the Stop button");
+    assert.ok(one(settingsButton(container), ".rail-dot"), "the mark left the gear");
   });
 });

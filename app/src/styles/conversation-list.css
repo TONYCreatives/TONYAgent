@@ -328,6 +328,11 @@
 }
 
 .chatlist-act {
+  /* For `.rail-dot`, which is positioned against the button rather than the
+     foot. The dot is the rail's mark reused here, so the offsets are the rail's
+     -- 6px in from the corner, which on a 38px target puts it just off the
+     glyph's lower-right rather than out at the button's edge. */
+  position: relative;
   display: grid;
   place-items: center;
   width: 38px;

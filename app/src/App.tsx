@@ -189,8 +189,29 @@ export function App({
    * them would report one failure's reason for another's.
    */
   const [update, setUpdate] = useState<UpdateAnswer | null>(null);
-  const [updateBusy, setUpdateBusy] = useState(false);
+  /**
+   * The check is in flight.
+   *
+   * Split from the fetch below rather than one "busy" flag: the fetch now starts
+   * on its own the moment a check finds something, so a single flag would put
+   * "Checking…" on a button that is not being pressed while 30 MB arrives in the
+   * background. Two questions, two flags -- and the panel says which one it is
+   * waiting on.
+   */
+  const [updateChecking, setUpdateChecking] = useState(false);
+  /** The installer is being fetched and verified. */
+  const [updateFetching, setUpdateFetching] = useState(false);
   const [updateReady, setUpdateReady] = useState<UpdateDownload | null>(null);
+  /**
+   * A fetch is in flight, and this version's installer is already on disk.
+   *
+   * Refs rather than state because both are read inside the callbacks that
+   * decide whether to start a fetch, and neither should cause a render or
+   * re-create a callback: they are bookkeeping about work already underway, not
+   * anything the window draws.
+   */
+  const updateFetchingRef = useRef(false);
+  const updateReadyVersionRef = useRef("");
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversation, setConversation] = useState("");
   /**
@@ -1064,6 +1085,40 @@ export function App({
   }, []);
 
   /**
+   * Fetch the installer and verify it. Nothing runs until the user says so.
+   *
+   * **Called on its own as soon as a check finds a new version**, and by hand
+   * only when that fetch failed -- the panel offers the button as a retry. So
+   * the download is the app's business and the install is the user's, which is
+   * the split the two buttons used to draw between them.
+   *
+   * Two guards, both about not doing the same work twice: a fetch already in
+   * flight is left alone, and a file already verified for *this* release is not
+   * fetched again. The second is what keeps a re-check from pulling 30 MB that
+   * is already on disk.
+   */
+  const fetchUpdate = useCallback(async (latest?: string) => {
+    const backend = backendRef.current;
+    if (!backend) return;
+    if (updateFetchingRef.current) return;
+    if (latest && updateReadyVersionRef.current === latest) return;
+    updateFetchingRef.current = true;
+    setUpdateFetching(true);
+    try {
+      const result = (await backend.call("update.download")) as UpdateDownload;
+      setUpdateReady(result);
+      // Only a verified file counts as ready. A failed fetch records nothing, so
+      // the next check tries again rather than deciding it is done.
+      if (result.ok) updateReadyVersionRef.current = result.version || latest || "";
+    } catch {
+      setUpdateReady({ ok: false, reason: "server", path: "", name: "", size: 0 });
+    } finally {
+      updateFetchingRef.current = false;
+      setUpdateFetching(false);
+    }
+  }, []);
+
+  /**
    * Ask the core whether a newer TONYAgent exists.
    *
    * **Never surfaced as an error.** This is a question the app asks on its own
@@ -1072,52 +1127,49 @@ export function App({
    * says it quietly. A thrown failure here is a bug in the protocol rather than
    * news for the user, which is why it is swallowed into the same shape.
    */
-  const checkUpdate = useCallback(async (force: boolean) => {
-    const backend = backendRef.current;
-    if (!backend) return;
-    setUpdateBusy(true);
-    try {
-      const answer = (await backend.call("update.check", { force })) as UpdateAnswer;
-      setUpdate(answer);
-      // A different version means the installer that was downloaded is for the
-      // wrong release. Dropped rather than offered: running last week's MSI
-      // after seeing this week's notes is the one way this feature could
-      // install something the user did not agree to.
-      setUpdateReady((prev) => (prev?.version === answer.latest ? prev : null));
-    } catch (error: unknown) {
-      setUpdate({
-        current: "",
-        latest: "",
-        tag: "",
-        available: false,
-        prerelease: false,
-        notes: "",
-        published_at: "",
-        url: "",
-        asset: null,
-        checked_at: 0,
-        cached: false,
-        reason: "malformed",
-      });
-    } finally {
-      setUpdateBusy(false);
-    }
-  }, []);
-
-  /** Fetch the installer and verify it. Nothing runs until the user says so. */
-  const downloadUpdate = useCallback(async () => {
-    const backend = backendRef.current;
-    if (!backend) return;
-    setUpdateBusy(true);
-    try {
-      const result = (await backend.call("update.download")) as UpdateDownload;
-      setUpdateReady(result);
-    } catch {
-      setUpdateReady({ ok: false, reason: "server", path: "", name: "", size: 0 });
-    } finally {
-      setUpdateBusy(false);
-    }
-  }, []);
+  const checkUpdate = useCallback(
+    async (force: boolean) => {
+      const backend = backendRef.current;
+      if (!backend) return;
+      setUpdateChecking(true);
+      try {
+        const answer = (await backend.call("update.check", { force })) as UpdateAnswer;
+        setUpdate(answer);
+        // A different version means the installer that was downloaded is for the
+        // wrong release. Dropped rather than offered: running last week's MSI
+        // after seeing this week's notes is the one way this feature could
+        // install something the user did not agree to.
+        setUpdateReady((prev) => (prev?.version === answer.latest ? prev : null));
+        // And then fetch it without being asked. The check already knows the
+        // address and the digest, and the only step that *has* to be a decision
+        // is running an installer -- so it is fetched now, while the release
+        // notes are still being read, and the panel's one button is the press
+        // that matters.
+        //
+        // No installer attached means nothing to fetch; the panel says so
+        // rather than starting a download that cannot happen.
+        if (answer.available && answer.asset) void fetchUpdate(answer.latest);
+      } catch (error: unknown) {
+        setUpdate({
+          current: "",
+          latest: "",
+          tag: "",
+          available: false,
+          prerelease: false,
+          notes: "",
+          published_at: "",
+          url: "",
+          asset: null,
+          checked_at: 0,
+          cached: false,
+          reason: "malformed",
+        });
+      } finally {
+        setUpdateChecking(false);
+      }
+    },
+    [fetchUpdate],
+  );
 
   /**
    * Run the verified installer. **This closes the app**, by design.
@@ -2207,6 +2259,7 @@ export function App({
           }
           petOpen={petOpen}
           onPet={() => void togglePet()}
+          updateAvailable={Boolean(update?.available)}
           onSettings={() => {
             setSettingsError(null);
             openSidebarPane("settings");
@@ -2292,10 +2345,11 @@ export function App({
               onActivateKey={activateKey}
               onListKeys={listKeys}
               update={update}
-              updateBusy={updateBusy}
+              updateChecking={updateChecking}
+              updateFetching={updateFetching}
               updateReady={updateReady}
               onCheckUpdate={(force) => void checkUpdate(force)}
-              onDownloadUpdate={() => void downloadUpdate()}
+              onDownloadUpdate={() => void fetchUpdate()}
               onInstallUpdate={() => void installUpdate()}
               onOpenReleases={() => void openReleases()}
             />
@@ -2309,12 +2363,14 @@ export function App({
           }
           // The rail's actions, because the sidebar covers the rail when open
           // (see ConversationList). Same handlers the rail is given, so the two
-          // states of the one sidebar cannot disagree about what a button does.
+          // states of the one sidebar cannot disagree about what a button does
+          // -- and the same mark on the gear, for the same reason.
           onSearch={() => openSidebarPane("search")}
           onSettings={() => {
             setSettingsError(null);
             openSidebarPane("settings");
           }}
+          updateAvailable={Boolean(update?.available)}
         />
       )}
 

@@ -185,8 +185,16 @@ interface Props {
    * you are current, and the panel has to say which of those happened.
    */
   update: UpdateAnswer | null;
-  /** A check or a download is in flight. */
-  updateBusy: boolean;
+  /** The check is in flight. The fetch below has its own flag. */
+  updateChecking: boolean;
+  /**
+   * The installer is being fetched and verified.
+   *
+   * Separate from `updateChecking` because the fetch starts on its own: with one
+   * flag, a check that found a new version would put "Checking…" on a button
+   * nobody pressed while 30 MB arrived in the background.
+   */
+  updateFetching: boolean;
   /** The downloaded installer, once one has been fetched and verified. */
   updateReady: UpdateDownload | null;
   onCheckUpdate: (force: boolean) => void;
@@ -312,7 +320,8 @@ export function SettingsPanel({
   petOpen,
   onPet,
   update,
-  updateBusy,
+  updateChecking,
+  updateFetching,
   updateReady,
   onCheckUpdate,
   onDownloadUpdate,
@@ -904,9 +913,9 @@ export function SettingsPanel({
                   type="button"
                   className="btn"
                   onClick={() => onCheckUpdate(true)}
-                  disabled={updateBusy || !connected}
+                  disabled={updateChecking || !connected}
                 >
-                  {updateBusy ? "Checking\u2026" : "Check for updates"}
+                  {updateChecking ? "Checking\u2026" : "Check for updates"}
                 </button>
                 <button type="button" className="btn" onClick={onOpenReleases}>
                   Release notes
@@ -918,16 +927,24 @@ export function SettingsPanel({
               <section className="settings-group">
                 <h3>Install</h3>
                 {/*
-                  Two steps rather than one, and the split is the honest one:
-                  the download can fail for its own reasons (offline, a digest
-                  that did not match) and the install can be refused for others
-                  (this is a source checkout, or there is no installer yet).
-                  Collapsing them would report the wrong one.
+                  **One press, not three.** The check finds the release and the
+                  fetch starts by itself -- see `checkUpdate` in App.tsx, which
+                  asks for the installer the moment it knows which one -- so the
+                  only step left here is the one that has to be a decision: run
+                  it.
 
-                  A release with no `.msi` attached is answered before the
-                  button is drawn rather than after the download fails: the
-                  check already knows, and offering a control that cannot work
-                  is the thing this panel avoids everywhere else.
+                  The *reporting* is still split, even though the presses are
+                  not. A fetch fails for its own reasons (offline, a digest that
+                  did not match) and the install is refused for others (this is a
+                  source checkout, or there is no installer yet), and the two say
+                  different things. The button below is therefore a retry as
+                  often as it is a first attempt, which is why it stays a plain
+                  button rather than becoming a link.
+
+                  A release with no `.msi` attached is answered before the button
+                  is drawn rather than after the fetch fails: the check already
+                  knows, and offering a control that cannot work is the thing
+                  this panel avoids everywhere else.
                 */}
                 {!update.asset ? (
                   <p className="settings-value">
@@ -953,8 +970,9 @@ export function SettingsPanel({
                 ) : (
                   <>
                     <p className="settings-note">
-                      The installer is downloaded from the release and checked
-                      against its published SHA-256 before anything runs it.
+                      {updateFetching
+                        ? "Fetching the installer now that a newer version is known."
+                        : "The installer is fetched from the release as soon as a newer version is known, and checked against its published SHA-256 before anything runs it."}
                     </p>
                     {updateReady && !updateReady.ok && (
                       <p className="settings-value">
@@ -972,9 +990,9 @@ export function SettingsPanel({
                         type="button"
                         className="btn"
                         onClick={onDownloadUpdate}
-                        disabled={updateBusy || !connected}
+                        disabled={updateFetching || updateChecking || !connected}
                       >
-                        {updateBusy ? "Downloading\u2026" : "Download the installer"}
+                        {updateFetching ? "Downloading\u2026" : "Download the installer"}
                       </button>
                     </div>
                   </>
