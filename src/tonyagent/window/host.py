@@ -440,19 +440,28 @@ def app_icon() -> str | None:
 
     The `.ico` rather than the `.png`: Windows wants a multi-resolution icon for
     the taskbar, the Alt+Tab switcher and the caption, and pywebview hands this
-    straight to the form. The icons came with the shell and outlived it -- they
-    moved from `src-tauri/icons/` to `app/icons/` when the Rust crate went away.
+    straight to the form.
+
+    **`logo/tonyagent-logo.ico`, which is the mark on black.** It used to be
+    `app/icons/icon.ico`, the white mark on the blue-to-violet tile, and the two
+    were kept apart on purpose: a tile holds its own in a taskbar full of other
+    squares, while a logo sits on whatever ground is already there. The app now
+    wears the logo everywhere -- the caption, the taskbar, the Start Menu and the
+    installer -- so there is one icon rather than two that disagree, and the tile
+    stays in `app/icons/` for the platforms that still build from it (`.icns`).
 
     Missing is not fatal, which is why this returns ``None`` instead of raising:
     a window with the default icon is a cosmetic difference, and refusing to open
     over one would turn that into no app at all. Same judgement as the corners.
     """
     bundled = bundle_root()
-    icon = (
-        bundled / "app" / "icons" / "icon.ico"
-        if bundled is not None
-        else Path(__file__).resolve().parents[3] / "app" / "icons" / "icon.ico"
-    )
+    root = bundled if bundled is not None else Path(__file__).resolve().parents[3]
+    icon = root / "logo" / "tonyagent-logo.ico"
+    if not icon.is_file():
+        # The tile, for a checkout that predates the logo or a bundle built
+        # before `logo/` was added to the spec's data. A fallback rather than an
+        # error, for the reason above.
+        icon = root / "app" / "icons" / "icon.ico"
     return str(icon) if icon.is_file() else None
 
 

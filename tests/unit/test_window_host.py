@@ -235,7 +235,10 @@ def test_the_host_finds_its_bundle_and_its_icon():
 
     icon = app_icon()
     assert icon is not None, "the window has lost its icon"
-    assert Path(icon).name == "icon.ico"
+    # The mark on black, not the tile. The app wears the logo everywhere now --
+    # the caption, the taskbar, the Start Menu and the installer -- so the file
+    # the window asks for and the file baked into the executable are one.
+    assert Path(icon).name == "tonyagent-logo.ico"
     assert Path(icon).is_file()
 
 
@@ -659,13 +662,32 @@ def test_a_frozen_host_uses_the_bundle_beside_the_executable(monkeypatch, tmp_pa
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
     # `app_icon` returns None for a file that is not there (a missing icon is
     # cosmetic, not fatal), so the bundle has to actually contain one.
-    icon = tmp_path / "app" / "icons" / "icon.ico"
+    icon = tmp_path / "logo" / "tonyagent-logo.ico"
     icon.parent.mkdir(parents=True)
     icon.write_bytes(b"icon")
 
     assert host.bundle_root() == tmp_path
     assert host.default_dist() == tmp_path / "app" / "dist"
     assert host.app_icon() == str(icon)
+
+
+def test_a_bundle_without_the_logo_falls_back_to_the_tile(monkeypatch, tmp_path):
+    """A bundle built before `logo/` was added still gets an icon.
+
+    Not a hypothetical: the first frozen build carried `app/icons/` and not
+    `logo/`, so an installed copy from before this change would otherwise lose
+    its caption icon entirely. A fallback rather than an error, for the same
+    reason a missing icon was never fatal in the first place.
+    """
+    from tonyagent.window import host
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    tile = tmp_path / "app" / "icons" / "icon.ico"
+    tile.parent.mkdir(parents=True)
+    tile.write_bytes(b"icon")
+
+    assert host.app_icon() == str(tile)
 
 
 def test_an_unfrozen_host_still_walks_up_to_the_checkout(monkeypatch):

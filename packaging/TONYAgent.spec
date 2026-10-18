@@ -143,7 +143,12 @@ exe = EXE(
     entitlements_file=None,
     # The caption icon and the taskbar icon. `pywebview` hands this to the form,
     # and the same file is the shortcut's icon in the installer.
-    icon=str(ROOT / "app" / "icons" / "icon.ico"),
+    #
+    # `logo/tonyagent-logo.ico` and not `app/icons/icon.ico`: the app wears the
+    # mark on black everywhere now -- see `host.app_icon`, which reads the same
+    # file at runtime -- so the icon baked into the executable and the icon the
+    # window asks for cannot be two different drawings.
+    icon=str(ROOT / "logo" / "tonyagent-logo.ico"),
 )
 
 coll = COLLECT(

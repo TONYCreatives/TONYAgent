@@ -129,7 +129,7 @@ and make sure %USERPROFILE%\.dotnet\tools is on PATH.
 '@
 }
 
-$icon = Join-Path $root 'app\icons\icon.ico'
+$icon = Join-Path $root 'logo\tonyagent-logo.ico'
 if (-not (Test-Path -LiteralPath $icon)) { Fail "the installer's icon is missing: $icon" }
 
 $msi = Join-Path $OutputDir "TONYAgent-$msiVersion.msi"
