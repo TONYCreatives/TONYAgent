@@ -202,10 +202,49 @@ interface HostGlobal {
   pywebview?: { api?: HostApi };
 }
 
-/** The host, or null when this page is running somewhere else. */
+/**
+ * The host, or null when this page is running somewhere else.
+ *
+ * **`null` for pywebview's placeholder, which is the whole reason this is not a
+ * one-line accessor.** pywebview injects the bridge in halves: `api.js` runs at
+ * document start and sets `window.pywebview = { ..., api: {} }`, and `finish.js`
+ * later calls `_createApi(...)` to put the methods on that object and only
+ * *then* dispatches `pywebviewready`. So there is a window -- as long as it
+ * takes the host to answer -- in which `api` is a truthy object with nothing on
+ * it.
+ *
+ * Handing that back as "the host" is what put `TypeError: a.ready is not a
+ * function` in the window's error banner the moment the app opened: the page's
+ * script won the race, `whenHostReady` short-circuited on the placeholder, and
+ * the first thing `start()` does is call `api.ready()`.
+ *
+ * **Empty is the test, and not the presence of some particular method.** The two
+ * halves are separated by a synchronous `_createApi` call -- it loops over the
+ * method list and assigns, with no await anywhere in it -- so "one method is
+ * there" and "they are all there" are the same instant, and nothing can observe
+ * a half-built api. Asking for one method by name would instead make this a
+ * statement about what the *reader* needs, and this function has readers that
+ * want `ready` (startup), `window_state` (the caption) and `pet` (the card): a
+ * host with one of those and not the others is not something pywebview can
+ * produce, so testing for it would be testing a shape that cannot occur.
+ */
 export function host(): HostApi | null {
   if (typeof window === "undefined") return null;
-  return (window as unknown as HostGlobal).pywebview?.api ?? null;
+  const api = (window as unknown as HostGlobal).pywebview?.api;
+  return api && Object.keys(api).length > 0 ? api : null;
+}
+
+/**
+ * Whether pywebview has injected anything at all, methods or not.
+ *
+ * The distinction `host()` deliberately throws away, and the one thing a caller
+ * waiting on a *slow* bridge needs: an empty `api` means the host is present and
+ * still being built, while no `pywebview` at all means this page is in a browser
+ * or a test and there will never be one.
+ */
+function presentsHost(): boolean {
+  if (typeof window === "undefined") return false;
+  return (window as unknown as HostGlobal).pywebview !== undefined;
 }
 
 /** Whether a host is answering right now. */
@@ -251,6 +290,15 @@ export function installStatusHandler(handler: (status: unknown) => void): void {
  * window here" is an ordinary answer: a browser preview, a jsdom test and a
  * `vite dev` session all run this page without a host, and all three should get
  * a page that renders and says so.
+ *
+ * **The timeout is for "there is no host here", not for "the host is slow".**
+ * Those are different questions and pywebview makes them distinguishable: an
+ * empty `api` with a `pywebview` beside it is a bridge that is present and still
+ * being built, and `finish.js` is on its way with the methods and the event. So
+ * the wait re-arms while the bridge is there, and only a page with no
+ * `pywebview` at all is answered with `null` -- answering the other way would
+ * turn a slow cold start into "No window host answered" about a window that is
+ * about to work.
  */
 export function whenHostReady(timeoutMs: number = READY_TIMEOUT_MS): Promise<HostApi | null> {
   const already = host();
@@ -273,10 +321,21 @@ export function whenHostReady(timeoutMs: number = READY_TIMEOUT_MS): Promise<Hos
       finish(host());
     }
 
+    function wait(): void {
+      timer = window.setTimeout(() => {
+        if (settled) return;
+        if (presentsHost()) {
+          wait();
+          return;
+        }
+        finish(null);
+      }, timeoutMs);
+    }
+
     window.addEventListener("pywebviewready", onReady);
     // The timeout is not a failure path, it is the *only* way a page with no
     // host ever hears an answer. Without it, every test and every browser tab
     // would hang on a promise that can never settle.
-    timer = window.setTimeout(() => finish(host()), timeoutMs);
+    wait();
   });
 }
