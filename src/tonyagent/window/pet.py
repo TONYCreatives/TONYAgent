@@ -139,20 +139,45 @@ class DeskPet:
         """Create the window if it is not there. Returns whether one is up."""
         with self._lock:
             if self._window is not None:
-                _bring_to_front(self._window)
+                existing = self._window
+            else:
+                existing = None
+                if not self._page:
+                    logger.warning("The pet was asked for, but this build has no pet page.")
+                    return False
+                x, y = self._corner()
+                # Whatever has the foreground now, so it can be given back. Read
+                # before the window exists, because creating one takes it and nothing
+                # here can refuse that. See `win32.give_foreground_back`.
+                before = _foreground()
+                app = self._app
+                page = self._page
+        if existing is not None:
+            # Through its own thread: this arrives on a page worker thread and
+            # `show` on another thread's window is a window that never answers.
+            win32.on_window_thread(existing, lambda: _bring_to_front(existing))
+            return True
+        # Created outside the lock. Creation marshals onto the GUI thread and
+        # blocks, and the lock must not be held across that: `close` takes the
+        # same lock from the main thread's teardown while this waits for that
+        # thread to pump, which is both threads waiting on each other. See
+        # `_closed` for the other half of the rule.
+        window = self._create_on_gui_thread(page, x, y, app)
+        if window is None:
+            logger.warning("The webview refused the pet window.")
+            return False
+        with self._lock:
+            if self._window is not None:
+                # Lost a race with another opener: the first window wins and
+                # this one goes, so two presses cannot make two cards.
+                try:
+                    window.destroy()
+                except Exception:  # noqa: BLE001 - a spare window is not worth a crash
+                    pass
+                win32.on_window_thread(
+                    self._window, lambda: _bring_to_front(self._window)
+                )
                 return True
-            if not self._page:
-                logger.warning("The pet was asked for, but this build has no pet page.")
-                return False
-            x, y = self._corner()
-            # Whatever has the foreground now, so it can be given back. Read
-            # before the window exists, because creating one takes it and nothing
-            # here can refuse that. See `win32.give_foreground_back`.
-            before = _foreground()
-            window = self._create(self._page, x, y)
-            if window is None:
-                logger.warning("The webview refused the pet window.")
-                return False
             self._window = window
             # Not ready until the page says so. `evaluate_js` before the document
             # is ready does not fail, it deadlocks -- see `Bridge.ready` -- so the
@@ -162,9 +187,42 @@ class DeskPet:
             # there is no handle yet: see `_dress`.
             self._previous = before
             self._dressed = False
-            self._dress_when_up(window)
-            window.events.closed += self._closed
-            return True
+        self._dress_when_up(window)
+        window.events.closed += self._closed
+        return True
+
+    def _create_on_gui_thread(
+        self, page: str, x: int, y: int, app: Any
+    ) -> Any:
+        """Make the window where windows are made: the GUI thread.
+
+        A page's request arrives on a pywebview worker thread, and a form
+        created there has no message pump behind it: the taskbar gains an entry
+        while nothing ever paints, clicks land nowhere, and the almost-window
+        keeps the process alive after the app itself has closed. Measured on a
+        real desktop as exactly that -- a taskbar button for a card that was not
+        there. The app's own window is already up by the time this runs, so its
+        thread is borrowed through the same `Invoke` the gestures use.
+
+        Without an app window there is nothing to borrow from, and the call goes
+        straight through -- which is the tests, and a host that has not attached
+        yet. `on_window_thread` falls back the same way where there is no WinForms
+        control to invoke on, so every non-Windows backend keeps working.
+        """
+        if app is None:
+            return self._create(page, x, y)
+        box: dict[str, Any] = {}
+
+        def make() -> None:
+            try:
+                box["window"] = self._create(page, x, y)
+            except Exception as exc:  # noqa: BLE001 - reported below, not through Invoke
+                box["error"] = exc
+
+        win32.on_window_thread(app, make)
+        if "error" in box:
+            raise box["error"]
+        return box.get("window")
 
     def close(self) -> None:
         """Take it down, if it is up."""

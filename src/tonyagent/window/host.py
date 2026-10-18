@@ -331,6 +331,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     # the same cycle `_attach` above describes.
     bridge._attach_pet(DeskPet(sibling_page(page, "pet.html"), api=bridge))
 
+    # Closing the app closes the card with it. Without this the pet's own window
+    # keeps the GUI loop alive after the main one is gone: the process stays up
+    # with a stopped core and nothing left to show it, and the remembered
+    # preference -- not a live window -- is what brings it back next launch.
+    # `close` takes no arguments, which is the shape a `closed` handler needs.
+    try:
+        window.events.closed += bridge._pet.close
+    except Exception as exc:  # noqa: BLE001 - the finally below is the backstop
+        logger.debug(f"Could not follow the window's closed event: {exc}")
+
     # Dragging is the app's own now, and pywebview's is left to find nothing.
     #
     # `pywebview-drag-region` used to be the whole mechanism: pywebview watches
@@ -363,6 +373,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         # whether the window was closed, the page died, or this process was
         # asked to stop. An orphaned core still holds the sandbox and the API
         # key, with nobody left to show its errors to.
+        #
+        # The card first, for the same reason: a pet window left up holds the
+        # GUI loop open on its own, and a loop that never returns never reaches
+        # the two lines below it. `close` on a missing window is a no-op, and it
+        # deliberately leaves the remembered preference alone -- closing the app
+        # is not un-wanting the pet, so it still comes back next launch.
+        bridge._pet.close()
         core.stop()
         if server is not None:
             server.stop()

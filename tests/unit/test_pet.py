@@ -946,3 +946,100 @@ def test_a_missing_preference_file_is_a_default_not_an_error(monkeypatch, tmp_pa
     monkeypatch.setattr(prefs, "_path", lambda: tmp_path / "nothing-here.json")
 
     assert prefs.get("anything", 7) == 7
+
+
+def test_opening_borrows_the_app_windows_thread(monkeypatch):
+    """The card is created where windows are made: the GUI thread.
+
+    A page's request arrives on a pywebview worker thread, and a form created
+    there has no message pump behind it: the taskbar gains an entry while
+    nothing ever paints, clicks land nowhere, and the almost-window keeps the
+    process alive after the app itself has closed. Measured on a real desktop
+    as exactly that. So creation goes through the app window's thread, and
+    this pins the routing rather than the framework: the marshal is captured,
+    and the create it carries still runs.
+    """
+    from tonyagent.window import pet as pet_module
+
+    marshalled: list[Any] = []
+
+    def marshal(window: Any, work: Any) -> None:
+        marshalled.append(window)
+        work()
+
+    monkeypatch.setattr(pet_module.win32, "on_window_thread", marshal)
+    monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
+    p, created = pet()
+    app = FakeWindow()
+    p.attach_app(app)
+
+    assert p.open() is True
+    assert created, "the card was never created"
+    assert marshalled and marshalled[0] is app
+    assert p.is_open()
+
+
+def test_reopening_shows_through_the_cards_own_thread(monkeypatch):
+    """`show` on another thread's window is a window that never answers.
+
+    The same worker-thread rule as creation, one step later: bringing an
+    existing card forward is still window work, so it marshals through the card
+    itself rather than running where the page's request happened to land.
+    """
+    from tonyagent.window import pet as pet_module
+
+    marshalled: list[Any] = []
+
+    def marshal(window: Any, work: Any) -> None:
+        marshalled.append(window)
+        work()
+
+    monkeypatch.setattr(pet_module.win32, "on_window_thread", marshal)
+    monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
+    p, _created = pet()
+    assert p.open() is True
+    assert p._window is not None
+
+    marshalled.clear()
+    assert p.open() is True
+    assert marshalled == [p._window]
+    assert p._window.shown == 1
+
+
+def test_two_openers_make_one_card(monkeypatch):
+    """The lock must not be held across creation, and two presses make one card.
+
+    Creation blocks on the GUI thread, so holding the lock across it would be
+    both threads waiting on each other against teardown. Both presses therefore
+    meet outside it -- and both can finish creating, so the loser destroys its
+    spare instead of keeping it beside the winner.
+    """
+    import threading
+
+    from tonyagent.window import pet as pet_module
+
+    monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
+    p, created = pet()
+    barrier = threading.Barrier(2)
+    windows: list[Any] = []
+    raw_create = p._create
+
+    def slow_create(page: str, x: int, y: int) -> Any:
+        window = raw_create(page, x, y)
+        windows.append(window)
+        barrier.wait(timeout=10)
+        return window
+
+    p._create = slow_create  # type: ignore[assignment]
+    results: list[bool] = []
+    threads = [threading.Thread(target=lambda: results.append(p.open())) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=15)
+
+    assert results == [True, True]
+    assert p.is_open()
+    assert len(created) == 2
+    assert p._window is not None and p._window.destroyed == 0
+    assert sum(window.destroyed for window in windows) == 1
