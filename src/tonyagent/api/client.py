@@ -136,7 +136,7 @@ def _is_protocol_mismatch(exc: LLMError) -> bool:
 #: ``/chat/completions``. Matched by prefix so future siblings (``muse-spark-1.4``)
 #: route correctly without a code change; anything unlisted still works, it just
 #: spends one failed chat request before the fallback catches it.
-RESPONSES_DIRECT_PREFIXES = ("muse-spark-", "grok-4.7", "gpt-6-luna", "gpt-5.6-luna")
+RESPONSES_DIRECT_PREFIXES = ("muse-spark-", "grok-4.7", "grok-4.6", "gpt-6-luna", "gpt-5.6-luna")
 
 
 @dataclass
@@ -422,19 +422,36 @@ class LLMClient:
         prices, and the frontend draws no label for it -- which is *not* the
         same as drawing "Free", because a gateway that omits pricing is not
         telling you the model costs nothing.
+
+        OpenCode Go publishes bare ids, so its rows are enriched from the
+        curated facts in `providers/go_catalog.py` (display name, protocol,
+        context window, max output tokens, input modalities). The live reply
+        still decides which ids exist: a model with no facts keeps zeros and
+        empty lists rather than inheriting a neighbour's numbers.
         """
+        # Local import: `providers` reaches back into this module for
+        # `normalize_key`, so a top-level import closes the loop. The catalog
+        # itself imports nothing, which is what keeps this one-directional.
+        from tonyagent.providers.go_catalog import GO_MODEL_FACTS
+
         catalog: list[dict] = []
         for model_id, entry in (await self._model_entries()).items():
+            facts = GO_MODEL_FACTS.get(model_id) if self.provider == "opencode-go" else None
+            window = _as_int(
+                entry.get("context_length")
+                or entry.get("context_window")
+                or entry.get("max_context_tokens")
+            )
             catalog.append(
                 {
                     "id": model_id,
-                    "name": str(entry.get("name") or ""),
-                    "context_length": _as_int(
-                        entry.get("context_length")
-                        or entry.get("context_window")
-                        or entry.get("max_context_tokens")
-                    ),
+                    "name": str(entry.get("name") or (facts or {}).get("name") or ""),
+                    "context_length": window or int((facts or {}).get("context_window") or 0),
                     "pricing": _read_pricing(entry.get("pricing")),
+                    "max_tokens": int((facts or {}).get("max_tokens") or 0),
+                    "input_modalities": list((facts or {}).get("input_modalities") or []),
+                    "protocol": str((facts or {}).get("protocol") or ""),
+                    "supports_reasoning": bool((facts or {}).get("supports_reasoning", False)),
                 }
             )
         catalog.sort(key=lambda model: str(model["id"]))
@@ -470,6 +487,14 @@ class LLMClient:
             # Some gateways report it as a string.
             if isinstance(value, str) and value.isdigit():
                 return int(value)
+        # Go publishes no sizes on the wire; the curated facts are the only
+        # source, and 0 stays the answer when they have none either.
+        if self.provider == "opencode-go":
+            from tonyagent.providers.go_catalog import GO_MODEL_FACTS
+
+            facts = GO_MODEL_FACTS.get(model)
+            if facts and int(facts.get("context_window") or 0) > 0:
+                return int(facts["context_window"])
         return 0
 
     async def list_model_reasoning(self) -> dict[str, ReasoningSpec]:
