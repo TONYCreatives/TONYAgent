@@ -391,10 +391,13 @@ class DeskPet:
     def _corner(self) -> tuple[int, int]:
         """Where the card goes when it opens: where it was left, or the corner.
 
-        The work area rather than the screen: it is the screen minus the taskbar
-        and anything else docked to it, so the pet sits above the taskbar instead
-        of behind it. Read from the monitor the *app* is on, so on two screens the
-        pet appears where the user is looking.
+        The work area of the monitor the *app* is on -- never a bare `0`. A null
+        handle asks Windows for "the" monitor and gets one it merely remembers:
+        measured on a real machine, a long-unplugged display still spans a
+        2880x1736 work area, so a card "clamped into view" there opens a full
+        screen below the visible one -- taskbar entry present, clicks landing
+        nowhere. The app's own handle resolves to the monitor the user is
+        looking at, which is also what the docstring here always promised.
 
         A remembered position wins, **clamped into the work area**. The monitor
         that position was measured on may be gone -- undocked, unplugged, or
@@ -402,15 +405,29 @@ class DeskPet:
         screen puts it somewhere the user cannot see or reach it. There is nothing
         to drag it back by, because it is not on screen to be pressed.
         """
-        try:
-            area = win32.work_area(0)
-        except Exception as exc:  # noqa: BLE001 - a placement is not a reason to refuse
-            logger.debug(f"Could not read the work area for the pet: {exc}")
+        area = self._area()
+        if area is None:
             return 0, 0
         saved = _saved_position()
         if saved is not None:
             return _clamp(area, saved[0], saved[1], WIDTH, HEIGHT)
         return _bottom_right(area, WIDTH, HEIGHT)
+
+    def _area(self) -> Any:
+        """The work area to place the card in, or None when it cannot be read.
+
+        The app's monitor first: it is a real handle on a visible screen. A
+        null handle is not tried at all -- see `_corner` for the ghost it
+        summons -- so without an app window there is no area, and the corner
+        falls back to the origin, which is on every screen ever made.
+        """
+        if self._app is None:
+            return None
+        try:
+            return win32.work_area(_handle(self._app))
+        except Exception as exc:  # noqa: BLE001 - a placement is not a reason to refuse
+            logger.debug(f"Could not read the work area for the pet: {exc}")
+            return None
 
     def _closed(self) -> None:
         """Forget the window so the next press makes a new one.

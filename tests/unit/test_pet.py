@@ -264,6 +264,7 @@ def test_the_place_it_was_left_wins_over_the_corner(monkeypatch):
     pet_module.prefs.set("pet_pos", [240, 120])
     monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
     p, _created = pet()
+    p.attach_app(FakeWindow())
 
     assert p._corner() == (240, 120)
 
@@ -279,6 +280,7 @@ def test_a_place_that_is_no_longer_on_screen_is_pulled_back_into_view(monkeypatc
     pet_module.prefs.set("pet_pos", [3200, 1400])
     monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
     p, _created = pet()
+    p.attach_app(FakeWindow())
 
     x, y = p._corner()
     assert x + pet_module.WIDTH <= 1440, "the card overhangs the right edge"
@@ -293,7 +295,47 @@ def test_a_place_that_cannot_be_read_is_the_corner_not_an_error(monkeypatch):
     for broken in ("nonsense", [1], [1, 2, 3], ["left", "top"], None, 5):
         pet_module.prefs.set("pet_pos", broken)
         p, _created = pet()
+        p.attach_app(FakeWindow())
         assert p._corner() == pet_module._bottom_right(_area(), pet_module.WIDTH, pet_module.HEIGHT)
+
+
+def test_the_corner_is_read_from_the_apps_monitor(monkeypatch):
+    """The card opens where the user is looking, not on a remembered ghost.
+
+    A null handle asks Windows for "the" monitor and gets one it merely
+    remembers: a long-unplugged display still spanned a 2880x1736 work area on
+    a real machine, so the card opened a full screen below the visible one --
+    taskbar entry present, clicks landing nowhere. The app's own handle
+    resolves to a monitor that exists, which is what pins the area to one.
+    """
+    from tonyagent.window import pet as pet_module
+
+    seen: list[int] = []
+    monkeypatch.setattr(
+        pet_module.win32, "work_area", lambda hwnd: seen.append(hwnd) or _area()
+    )
+    monkeypatch.setattr(pet_module.win32, "root_window", lambda handle: 9000 + handle)
+    p, _created = pet()
+    app = FakeWindow()
+    app.native = type("Native", (), {"Handle": _Handle()})()  # type: ignore[attr-defined]
+    p.attach_app(app)
+
+    assert p._corner() == pet_module._bottom_right(_area(), pet_module.WIDTH, pet_module.HEIGHT)
+    assert seen == [9000 + 4242]
+
+
+def test_no_app_window_means_the_origin_not_a_guess(monkeypatch):
+    """Without an app there is no monitor to read, so there is no area.
+
+    The origin is on every screen ever made, which a guessed area is not: the
+    guess is what stranded the card below the visible screen on a ghost.
+    """
+    from tonyagent.window import pet as pet_module
+
+    monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
+    p, _created = pet()
+
+    assert p._corner() == (0, 0)
 
 
 def test_dragging_saves_where_it_ended_and_says_it_moved(monkeypatch):
