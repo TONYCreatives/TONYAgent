@@ -948,6 +948,20 @@ describe("the tab strip gives way instead of overflowing the window", () => {
     // keeps the title still, and a slot with no width does not.
     assert.match(body(".tab-lead"), /width:\s*12px/);
     assert.match(body(".tab-lead"), /flex:\s*none/);
+
+    // **And the slot is not the tab's leading inset.** It used to be -- 12px of
+    // empty box that read as padding while the tab was idle -- and that held for
+    // exactly as long as nothing was drawn in it. The busy ring fills the slot
+    // it is centred in, so a slot standing in for padding leaves the ring with
+    // no air on that side: measured, the slot's left edge and the tab's were
+    // both at x=64, and the ring sat flush against the tab's own edge. The
+    // arithmetic is `air + ring + gap = inset`, so a 0 here is the ring touching
+    // the edge again.
+    assert.match(
+      body(".tab"),
+      /padding:\s*0\s+8px\s+0\s+4px/,
+      "the tab lost the air in front of the busy ring",
+    );
   });
 
   test("no separator is drawn beside the tab you are in, or the one you are on", () => {

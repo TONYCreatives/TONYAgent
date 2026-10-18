@@ -241,10 +241,28 @@
   flex: 0 1 auto;
   min-width: 72px;
   max-width: 240px;
-  /* No left padding at all: the leading slot below is 12px of the inset this
-     used to carry, so the slot and the space it occupies are the same space. An
-     idle tab's empty slot is indistinguishable from the padding it replaced,
-     and the strip did not get any wider. */
+  /*
+   * **4px of real padding on the left, and the slot is not a substitute for
+   * it.**
+   *
+   * The slot used to be the whole leading inset: 12px of empty box that read as
+   * padding while the tab was idle, and the title started 16px in either way.
+   * That worked for exactly as long as nothing was drawn in it. A turn puts the
+   * busy ring in it, and the ring *fills* the slot -- so the 12px of padding
+   * became 12px of ring, sitting flush against the tab's own edge. Measured
+   * before this: the slot's left edge and the tab's were both at x=64, which is
+   * the "almost no gap" on the leading side of the strip.
+   *
+   * So the slot is the ring's box, and this is the air around it, which is the
+   * only arrangement that has both. Four, because that is the gap between the
+   * slot and the title and the strip's own unit: the ring is inset by one rhythm
+   * on the leading side, the way the close glyph is by 8 on the trailing one.
+   *
+   * It costs 4px per tab, and that is the trade. The arithmetic is
+   * `air + ring + gap = inset`, so keeping the inset at 16 means an 8px ring for
+   * the same 4px of air -- and a ring that small beside a 13px title reads as a
+   * dot rather than as work in progress.
+   */
   /*
    * 8px on the right, not the 4 it was. The close glyph is 18px and sits at the
    * end of the row, so 4px left it nearly touching the tab's own edge -- measured
@@ -252,7 +270,7 @@
    * having been pushed out rather than placed. 8px matches the bar's own gap, so
    * the glyph is inset by one rhythm instead of a number of its own.
    */
-  padding: 0 8px 0 0;
+  padding: 0 8px 0 4px;
   border-radius: var(--radius-xs) var(--radius-xs) 0 0;
   color: var(--fg-mute);
   transition:
