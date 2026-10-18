@@ -224,6 +224,12 @@ def _release_payload(release: dict[str, Any]) -> dict[str, Any]:
     Narrowed on purpose. The raw release object is tens of kilobytes -- every
     asset, every uploader, a dozen URLs -- and none of it belongs in a cache
     file that is read on every launch.
+
+    **The installer is the first `.msi` asset, and this project publishes
+    exactly one.** That is a real assumption rather than a general rule: a
+    release carrying several (per-architecture, say) would need a naming rule
+    here, because "first" is a coin toss between them. `release.ps1` attaches
+    one file, so there is nothing to choose between today.
     """
     installer = ""
     for entry in release.get("assets") or []:

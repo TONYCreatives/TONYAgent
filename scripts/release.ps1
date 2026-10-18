@@ -130,7 +130,23 @@ Step 'Pushing the branch and the tag'
 git push origin $branch
 if ($LASTEXITCODE -ne 0) { Fail 'could not push the branch' }
 git push origin $tag
-if ($LASTEXITCODE -ne 0) { Fail 'could not push the tag' }
+if ($LASTEXITCODE -ne 0) {
+    # **The tag exists on the remote and is not this one.** That is what
+    # re-cutting a version looks like: the local tag was moved, the remote one
+    # did not follow, and pushing fails. It is not something to paper over --
+    # moving a tag that has been published is how two people end up with
+    # different code under one version number -- so it says what to do instead.
+    Fail @"
+The tag $tag already exists on the remote at a different commit.
+
+If the release for it has not been published, and nobody has fetched it:
+
+    git push --force origin $tag
+
+Otherwise cut a new version in src\tonyagent\__init__.py rather than moving
+this one. Two different trees under one version is worse than a second release.
+"@
+}
 
 Step 'Publishing the release'
 & gh @releaseArgs
