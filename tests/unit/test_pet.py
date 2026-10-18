@@ -262,7 +262,7 @@ def test_the_place_it_was_left_wins_over_the_corner(monkeypatch):
     from tonyagent.window import pet as pet_module
 
     pet_module.prefs.set("pet_pos", [240, 120])
-    monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
+    monkeypatch.setattr(pet_module.win32, "work_area_logical", lambda hwnd: _area())
     p, _created = pet()
     p.attach_app(FakeWindow())
 
@@ -278,7 +278,7 @@ def test_a_place_that_is_no_longer_on_screen_is_pulled_back_into_view(monkeypatc
     from tonyagent.window import pet as pet_module
 
     pet_module.prefs.set("pet_pos", [3200, 1400])
-    monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
+    monkeypatch.setattr(pet_module.win32, "work_area_logical", lambda hwnd: _area())
     p, _created = pet()
     p.attach_app(FakeWindow())
 
@@ -291,7 +291,7 @@ def test_a_place_that_cannot_be_read_is_the_corner_not_an_error(monkeypatch):
     """A decoration's position is not worth a refusal: the corner is an answer."""
     from tonyagent.window import pet as pet_module
 
-    monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
+    monkeypatch.setattr(pet_module.win32, "work_area_logical", lambda hwnd: _area())
     for broken in ("nonsense", [1], [1, 2, 3], ["left", "top"], None, 5):
         pet_module.prefs.set("pet_pos", broken)
         p, _created = pet()
@@ -312,7 +312,7 @@ def test_the_corner_is_read_from_the_apps_monitor(monkeypatch):
 
     seen: list[int] = []
     monkeypatch.setattr(
-        pet_module.win32, "work_area", lambda hwnd: seen.append(hwnd) or _area()
+        pet_module.win32, "work_area_logical", lambda hwnd: seen.append(hwnd) or _area()
     )
     monkeypatch.setattr(pet_module.win32, "root_window", lambda handle: 9000 + handle)
     p, _created = pet()
@@ -324,6 +324,33 @@ def test_the_corner_is_read_from_the_apps_monitor(monkeypatch):
     assert seen == [9000 + 4242]
 
 
+def test_the_area_is_asked_for_in_logical_pixels(monkeypatch):
+    """**Placement and pywebview must agree on units, and physical is 2x off.**
+
+    `create_window` multiplies x and y by the monitor's DPI scale and physical
+    is what `GetMonitorInfo` answers. Mixing them put the card at
+    scale-squared: measured on a 2880x1800 display at 200%, exactly twice too
+    far right and down and off the screen. The pet reads the logical area, so
+    this pins which reader it uses rather than trusting the conversion.
+    """
+    from tonyagent.window import pet as pet_module
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        pet_module.win32, "work_area_logical", lambda hwnd: calls.append("logical") or _area()
+    )
+    monkeypatch.setattr(
+        pet_module.win32,
+        "work_area",
+        lambda hwnd: calls.append("physical") or _area(),
+    )
+    p, _created = pet()
+    p.attach_app(FakeWindow())
+
+    p._corner()
+    assert calls == ["logical"]
+
+
 def test_no_app_window_means_the_origin_not_a_guess(monkeypatch):
     """Without an app there is no monitor to read, so there is no area.
 
@@ -332,7 +359,7 @@ def test_no_app_window_means_the_origin_not_a_guess(monkeypatch):
     """
     from tonyagent.window import pet as pet_module
 
-    monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
+    monkeypatch.setattr(pet_module.win32, "work_area_logical", lambda hwnd: _area())
     p, _created = pet()
 
     assert p._corner() == (0, 0)
@@ -1010,7 +1037,7 @@ def test_opening_borrows_the_app_windows_thread(monkeypatch):
         work()
 
     monkeypatch.setattr(pet_module.win32, "on_window_thread", marshal)
-    monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
+    monkeypatch.setattr(pet_module.win32, "work_area_logical", lambda hwnd: _area())
     p, created = pet()
     app = FakeWindow()
     p.attach_app(app)
@@ -1037,7 +1064,7 @@ def test_reopening_shows_through_the_cards_own_thread(monkeypatch):
         work()
 
     monkeypatch.setattr(pet_module.win32, "on_window_thread", marshal)
-    monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
+    monkeypatch.setattr(pet_module.win32, "work_area_logical", lambda hwnd: _area())
     p, _created = pet()
     assert p.open() is True
     assert p._window is not None
@@ -1060,7 +1087,7 @@ def test_two_openers_make_one_card(monkeypatch):
 
     from tonyagent.window import pet as pet_module
 
-    monkeypatch.setattr(pet_module.win32, "work_area", lambda hwnd: _area())
+    monkeypatch.setattr(pet_module.win32, "work_area_logical", lambda hwnd: _area())
     p, created = pet()
     barrier = threading.Barrier(2)
     windows: list[Any] = []

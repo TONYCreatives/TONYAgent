@@ -145,6 +145,10 @@ HTBOTTOMRIGHT = 17
 #: a maximized window belongs to.
 MONITOR_DEFAULTTONEAREST = 2
 
+#: ``GetDeviceCaps``'s logical pixels per inch, the pre-1607 way to ask a
+#: window's DPI. See `dpi_scale`.
+LOGPIXELSX = 88
+
 #: The eight edges the page may ask to resize from, and the code each one is. A
 #: closed map rather than a passthrough, for the reason ``Bridge.ACTIONS`` is
 #: one: the page is not handed an arbitrary window command for asking nicely.
@@ -585,7 +589,12 @@ def _adopt_style(hwnd: int, recipe: Callable[[int], int]) -> None:
 
 
 def work_area(hwnd: int) -> RECT:
-    """The window's monitor minus the taskbar and anything else docked to it."""
+    """The window's monitor minus the taskbar and anything else docked to it.
+
+    **Physical pixels.** That is the unit ``WM_NCCALCSIZE`` wants and the unit
+    ``GetMonitorInfo`` answers in. It is *not* the unit to place a window in --
+    see `work_area_logical`.
+    """
     _bind()
     user32 = ctypes.windll.user32  # type: ignore[attr-defined]
     monitor = user32.MonitorFromWindow(wintypes.HWND(hwnd), MONITOR_DEFAULTTONEAREST)
@@ -594,6 +603,62 @@ def work_area(hwnd: int) -> RECT:
     if not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
         raise OSError("this window's monitor has no work area to read")
     return info.rcWork
+
+
+def dpi_scale(hwnd: int) -> float:
+    """Physical pixels per logical pixel on this window's monitor: 1.0 at 96 DPI.
+
+    A 2880x1800 display at 200% scaling answers 2.0, which is the factor
+    pywebview multiplies a window's requested position by. Anything that has to
+    agree with ``create_window``'s coordinates has to divide by this first.
+    """
+    if sys.platform != "win32":
+        return 1.0
+    _bind()
+    user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+    try:
+        dpi = int(user32.GetDpiForWindow(wintypes.HWND(hwnd)))
+    except Exception as exc:  # noqa: BLE001 - see the fallback
+        logger.debug(f"GetDpiForWindow is unavailable: {exc}")
+        dpi = 0
+    if not dpi:
+        # Before Windows 10 1607 there is no per-window DPI, so the device
+        # context's answer stands in: the same number on a single-monitor
+        # machine, which is the only place the fallback can be reached.
+        try:
+            hdc = user32.GetDC(wintypes.HWND(hwnd))
+            dpi = int(ctypes.windll.gdi32.GetDeviceCaps(hdc, LOGPIXELSX))  # type: ignore[attr-defined]
+            user32.ReleaseDC(wintypes.HWND(hwnd), hdc)
+        except Exception as exc:  # noqa: BLE001 - 96 is the least wrong answer
+            logger.debug(f"Could not read the device DPI: {exc}")
+            dpi = 96
+    return (dpi or 96) / 96.0
+
+
+def work_area_logical(hwnd: int) -> RECT:
+    """The work area in the units pywebview places windows in.
+
+    **Logical pixels, and this is the bug it exists to prevent.** ``work_area``
+    answers physical pixels, and pywebview multiplies ``create_window``'s x and
+    y by the monitor's scale to get there. Handing it physical numbers therefore
+    puts the window at scale-*squared*: measured on a 2880x1800 display at 200%
+    scaling, a card asked for at the bottom right of a 1440x900 work area landed
+    at physical (5352, 3064) -- exactly twice too far right and down, off the
+    screen entirely, and present in the taskbar the whole time.
+
+    The card's own size needs no equivalent, because pywebview scales
+    ``initial_width`` by the same factor: sizes are already logical both ways.
+    """
+    area = work_area(hwnd)
+    scale = dpi_scale(hwnd)
+    if scale == 1.0:
+        return area
+    return RECT(
+        int(area.left / scale),
+        int(area.top / scale),
+        int(area.right / scale),
+        int(area.bottom / scale),
+    )
 
 
 def _window_proc(hwnd: int, message: int, wparam: int, lparam: int) -> int:

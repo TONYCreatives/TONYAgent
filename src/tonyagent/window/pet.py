@@ -420,11 +420,14 @@ class DeskPet:
         null handle is not tried at all -- see `_corner` for the ghost it
         summons -- so without an app window there is no area, and the corner
         falls back to the origin, which is on every screen ever made.
+
+        **Logical pixels**, because that is what ``create_window`` takes. See
+        `win32.work_area_logical` for the 2x error that comes of mixing units.
         """
         if self._app is None:
             return None
         try:
-            return win32.work_area(_handle(self._app))
+            return win32.work_area_logical(_handle(self._app))
         except Exception as exc:  # noqa: BLE001 - a placement is not a reason to refuse
             logger.debug(f"Could not read the work area for the pet: {exc}")
             return None
