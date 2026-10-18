@@ -6,9 +6,13 @@ keep: both are aggregators that publish model metadata, so the catalogue work
 has two implementations rather than six, and neither is an OpenAI-shaped vendor
 that answers `/models` with an id and nothing else.
 
-`/chat/completions` is the endpoint used here. The service also offers
-`/messages` (Anthropic-shaped) and `/responses`, and neither is a reason to
-write a second dialect: this app speaks chat-completions, and Go serves it.
+`/chat/completions` is the default endpoint, with automatic fallback to
+`/responses` when the gateway answers "Model does not support this protocol".
+Muse Spark (and similar models) only serve `/responses`, so the client routes
+them there directly and translates the same tool calls both ways; the session
+never learns a second shape. The service also offers `/messages`
+(Anthropic-shaped), which remains unsupported: a model that needs it fails
+with the provider's own error rather than a mistranslation here.
 
 **`models` is empty, and that is not an oversight.** Go's model ids are only
 published by its own `/models` endpoint, which is behind the subscription key --

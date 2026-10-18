@@ -23,7 +23,14 @@ from typing import Any, AsyncIterator
 import httpx
 
 from tonyagent import __version__ as VERSION
-from tonyagent.api.dialects import Chunk, Completion, Dialect, ReasoningSpec, Usage
+from tonyagent.api.dialects import (
+    Chunk,
+    Completion,
+    Dialect,
+    ReasoningSpec,
+    ResponsesDialect,
+    Usage,
+)
 from tonyagent.api.errors import ErrorKind, KeyFormatError, KeyLengthError, LLMError
 
 #: **Who is asking.** Some gateways refuse traffic that arrives as a generic SDK or
@@ -109,6 +116,29 @@ def _read_pricing(raw: Any) -> dict[str, float]:
     return out
 
 
+def _is_protocol_mismatch(exc: LLMError) -> bool:
+    """Whether ``exc`` is a gateway refusing the wire format, not the content.
+
+    Go answers a Responses-only model sent to ``/chat/completions`` (and vice
+    versa) with 400 "Model does not support this protocol". That is a routing
+    fact, so the client retries the same request through the other dialect
+    once instead of showing it. Any other 400 is a real bad request and is
+    raised as-is.
+    """
+    return (
+        exc.status == 400
+        and bool(exc.body)
+        and "does not support this protocol" in exc.body.lower()
+    )
+
+
+#: Models known from Go's endpoint table to serve ``/responses`` rather than
+#: ``/chat/completions``. Matched by prefix so future siblings (``muse-spark-1.4``)
+#: route correctly without a code change; anything unlisted still works, it just
+#: spends one failed chat request before the fallback catches it.
+RESPONSES_DIRECT_PREFIXES = ("muse-spark-", "grok-4.7", "gpt-6-luna", "gpt-5.6-luna")
+
+
 @dataclass
 class Health:
     """Result of a real connectivity check."""
@@ -140,6 +170,7 @@ class LLMClient:
         self.api_key = normalize_key(api_key)
         self.model = model
         self.dialect = Dialect()
+        self.responses_dialect = ResponsesDialect()
         self.base_url = (base_url or self.dialect.default_base_url).rstrip("/")
         self.timeout = timeout
         self.extra_headers = extra_headers or {}
@@ -198,8 +229,19 @@ class LLMClient:
                 headers[self.session_header] = self.session_id
         return headers
 
-    def _url(self, stream: bool) -> str:
-        return self.dialect.url(self.base_url, self.model, stream)
+    def _url(self, stream: bool, dialect=None) -> str:
+        return (dialect or self.dialect).url(self.base_url, self.model, stream)
+
+    def _dialect_order(self):
+        """Chat first, unless the model is a known Responses-only id.
+
+        Unknown models still work: the first attempt fails with the gateway's
+        protocol message and the client retries through the other dialect once.
+        """
+        model = (self.model or "").lower()
+        if model.startswith(RESPONSES_DIRECT_PREFIXES):
+            return (self.responses_dialect, self.dialect)
+        return (self.dialect, self.responses_dialect)
 
     def check_key(self) -> None:
         """Fail fast on a missing or clearly truncated key."""
@@ -256,36 +298,42 @@ class LLMClient:
     # -- requests ------------------------------------------------------------
     async def complete(self, messages, tools=None, tool_choice=None, **extra) -> Completion:
         self.check_key()
-        payload = self.dialect.build_request(
-            self.model, messages, tools, tool_choice, stream=False, **extra
-        )
-        started = time.monotonic()
-        try:
-            async with httpx.AsyncClient(timeout=self.timeout) as http:
-                resp = await http.post(self._url(False), headers=self._headers(), json=payload)
-        except httpx.HTTPError as exc:
-            self._record(ok=False, started=started)
-            raise LLMError.network(exc, self.provider) from exc
-        if resp.status_code >= 400:
-            self._record(ok=False, started=started)
-            raise LLMError.from_response(resp.status_code, resp.text, self.provider)
-        result = self.dialect.parse_completion(resp.json())
-        self._record(ok=True, started=started, usage=result.usage)
-        return result
+        last_mismatch: LLMError | None = None
+        for dialect in self._dialect_order():
+            payload = dialect.build_request(
+                self.model, messages, tools, tool_choice, stream=False, **extra
+            )
+            started = time.monotonic()
+            try:
+                async with httpx.AsyncClient(timeout=self.timeout) as http:
+                    resp = await http.post(
+                        self._url(False, dialect), headers=self._headers(), json=payload
+                    )
+            except httpx.HTTPError as exc:
+                self._record(ok=False, started=started)
+                raise LLMError.network(exc, self.provider) from exc
+            if resp.status_code >= 400:
+                self._record(ok=False, started=started)
+                exc = LLMError.from_response(resp.status_code, resp.text, self.provider)
+                if _is_protocol_mismatch(exc):
+                    last_mismatch = exc
+                    continue
+                raise exc
+            result = dialect.parse_completion(resp.json())
+            self._record(ok=True, started=started, usage=result.usage)
+            return result
+        assert last_mismatch is not None
+        raise last_mismatch
 
-    async def stream(self, messages, tools=None, tool_choice=None, **extra) -> AsyncIterator[Chunk]:
-        """Yield chunks as they arrive. Always raises LLMError on failure."""
-        self.check_key()
-        payload = self.dialect.build_request(
-            self.model, messages, tools, tool_choice, stream=True, **extra
-        )
+    async def _stream_with(self, dialect, payload) -> AsyncIterator[Chunk]:
+        """Yield chunks for one dialect. Raises LLMError on HTTP failure."""
         started = time.monotonic()
         ok = False
         acc: dict = {}
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as http:
                 async with http.stream(
-                    "POST", self._url(True), headers=self._headers(), json=payload
+                    "POST", self._url(True, dialect), headers=self._headers(), json=payload
                 ) as resp:
                     if resp.status_code >= 400:
                         body = (await resp.aread()).decode("utf-8", "replace")
@@ -300,7 +348,7 @@ class LLMClient:
                         data = line[5:].strip()
                         if data == "[DONE]":
                             break
-                        chunk = self.dialect.parse_stream_event(event, data, acc)
+                        chunk = dialect.parse_stream_event(event, data, acc)
                         if chunk is not None:
                             yield chunk
                             if chunk.finish_reason:
@@ -315,6 +363,27 @@ class LLMClient:
             # spent a request, and it is the case a ledger that only counted
             # clean finishes would miss by the most.
             self._record(ok=ok, started=started, usage=acc.get("usage"))
+
+    async def stream(self, messages, tools=None, tool_choice=None, **extra) -> AsyncIterator[Chunk]:
+        """Yield chunks as they arrive. Always raises LLMError on failure."""
+        self.check_key()
+        order = self._dialect_order()
+        first_payloads = [
+            dialect.build_request(
+                self.model, messages, tools, tool_choice, stream=True, **extra
+            )
+            for dialect in order
+        ]
+        try:
+            async for chunk in self._stream_with(order[0], first_payloads[0]):
+                yield chunk
+            return
+        except LLMError as exc:
+            if not _is_protocol_mismatch(exc) or len(order) < 2:
+                raise
+            async for chunk in self._stream_with(order[1], first_payloads[1]):
+                yield chunk
+            return
 
     # -- health --------------------------------------------------------------
     async def check(self) -> Health:

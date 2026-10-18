@@ -272,6 +272,343 @@ class Dialect:
         return f"{base_url.rstrip('/')}/models"
 
 
+class ResponsesDialect:
+    """The OpenAI Responses wire format (``/responses``).
+
+    Muse Spark (and a few other Go models) only serve this endpoint: sending
+    them to ``/chat/completions`` is answered with 400 "Model does not support
+    this protocol". The app keeps its neutral ``ChatMessage``/``ToolSchema``
+    model everywhere above this layer, so this class translates in both
+    directions and the session never learns a second shape: text and tool
+    calls come out as the same :class:`Completion`/:class:`Chunk` the chat
+    dialect produces.
+    """
+
+    def build_request(self, model, messages, tools=None, tool_choice=None, stream=False, **extra):
+        payload: dict[str, Any] = {
+            "model": model,
+            "input": messages_to_responses_input(messages),
+        }
+        built = responses_tools(tools)
+        if built:
+            payload["tools"] = built
+            if tool_choice:
+                payload["tool_choice"] = responses_tool_choice(tool_choice)
+        if stream:
+            payload["stream"] = True
+        payload.update(extra)
+        return payload
+
+    def url(self, base_url: str, model: str, stream: bool) -> str:
+        return f"{base_url.rstrip('/')}/responses"
+
+    def auth_headers(self, api_key: str) -> dict:
+        return {"Authorization": f"Bearer {api_key}"}
+
+    def models_url(self, base_url: str) -> str:
+        return f"{base_url.rstrip('/')}/models"
+
+    def parse_models(self, obj: dict) -> list[str]:
+        return [m.get("id", "") for m in (obj.get("data") or []) if m.get("id")]
+
+    def parse_model_reasoning(self, obj: dict) -> dict[str, "ReasoningSpec"]:
+        specs: dict[str, ReasoningSpec] = {}
+        for model in obj.get("data") or []:
+            model_id = model.get("id")
+            if not model_id:
+                continue
+            reasoning = model.get("reasoning")
+            if not isinstance(reasoning, dict):
+                continue
+            specs[model_id] = ReasoningSpec(
+                efforts=list(reasoning.get("supported_efforts") or []),
+                default_effort=reasoning.get("default_effort") or "",
+                mandatory=bool(reasoning.get("mandatory")),
+            )
+        return specs
+
+    def parse_completion(self, obj: dict) -> Completion:
+        text, tool_calls = responses_output(obj.get("output") or [])
+        usage = obj.get("usage") or {}
+        return Completion(
+            content=text or None,
+            tool_calls=tool_calls,
+            finish_reason="tool_calls" if tool_calls else "stop",
+            model=obj.get("model", ""),
+            usage=Usage(
+                usage.get("input_tokens", 0),
+                usage.get("output_tokens", 0),
+            ),
+        )
+
+    def parse_stream_event(self, event: str, data: str, acc: dict) -> Chunk | None:
+        if not data or data == "[DONE]":
+            return None
+        try:
+            obj = json.loads(data)
+        except ValueError:
+            return None
+        kind = obj.get("type") or event
+        if kind == "response.output_text.delta":
+            return Chunk(content=obj.get("delta"))
+        if kind == "response.output_item.added":
+            responses_note_item(obj.get("item") or {}, acc)
+            return None
+        if kind == "response.function_call_arguments.delta":
+            responses_add_delta(obj, acc)
+            return Chunk(tool_calls=responses_current_tool_calls(acc))
+        if kind == "response.function_call_arguments.done":
+            responses_finish_item(obj, acc)
+            return Chunk(tool_calls=responses_current_tool_calls(acc))
+        if kind == "response.output_item.done":
+            item = obj.get("item") or {}
+            if item.get("type") == "function_call":
+                responses_note_item(item, acc, done=True)
+                return Chunk(tool_calls=responses_current_tool_calls(acc))
+            return None
+        if kind == "response.completed":
+            response = obj.get("response") or {}
+            usage = response.get("usage") or {}
+            if usage:
+                acc["usage"] = Usage(
+                    usage.get("input_tokens", 0),
+                    usage.get("output_tokens", 0),
+                )
+            calls = responses_current_tool_calls(acc)
+            if calls is None:
+                _, calls = responses_output(response.get("output") or [])
+            return Chunk(
+                finish_reason="tool_calls" if calls else "stop",
+                tool_calls=calls,
+                model=response.get("model", ""),
+            )
+        if kind in ("response.failed", "response.incomplete", "error"):
+            return Chunk(finish_reason="error")
+        if obj.get("error"):
+            return Chunk(finish_reason="error")
+        return None
+
+
+def responses_tools(tools: list[dict] | None) -> list[dict] | None:
+    """Chat-shaped tools to Responses-shaped tools.
+
+    The chat dialect carries ``{"type": "function", "function": {...}}``;
+    Responses wants the inner object flattened with the type beside it.
+    """
+    if not tools:
+        return None
+    out = []
+    for t in tools:
+        fn = t.get("function", t)
+        out.append(
+            {
+                "type": "function",
+                "name": fn.get("name", ""),
+                "description": fn.get("description", ""),
+                "parameters": fn.get("parameters")
+                or {"type": "object", "properties": {}},
+            }
+        )
+    return out or None
+
+
+def responses_tool_choice(choice) -> str | dict | None:
+    """Chat tool-choice values to their Responses equivalents."""
+    if not choice:
+        return None
+    value = getattr(choice, "value", choice)
+    if value in ("auto", "none", "required"):
+        return value
+    return {"type": "function", "name": value}
+
+
+def messages_to_responses_input(messages: list[dict]) -> list[dict]:
+    """Neutral chat messages to a Responses ``input`` list.
+
+    History is re-sent every turn (there is no ``previous_response_id``
+    chaining), so every role the session can produce is mapped: system and
+    user become input messages, assistant tool calls become ``function_call``
+    items, and tool replies become ``function_call_output`` items. Anything
+    unrecognised is dropped rather than guessed at: sending a malformed item
+    fails the whole turn.
+    """
+    import json as _json
+
+    items: list[dict] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role", "")
+        content = message.get("content")
+        tool_calls = message.get("tool_calls")
+        if role == "tool":
+            call_id = message.get("tool_call_id") or ""
+            output = content if isinstance(content, str) else _json.dumps(content)
+            items.append(
+                {"type": "function_call_output", "call_id": call_id, "output": output or ""}
+            )
+            continue
+        if tool_calls:
+            text = content if isinstance(content, str) and content else ""
+            if text:
+                items.append({"role": "assistant", "content": text})
+            for call in tool_calls:
+                fn = (call.get("function") or {}) if isinstance(call, dict) else {}
+                call_id = (call.get("id") or "") if isinstance(call, dict) else ""
+                items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": call_id,
+                        "name": fn.get("name", ""),
+                        "arguments": fn.get("arguments", "") or "",
+                    }
+                )
+            continue
+        if role == "system":
+            text = content if isinstance(content, str) else ""
+            if text:
+                items.append({"role": "system", "content": text})
+            continue
+        if role in ("user", "assistant", "developer"):
+            if isinstance(content, str):
+                if content:
+                    items.append({"role": role, "content": content})
+            elif isinstance(content, list):
+                parts = chat_parts_to_responses_content(content)
+                if parts:
+                    items.append({"role": role, "content": parts})
+            continue
+    return items
+
+
+def chat_parts_to_responses_content(parts: list) -> list[dict]:
+    """OpenAI content parts to Responses input content parts."""
+    out: list[dict] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        kind = part.get("type", "")
+        if kind == "text":
+            text = part.get("text", "")
+            if text:
+                out.append({"type": "input_text", "text": text})
+        elif kind == "input_text":
+            if part.get("text"):
+                out.append({"type": "input_text", "text": part["text"]})
+        elif kind == "image_url":
+            image = part.get("image_url")
+            url = image.get("url", "") if isinstance(image, dict) else part.get("url", "")
+            if url:
+                out.append({"type": "input_image", "image_url": url})
+        elif kind == "input_image":
+            if part.get("image_url"):
+                out.append(part)
+    return out
+
+
+def responses_output(output: list) -> tuple[str, list[dict] | None]:
+    """A Responses ``output`` list to (text, chat-shaped tool calls)."""
+    texts: list[str] = []
+    calls: list[dict] = []
+    for item in output:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type", "")
+        if kind == "message":
+            for part in item.get("content") or []:
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "output_text" and part.get("text"):
+                    texts.append(part["text"])
+                elif part.get("type") == "refusal" and part.get("refusal"):
+                    texts.append(part["refusal"])
+        elif kind == "function_call":
+            call_id = item.get("call_id") or item.get("id") or ""
+            calls.append(
+                {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": item.get("name", ""),
+                        "arguments": item.get("arguments", "") or "",
+                    },
+                }
+            )
+    return ("".join(texts), calls or None)
+
+
+def responses_note_item(item: dict, acc: dict, done: bool = False) -> None:
+    """Record a streamed ``function_call`` item under its id."""
+    if item.get("type") != "function_call":
+        return
+    buf = acc.setdefault("fc", {})
+    key = str(item.get("id") or item.get("call_id") or len(buf))
+    slot = buf.setdefault(key, {"id": "", "call_id": "", "name": "", "arguments": ""})
+    if item.get("id"):
+        slot["id"] = item["id"]
+    if item.get("call_id"):
+        slot["call_id"] = item["call_id"]
+    if item.get("name"):
+        slot["name"] = item["name"]
+    if done and item.get("arguments"):
+        slot["arguments"] = item["arguments"]
+
+
+def responses_add_delta(obj: dict, acc: dict) -> None:
+    """Append one ``function_call_arguments.delta`` fragment."""
+    item_id = str(obj.get("item_id") or "")
+    delta = obj.get("delta") or ""
+    if not item_id:
+        return
+    buf = acc.setdefault("fc", {})
+    slot = buf.setdefault(
+        item_id, {"id": item_id, "call_id": item_id, "name": "", "arguments": ""}
+    )
+    slot["arguments"] += delta
+
+
+def responses_finish_item(obj: dict, acc: dict) -> None:
+    """Finalize one function call when its ``done`` event arrives."""
+    item_id = str(obj.get("item_id") or "")
+    buf = acc.setdefault("fc", {})
+    slot = None
+    if item_id and item_id in buf:
+        slot = buf[item_id]
+    elif buf:
+        slot = next(reversed(buf.values()))
+    if slot is None:
+        return
+    if obj.get("arguments"):
+        slot["arguments"] = obj["arguments"]
+    if obj.get("name"):
+        slot["name"] = obj["name"]
+    if obj.get("call_id"):
+        slot["call_id"] = obj["call_id"]
+
+
+def responses_current_tool_calls(acc: dict) -> list[dict] | None:
+    """Buffered function calls as chat-shaped tool calls, or None."""
+    buf = acc.get("fc")
+    if not buf:
+        return None
+    calls = []
+    for slot in buf.values():
+        if not slot.get("name") and not slot.get("arguments"):
+            continue
+        call_id = slot.get("call_id") or slot.get("id") or ""
+        calls.append(
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {
+                    "name": slot.get("name", ""),
+                    "arguments": slot.get("arguments", "") or "",
+                },
+            }
+        )
+    return calls or None
+
+
 def current_tool_calls(acc: dict) -> list[dict] | None:
     buf = acc.get("buffer")
     return list(buf.values()) if buf else None
