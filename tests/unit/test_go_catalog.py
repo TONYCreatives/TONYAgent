@@ -14,13 +14,26 @@ def _client(provider="opencode-go", model="kimi-k3"):
 
 
 def test_every_fact_has_the_fields_a_picker_reads():
-    assert len(GO_MODEL_FACTS) >= 30
+    assert len(GO_MODEL_FACTS) >= 39
     for model_id, facts in GO_MODEL_FACTS.items():
         assert facts["name"], model_id
-        assert facts["protocol"] in ("chat", "responses", "messages"), model_id
-        assert facts["context_window"] > 0, model_id
-        assert facts["max_tokens"] > 0, model_id
-        assert facts["input_modalities"], model_id
+        assert facts["protocol"] in ("chat", "responses", "messages", ""), model_id
+        assert isinstance(facts["context_window"], int), model_id
+        assert isinstance(facts["max_tokens"], int), model_id
+        assert isinstance(facts["input_modalities"], list), model_id
+        # Unknown means fully unknown: a row with no numbers carries no
+        # modalities and no badge either, never half a claim.
+        if facts["context_window"] == 0:
+            assert facts["max_tokens"] == 0, model_id
+            assert facts["input_modalities"] == [], model_id
+            assert facts["protocol"] == "", model_id
+
+
+def test_spot_checks():
+    assert GO_MODEL_FACTS["kimi-k2.6"]["name"] == "Kimi K2.6"
+    assert GO_MODEL_FACTS["glm-5.1"]["context_window"] == 204800
+    assert GO_MODEL_FACTS["qwen3.6-plus"]["protocol"] == "messages"
+    assert GO_MODEL_FACTS["omen-alpha"]["name"] == "Omen Alpha"
 
 
 def test_responses_models_agree_with_request_routing():

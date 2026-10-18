@@ -24,6 +24,14 @@ from __future__ import annotations
 #: (`/responses`), or "messages" (Anthropic `/messages`, which this app does
 #: not speak -- listed so the picker can say so instead of failing at send).
 GO_MODEL_FACTS: dict[str, dict] = {
+    "beam-free": {
+        "name": "Beam Free",
+        "protocol": "",
+        "context_window": 0,
+        "max_tokens": 0,
+        "input_modalities": [],
+        "supports_reasoning": False,
+    },
     "claude-haiku-5-5": {
         "name": "Claude Haiku 5.5",
         "protocol": "messages",
@@ -62,6 +70,22 @@ GO_MODEL_FACTS: dict[str, dict] = {
         "context_window": 1000000,
         "max_tokens": 384000,
         "input_modalities": ["text", "image"],
+        "supports_reasoning": True,
+    },
+    "gemini-4-argon-contributor": {
+        "name": "Gemini 4 Argon Contributor",
+        "protocol": "",
+        "context_window": 0,
+        "max_tokens": 0,
+        "input_modalities": [],
+        "supports_reasoning": False,
+    },
+    "glm-5.1": {
+        "name": "GLM-5.1",
+        "protocol": "chat",
+        "context_window": 204800,
+        "max_tokens": 131072,
+        "input_modalities": ["text"],
         "supports_reasoning": True,
     },
     "glm-5.2": {
@@ -136,6 +160,14 @@ GO_MODEL_FACTS: dict[str, dict] = {
         "input_modalities": ["text"],
         "supports_reasoning": True,
     },
+    "kimi-k2.6": {
+        "name": "Kimi K2.6",
+        "protocol": "chat",
+        "context_window": 262144,
+        "max_tokens": 65536,
+        "input_modalities": ["text", "image"],
+        "supports_reasoning": True,
+    },
     "kimi-k2.7-code": {
         "name": "Kimi K2.7 Code",
         "protocol": "chat",
@@ -200,6 +232,14 @@ GO_MODEL_FACTS: dict[str, dict] = {
         "input_modalities": ["text", "image"],
         "supports_reasoning": True,
     },
+    "minimax-m2.5": {
+        "name": "MiniMax-M2.5",
+        "protocol": "chat",
+        "context_window": 204800,
+        "max_tokens": 131072,
+        "input_modalities": ["text"],
+        "supports_reasoning": True,
+    },
     "minimax-m2.7": {
         "name": "MiniMax-M2.7",
         "protocol": "chat",
@@ -230,6 +270,30 @@ GO_MODEL_FACTS: dict[str, dict] = {
         "context_window": 1048576,
         "max_tokens": 131072,
         "input_modalities": ["text", "image"],
+        "supports_reasoning": True,
+    },
+    "omen-alpha": {
+        "name": "Omen Alpha",
+        "protocol": "",
+        "context_window": 0,
+        "max_tokens": 0,
+        "input_modalities": [],
+        "supports_reasoning": False,
+    },
+    "qwen3.6-plus": {
+        "name": "Qwen3.6 Plus",
+        "protocol": "messages",
+        "context_window": 262144,
+        "max_tokens": 65536,
+        "input_modalities": ["text", "image"],
+        "supports_reasoning": True,
+    },
+    "qwen3.7-max": {
+        "name": "Qwen3.7 Max",
+        "protocol": "",
+        "context_window": 1000000,
+        "max_tokens": 131072,
+        "input_modalities": ["text"],
         "supports_reasoning": True,
     },
     "qwen3.7-plus": {
@@ -263,5 +327,13 @@ GO_MODEL_FACTS: dict[str, dict] = {
         "max_tokens": 524288,
         "input_modalities": ["text", "image"],
         "supports_reasoning": True,
+    },
+    "step-5-preview": {
+        "name": "Step 5 Preview",
+        "protocol": "",
+        "context_window": 0,
+        "max_tokens": 0,
+        "input_modalities": [],
+        "supports_reasoning": False,
     },
 }
