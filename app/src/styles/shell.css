@@ -86,6 +86,27 @@
   grid-template-columns: var(--code-side-w) minmax(0, 1fr);
 }
 
+/*
+ * --- Settings: the window becomes a settings page -------------------------
+ *
+ * One column, and the rail is not rendered in this mode (see `App`) -- so the
+ * track it occupied is gone rather than left as 64px of empty chrome down the
+ * left edge of a page that has nothing to do with chats.
+ *
+ * `.main` has to leave the column it is pinned to here, and this is the one mode
+ * where that is true: it is `grid-column: 2` explicitly, and against a template
+ * with a single track that places it in an *implicit* second column -- which is
+ * the same failure the note on `.main` describes, arriving by a different route.
+ * Code mode does not need this because its template still has two tracks.
+ */
+.app[data-mode="settings"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app[data-mode="settings"] .main {
+  grid-column: 1;
+}
+
 .code-explorer {
   grid-column: 1;
   grid-row: 2;

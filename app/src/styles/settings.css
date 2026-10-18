@@ -2,12 +2,14 @@
 /* --- settings panel ------------------------------------------------------ */
 
 /*
- * Settings, as a pane of the sidebar rather than a dialog over the window.
+ * A `.modal` inside the sidebar fills it, rather than floating in it.
  *
- * The panel keeps its own markup -- `.modal` is still its root, because the
- * heading, the rows and the sticky footer are all styled from there -- and this
- * is what turns that markup into a pane when the sidebar is what contains it.
- * Scoped by `.chatlist` so the modal rules themselves stay untouched: the same
+ * **The search panel is the one that does this now.** The settings panel was the
+ * other, and it is a page of the window instead -- see `.settings-page` -- so
+ * the modal rules themselves stay exactly what the centred dialogs need and this
+ * is what turns that markup into the sidebar's body.
+ *
+ * Scoped by `.chatlist` so the two do not have to agree about anything: the same
  * element is still a centred dialog wherever else it is put.
  */
 .chatlist .modal {
@@ -39,189 +41,195 @@
   backdrop-filter: none;
 }
 
+/* --- the settings page --------------------------------------------------- */
+
 /*
- * The pane is a column: title and tabs at the top, options in the middle, Close
- * on the floor.
+ * Settings, as a page of the window rather than a pane of the sidebar.
  *
- * **This replaces a sticky footer, and the sticky one was the bug.**
- * `.modal-actions` is `position: sticky; bottom: -18px` so that it pins to the
- * bottom of a *scrolling* panel -- which is right for a centred dialog and wrong
- * for a pane, because a sticky element is pinned to its scroll container's
- * content box: while the content is shorter than the pane there is nothing to
- * scroll, so the bar simply sits after the content. Measured on a 700px pane:
- * Close sat 181px above the foot on Permission, 34px above it on Project, and on
- * the floor on Keys -- three different answers to "where is the exit", and none
- * of them the sidebar's edge.
+ * Two columns: the sections, and the one you are in. It was a 288px pane with
+ * four tabs across the top, and that row was the constraint the whole
+ * arrangement was built around -- 63px a track, "Permission" the longest label,
+ * and a fifth tab rejected because it does not fit. A column has no such
+ * ceiling, and the body beside it has the width the rows wanted: a provider, a
+ * model and Apply need about 420px between them, and in the pane they were
+ * stacked one per line instead.
  *
- * So the pane stops scrolling and the body does it instead. `overflow: hidden`
- * rather than `visible` because the body has to be the only thing that can move;
- * a pane that could scroll as well would give two scrollbars and two scroll
- * positions for one column of content.
+ * The page fills the window below the title bar. See
+ * `.app[data-mode="settings"]` in `shell.css` for the grid that hands it the
+ * whole width, the rail having been the 64px that used to sit to its left.
  */
-.chatlist .settings-modal {
+.settings-page {
+  display: grid;
+  grid-template-columns: var(--settings-nav-w) minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
+}
+
+/*
+ * The sections, and the way out of the page.
+ *
+ * Its own scroll region. Four sections fit at any window height today, but the
+ * list is the part that grows, and a nav that pushed the body's content down
+ * would be the pane's old problem in a new place.
+ */
+.settings-nav {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  /* The scrollbar follows the scrolling to the body below, and the gutter goes
-     with it: reserving space on the pane as well would take 10px off this
-     column's width for a scrollbar that can no longer appear here. */
-  scrollbar-gutter: auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--border-soft);
+  background: var(--surface);
+}
+
+/*
+ * The back control and the page's name.
+ *
+ * The pair `.chatlist-subhead` draws in the sidebar -- a back button and the
+ * name of where you are -- at the top of this column rather than on the floor of
+ * the page. A sticky footer was what used to hold the exit still, and it was the
+ * bug in the pane: pinned to a scroll container's content box, it sat 181px
+ * above the foot on one section and on the floor on another, so "where is the
+ * way out" had a different answer on each. A control at the top does not have to
+ * be held anywhere.
+ */
+.settings-nav-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 10px var(--pad-panel);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.settings-nav-head h2 {
+  margin: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+/*
+ * The way out. `.chatlist-back`'s twin, and the same 28px disc for the same
+ * reason: it is one thing you press, so it stands alone -- see the CONTROLS list
+ * in `layout.test`.
+ */
+.settings-back {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.settings-back:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.settings-back:active {
+  transform: scale(0.94);
 }
 
 /*
  * The one region that scrolls.
  *
- * `flex: 1` and not a height: the body takes whatever the title, the tabs and
- * the footer leave, so the footer lands on the pane's floor whether the tab is
- * one sentence or a page of keys. `min-height: 0` is what lets it shrink below
- * its content in the first place -- without it a flex item refuses to be shorter
- * than what is in it, the column overflows, and the footer is pushed off the
- * bottom of the sidebar instead of being pinned to it.
+ * `min-width: 0` so the column can be narrower than its widest row: a grid item's
+ * automatic minimum size is its content, so one long model id would otherwise
+ * widen the body and push the nav off the left edge of the window.
+ *
+ * The gutter is reserved whether or not anything overflows -- the same technique
+ * and the same reason as the transcript's. Moving between sections used to shift
+ * the content box by the width of a scrollbar that came and went.
+ *
+ * The measure is on the children rather than here, because the body has to span
+ * the column for its scrollbar to sit at the window's edge while the rows stop
+ * at a readable width.
  */
-.chatlist .settings-modal .settings-body {
-  flex: 1;
+.settings-body {
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
-  /* Reserved on the scroller, which is where the tab-switching width change
-     used to happen: the Model tab is taller than this pane and Permission is
-     not, so moving between them shifted the content box by the width of a
-     scrollbar that came and went. `stable` keeps the box the same either way. */
   scrollbar-gutter: stable;
+  padding: var(--pad-panel);
 }
 
 /*
- * Close, flush with the sidebar's floor.
+ * A measure, not the whole window.
  *
- * `position: static`, because being after the body in a column already puts it at
- * the bottom -- and because sticky here is what put it in the middle of a short
- * tab. The margins reach the pane's edges and cancel its bottom padding, so the
- * hairline above the row spans the sidebar and the row's own floor is the
- * sidebar's, rather than a padded box floating above it.
+ * The body is the window less the nav -- 991px on a 1280px screen -- and a
+ * control that spans it is not a line any more: `.settings-row` is a flex row
+ * whose fields take `flex: 1`, so at full width the endpoint field alone would
+ * be most of a metre.
  *
- * `background: none`: the pane is already the frosted surface (see
- * `.chatlist .modal`), so an opaque strip here would be a second surface inside
- * the first. The centred dialog keeps its own, where there is a panel behind it
- * for the strip to match.
- *
- * The old rule this replaces reached `-18px - var(--scrollbar)` to the right to
- * paint under the pane's reserved gutter, which was a workaround for the footer
- * being a sibling of the scrollbar. The footer no longer shares a scroll
- * container with it, so the workaround is gone with the cause.
+ * `--measure`, which is the window's reading column -- the transcript, the
+ * composer, the hint and the banner all take it -- rather than a second number
+ * for this page. Prose on this page is read the same way prose in the transcript
+ * is, and the day one of them moves the other has to move with it.
  */
-.chatlist .settings-modal .modal-actions {
-  position: static;
-  flex: none;
-  /* The same three cancellations as the centred dialog's footer, from the same
-     token rather than from a second set of 18s. */
-  margin: 12px calc(-1 * var(--pad-panel)) calc(-1 * var(--pad-panel));
-  padding: 12px var(--pad-panel) var(--pad-panel);
-  background: none;
+.settings-body > * {
+  max-width: var(--measure);
 }
 
 /*
- * One field per line, at the sidebar's width.
+ * The sections, down a column.
  *
- * `.settings-row-model` is a grid of provider, model and Apply side by side,
- * and that needs about 420px to say anything: at the sidebar's 252px of usable
- * width the model id is three characters and a scrollbar. Stacked, every
- * control gets the full width, and the row reads top to bottom like the rest of
- * the panel does.
- */
-.chatlist .settings-row-model {
-  grid-template-columns: 1fr;
-}
-
-/* The other rows are flex, and their two or three controls do not fit either. */
-.chatlist .settings-row {
-  flex-wrap: wrap;
-}
-
-/*
- * The panel's sections, as tabs.
+ * A tablist still -- four of them, one showing -- so the roles, the labels and
+ * the `aria-selected` are what they were. What changed is the arrangement: at
+ * 252px the row *was* the constraint this panel was built around, and down a
+ * column the labels have the width they want. The arithmetic above is gone with
+ * it: there are no equal tracks to divide, so there is nothing for a pill to be
+ * one quarter of, and `data-tab` no longer has a position to translate to.
  *
- * The same control the sidebar uses for Chats and Files -- one pill that slides,
+ * **No sliding pill, and that is the point of the change.** The pill existed
  * because a fill swapping on whichever button is active is the one state change
- * in this window with no movement in it. Four tracks, so the width is the same
- * arithmetic quartered: the padding box, less the 2px at each end and the three
- * 2px gaps. The transform is one pill plus one gap per step, which is why the
- * rules below carry `+2px`, `+4px` and `+6px` rather than a measurement apiece.
- *
- * **Four is not a preference.** A fifth tab was tried and does not fit: the
- * tracks become 48px and the longest label needs about 55px. Adding one means
- * changing the arrangement, not adding a rule here.
- *
- * Four labels in a 252px row is 63px each, which is why the tab's own text is
- * `--text-sm` and has no horizontal padding: "Permission" is the longest of the
- * four by some way and it is the width the row was checked against.
+ * in this window with no movement in it -- and that is true of a *row* of equal
+ * tracks, where the movement is along the axis the eye is already travelling.
+ * Down a column the selected row is a different thing rather than the same thing
+ * somewhere else, so it takes the wash, like every other selected row here.
  */
 .settings-tabs {
-  position: relative;
   display: flex;
+  flex-direction: column;
   gap: 2px;
-  margin: 0 0 14px;
-  padding: 2px;
+  padding: 8px;
   flex: none;
-  border-radius: var(--radius-pill);
-  background: var(--input);
-}
-
-.settings-tabs::before {
-  content: "";
-  position: absolute;
-  top: 2px;
-  bottom: 2px;
-  left: 2px;
-  width: calc((100% - 10px) / 4);
-  border-radius: var(--radius-pill);
-  background: var(--chip);
-  transition: transform var(--motion-base) var(--ease-out);
-  pointer-events: none;
-}
-
-.settings-tabs[data-tab="project"]::before {
-  transform: translateX(calc(100% + 2px));
-}
-
-.settings-tabs[data-tab="keys"]::before {
-  transform: translateX(calc(200% + 4px));
-}
-
-.settings-tabs[data-tab="app"]::before {
-  transform: translateX(calc(300% + 6px));
 }
 
 /*
- * The label, above the pill. `position: relative` is what keeps it there: an
- * absolutely positioned pseudo-element paints over in-flow content, and a
- * positioned later sibling wins. `min-width: 0` because all three labels share
- * the width equally and a long one must not push the tracks out of step with
- * the pill -- measured against `Permission`, the longest of them.
+ * A row in a column rather than a segment of a control, which is the shape
+ * `layout.test` splits those two ways -- see its ROWS list, which this is on.
  */
 .settings-tab {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  height: 28px;
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 10px;
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--fg-dim);
   font: inherit;
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
+  text-align: left;
   white-space: nowrap;
   cursor: pointer;
-  transition: color var(--motion-fast) ease, transform var(--motion-fast) var(--ease-out);
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
 }
 
 .settings-tab:hover:not(.is-active) {
+  background: var(--hover);
   color: var(--fg);
 }
 
-.settings-tab:active {
-  transform: scale(0.96);
-}
-
 .settings-tab.is-active {
+  background: var(--wash);
   color: var(--fg);
 }
 
@@ -453,13 +461,18 @@
  * `:only-child` spans both tracks: with no stored key there is only "Save key",
  * and half a line with nothing beside it is not a layout, it is a gap.
  */
+/*
+ * The actions row.
+ *
+ * It was a two-column grid: two controls side by side when there are two, and a
+ * lone one spanning both. There is only ever one in this row -- Save key -- and
+ * at the pane's 252px spanning it is what made it a button rather than a stub.
+ * At the page's measure the same rule draws 760px of button, which reads as a
+ * submit bar across the settings page rather than as a control beside a field.
+ */
 .settings-key-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-}
-
-.settings-key-actions > .btn:only-child {
-  grid-column: span 2;
+  display: flex;
+  gap: 8px;
 }
 
 /*

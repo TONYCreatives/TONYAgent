@@ -191,15 +191,17 @@ interface Props {
   treeLoading?: boolean;
   hasProject: boolean;
   /**
-   * The Settings and Search panes, handed in rather than built here.
+   * The Search pane, handed in rather than built here.
    *
-   * Both are panels in their own right, with handlers that all live on the App,
-   * and this component's job is the sidebar's frame rather than what fills it.
-   * They arrive as elements so React mounts one only while its pane is showing:
-   * a Settings panel parked behind a closed pane would run its effects and read
-   * a model list nobody asked for.
+   * It is a panel in its own right, with handlers that all live on the App, and
+   * this component's job is the sidebar's frame rather than what fills it. It
+   * arrives as an element so React mounts it only while its pane is showing: a
+   * search panel parked behind a closed pane would run its effects and read a
+   * project nobody asked for.
+   *
+   * The settings page was the other one of these and is not here any more -- see
+   * `SidebarPane`, and `SettingsPanel`, which is the window now.
    */
-  settingsPane?: ReactNode;
   searchPane?: ReactNode;
 }
 
@@ -207,12 +209,18 @@ interface Props {
  * Which face of the sidebar is in front.
  *
  * Chats and Files are peers, and the segmented control under the head is how
- * you move between them. Settings and Search are not peers of those: they are
- * places you *enter* -- from the foot or from the rail -- so they cover the body
- * rather than sit beside it, and they swap the control for a way back instead of
- * lighting a tab.
+ * you move between them. Search is not a peer of those: it is a place you
+ * *enter* -- from the foot or from the rail -- so it covers the body rather than
+ * sitting beside it, and it swaps the control for a way back instead of lighting
+ * a tab.
+ *
+ * **Settings was the other one, and it left.** It was a pane here at 288px with
+ * four tabs across the top, and that row was the constraint the whole panel was
+ * built around -- see `SettingsPanel`, which is a page of the window now. What
+ * is left of the pair is a single "place you enter", which is why the comments
+ * around it read as though they were written for one.
  */
-export type SidebarPane = "chats" | "files" | "settings" | "search";
+export type SidebarPane = "chats" | "files" | "search";
 
 /**
  * Relative time, coarse on purpose.
@@ -276,7 +284,6 @@ export function ConversationList({
   treeTruncated,
   treeLoading,
   hasProject,
-  settingsPane,
   searchPane,
 }: Props) {
   /** The conversation being renamed, or null. */
@@ -497,14 +504,14 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
         </button>
       </div>
 
-      {pane === "settings" || pane === "search" ? (
+      {pane === "search" ? (
         /*
           The way back, in the tabs' place rather than above them.
 
-          Settings and Search are not two more tabs -- they are places you enter
-          and leave -- and the control that leaves one belongs where the control
-          that reached it was, so the row keeps its height and nothing below it
-          moves when the pane changes.
+          Search is not a third tab -- it is a place you enter and leave -- and
+          the control that leaves it belongs where the control that reached it
+          was, so the row keeps its height and nothing below it moves when the
+          pane changes.
         */
         <div className="chatlist-subhead">
           <button
@@ -528,9 +535,7 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
               <path d="M15 18l-6-6 6-6" />
             </svg>
           </button>
-          <span className="chatlist-subhead-title">
-            {pane === "settings" ? "Settings" : "Search"}
-          </span>
+          <span className="chatlist-subhead-title">Search</span>
         </div>
       ) : (
         <div className="chatlist-tabs" role="tablist" aria-label="Sidebar">
@@ -797,8 +802,6 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
           hasProject={hasProject}
         />
       )}
-
-      {pane === "settings" && settingsPane}
 
       {pane === "search" && searchPane}
 

@@ -138,8 +138,14 @@ interface Props {
    * strip is -- "what am I looking at" -- and it is the one control that
    * *leaves* the transcript, so it belongs beside the tabs it competes with.
    * The rail answers "what can I do"; a mode lives with the view.
+   *
+   * **`settings` lights no segment, and that is deliberate.** The page is not a
+   * view *of* the conversation the way these three are -- there is no transcript
+   * behind it to come back to by pressing one of them -- so the switch is honest
+   * about it: nothing is pressed while settings is up. The three still work as a
+   * way out, which is a second exit beside the page's own back control.
    */
-  mode?: "agent" | "code" | "trajectory";
+  mode?: "agent" | "code" | "trajectory" | "settings";
   onModeChange?: (mode: "agent" | "code" | "trajectory") => void;
   /** True when a project is open, so the code half has something to show. */
   canCode?: boolean;

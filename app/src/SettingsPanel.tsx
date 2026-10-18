@@ -503,57 +503,97 @@ export function SettingsPanel({
   const canStart = Boolean(project) && !running && !starting;
 
   return (
-    // `settings-modal` and not just `modal`: the pane's own rules -- the title
-    // and tabs fixed at the top, the body scrolling, Close on the floor -- are
-    // about *this* panel, and the search panel is a `.modal` in the same column.
-    <div
-      className="modal settings-modal"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="settings-title"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <h2 id="settings-title">Settings</h2>
+    /*
+      A page, not a dialog and not a pane.
 
-      {error && <p className="warn">{error}</p>}
-      {notice && <p className="notice">{notice}</p>}
+      It has been both: a centred 500px `.modal`, and a 288px pane of the
+      sidebar. The pane is what made the arrangement awkward -- four sections
+      sharing a 252px tab row, where a fifth does not fit, and rows that had to
+      stack because a provider, a model and Apply want 420px between them.
 
-      <div
-        className="settings-tabs"
-        role="tablist"
-        aria-label="Settings"
-        data-tab={tab}
-      >
-        {SETTINGS_TABS.map((entry) => (
+      Full-window, the shape is the one a settings page always takes: the
+      sections down the left, the chosen one beside it with the width to lay its
+      rows out in a line.
+    */
+    <div className="settings-page">
+      <nav className="settings-nav" aria-labelledby="settings-title">
+        {/*
+          The way out, where the sidebar's own back control was: a back button
+          and the page's name, which is the pair `.chatlist-subhead` draws one
+          rung down. Settings is somewhere you enter and leave, so this is the
+          control that leaves it.
+        */}
+        <div className="settings-nav-head">
           <button
-            key={entry.id}
             type="button"
-            role="tab"
-            className={"settings-tab" + (tab === entry.id ? " is-active" : "")}
-            aria-selected={tab === entry.id}
-            onClick={() => setTab(entry.id)}
+            className="settings-back"
+            onClick={onClose}
+            title="Back to the chat"
+            aria-label="Back to the chat"
           >
-            {entry.label}
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.9"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M15 18l-6-6 6-6" />
+            </svg>
           </button>
-        ))}
-      </div>
+          <h2 id="settings-title">Settings</h2>
+        </div>
+
+        {/*
+          The sections. A tablist still -- four of them, one showing -- but
+          stacked rather than in a row. At 252px the row *was* the constraint the
+          whole arrangement was built around; down a column the labels have the
+          width they want, and a fifth would be one more row rather than a
+          rearrangement.
+        */}
+        <div
+          className="settings-tabs"
+          role="tablist"
+          aria-orientation="vertical"
+          aria-label="Settings sections"
+          data-tab={tab}
+        >
+          {SETTINGS_TABS.map((entry) => (
+            <button
+              key={entry.id}
+              type="button"
+              role="tab"
+              className={"settings-tab" + (tab === entry.id ? " is-active" : "")}
+              aria-selected={tab === entry.id}
+              onClick={() => setTab(entry.id)}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </div>
+      </nav>
 
       {/*
-        The only thing in the pane that moves.
+        The one scrolling region on the page.
 
-        The title and the tabs stay at the top and the Close row stays on the
-        floor, so the body is the one scrolling region -- which is what makes the
-        exit reachable on every tab and at every window height. See
-        `.chatlist .settings-modal` in `settings.css`: this element is why the
-        panel's own `overflow` is off.
+        The nav is a column of its own and does not move, and the back control is
+        in it rather than on the floor, so this is the only thing that scrolls --
+        which is what keeps the way out reachable on every section and at every
+        window height. It used to be a sticky footer doing that job; a back
+        button at the top does it without a second fixed band.
 
-        It is a wrapper rather than three siblings because a scroll container has
-        to be one node, and because the three tabs must *share* it: a scroller per
-        tab would take the scroll position of the last one with it when the tabs
-        changed, on top of putting the footer's height at the mercy of whichever
-        tab happened to be open.
+        It is a wrapper rather than four siblings because a scroll container has
+        to be one node, and because the four sections must *share* it: a scroller
+        per section would take the scroll position of the last one with it when
+        the section changed.
       */}
       <div className="settings-body">
+        {error && <p className="warn">{error}</p>}
+        {notice && <p className="notice">{notice}</p>}
         {tab === "permission" && (
           <>
             <section className="settings-group">
@@ -1003,12 +1043,6 @@ export function SettingsPanel({
             </section>
           </>
         )}
-      </div>
-
-      <div className="modal-actions">
-        <button type="button" className="btn" onClick={onClose}>
-          Close
-        </button>
       </div>
     </div>
   );

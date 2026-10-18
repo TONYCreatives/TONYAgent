@@ -302,7 +302,6 @@
  * what you are already looking at when this applies, so they would be controls
  * that lead to the pane in front of you.
  */
-.chatlist[data-pane="settings"] .chatlist-foot,
 .chatlist[data-pane="search"] .chatlist-foot {
   display: none;
 }

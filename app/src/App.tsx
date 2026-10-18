@@ -94,7 +94,7 @@ const USAGE_TAB = "usage-tab";
  * window then shows a file while the strip highlights a chat. The strip
  * keeps one job (which conversation), the switch keeps the other.
  */
-type MainMode = "agent" | "code" | "trajectory";
+type MainMode = "agent" | "code" | "trajectory" | "settings";
 
 /**
  * A folder path split into where it lives and what it is called.
@@ -443,13 +443,27 @@ export function App({
    * Bring one of the sidebar's panes forward.
    *
    * Two state changes that have to happen together: the pane, and the sidebar
-   * that shows it. Settings and search used to open as overlays and needed only
-   * the first; as panes they need both, and a caller that set the pane alone
-   * would be pointing at a panel nobody can see.
+   * that shows it. Search used to open as an overlay and needed only the first;
+   * as a pane it needs both, and a caller that set the pane alone would be
+   * pointing at a panel nobody can see.
    */
   const openSidebarPane = useCallback((pane: SidebarPane) => {
     setSidebarPane(pane);
     setRailExpanded(true);
+  }, []);
+
+  /**
+   * Show the settings page.
+   *
+   * A mode rather than a pane -- see `settingsMode` -- so this is the window
+   * changing rather than the sidebar. The stale error and notice go with it:
+   * they belong to the last visit's actions, and a warning about a sandbox that
+   * failed to start three days ago is not news for a page being opened now.
+   */
+  const openSettings = useCallback(() => {
+    setSettingsError(null);
+    setSettingsNotice(null);
+    setMainMode("settings");
   }, []);
 
   /**
@@ -1798,6 +1812,28 @@ export function App({
   }, [railExpanded]);
 
   /**
+   * Escape leaves the settings page.
+   *
+   * The same key doing the same job one rung up: settings is a place you enter,
+   * and Escape is this window's own way out of one. The page's back button is the
+   * other, and it is the one with a label on it -- so this is the shortcut rather
+   * than the only door.
+   *
+   * `defaultPrevented` for the reason above, and it matters more here: this page
+   * holds the permission ladder, the thinking dial and the model pickers, and a
+   * press that closed one of those must not also leave the page.
+   */
+  useEffect(() => {
+    if (mainMode !== "settings") return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      setMainMode("agent");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mainMode]);
+
+  /**
    * Start the sandbox on the folder already chosen.
    *
    * Sends no path. `sandbox.start` falls back to the folder the core already
@@ -2105,6 +2141,22 @@ export function App({
   const trajectoryMode = mainMode === "trajectory";
 
   /**
+   * Settings, which is a *page* rather than a pane.
+   *
+   * It was the sidebar's fourth pane -- 288px with four tabs across the top --
+   * and the row was the constraint everything else was built around: four tracks
+   * of 63px, "Permission" the longest label, and a fifth section rejected
+   * because it does not fit. Full-window it is the arrangement that has no such
+   * ceiling: the sections down the left, the chosen one beside it.
+   *
+   * A mode and not a flag, for the reason Code mode is one: this decides what
+   * the *shell* renders. The rail, the conversation overlay and the tab strip
+   * are all absent from it, and `--rail-w` of column 1 goes with them -- see
+   * `.app[data-mode="settings"]`.
+   */
+  const settingsMode = mainMode === "settings";
+
+  /**
    * The conversation: the transcript, anything the window has to say about it,
    * and the field.
    *
@@ -2175,12 +2227,18 @@ export function App({
       */}
       <TopBar
         busy={state.busy}
-        // The strip is the conversation's, and Code mode has no conversation in
-        // front. The bar keeps the mark, the drag region, the switch and the
-        // caption -- which is what "the whole screen changes" means at the top
-        // edge of the window as well as the middle.
-        tabs={codeMode || trajectoryMode ? [] : tabStrip}
-        active={codeMode || trajectoryMode ? "" : usageTab === "active" ? USAGE_TAB : conversation}
+        // The strip is the conversation's, and Code, Trajectory and Settings
+        // have no conversation in front. The bar keeps the mark, the drag
+        // region, the switch and the caption -- which is what "the whole screen
+        // changes" means at the top edge of the window as well as the middle.
+        tabs={codeMode || trajectoryMode || settingsMode ? [] : tabStrip}
+        active={
+          codeMode || trajectoryMode || settingsMode
+            ? ""
+            : usageTab === "active"
+              ? USAGE_TAB
+              : conversation
+        }
         mode={mainMode}
         canCode={project !== ""}
         onModeChange={(next) => {
@@ -2245,7 +2303,7 @@ export function App({
         below -- which is the difference between "a pane changed" and "the
         window changed".
       */}
-      {!codeMode && !trajectoryMode && (
+      {!codeMode && !trajectoryMode && !settingsMode && (
         <IconRail
           connected={connected}
           busy={state.busy}
@@ -2260,10 +2318,7 @@ export function App({
           petOpen={petOpen}
           onPet={() => void togglePet()}
           updateAvailable={Boolean(update?.available)}
-          onSettings={() => {
-            setSettingsError(null);
-            openSidebarPane("settings");
-          }}
+          onSettings={openSettings}
           onSearch={() => openSidebarPane("search")}
         />
       )}
@@ -2277,7 +2332,7 @@ export function App({
         what tells the two apart, and the closed state is inert -- see
         `.chatlist[data-state="closed"]`.
       */}
-      {!codeMode && !trajectoryMode && conversationsMounted && (
+      {!codeMode && !trajectoryMode && !settingsMode && conversationsMounted && (
         <ConversationList
           open={railExpanded}
           conversations={conversations}
@@ -2305,55 +2360,9 @@ export function App({
           treeTruncated={treeTruncated}
           treeLoading={treeLoading}
           hasProject={project !== ""}
-          // The other two panes. Built here rather than by the sidebar, because
-          // the App owns every handler they need -- and passed as elements so
-          // `ConversationList` stays a container and never imports them.
-          settingsPane={
-            <SettingsPanel
-              connected={connected}
-              busy={state.busy}
-              providers={providers}
-              provider={provider}
-              baseUrl={baseUrl}
-              project={project}
-              sandbox={sandbox}
-              trusted={trustedProjects.has(project)}
-              permissionList={permissionList}
-              permission={permission}
-              reasoning={reasoning}
-              error={settingsError}
-              notice={settingsNotice}
-              // The same state and the same handler the rail's pet button is
-              // given. Two ways to reach one action, and neither is allowed its
-              // own idea of whether the card is up -- see `togglePet`.
-              petOpen={petOpen}
-              onPet={() => void togglePet()}
-              // "Close" means back to the conversations now. The panel is a pane
-              // of the sidebar rather than a dialog over the window, so there is
-              // nothing to close -- there is somewhere to go back to.
-              onClose={() => setSidebarPane("chats")}
-              onChooseFolder={chooseFolder}
-              onStartSandbox={startSandbox}
-              onStopSandbox={stopSandbox}
-              onPermissionChange={changePermission}
-              onReasoningChange={(effort) => void changeReasoning(effort)}
-              onApplyEndpoint={applyEndpoint}
-              onTrust={setTrust}
-              onSaveKey={saveKey}
-              onDeleteKey={deleteKey}
-              onRevealKey={revealKey}
-              onActivateKey={activateKey}
-              onListKeys={listKeys}
-              update={update}
-              updateChecking={updateChecking}
-              updateFetching={updateFetching}
-              updateReady={updateReady}
-              onCheckUpdate={(force) => void checkUpdate(force)}
-              onDownloadUpdate={() => void fetchUpdate()}
-              onInstallUpdate={() => void installUpdate()}
-              onOpenReleases={() => void openReleases()}
-            />
-          }
+          // The search pane. Built here rather than by the sidebar, because the
+          // App owns every handler it needs -- and passed as an element so
+          // `ConversationList` stays a container and never imports it.
           searchPane={
             <SearchPanel
               connected={connected}
@@ -2366,10 +2375,7 @@ export function App({
           // states of the one sidebar cannot disagree about what a button does
           // -- and the same mark on the gear, for the same reason.
           onSearch={() => openSidebarPane("search")}
-          onSettings={() => {
-            setSettingsError(null);
-            openSidebarPane("settings");
-          }}
+          onSettings={openSettings}
           updateAvailable={Boolean(update?.available)}
         />
       )}
@@ -2476,7 +2482,60 @@ export function App({
           which is what selecting another tab does everywhere else in this
           window -- see `openConversation`, `createConversation` and `TopBar`.
         */}
-        {trajectoryMode ? (
+        {settingsMode ? (
+          /*
+            The settings page, in place of the conversation.
+
+            Not a dialog over it and not a pane beside it: the whole window below
+            the title bar, with the rail and the tab strip gone -- which is what
+            makes it a place you are *in* rather than a panel you have open. See
+            `SettingsPanel`, which is one page now and no longer has to fit
+            anything into 288px.
+          */
+          <SettingsPanel
+            connected={connected}
+            busy={state.busy}
+            providers={providers}
+            provider={provider}
+            baseUrl={baseUrl}
+            project={project}
+            sandbox={sandbox}
+            trusted={trustedProjects.has(project)}
+            permissionList={permissionList}
+            permission={permission}
+            reasoning={reasoning}
+            error={settingsError}
+            notice={settingsNotice}
+            // The same state and the same handler the rail's pet button is
+            // given. Two ways to reach one action, and neither is allowed its
+            // own idea of whether the card is up -- see `togglePet`.
+            petOpen={petOpen}
+            onPet={() => void togglePet()}
+            // Back to the conversation. The page is a mode, so leaving it is
+            // `agent` -- the same thing the title bar's own switch sets.
+            onClose={() => setMainMode("agent")}
+            onChooseFolder={chooseFolder}
+            onStartSandbox={startSandbox}
+            onStopSandbox={stopSandbox}
+            onPermissionChange={changePermission}
+            onReasoningChange={(effort) => void changeReasoning(effort)}
+            onApplyEndpoint={applyEndpoint}
+            onTrust={setTrust}
+            onSaveKey={saveKey}
+            onDeleteKey={deleteKey}
+            onRevealKey={revealKey}
+            onActivateKey={activateKey}
+            onListKeys={listKeys}
+            update={update}
+            updateChecking={updateChecking}
+            updateFetching={updateFetching}
+            updateReady={updateReady}
+            onCheckUpdate={(force) => void checkUpdate(force)}
+            onDownloadUpdate={() => void fetchUpdate()}
+            onInstallUpdate={() => void installUpdate()}
+            onOpenReleases={() => void openReleases()}
+          />
+        ) : trajectoryMode ? (
           <TrajectoryView events={trajectory} />
         ) : codeMode ? (
           /*
@@ -2647,9 +2706,7 @@ export function App({
           busy={state.busy}
           needsProvider={needsProvider}
           onConfigure={() => {
-            setSettingsError(null);
-            setSettingsNotice(null);
-            openSidebarPane("settings");
+            openSettings();
           }}
           logLines={logLines}
           logsOpen={logsOpen}

@@ -202,30 +202,32 @@ describe("the settings tabs", () => {
 });
 
 /**
- * The pane's shape, which is what the stylesheet's rules are actually about.
+ * The page's shape, which is what the stylesheet's rules are actually about.
  *
  * These are not cosmetic assertions: each one is the markup half of a CSS rule
- * that decides where the Close button ends up, and a stylesheet cannot pin a row
- * that is nested inside the thing it is meant to sit below.
+ * that decides where the way out ends up, and a stylesheet cannot hold a control
+ * still that is nested inside the thing it is meant to sit outside of.
  */
-describe("the pane's own shape", () => {
-  test("the foot is outside the scrolling body, so CSS can pin it to the floor", async () => {
-    // `.chatlist .settings-modal` makes the body the scroller and leaves the
-    // Close row after it in the column, which is what puts the exit on the
-    // sidebar's edge on every tab. That holds only while the row is a *sibling*
-    // of the body: nested inside it, it would scroll away with the content and
-    // the panel would be back to the mid-page Close this replaced.
+describe("the page's own shape", () => {
+  test("the way out is in the nav, outside the scrolling body", async () => {
+    // `.settings-body` is the scroller and the nav is a column of its own beside
+    // it, which is what keeps the exit reachable however long the section is.
+    // That holds only while the two are *siblings*: a back control nested inside
+    // the body would scroll away with the content, which is the mid-page Close
+    // this replaced.
     const container = await render(panel());
     const body = one(container, ".settings-body")!;
-    const actions = one(container, ".modal-actions")!;
+    const back = one(container, ".settings-back")!;
+    const nav = one(container, ".settings-nav")!;
 
-    assert.equal(body.contains(actions), false, "the Close row scrolls with the content");
-    assert.equal(one(container, ".modal")!.contains(body), true);
+    assert.equal(body.contains(back), false, "the way out scrolls with the content");
+    assert.equal(nav.contains(back), true, "the way out is not in the nav");
+    assert.equal(nav.contains(body), false, "the body is inside the nav");
   });
 
-  test("the tab bodies share one scroller rather than one each", async () => {
-    // A scroller per tab would take the scroll position of the last one with it,
-    // and would make the footer's height depend on whichever tab was open.
+  test("the section bodies share one scroller rather than one each", async () => {
+    // A scroller per section would take the scroll position of the last one with
+    // it.
     const container = await render(panel());
     await click(tab(container, "Keys"));
     assert.equal(all(container, ".settings-body").length, 1);

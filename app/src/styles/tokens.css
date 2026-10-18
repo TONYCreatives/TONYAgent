@@ -471,6 +471,17 @@
    */
   --code-side-w: 268px;
   /*
+   * The settings page's section column.
+   *
+   * Sized to its longest label, like every other column here: "Behavior" at
+   * `--text-base` is the widest of the four, and the column is that plus the
+   * padding either side and room for the one that comes next. It is a nav rather
+   * than a list of titles, so it wants to be *narrower* than the chat list -- the
+   * eye is looking for one of four short words, and a 268px column of them would
+   * read as a list to search rather than a set to choose from.
+   */
+  --settings-nav-w: 196px;
+  /*
    * The assistant panel's width in Code mode, while it is showing.
    *
    * Set by the two surfaces inside it agreeing, which is the same rule the

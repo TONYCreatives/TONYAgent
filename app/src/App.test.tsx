@@ -871,17 +871,16 @@ describe("the permission menu reflects the core", () => {
    */
   const openSettings = async (c: HTMLElement) => {
     await click(one(c, '.rail-btn[aria-label="Settings"]')!);
-    for (let i = 0; i < 50 && !one(c, ".modal"); i++) await wait(20);
+    for (let i = 0; i < 50 && !one(c, ".settings-page"); i++) await wait(20);
   };
 
-  test("Escape closes the sidebar, which is where settings now lives", async () => {
-    // Settings is a pane of the sidebar rather than a page over the window, so
-    // Escape has one thing to put away and one place to go: the sidebar closes
-    // and returns to the chats pane on the way out.
+  test("Escape leaves the settings page, which is a page of the window now", async () => {
+    // Settings is a mode rather than a pane of the sidebar, so Escape has one
+    // thing to leave and one place to go: back to the conversation it replaced.
     //
-    // And a menu inside this pane still claims Escape first: the thinking dial is
-    // a popover, it answers the key itself, and if the sidebar answered it too
-    // then closing a menu would take the whole sidebar down behind it.
+    // And a menu inside the page still claims Escape first: the thinking dial is
+    // a popover, it answers the key itself, and if the page answered it too then
+    // closing a menu would leave the page behind it.
     // `useDismiss` claims it in the capture phase, which is what makes that
     // order possible -- see `SettingsMenus.test.tsx` for the other half.
     //
@@ -891,10 +890,13 @@ describe("the permission menu reflects the core", () => {
     // ladder is showing.
     const { container } = await mount();
     await openSettings(container);
-    assert.ok(one(container, ".modal"), "the settings pane did not open");
-    assert.ok(
-      one(container, '.chatlist[data-pane="settings"]'),
-      "the sidebar did not switch to the settings pane",
+    assert.ok(one(container, ".settings-page"), "the settings page did not open");
+    // The rail is gone with it -- this is the window changing rather than a
+    // panel opening over it.
+    assert.equal(
+      one(container, '.rail-btn[aria-label="Settings"]'),
+      null,
+      "the rail is still on screen behind the settings page",
     );
 
     await push(() =>
@@ -904,9 +906,32 @@ describe("the permission menu reflects the core", () => {
     );
     await wait(exitDurationMs() + 60);
     assert.equal(
-      one(container, ".modal"),
+      one(container, ".settings-page"),
       null,
-      "Escape left the settings pane on screen",
+      "Escape left the settings page on screen",
+    );
+    assert.ok(
+      one(container, '.rail-btn[aria-label="Settings"]'),
+      "the window did not come back",
+    );
+  });
+
+  test("and the back control leaves it too", async () => {
+    // The page has two ways out and both are wanted: a labelled control for the
+    // mouse, and Escape for the keyboard. The back button is the one the page
+    // shows, so it is the one this asserts on -- Escape has the test above.
+    const { container } = await mount();
+    await openSettings(container);
+
+    const back = one(container, ".settings-back")!;
+    assert.equal(back.getAttribute("aria-label"), "Back to the chat");
+    await click(back);
+    await wait(60);
+
+    assert.equal(one(container, ".settings-page"), null, "the back control did not leave");
+    assert.ok(
+      one(container, '.rail-btn[aria-label="Settings"]'),
+      "the window did not come back",
     );
   });
 
@@ -1068,7 +1093,7 @@ describe("the sandbox has a Start button", () => {
    */
   const openSettings = async (c: HTMLElement) => {
     await click(one(c, '.rail-btn[aria-label="Settings"]')!);
-    for (let i = 0; i < 50 && !one(c, ".modal"); i++) await wait(20);
+    for (let i = 0; i < 50 && !one(c, ".settings-page"); i++) await wait(20);
     await click(
       all(c, ".settings-tab").find((b) => (b.textContent ?? "").trim() === "Project")!,
     );
@@ -1298,7 +1323,7 @@ describe("the keys pane over the real protocol", () => {
    */
   const openKeys = async (c: HTMLElement) => {
     await click(one(c, '.rail-btn[aria-label="Settings"]')!);
-    for (let i = 0; i < 50 && !one(c, ".modal"); i++) await wait(20);
+    for (let i = 0; i < 50 && !one(c, ".settings-page"); i++) await wait(20);
     await click(
       all(c, ".settings-tab").find((b) => (b.textContent ?? "").trim() === "Keys")!,
     );
@@ -1884,7 +1909,7 @@ describe("the window fetches a new version by itself", () => {
   /** Open Settings on the App tab, where the version and the button live. */
   const openAppTab = async (c: HTMLElement) => {
     await click(one(c, '.rail-btn[aria-label="Settings"]')!);
-    for (let i = 0; i < 50 && !one(c, ".modal"); i++) await wait(20);
+    for (let i = 0; i < 50 && !one(c, ".settings-page"); i++) await wait(20);
     await click(
       all(c, ".settings-tab").find((b) => (b.textContent ?? "").trim() === "App")!,
     );

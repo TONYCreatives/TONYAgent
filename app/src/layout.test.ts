@@ -835,6 +835,8 @@ describe("every control is a stadium and every container is a box", () => {
     ".rowmenu button",
     ".permchoice-item",
     ".permchoice-list .permchoice-item",
+    // The settings page's sections, one of a column rather than a segmented row.
+    ".settings-tab",
   ];
 
   /**
@@ -2048,93 +2050,97 @@ describe("permission and thinking read as one control in the settings panel", ()
     assert.match(body(".modal"), /overflow-y:\s*auto/);
   });
 
-  test("and settings is a pane of the sidebar, not a dialog over the window", () => {
-    // Settings and Search are panes of the left sidebar now. The panel keeps
-    // `.modal` as its root -- its heading, its rows and its sticky footer are
-    // all styled from there -- and `.chatlist .modal` is what turns that markup
-    // into a pane. Scoped by the sidebar so the modal rules themselves stay
-    // exactly what the other two dialogs need.
-    const pane = body(".chatlist .modal");
-    assert.match(pane, /width:\s*100%/);
-    assert.match(pane, /max-width:\s*none/);
-    assert.match(pane, /border-radius:\s*0/);
-    assert.match(pane, /background:\s*none/);
+  test("and settings is a page of the window, not a dialog and not a pane", () => {
+    // It has been both: a centred 500px `.modal`, and a 288px pane of the
+    // sidebar. The pane is what made the arrangement awkward -- four sections
+    // sharing a 252px tab row, where a fifth does not fit, and rows that had to
+    // stack because a provider, a model and Apply want 420px between them.
+    const page = body(".settings-page");
+    assert.match(
+      page,
+      /grid-template-columns:\s*var\(--settings-nav-w\) minmax\(0, 1fr\)/,
+    );
+
+    // The nav holds its width and the body takes the rest: `minmax(0, 1fr)` and
+    // `min-width: 0` rather than `1fr` alone, because a grid item's automatic
+    // minimum size is its content -- one long model id would otherwise widen the
+    // body and push the nav off the left edge of the window.
+    assert.match(body(".settings-nav"), /overflow-y:\s*auto/);
+    assert.match(body(".settings-body"), /min-width:\s*0/);
+
+    // And the shell hands it the whole window: one track, because the rail is
+    // not rendered in this mode. `.main` has to leave the column it is pinned
+    // to -- against a single track, `grid-column: 2` places it in an *implicit*
+    // second column and the page goes off the right edge of the window.
+    assert.match(
+      body('.app[data-mode="settings"]'),
+      /grid-template-columns:\s*minmax\(0, 1fr\)/,
+    );
+    assert.match(body('.app[data-mode="settings"] .main'), /grid-column:\s*1\b/);
   });
 
-  test("and its Close button is on the sidebar's floor, on every tab", () => {
+  test("the way out of settings is at the top of the nav, not on the floor", () => {
     // **This used to be a sticky footer, and sticky was the bug.**
     // `.modal-actions` is `position: sticky; bottom: -18px`, which pins a bar to
     // the bottom of a *scrolling* panel -- right for a dialog whose content
-    // overflows, and wrong for a pane whose tab may be shorter than the pane:
-    // with nothing to scroll there is no scrollport to be pinned to, so the bar
-    // simply sat after the content. Measured on a 700px pane: Close was 181px
-    // above the foot on Permission, 34px above it on Project, and flush on Keys.
+    // overflows, and wrong for a pane whose section may be shorter than the
+    // pane: with nothing to scroll there is no scrollport to be pinned to, so
+    // the bar simply sat after the content. Measured on a 700px pane: Close was
+    // 181px above the foot on Permission, 34px above it on Project, and flush on
+    // Keys -- three answers to "where is the exit", and none of them the
+    // sidebar's edge.
     //
-    // So the pane is a column, the *body* scrolls, and the footer is the last row
-    // of that column -- which is the sidebar's edge whatever the tab holds.
-    const pane = body(".chatlist .settings-modal");
-    assert.match(pane, /display:\s*flex/);
-    assert.match(pane, /flex-direction:\s*column/);
-    // `hidden` and not `auto`: with two things that could scroll there would be
-    // two scroll positions for one column of content.
-    assert.match(pane, /overflow:\s*hidden/);
+    // A control at the top of the nav does not have to be held anywhere, so the
+    // page has no fixed band at all: the nav is a column of its own and the body
+    // is the only thing that scrolls.
+    assert.match(body(".settings-nav-head"), /display:\s*flex/);
+    assert.match(body(".settings-nav-head"), /flex:\s*none/);
+    assert.match(body(".settings-back"), /place-items:\s*center/);
 
-    const middle = body(".chatlist .settings-modal .settings-body");
-    // `flex: 1` is what puts the footer on the floor rather than under the last
-    // row of a short tab, and `min-height: 0` is what lets the body be shorter
-    // than its content at all -- without it the column overflows and the footer
-    // is pushed off the bottom of the sidebar instead of pinned to it.
-    assert.match(middle, /flex:\s*1/);
-    assert.match(middle, /min-height:\s*0/);
-    assert.match(middle, /overflow-y:\s*auto/);
-    /*
-     * The gutter moves to the scroller with the scrolling. Still `stable`, and
-     * for the original reason: Permission is shorter than this pane and Keys is
-     * taller, so measured, the content box moved between **251px and 241px** on
-     * every switch -- while the tab pill was sliding, whose transform is a
-     * percentage of the track that had just moved underneath it.
-     */
-    assert.match(middle, /scrollbar-gutter:\s*stable/);
+    const scroller = body(".settings-body");
+    assert.match(scroller, /overflow-y:\s*auto/);
+    // Reserved on the scroller, and for the original reason: moving between
+    // sections used to shift the content box by the width of a scrollbar that
+    // came and went.
+    assert.match(scroller, /scrollbar-gutter:\s*stable/);
 
-    const foot = body(".chatlist .settings-modal .modal-actions");
-    assert.match(foot, /position:\s*static/);
-    // Spans the pane: `.modal`'s padding is negated, so the margins reach past
-    // it on both sides and below, and the row's own floor is the sidebar's edge
-    // rather than a padded box floating above it. Written from the token rather
-    // than from a second set of 18s -- this rule and the centred dialog's were
-    // six copies of one number in two files.
-    assert.match(
-      foot,
-      /margin:\s*12px calc\(-1 \* var\(--pad-panel\)\) calc\(-1 \* var\(--pad-panel\)\)/,
-    );
+    // And there is no settings footer left to pin. The centred dialogs still
+    // have theirs -- that is the half of the rule this is not about.
+    assert.doesNotMatch(SOURCE, /\.settings-modal/);
     assert.match(
       body(".modal-actions"),
       /bottom:\s*calc\(-1 \* var\(--pad-panel\)\)/,
       "the dialog's sticky footer still cancels a hard-coded padding",
     );
-    // And it is not a second surface inside the first: `.chatlist .modal` is
-    // already the frosted pane, so an opaque strip here would read as a card in
-    // a card. The centred dialog keeps its own.
-    assert.match(foot, /background:\s*none/);
   });
 
-  test("and its rows stack, because the sidebar is 288px wide", () => {
-    // The model row is a grid of provider, model and Apply side by side, which
-    // needs about 420px to say anything: at the sidebar's 252px of usable width
-    // the model id is three characters and a scrollbar. Stacked, every control
-    // gets the full width and the row reads down the panel like the rest.
-    assert.match(body(".chatlist .settings-row-model"), /grid-template-columns:\s*1fr\b/);
-    assert.match(body(".chatlist .settings-row"), /flex-wrap:\s*wrap/);
-    // The search panel's own width and height cap give way to the sidebar's.
+  test("and the rows no longer stack, because the page is the window", () => {
+    // The model row is a grid of provider, model and Apply side by side, and
+    // that needs about 420px: stacked at the sidebar's 252px the model id came
+    // out three characters and a scrollbar. At the page's width it is a row
+    // again, which is the whole reason for the move -- so the two overrides that
+    // stacked it are gone, and asserting their absence is the point.
+    assert.doesNotMatch(SOURCE, /\.chatlist \.settings-row/);
+
+    // What replaces the stacking is a measure, and it is the window's own
+    // reading column rather than a second number for this page: the body is the
+    // window less the nav, and prose here is read the way prose in the
+    // transcript is.
+    assert.match(body(".settings-body > *"), /max-width:\s*var\(--measure\)/);
+
+    // The search panel's own width and height cap still give way to the
+    // sidebar's. It is the one pane left, so `.chatlist .modal` is now its rule.
+    assert.match(body(".chatlist .modal"), /width:\s*100%/);
     assert.match(body(".chatlist .search-modal"), /width:\s*100%/);
     assert.match(body(".chatlist .search-modal"), /max-height:\s*none/);
   });
 
   test("the sub-panes take the tabs' place, at the tabs' height", () => {
-    // Settings and Search swap the segmented control for a back row rather than
-    // sitting under it, so entering one does not shift the pane below it up by a
-    // row's worth -- and the control that leaves a pane is where the control
-    // that reached it was.
+    // Search swaps the segmented control for a back row rather than sitting
+    // under it, so entering it does not shift the pane below it up by a row's
+    // worth -- and the control that leaves a pane is where the control that
+    // reached it was. Settings used to be the other half of this pair and is a
+    // page of the window now.
     assert.match(body(".chatlist-subhead"), /height:\s*32px/);
     assert.match(body(".chatlist-back"), /place-items:\s*center/);
     // And the chats content is hidden for every pane that is not Chats, so a
@@ -2259,22 +2265,20 @@ describe("permission and thinking read as one control in the settings panel", ()
   });
 });
 
-// --- the key group's buttons ------------------------------------------------
-describe("the key group's two buttons", () => {
-  test("each takes half the line, and a lone one takes all of it", () => {
-    // A grid rather than `flex: 1` on both, for the reason `.settings-row-model`
-    // is one: two flex items with equal `flex` and `min-width: 0` measured 172.8
-    // against 198.8 in this panel, and "the very half" is the whole request.
-    assert.match(body(".settings-key-actions"), /display:\s*grid/);
-    assert.match(
-      body(".settings-key-actions"),
-      /grid-template-columns:\s*1fr 1fr/,
-    );
-    // With no stored key there is one button, and it spans both tracks: half a
-    // line with nothing beside it is a gap rather than a layout.
-    assert.match(
-      body(".settings-key-actions > .btn:only-child"),
-      /grid-column:\s*span 2/,
+// --- the key group's button ------------------------------------------------
+describe("the key group's actions row", () => {
+  test("the control is its own width, not the whole page", () => {
+    // It was a two-column grid with a lone button spanning both, which at the
+    // pane's 252px is what made Save key a button rather than a stub. There is
+    // only ever one control in this row, and at the page's measure spanning it
+    // draws a submit bar across the settings page.
+    assert.match(body(".settings-key-actions"), /display:\s*flex/);
+    assert.equal(
+      RULES.filter((r) =>
+        r.selectors.includes(".settings-key-actions > .btn:only-child"),
+      ).length,
+      0,
+      "the spanning rule is back",
     );
   });
 });
