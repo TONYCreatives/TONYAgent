@@ -156,6 +156,24 @@ export interface HostApi {
    * drags itself and raises the app -- and the action is what tells them apart.
    */
   pet(action: PetAction, payload?: Record<string, unknown>): Promise<PetStateReply & Partial<PetDragReply>>;
+  /**
+   * Run the installer the core downloaded, and close the window.
+   *
+   * **No arguments**, deliberately. The file to run is found in one directory
+   * and checked against a name pattern there, so the page cannot point this at
+   * an arbitrary path -- the same rule `open_account_view`'s closed set keeps.
+   * The window closes itself because Windows Installer cannot replace the
+   * running executable: the close is what lets the update proceed.
+   */
+  update_install(): Promise<{ started: boolean; reason: string; path: string }>;
+  /**
+   * Open the project's releases page in the user's own browser.
+   *
+   * The address is a constant in the core, so the page cannot point this
+   * anywhere. The *user's* browser rather than the owned one: a release page
+   * needs no remembered sign-in, and it is where a manual download belongs.
+   */
+  open_releases(): Promise<{ url: string; opened: boolean }>;
 }
 
 /** What the host pushes into the page. */

@@ -146,6 +146,10 @@
  * 2px gaps. The transform is one pill plus one gap per step, which is why the
  * rules below carry `+2px`, `+4px` and `+6px` rather than a measurement apiece.
  *
+ * **Four is not a preference.** A fifth tab was tried and does not fit: the
+ * tracks become 48px and the longest label needs about 55px. Adding one means
+ * changing the arrangement, not adding a rule here.
+ *
  * Four labels in a 252px row is 63px each, which is why the tab's own text is
  * `--text-sm` and has no horizontal padding: "Permission" is the longest of the
  * four by some way and it is the width the row was checked against.
@@ -182,7 +186,7 @@
   transform: translateX(calc(200% + 4px));
 }
 
-.settings-tabs[data-tab="window"]::before {
+.settings-tabs[data-tab="app"]::before {
   transform: translateX(calc(300% + 6px));
 }
 

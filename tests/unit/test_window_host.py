@@ -36,9 +36,15 @@ SRC = REPO / "src"
 #: The page's whole API, and nothing else. See `Bridge`'s docstring: pywebview
 #: walks `dir(js_api)`, *evaluates* every public attribute and recurses into
 #: non-callables, so anything public here is either an API method or a hazard.
+#:
+#: `open_releases` and `update_install` are the update feature's half of this
+#: surface. Both take no arguments on purpose -- the file to run and the page to
+#: open are chosen by the host from constants, never named by the page -- so
+#: neither can be pointed anywhere the app did not already intend.
 PAGE_API = [
     "core_alive",
     "open_account_view",
+    "open_releases",
     "pet",
     "pick_files",
     "pick_folder",
@@ -46,6 +52,7 @@ PAGE_API = [
     "ready",
     "send",
     "system_menu",
+    "update_install",
     "window_control",
     "window_state",
 ]

@@ -165,6 +165,8 @@ class StdioServer:
             "trust.set": self._h_trust_set,
             "models.list": self._h_models_list,
             "models.catalog": self._h_models_catalog,
+            "update.check": self._h_update_check,
+            "update.download": self._h_update_download,
             "tools.get": self._h_tools_get,
             "tools.set": self._h_tools_set,
             "plan.get": self._h_plan_get,
@@ -1400,6 +1402,40 @@ class StdioServer:
                 "metadata. Check the API key and the endpoint."
             )
         return {"models": catalog, "current": self.session.model}
+
+    # -- updates -------------------------------------------------------------
+    async def _h_update_check(self, params: dict) -> Any:
+        """Whether a newer TONYAgent has been released.
+
+        **It answers rather than raises.** Every other handler here reports a
+        failure by raising, because a failure to bind a provider or to list
+        models is something the user asked for and did not get. This one is a
+        question the app asks *on its own behalf*, unprompted, at startup -- so
+        an offline laptop must not surface as an error dialog about a feature
+        nobody invoked. The answer carries a `reason` instead, and the window
+        decides how quietly to say it.
+
+        `force` is the "check now" button: it skips the day-long freshness
+        window. It still sends the stored `ETag`, so pressing it repeatedly
+        costs quota only when GitHub has something new to say.
+        """
+        from tonyagent.core import update as update_module
+
+        info = await update_module.check(force=bool(params.get("force")))
+        return info.to_dict()
+
+    async def _h_update_download(self, params: dict) -> Any:
+        """Fetch the installer for the release the check found, and verify it.
+
+        **The address and the digest are not parameters.** They come from
+        GitHub's own reply inside this process, so the page cannot ask for a
+        download from somewhere else -- the same rule `account.VIEWS` keeps for
+        the browser window. A download that fails verification is deleted
+        rather than left where the window could run it.
+        """
+        from tonyagent.core import update as update_module
+
+        return await update_module.download()
 
     # -- the tool call budget ------------------------------------------------
     def _h_tools_get(self, params: dict) -> Any:

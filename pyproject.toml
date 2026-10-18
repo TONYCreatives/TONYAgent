@@ -1,6 +1,10 @@
 [project]
 name = "tonyagent"
-version = "0.1.0"
+# Dynamic, and `src/tonyagent/__init__.py` holds the literal. See the note there:
+# the version used to be written in both files, read by different consumers, with
+# nothing comparing them. The app is the one that has to answer "what am I" at
+# runtime, so the app owns the number.
+dynamic = ["version"]
 description = "A local AI agent for automating programming tasks"
 readme = "README.md"
 license = {text = "MIT"}
@@ -78,6 +82,13 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["tonyagent*"]
+
+# Where the dynamic version above comes from. `attr` is read by *parsing* the
+# module rather than importing it, which is why the literal in `__init__.py` has
+# to stay a bare string: setuptools runs before this package's dependencies
+# exist, so an expression there fails the build instead of resolving.
+[tool.setuptools.dynamic]
+version = { attr = "tonyagent.__version__" }
 
 # The card's `grab`/`grabbing` cursors ship as files, not as calls: `CreateCursor`
 # takes bitmasks and can only make 1-bit cursors, while a `.cur` read with

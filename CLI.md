@@ -359,12 +359,31 @@ the whole protocol is drivable from a shell:
 {"method": "mode.set", "params": {"mode": "plan"}}
 {"method": "context.get"}
 {"method": "models.catalog"}
+{"method": "update.check"}
 ```
 
 `models.catalog` answers each model with the provider's own `context_length`
 and `pricing`, in dollars per million tokens. An entry with **no** `pricing`
 object is not the same as one priced at zero: the first means the gateway said
 nothing, so the picker draws no label, and only the second reads `Free`.
+
+`update.check` answers whether a newer release exists, and **it answers rather
+than raising** — unlike every other method here. It is a question the app asks
+on its own behalf at startup, so an offline machine must not produce an error
+about a feature nobody invoked. The reply carries a `reason` instead:
+
+```json
+{"current": "0.1.0", "latest": "v0.2.0", "available": true, "reason": ""}
+```
+
+`reason` is empty when the question was answered, and otherwise one of
+`offline`, `rate_limited`, `not_found`, `server` or `malformed`. **A non-empty
+reason is not "up to date"** — a check that could not reach GitHub has not
+learned that this version is the newest. `force` skips the day-long cache:
+
+```json
+{"method": "update.check", "params": {"force": true}}
+```
 
 ## Troubleshooting
 

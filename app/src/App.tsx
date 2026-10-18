@@ -17,6 +17,7 @@ import {
   type SidebarPane,
 } from "./ConversationList.js";
 import { pickFolder } from "./dialog.js";
+import { host } from "./bridge.js";
 import { CodeViewer, type ViewerFile } from "./CodeViewer.js";
 import { diffLines, type LineRange } from "./diff.js";
 import { FilesPane } from "./FileSidebar.js";
@@ -39,7 +40,7 @@ import { QuestionDialog } from "./QuestionDialog.js";
 import { SearchPanel, type SearchMatch } from "./SearchPanel.js";
 import type { PermissionList, ReasoningInfo } from "./SettingsMenus.js";
 import type { SkillInfo } from "./SkillPicker.js";
-import { SettingsPanel, type KeyEntry, type ProviderInfo } from "./SettingsPanel.js";
+import { SettingsPanel, type KeyEntry, type ProviderInfo, type UpdateAnswer, type UpdateDownload } from "./SettingsPanel.js";
 import { StatusBar } from "./StatusBar.js";
 import { TopBar, type Tab } from "./TopBar.js";
 import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount.js";
@@ -179,6 +180,17 @@ export function App({
     string,
     ModelDetails
   > | null>(null);
+  /**
+   * What the last update check found, and the installer once it is verified.
+   *
+   * Three pieces of state rather than one, because they fail independently: the
+   * *check* can fail to reach GitHub, the *download* can fail its digest, and
+   * the *install* can be refused because this is a source checkout. Collapsing
+   * them would report one failure's reason for another's.
+   */
+  const [update, setUpdate] = useState<UpdateAnswer | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateReady, setUpdateReady] = useState<UpdateDownload | null>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversation, setConversation] = useState("");
   /**
@@ -1050,6 +1062,107 @@ export function App({
       setModelListError(error instanceof Error ? error.message : String(error));
     }
   }, []);
+
+  /**
+   * Ask the core whether a newer TONYAgent exists.
+   *
+   * **Never surfaced as an error.** This is a question the app asks on its own
+   * behalf, unprompted -- so an offline laptop must not produce a dialog about
+   * a feature nobody invoked. The answer carries its own reason and the panel
+   * says it quietly. A thrown failure here is a bug in the protocol rather than
+   * news for the user, which is why it is swallowed into the same shape.
+   */
+  const checkUpdate = useCallback(async (force: boolean) => {
+    const backend = backendRef.current;
+    if (!backend) return;
+    setUpdateBusy(true);
+    try {
+      const answer = (await backend.call("update.check", { force })) as UpdateAnswer;
+      setUpdate(answer);
+      // A different version means the installer that was downloaded is for the
+      // wrong release. Dropped rather than offered: running last week's MSI
+      // after seeing this week's notes is the one way this feature could
+      // install something the user did not agree to.
+      setUpdateReady((prev) => (prev?.version === answer.latest ? prev : null));
+    } catch (error: unknown) {
+      setUpdate({
+        current: "",
+        latest: "",
+        tag: "",
+        available: false,
+        prerelease: false,
+        notes: "",
+        published_at: "",
+        url: "",
+        asset: null,
+        checked_at: 0,
+        cached: false,
+        reason: "malformed",
+      });
+    } finally {
+      setUpdateBusy(false);
+    }
+  }, []);
+
+  /** Fetch the installer and verify it. Nothing runs until the user says so. */
+  const downloadUpdate = useCallback(async () => {
+    const backend = backendRef.current;
+    if (!backend) return;
+    setUpdateBusy(true);
+    try {
+      const result = (await backend.call("update.download")) as UpdateDownload;
+      setUpdateReady(result);
+    } catch {
+      setUpdateReady({ ok: false, reason: "server", path: "", name: "", size: 0 });
+    } finally {
+      setUpdateBusy(false);
+    }
+  }, []);
+
+  /**
+   * Run the verified installer. **This closes the app**, by design.
+   *
+   * Windows Installer cannot replace a running executable, and the host and the
+   * core are one file, so the host starts a helper that waits for this process
+   * to exit and then runs the installer. There is nothing to do on the way out:
+   * the window is already closing.
+   */
+  const installUpdate = useCallback(async () => {
+    const api = host();
+    if (!api) return;
+    try {
+      await api.update_install();
+    } catch {
+      // The window is going away regardless; a failure here means the installer
+      // did not start, and the user will find the app still open.
+      setUpdateReady({ ok: false, reason: "launch_failed", path: "", name: "", size: 0 });
+    }
+  }, []);
+
+  const openReleases = useCallback(async () => {
+    const api = host();
+    if (!api) return;
+    try {
+      await api.open_releases();
+    } catch {
+      // Opening a browser is best effort; there is nowhere to report it to.
+    }
+  }, []);
+
+  /**
+   * Ask once, quietly, when the core comes up.
+   *
+   * Not on a timer and not on every render: the core's own answer is cached for
+   * a day, and the check costs one conditional request that GitHub does not
+   * charge for. It is keyed on `connected` so it happens once per launch, after
+   * there is a core to ask -- before that there is nothing to answer it.
+   */
+  const checkedOnBootRef = useRef(false);
+  useEffect(() => {
+    if (!connected || checkedOnBootRef.current) return;
+    checkedOnBootRef.current = true;
+    void checkUpdate(false);
+  }, [connected, checkUpdate]);
 
   /**
    * Switch models, by re-binding the provider.
@@ -2178,6 +2291,13 @@ export function App({
               onRevealKey={revealKey}
               onActivateKey={activateKey}
               onListKeys={listKeys}
+              update={update}
+              updateBusy={updateBusy}
+              updateReady={updateReady}
+              onCheckUpdate={(force) => void checkUpdate(force)}
+              onDownloadUpdate={() => void downloadUpdate()}
+              onInstallUpdate={() => void installUpdate()}
+              onOpenReleases={() => void openReleases()}
             />
           }
           searchPane={

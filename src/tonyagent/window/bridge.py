@@ -79,6 +79,13 @@ PET_ACTIONS = frozenset({"state", "show", "hide", "ready", "status", "focus", "d
 TARGET = "window.__tonyAgent"
 
 
+def _current_pid() -> int:
+    """This process's pid, which the installer helper waits on."""
+    import os
+
+    return os.getpid()
+
+
 class Bridge:
     """The ``js_api`` object: everything the page may ask the host to do."""
 
@@ -296,8 +303,82 @@ class Bridge:
         """
         return self._account.read(view)
 
-    # -- the desktop pet ------------------------------------------------------
+    # -- updates -------------------------------------------------------------
 
+    def open_releases(self) -> dict[str, Any]:
+        """Open the project's releases page in the user's own browser.
+
+        **The user's browser, not the owned one**, and that is the difference
+        from `open_account_view`: that window exists because the provider's
+        dashboard needs a sign-in that has to outlive the process, while a
+        release page needs nothing remembered. It is also where a manual
+        download belongs, which is the only route for a machine that cannot run
+        an MSI.
+
+        The address is a constant in `core.update`, so the page cannot point
+        this anywhere -- the same rule `ACTIONS` keeps.
+        """
+        import webbrowser
+
+        from tonyagent.core.update import RELEASES_PAGE
+
+        try:
+            opened = bool(webbrowser.open(RELEASES_PAGE))
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.debug(f"Could not open the releases page: {exc}")
+            opened = False
+        return {"url": RELEASES_PAGE, "opened": opened}
+
+    def update_install(self) -> dict[str, Any]:
+        """Run the verified installer, then close the window.
+
+        **The window closes itself, and that is the mechanism rather than a
+        courtesy.** Windows Installer cannot replace a running executable, and
+        this is that executable -- the host and the core are one file. The
+        installer is started by a helper that waits for this process to exit, so
+        the close is what lets it run; leaving the window open would leave the
+        update waiting on the user.
+
+        No arguments, deliberately. The file to run is found in one directory
+        and checked against a name pattern there -- see `window/update.py` --
+        because a method the page can point at any path is a method the page can
+        point at anything.
+        """
+        from tonyagent.core.update import download_dir
+        from tonyagent.window import update as update_module
+
+        if not update_module.supported():
+            return {"started": False, "reason": "unsupported", "path": ""}
+        result = update_module.install(download_dir(), _current_pid())
+        if result.get("started"):
+            # Scheduled before the destroy, so the helper is already waiting on
+            # this pid when it goes -- the other order races the exit.
+            self._close_soon()
+        return result
+
+    def _close_soon(self) -> None:
+        """Destroy the window a moment from now, off the calling thread.
+
+        Not inline: this method is running *on* the window's thread, and
+        destroying the window from inside its own call is the same class of
+        mistake `DeskPet._closed` documents -- the page's promise would never
+        settle, because the thread it is waiting on is the one being torn down.
+        """
+        window = self._window
+        if window is None:
+            return
+
+        def later() -> None:
+            try:
+                window.destroy()
+            except Exception as exc:  # noqa: BLE001 - a failed close is not fatal
+                logger.debug(f"Could not close the window for the update: {exc}")
+
+        timer = threading.Timer(0.75, later)
+        timer.daemon = True
+        timer.start()
+
+    # -- the desktop pet ------------------------------------------------------
     def pet(self, action: str = "state", payload: dict[str, Any] | None = None) -> dict[str, Any]:
         """The pet's whole interface, in one method.
 

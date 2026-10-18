@@ -54,12 +54,18 @@ function Fail([string]$message) {
 # Read rather than passed in: a version that has to be typed twice is a version
 # that disagrees with itself, and an MSI whose ProductVersion does not match the
 # program it installs breaks the upgrade path in a way nothing reports.
-$versionLine = Select-String -Path (Join-Path $root 'pyproject.toml') -Pattern '^\s*version\s*=\s*"([^"]+)"' |
+#
+# **From `__init__.py`, not `pyproject.toml`.** The version used to be a literal
+# in both, and this script read the wrong one of the two. `pyproject.toml` is now
+# dynamic and points at the module, which is also what the app itself reports --
+# so the tag, the MSI and the running program cannot disagree.
+$initPy = Join-Path $root 'src\tonyagent\__init__.py'
+$versionLine = Select-String -Path $initPy -Pattern '^\s*__version__\s*=\s*"([^"]+)"' |
     Select-Object -First 1
-if (-not $versionLine) { Fail 'no version found in pyproject.toml' }
+if (-not $versionLine) { Fail "no __version__ found in $initPy" }
 $version = $versionLine.Matches[0].Groups[1].Value
 if ($version -notmatch '^\d+\.\d+\.\d+') {
-    Fail "the MSI needs a numeric x.y.z version, and pyproject.toml says '$version'"
+    Fail "the MSI needs a numeric x.y.z version, and __init__.py says '$version'"
 }
 # Windows Installer compares only the first three fields, so the fourth is
 # dropped rather than refused: `0.1.0.dev1` is installed as 0.1.0.

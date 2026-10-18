@@ -36,9 +36,65 @@ import {
   type ReasoningInfo,
 } from "./SettingsMenus.js";
 
-/** Shape of one entry in the providers.list reply. */
-export interface ProviderInfo {
+/**
+ * One `update.check` reply.
+ *
+ * `reason` is "" when the question was answered and otherwise names why it was
+ * not. The panel turns that into a sentence rather than showing the token --
+ * see `updateMessage`, which is a pure function so the wording is testable
+ * without a window.
+ */
+export interface UpdateAnswer {
+  current: string;
+  latest: string;
+  tag: string;
+  available: boolean;
+  prerelease: boolean;
+  notes: string;
+  published_at: string;
+  url: string;
+  asset: { name: string; size: number; digest: string; url: string } | null;
+  checked_at: number;
+  cached: boolean;
+  reason: string;
+}
+
+/** One `update.download` reply. `reason` is "" when the file is ready. */
+export interface UpdateDownload {
+  ok: boolean;
+  reason: string;
+  path: string;
   name: string;
+  size: number;
+  version?: string;
+}
+
+/**
+ * What to say about an answer, in one sentence.
+ *
+ * **Every failure gets its own wording, and none of them say "up to date".** A
+ * check that could not run has not learned that this version is the newest, and
+ * telling the user they are current on the strength of a failed request is the
+ * one claim this feature must never make. The same distinction `models.list`
+ * draws between "no models" and "could not ask".
+ */
+export function updateMessage(answer: UpdateAnswer | null): string {
+  if (!answer) return "Not checked yet.";
+  if (answer.reason === "offline") return "Could not reach GitHub. Check your connection.";
+  if (answer.reason === "rate_limited") return "GitHub is rate-limiting this machine. Try again later.";
+  if (answer.reason === "not_found") {
+    return "The release repository could not be read. It may be private or renamed.";
+  }
+  if (answer.reason === "server") return "GitHub returned an error. Try again later.";
+  if (answer.reason === "malformed") return "GitHub answered with something this app could not read.";
+  if (answer.available) {
+    return `${answer.tag || answer.latest} is available.`;
+  }
+  return "You are up to date.";
+}
+
+/** Shape of one entry in the providers.list reply. */
+export interface ProviderInfo {  name: string;
   models: string[];
   has_credentials: boolean;
 }
@@ -55,30 +111,28 @@ export interface KeyEntry {
  *
  * Four, because there are four questions in here and they get asked at
  * different times: how the agent is allowed to behave, what it is working on,
- * what it is talking to, and what the window itself does. The third tab is Keys
+ * what it is talking to, and what the program itself does. The third tab is Keys
  * rather than Model now that the model pickers are gone -- the credential is the
- * only thing left on it -- and Window is the desktop pet, which is the one
- * setting here that changes nothing about the agent.
+ * only thing left on it.
  *
- * **Window rather than a fourth row on one of the other tabs.** The pet is not a
- * permission and not a property of the project, so filing it under either would
- * put a control on a page whose question it does not answer -- which is how a
- * panel that reads as four clear pages starts reading as one page with some
- * things on it.
+ * **App rather than Window, and About is not a fifth tab.** The last tab used to
+ * be called Window, because the desktop pet was the only thing on it. The
+ * version and the update check are the same kind of setting -- they change
+ * nothing about the agent, they are about the program -- so they belong beside
+ * it rather than in a tab of their own.
  *
- * **The first tab is Behavior and not Permission, and a measurement is why.**
- * Four tracks in this sidebar are 60.3px each, and "Permission" measures 69px at
- * `--text-sm` -- so it clipped, on every window size, which is the one thing a
- * tab label may never do. The tab holds the permission ladder *and* the thinking
- * dial, so the narrower word is also the more accurate one: it names the page
- * rather than one control on it, and the section headings inside still say
- * Permission and Thinking precisely.
+ * A fifth tab was tried first and does not fit. Measured: the pane's usable
+ * width is 252px, which is 48px per track at five, and "Behavior" measures about
+ * 55px at `--text-sm`. The row is why the labels are short in the first place --
+ * "Permission" measured 69px against four 63px tracks and was renamed for it --
+ * and the honest answer to a fifth label is a different arrangement rather than
+ * a clipped one.
  */
 const SETTINGS_TABS = [
   { id: "permission", label: "Behavior" },
   { id: "project", label: "Project" },
   { id: "keys", label: "Keys" },
-  { id: "window", label: "Window" },
+  { id: "app", label: "App" },
 ] as const;
 
 type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
@@ -123,6 +177,24 @@ interface Props {
    * the same reason; this is the second way to reach it, not a different thing.
    */
   onPet: () => void;
+  /**
+   * The last answer about updates, or null before one has arrived.
+   *
+   * `UpdateAnswer` rather than a boolean, because the interesting cases are not
+   * "yes" and "no": a check that could not reach GitHub has not learned that
+   * you are current, and the panel has to say which of those happened.
+   */
+  update: UpdateAnswer | null;
+  /** A check or a download is in flight. */
+  updateBusy: boolean;
+  /** The downloaded installer, once one has been fetched and verified. */
+  updateReady: UpdateDownload | null;
+  onCheckUpdate: (force: boolean) => void;
+  onDownloadUpdate: () => void;
+  /** Run the installer and close the app. */
+  onInstallUpdate: () => void;
+  /** Open the releases page in the user's own browser. */
+  onOpenReleases: () => void;
   onClose: () => void;
   onChooseFolder: () => void;
   onStartSandbox: () => void;
@@ -239,6 +311,13 @@ export function SettingsPanel({
   notice,
   petOpen,
   onPet,
+  update,
+  updateBusy,
+  updateReady,
+  onCheckUpdate,
+  onDownloadUpdate,
+  onInstallUpdate,
+  onOpenReleases,
   onClose,
   onChooseFolder,
   onStartSandbox,
@@ -767,7 +846,7 @@ export function SettingsPanel({
           </>
         )}
 
-        {tab === "window" && (
+        {tab === "app" && (
           <>
             <section className="settings-group">
               <h3>Desktop pet</h3>
@@ -801,6 +880,107 @@ export function SettingsPanel({
                 </span>
               </label>
             </section>
+
+            <section className="settings-group">
+              <h3>Version</h3>
+              <p className="settings-note">
+                This window is TONYAgent {update?.current || "\u2026"}.
+              </p>
+              {/*
+                The status line is the answer, whatever it is. It is never
+                hidden behind a spinner: a check that failed has something to
+                say, and a check that succeeded has something else. See
+                `updateMessage` for why none of the failures say "up to date".
+              */}
+              <p className="settings-value">{updateMessage(update)}</p>
+              {update?.available && update.notes && (
+                <details className="settings-notes">
+                  <summary>Release notes</summary>
+                  <pre>{update.notes}</pre>
+                </details>
+              )}
+              <div className="settings-row">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => onCheckUpdate(true)}
+                  disabled={updateBusy || !connected}
+                >
+                  {updateBusy ? "Checking\u2026" : "Check for updates"}
+                </button>
+                <button type="button" className="btn" onClick={onOpenReleases}>
+                  Release notes
+                </button>
+              </div>
+            </section>
+
+            {update?.available && (
+              <section className="settings-group">
+                <h3>Install</h3>
+                {/*
+                  Two steps rather than one, and the split is the honest one:
+                  the download can fail for its own reasons (offline, a digest
+                  that did not match) and the install can be refused for others
+                  (this is a source checkout, or there is no installer yet).
+                  Collapsing them would report the wrong one.
+
+                  A release with no `.msi` attached is answered before the
+                  button is drawn rather than after the download fails: the
+                  check already knows, and offering a control that cannot work
+                  is the thing this panel avoids everywhere else.
+                */}
+                {!update.asset ? (
+                  <p className="settings-value">
+                    That release has no installer attached, so there is nothing
+                    to download. Use "Release notes" to see the release itself.
+                  </p>
+                ) : updateReady?.ok ? (
+                  <>
+                    <p className="settings-note">
+                      {updateReady.name} is downloaded and verified against the
+                      digest GitHub published for the release.
+                    </p>
+                    <p className="settings-note">
+                      Installing closes TONYAgent and starts the Windows
+                      installer, which will ask for permission.
+                    </p>
+                    <div className="settings-row">
+                      <button type="button" className="btn btn-accent" onClick={onInstallUpdate}>
+                        Install and restart
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="settings-note">
+                      The installer is downloaded from the release and checked
+                      against its published SHA-256 before anything runs it.
+                    </p>
+                    {updateReady && !updateReady.ok && (
+                      <p className="settings-value">
+                        {updateReady.reason === "no_digest"
+                          ? "That release carries no SHA-256 digest, so it will not be downloaded."
+                          : updateReady.reason === "offline"
+                            ? "The download could not be completed. Check your connection."
+                            : updateReady.reason === "digest"
+                              ? "The downloaded file did not match its published digest, so it was deleted."
+                              : "There is no installer attached to that release yet."}
+                      </p>
+                    )}
+                    <div className="settings-row">
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={onDownloadUpdate}
+                        disabled={updateBusy || !connected}
+                      >
+                        {updateBusy ? "Downloading\u2026" : "Download the installer"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </section>
+            )}
           </>
         )}
       </div>

@@ -131,6 +131,25 @@ export interface CoreMethods {
    */
   "models.catalog": Record<string, never>;
   /**
+   * Whether a newer TONYAgent has been released.
+   *
+   * **The answer carries its own failure.** `reason` is "" when the question
+   * was answered, and otherwise says why it was not (`offline`, `rate_limited`,
+   * `not_found`, `server`, `malformed`). "Up to date" and "could not ask" are
+   * different facts, and a check that cannot reach GitHub has not learned that
+   * you are current.
+   */
+  "update.check": { force?: boolean };
+  /**
+   * Fetch the installer for the release the check found, and verify it.
+   *
+   * No address and no digest cross this boundary: both come from GitHub's reply
+   * inside the core, so the page cannot ask for a download from elsewhere. A
+   * file that fails verification is deleted rather than left where the window
+   * could run it.
+   */
+  "update.download": Record<string, never>;
+  /**
    * Store an API key in the OS keyring under a name.
    *
    * The key goes out on stdin and the reply carries only the provider and the

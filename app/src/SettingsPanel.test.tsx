@@ -20,7 +20,14 @@ import "./test-dom.js";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { SettingsPanel, type KeyEntry, type ProviderInfo } from "./SettingsPanel.js";
+import {
+  SettingsPanel,
+  updateMessage,
+  type KeyEntry,
+  type ProviderInfo,
+  type UpdateAnswer,
+  type UpdateDownload,
+} from "./SettingsPanel.js";
 import { all, click, one, render, setValue, wait } from "./test-render.js";
 
 const noop = () => {};
@@ -43,6 +50,13 @@ interface Overrides {
   connected?: boolean;
   petOpen?: boolean;
   onPet?: () => void;
+  update?: UpdateAnswer | null;
+  updateBusy?: boolean;
+  updateReady?: UpdateDownload | null;
+  onCheckUpdate?: (force: boolean) => void;
+  onDownloadUpdate?: () => void;
+  onInstallUpdate?: () => void;
+  onOpenReleases?: () => void;
   onRevealKey?: (provider: string, name: string) => Promise<string | null>;
   onDeleteKey?: (provider: string, name: string) => Promise<boolean>;
   onActivateKey?: (provider: string, name: string) => Promise<boolean>;
@@ -69,6 +83,13 @@ function panel(overrides: Overrides = {}) {
       notice={null}
       petOpen={overrides.petOpen ?? false}
       onPet={overrides.onPet ?? noop}
+      update={overrides.update ?? null}
+      updateBusy={overrides.updateBusy ?? false}
+      updateReady={overrides.updateReady ?? null}
+      onCheckUpdate={overrides.onCheckUpdate ?? noop}
+      onDownloadUpdate={overrides.onDownloadUpdate ?? noop}
+      onInstallUpdate={overrides.onInstallUpdate ?? noop}
+      onOpenReleases={overrides.onOpenReleases ?? noop}
       onClose={noop}
       onChooseFolder={noop}
       onStartSandbox={noop}
@@ -162,7 +183,7 @@ describe("the settings tabs", () => {
     const labels = all(container, ".settings-tab").map((b) =>
       (b.textContent ?? "").trim(),
     );
-    assert.deepEqual(labels, ["Behavior", "Project", "Keys", "Window"]);
+    assert.deepEqual(labels, ["Behavior", "Project", "Keys", "App"]);
   });
 
   test("exactly one tab says it is the chosen one", async () => {
@@ -225,14 +246,17 @@ describe("the desktop pet, from the settings pane", () => {
       "the panel stopped opening on the permissions",
     );
 
-    await click(tab(container, "Window"));
-    assert.deepEqual(headings(container), ["Desktop pet"]);
+    await click(tab(container, "App"));
+    // Two sections, and the second is why the tab is called App rather than
+    // Window: the version and the update check are about the program, the same
+    // kind of setting as the card, and neither is a property of the agent.
+    assert.deepEqual(headings(container), ["Desktop pet", "Version"]);
   });
 
   test("it draws the card's real state, and a press asks for the other one", async () => {
     const asked: number[] = [];
     const container = await render(panel({ petOpen: true, onPet: () => asked.push(1) }));
-    await click(tab(container, "Window"));
+    await click(tab(container, "App"));
 
     assert.equal(petBox(container).checked, true, "the box does not show an open card");
     await click(petBox(container));
@@ -252,7 +276,7 @@ describe("the desktop pet, from the settings pane", () => {
     // not: the shell can make a window whether or not anything is running, and a
     // card that says "waiting" beside a stopped core is telling the truth.
     const container = await render(panel({ connected: false }));
-    await click(tab(container, "Window"));
+    await click(tab(container, "App"));
 
     assert.equal(petBox(container).disabled, false, "a window control was refused without a core");
   });
@@ -571,5 +595,124 @@ describe("the Base URL, which is not a model setting", () => {
     const container = await opened();
     // One key input per provider's add row, and no others.
     assert.equal(all(container, 'input[type="password"]').length, 2);
+  });
+});
+
+// --- the About tab -----------------------------------------------------------
+//
+// The one claim this feature must never make is "you are up to date" when the
+// check could not run. A failed request has not learned that this version is the
+// newest, so every failure has its own wording and none of them say it.
+describe("what the update check says", () => {
+  const answer = (over: Partial<UpdateAnswer> = {}): UpdateAnswer => ({
+    current: "0.1.0",
+    latest: "0.2.0",
+    tag: "v0.2.0",
+    available: false,
+    prerelease: false,
+    notes: "",
+    published_at: "",
+    url: "",
+    asset: null,
+    checked_at: 0,
+    cached: false,
+    reason: "",
+    ...over,
+  });
+
+  test("a check that never ran does not claim anything", () => {
+    assert.match(updateMessage(null), /not checked/i);
+  });
+
+  test("a successful check with nothing new is the only 'up to date'", () => {
+    assert.match(updateMessage(answer()), /up to date/i);
+    assert.match(updateMessage(answer({ available: true })), /v0\.2\.0 is available/);
+  });
+
+  test("every failure has its own wording, and none of them say up to date", () => {
+    for (const reason of ["offline", "rate_limited", "not_found", "server", "malformed"]) {
+      const said = updateMessage(answer({ reason }));
+      assert.ok(said.length > 0, reason);
+      assert.doesNotMatch(said, /up to date/i, `${reason} claimed the app was current`);
+    }
+    assert.match(updateMessage(answer({ reason: "offline" })), /connection/i);
+    assert.match(updateMessage(answer({ reason: "not_found" })), /private|renamed/i);
+  });
+
+  test("the About tab shows the version and the answer", async () => {
+    const container = await render(panel({ update: answer({ available: true }) }));
+    await click(tab(container, "App"));
+
+    const version = section(container, "Version");
+    assert.match(version.textContent ?? "", /TONYAgent 0\.1\.0/);
+    assert.match(version.textContent ?? "", /v0\.2\.0 is available/);
+  });
+
+  test("the installer is only offered once one is downloaded", async () => {
+    const withUpdate = answer({
+      available: true,
+      asset: { name: "TONYAgent-0.2.0.msi", size: 1, digest: "sha256:x", url: "u" },
+    });
+
+    const before = await render(panel({ update: withUpdate }));
+    await click(tab(before, "App"));
+    assert.equal(
+      all(before, ".btn").some((b) => /install and restart/i.test(b.textContent ?? "")),
+      false,
+      "offered to install before anything was downloaded",
+    );
+    assert.ok(
+      all(before, ".btn").some((b) => /download the installer/i.test(b.textContent ?? "")),
+    );
+
+    const after = await render(
+      panel({
+        update: withUpdate,
+        updateReady: {
+          ok: true,
+          reason: "",
+          path: "C:/u/TONYAgent-0.2.0.msi",
+          name: "TONYAgent-0.2.0.msi",
+          size: 1,
+        },
+      }),
+    );
+    await click(tab(after, "App"));
+    assert.ok(
+      all(after, ".btn").some((b) => /install and restart/i.test(b.textContent ?? "")),
+    );
+  });
+
+  test("a digest mismatch is reported as one, not as a failed download", async () => {
+    const container = await render(
+      panel({
+        update: answer({
+          available: true,
+          asset: { name: "TONYAgent-0.2.0.msi", size: 1, digest: "sha256:x", url: "u" },
+        }),
+        updateReady: {
+          ok: false,
+          reason: "digest",
+          path: "",
+          name: "TONYAgent-0.2.0.msi",
+          size: 0,
+        },
+      }),
+    );
+    await click(tab(container, "App"));
+    assert.match(container.textContent ?? "", /did not match its published digest/i);
+  });
+
+  test("a release with no installer is not offered one", async () => {
+    // The check already knows there is no `.msi`, so the button is never drawn
+    // -- offering a control that cannot work is what the rest of this panel
+    // avoids, and a download that fails later would report it too late.
+    const container = await render(panel({ update: answer({ available: true }) }));
+    await click(tab(container, "App"));
+    assert.match(container.textContent ?? "", /no installer attached/i);
+    assert.equal(
+      all(container, ".btn").some((b) => /download the installer/i.test(b.textContent ?? "")),
+      false,
+    );
   });
 });
