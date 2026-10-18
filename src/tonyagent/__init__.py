@@ -18,5 +18,5 @@
 #: Keep it a bare literal. setuptools reads it by parsing rather than importing
 #: (it cannot import a package whose dependencies are not installed yet), so an
 #: expression here is a build failure rather than a clever version string.
-__version__ = "0.3.3"
+__version__ = "0.3.4"
 __author__ = "Tony Lee"
