@@ -640,6 +640,15 @@ class AgentSession:
             return []
         try:
             models = await factory().list_models()
+        except LLMError:
+            # **Already the provider's own answer, and a better one.** The
+            # client raises `LLMError` with the right kind and hint -- a 401
+            # says AUTH, a 429 says RATE_LIMIT, a missing key says CONFIG --
+            # and wrapping that in `network` relabels every one of them a
+            # connectivity problem. It also stacked the prefix: a 401 came out
+            # as "Could not reach the provider: Could not reach the provider:
+            # ...", which is what the window was showing.
+            raise
         except Exception as exc:  # noqa: BLE001 - reported to the caller
             raise LLMError.network(exc, self.provider_name) from exc
         return sorted(models)
@@ -661,6 +670,11 @@ class AgentSession:
             return []
         try:
             return await factory().model_catalog()
+        except LLMError:
+            # Same reason as `available_models`: the client's own answer already
+            # names the kind and the fix, and `network` would relabel a 401 or a
+            # missing key as a connectivity problem.
+            raise
         except Exception as exc:  # noqa: BLE001 - reported to the caller
             raise LLMError.network(exc, self.provider_name) from exc
 

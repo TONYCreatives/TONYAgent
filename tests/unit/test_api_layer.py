@@ -162,6 +162,33 @@ def test_missing_key_is_a_config_error():
     assert exc.value.kind is ErrorKind.CONFIG
 
 
+async def test_the_model_list_needs_a_key_before_it_needs_a_socket():
+    """**This path forgot the guard the other two take.**
+
+    `auth_headers` spells the key into `Authorization: Bearer <key>`, so with no
+    key it builds `Bearer ` -- and httpx refuses that with "Illegal header value
+    b'Bearer '", which names neither the provider nor the missing key. The window
+    showed exactly that sentence, and twice, because the session wrapped the
+    client's own error in a second "Could not reach the provider".
+
+    `complete` and `stream` both call `check_key` before they touch the network;
+    `_fetch_model_entries` was the one that went without, so the model menu --
+    the first thing a user opens after pasting a key -- was where a key problem
+    arrived as a protocol error. Asserted on the kind and the wording, because
+    "it raised something" is true of the wrong answer too.
+    """
+    c = LLMClient("openrouter", "", "m", "https://openrouter.ai/api/v1", key_prefix="sk-or-")
+
+    with pytest.raises(LLMError) as raised:
+        await c.list_models()
+
+    assert raised.value.kind is ErrorKind.CONFIG
+    assert "no api key" in raised.value.message.lower()
+    assert "openrouter" in raised.value.message
+    # And the hint is the fix, not a guess about the network.
+    assert "keyring" in raised.value.user_message().lower()
+
+
 # --- error classification ----------------------------------------------------
 
 @pytest.mark.parametrize("status,kind", [

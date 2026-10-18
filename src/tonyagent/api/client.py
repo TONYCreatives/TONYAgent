@@ -528,6 +528,14 @@ class LLMClient:
 
     async def _fetch_model_entries(self) -> dict[str, dict]:
         """One request to the gateway's model list."""
+        # **Before the headers are built.** `auth_headers` spells the key into
+        # `Authorization: Bearer <key>`, so with no key it produces `Bearer ` --
+        # and `httpx` refuses that with "Illegal header value b'Bearer '", which
+        # says nothing about the key being the problem. `check_key` answers
+        # "No API key stored for <provider>" with the hint that fixes it, and it
+        # is the same guard `complete` and `stream` already take before they
+        # touch the network. This path was the one that went without.
+        self.check_key()
         url = self.dialect.models_url(self.base_url)
         headers = self._headers()
         headers.pop("Accept", None)

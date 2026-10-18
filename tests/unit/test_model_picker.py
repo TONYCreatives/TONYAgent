@@ -174,6 +174,40 @@ class TestTheRpc:
         frames = _drive([{"id": 1, "method": "models.list"}], session)
 
         assert "error" in frames[0]
+        # **The client's own answer, not relabelled.** This was wrapped in a
+        # second `LLMError.network`, which turned a 401 -- a key problem -- into
+        # "Could not reach the provider", a connectivity story, and stacked that
+        # prefix on top of the sentence the client had already written. The
+        # window showed the doubled version: "Could not reach the provider:
+        # Could not reach the provider: Illegal header value b'Bearer '".
+        said = frames[0]["error"]["message"]
+        assert "could not reach" not in said.lower(), said
+        assert said.strip(), "the 401 arrived with nothing to say"
+
+    def test_a_missing_key_comes_with_the_sentence_that_fixes_it(self):
+        # The turn path has always sent `user_message()` -- the message plus the
+        # hint -- while the model menu sent `str(exc)`: the symptom without the
+        # fix. This is the surface a user reaches first after pasting a key, so
+        # it is the one where "No API key stored for openrouter." most needs the
+        # half that says what to do about it.
+        from tonyagent.api import ErrorKind, LLMError
+
+        session = _session(
+            _Http(
+                error=LLMError(
+                    ErrorKind.CONFIG,
+                    "No API key stored for openrouter.",
+                    provider="openrouter",
+                    hint="Open the API Provider panel and save one.",
+                )
+            )
+        )
+
+        frames = _drive([{"id": 1, "method": "models.list"}], session)
+
+        said = frames[0]["error"]["message"]
+        assert "No API key stored for openrouter." in said
+        assert "save one" in said, "the hint is missing, so this is only a symptom"
 
 
 # --- the request is not repeated -------------------------------------------

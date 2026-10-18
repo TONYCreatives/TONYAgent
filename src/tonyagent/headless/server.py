@@ -1361,7 +1361,15 @@ class StdioServer:
         """
         if self.session.provider is None:
             raise RpcError("no provider configured")
-        models = await self.session.available_models()
+        from tonyagent.api import LLMError
+
+        try:
+            models = await self.session.available_models()
+        except LLMError as exc:
+            # The hint, for the reason `_h_models_catalog` gives: this is where
+            # a missing key is most often met, and the sentence that says how to
+            # fix it is the difference between a symptom and an answer.
+            raise RpcError(exc.user_message()) from None
         if not models:
             raise RpcError(
                 f"{self.session.provider_name or 'This provider'} returned no "
@@ -1395,7 +1403,12 @@ class StdioServer:
             # Reported rather than returned empty: an empty catalog and a
             # failed request look identical in a picker, and only one of them
             # is fixed by checking the key.
-            raise RpcError(str(exc)) from None
+            #
+            # `user_message` and not `str`: the hint is the half that says what
+            # to *do* -- "paste the key, and press Save to Keyring" -- and this
+            # is the surface a user reaches first after pasting one. The turn
+            # path has always sent it; the model menu sent only the symptom.
+            raise RpcError(exc.user_message()) from None
         if not catalog:
             raise RpcError(
                 f"{self.session.provider_name or 'This provider'} returned no model "
