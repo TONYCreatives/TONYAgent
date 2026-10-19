@@ -2001,3 +2001,111 @@ describe("the window fetches a new version by itself", () => {
     );
   });
 });
+
+/**
+ * The command allow-list, through the window rather than through the panel.
+ *
+ * `SettingsPanel.test.tsx` covers what the group sends; this covers that the
+ * window is the thing sending it, and that the read happens when Settings opens
+ * rather than at boot -- the page is a mode, and a list nobody is looking at is
+ * not worth a round trip on every launch.
+ */
+describe("the command allow-list, wired to the core", () => {
+  const times = (transport: FakeTransport, method: string) =>
+    transport.sent.filter((r) => r.method === method).length;
+
+  const COMMANDS = {
+    tools: {
+      command_allowlist: ["python", "git"],
+      command_allowlist_defaults: ["python", "python3", "git"],
+      command_denylist: ["shutdown"],
+    },
+  };
+
+  const openSettings = async (c: HTMLElement) => {
+    await click(one(c, '.rail-btn[aria-label="Settings"]')!);
+    for (let i = 0; i < 50 && !one(c, ".settings-page"); i++) await wait(20);
+  };
+
+  test("the list is read when the page opens, not on every launch", async () => {
+    const { container, transport } = await mount({ "settings.get": COMMANDS });
+    assert.equal(
+      times(transport, "settings.get"),
+      0,
+      "the command list was read before anyone opened Settings",
+    );
+
+    await openSettings(container);
+    await wait(20);
+
+    assert.equal(times(transport, "settings.get"), 1);
+    assert.deepEqual(
+      texts(container, ".settings-command-name"),
+      ["python", "git"],
+    );
+  });
+
+  test("adding a program writes it through settings.set", async () => {
+    // The whole path: the field, the press, the method the core serves, and the
+    // list redrawn from what the core answered rather than from what was typed.
+    const { container, transport } = await mount({
+      "settings.get": COMMANDS,
+      "settings.set": {
+        key: "tools.command_allowlist",
+        value: ["python", "git", "cargo"],
+        persisted: true,
+      },
+    });
+    await openSettings(container);
+    await wait(20);
+
+    await setValue(
+      one(container, '[aria-label="Add a program to the allow-list"]') as HTMLInputElement,
+      "cargo",
+    );
+    await click(
+      all(container, ".settings-group .btn").find((b) =>
+        /^add$/i.test((b.textContent ?? "").trim()),
+      )!,
+    );
+    await wait(20);
+
+    const written = transport.sent.filter((r) => r.method === "settings.set");
+    assert.equal(written.length, 1);
+    assert.deepEqual(written[0].params, {
+      key: "tools.command_allowlist",
+      value: ["python", "git", "cargo"],
+    });
+    assert.deepEqual(
+      texts(container, ".settings-command-name"),
+      ["python", "git", "cargo"],
+    );
+  });
+
+  test("a write that the core refused is reported, not drawn as if it took", async () => {
+    const { container } = await mount({
+      "settings.get": COMMANDS,
+      "settings.set": {
+        key: "tools.command_allowlist",
+        value: ["python", "git"],
+        persisted: false,
+      },
+    });
+    await openSettings(container);
+    await wait(20);
+
+    await setValue(
+      one(container, '[aria-label="Add a program to the allow-list"]') as HTMLInputElement,
+      "cargo",
+    );
+    await click(
+      all(container, ".settings-group .btn").find((b) =>
+        /^add$/i.test((b.textContent ?? "").trim()),
+      )!,
+    );
+    await wait(20);
+
+    assert.deepEqual(texts(container, ".settings-command-name"), ["python", "git"]);
+    assert.match(one(container, ".settings-group")!.parentElement!.textContent ?? "", /could not save/i);
+  });
+});

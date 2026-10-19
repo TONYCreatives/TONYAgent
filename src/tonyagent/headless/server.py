@@ -92,6 +92,84 @@ def _permission_payload(level: Any) -> dict[str, Any]:
     }
 
 
+def _clean_command_list(value: Any) -> list[str] | None:
+    """One command allow-list, as the shell gate will read it.
+
+    Validated rather than stored as sent. An entry is matched *exactly* against
+    the program's name -- see ``shell_tools._allowlist_names`` -- so a name with
+    a space in it, or a path, can never match anything. Storing one would put a
+    row on the page that quietly does nothing, which is the failure mode this
+    whole settings surface exists to avoid: a control that reports a rule the
+    core is not applying.
+
+    Duplicates are dropped case-insensitively, because the match is
+    case-insensitive -- two rows the same command answers to are one rule
+    written twice. The first spelling is the one kept, so the list reads the way
+    it was typed.
+
+    ``None`` is the unset case and passes through: see ``_h_settings_set``.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise RpcError("a command list must be a list of program names")
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for entry in value:
+        if not isinstance(entry, str):
+            raise RpcError("a program name must be text")
+        name = entry.strip()
+        if not name:
+            raise RpcError("a program name cannot be empty")
+        if any(character.isspace() for character in name):
+            raise RpcError(
+                f"{name!r} has a space in it, and the allow-list matches one "
+                "program's name"
+            )
+        if "/" in name or "\\" in name:
+            raise RpcError(
+                f"{name!r} is a path, and the allow-list matches the program's "
+                "name -- not where it lives"
+            )
+        folded = name.lower()
+        if folded in seen:
+            continue
+        seen.add(folded)
+        cleaned.append(name)
+    return cleaned
+
+
+#: The settings a window may write: dotted key -> the function that cleans a
+#: proposed value.
+#:
+#: A whitelist rather than a passthrough. This file also holds ``[keys.*]`` and
+#: the provider the window is bound to, and a method that could write any key
+#: would be a way to change things no control on the page asked for -- including
+#: the active key name, which is a decision `key.activate` makes.
+#:
+#: ``tools.command_denylist`` is deliberately absent. It is a floor rather than
+#: a preference (see ``shell_tools.effective_command_lists``): the page reports
+#: it, and a write is refused by not being on this list.
+_EDITABLE_SETTINGS: dict[str, Any] = {
+    "tools.command_allowlist": _clean_command_list,
+}
+
+
+def _current_setting(key: str) -> Any:
+    """What ``key`` is now, read the way the next turn will read it.
+
+    Through ``load_section``, so the reply to a write is the value that is in
+    force rather than the value that was sent -- the two differ the moment a
+    write fails, and a panel that echoed the request would show a rule the core
+    is not holding anyone to. This is the same distinction `tools.get` draws by
+    reading the session instead of the settings file.
+    """
+    from tonyagent.config.migration import load_section
+
+    section, _, name = key.partition(".")
+    return getattr(load_section(section), name)
+
+
 class StdioServer:
     """Reads requests from stdin, writes replies and events to stdout.
 
@@ -169,6 +247,8 @@ class StdioServer:
             "update.download": self._h_update_download,
             "tools.get": self._h_tools_get,
             "tools.set": self._h_tools_set,
+            "settings.get": self._h_settings_get,
+            "settings.set": self._h_settings_set,
             "plan.get": self._h_plan_get,
             "permission.list": self._h_permission_list,
             "permission.set": self._h_permission_set,
@@ -1497,6 +1577,75 @@ class StdioServer:
             logger.error(f"Could not save the tool call budget: {exc}")
             return {"max_tool_calls": applied, "persisted": False}
         return {"max_tool_calls": applied, "persisted": True}
+
+    # -- the settings file --------------------------------------------------
+
+    def _h_settings_get(self, params: dict) -> Any:
+        """The command lists, as the shell gate will read them.
+
+        Both come from the tool layer's own reader rather than from the config
+        file, for the reason `tools.get` reads the session rather than settings:
+        the deny list a turn is held to is the code's patterns *plus* whatever
+        the file adds, and a panel that showed the file's half would be showing
+        a list nobody is using.
+
+        `command_allowlist_defaults` is what "Restore defaults" goes back to. It
+        is the code's own list -- the answer `load_section` gives when the file
+        carries no list at all -- so the panel can mark the rows that are not
+        part of it without hardcoding a list the core owns.
+        """
+        from tonyagent.config.settings import settings
+        from tonyagent.tools.shell_tools import effective_command_lists
+
+        allow, deny = effective_command_lists()
+        return {
+            "tools": {
+                "command_allowlist": allow,
+                "command_allowlist_defaults": list(settings.tools.command_allowlist),
+                "command_denylist": deny,
+            }
+        }
+
+    def _h_settings_set(self, params: dict) -> Any:
+        """Change one setting in the config file.
+
+        `key` is dotted -- ``section.name`` -- and has to be one of
+        ``_EDITABLE_SETTINGS``. The whitelist is the point: this is the same
+        file that holds `[keys.*]`, and a method that wrote any key it was given
+        would be a way to change things no control on the page asked for.
+
+        **A `value` of null means unset**, which is what the panel's "Restore
+        defaults" sends. It removes the key rather than writing today's default,
+        because a file that carries the current default goes on carrying it
+        after the default changes -- see `save_section_value`.
+
+        The reply carries the value that is now in force, read back the way the
+        next turn will read it, plus whether the file took the write. A failed
+        write is reported rather than raised: for these settings the file *is*
+        the store, so a failure means nothing changed, and the panel needs to
+        say that instead of showing the list the user just typed.
+        """
+        from tonyagent.config.migration import save_section_value
+
+        key = str(params.get("key", ""))
+        cleaner = _EDITABLE_SETTINGS.get(key)
+        if cleaner is None:
+            raise RpcError(f"{key!r} is not a setting this window can change")
+        clean = cleaner(params.get("value"))
+        section, _, name = key.partition(".")
+
+        persisted = True
+        try:
+            save_section_value(section, name, clean)
+        except Exception as exc:  # noqa: BLE001 - the reply carries the outcome
+            logger.error(f"Could not save {key}: {exc}")
+            persisted = False
+
+        return {
+            "key": key,
+            "value": _current_setting(key),
+            "persisted": persisted,
+        }
 
     # -- permissions --------------------------------------------------------
     def _h_permission_set(self, params: dict) -> Any:

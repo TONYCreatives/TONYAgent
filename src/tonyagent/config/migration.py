@@ -6,6 +6,8 @@ import shutil
 import tomli
 import tomli_w
 from pathlib import Path
+from typing import Any
+
 from loguru import logger
 
 from tonyagent.config.settings import settings
@@ -352,6 +354,33 @@ def reset_config() -> None:
     if config_path.exists():
         config_path.unlink()
     logger.info("Configuration reset to defaults")
+
+
+def save_section_value(section: str, key: str, value: Any) -> None:
+    """Write one key of one config section, read-modify-write.
+
+    Same shape and same reason as :func:`save_max_tool_calls`: the sidecar never
+    loads ``settings``, so assembling a whole config dict here would write
+    defaults over the user's real settings. One key is touched; every other
+    section and every other key in this one carries through.
+
+    ``value is None`` *removes* the key, which is how a control offers "back to
+    the default". Removing rather than writing today's default is deliberate:
+    a file that carries the current default is a file that goes on carrying it
+    after the default changes, which is exactly how the two tool lists in this
+    file became fossils -- see the version 1 -> 2 migration in
+    :func:`migrate_config`.
+    """
+    config = load_config()
+    table = config.get(section)
+    if not isinstance(table, dict):
+        table = {}
+        config[section] = table
+    if value is None:
+        table.pop(key, None)
+    else:
+        table[key] = value
+    save_config(config)
 
 
 def save_folder(current: str, recent: list[str] | None = None) -> None:

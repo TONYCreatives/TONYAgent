@@ -32,7 +32,11 @@ from tonyagent.config.migration import load_section
 from tonyagent.config.settings import ToolsSettings
 from tonyagent.core.events import EventBus
 from tonyagent.core.session import AgentSession, _default_max_tool_calls
-from tonyagent.tools.shell_tools import _is_command_allowed, _tool_lists, denylist_reason
+from tonyagent.tools.shell_tools import (
+    _is_command_allowed,
+    denylist_reason,
+    effective_command_lists,
+)
 
 
 @pytest.fixture
@@ -168,7 +172,7 @@ def test_a_hand_written_deny_list_cannot_shorten_the_floor(isolated_config):
         isolated_config,
         {"tools": {"command_denylist": [r"\bcurl\b"]}, "meta": {"version": 2}},
     )
-    _allow, deny = _tool_lists()
+    _allow, deny = effective_command_lists()
     assert r"\bcurl\b" in deny, "the hand-written pattern is in force"
     assert deny[: len(ToolsSettings().command_denylist)] == ToolsSettings().command_denylist
 

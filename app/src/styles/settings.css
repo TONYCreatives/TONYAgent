@@ -1043,3 +1043,169 @@
 .permchoice-list .permchoice-item.is-active {
   border-left-color: var(--accent);
 }
+
+/* --- the command allow-list ----------------------------------------------- */
+
+/*
+ * The allowed programs, as chips that wrap.
+ *
+ * A wrapped row rather than a line each. These are short names -- `python`,
+ * `git`, `npm` -- and eleven of them one per line would be a page of its own
+ * between the permission ladder and the thinking dial. The chip is the stadium
+ * this app already uses for a small tag, at the height of the controls beside
+ * it rather than of a row.
+ */
+.settings-commands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-command {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 24px;
+  /* Asymmetric on purpose: the x is a disc with its own padding, so the name
+     gets the room and the button sits in the gap that is left. */
+  padding: 0 3px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--input);
+  color: var(--fg);
+  font-size: var(--text-xs);
+}
+
+/*
+ * Monospace, because a program name is a token the user may have to spell
+ * exactly: `python3` and `python` are different programs, and the mono face is
+ * where that difference is visible at a glance.
+ */
+.settings-command-name {
+  font-family: var(--mono);
+}
+
+/*
+ * The x on a chip. `.settings-unkey`'s smaller twin, and the same pairing: the
+ * disc is the hit target, and the hover colour is the one that says this is the
+ * control that removes something.
+ */
+.settings-command-drop {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  color: var(--fg-mute);
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.settings-command-drop:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--danger);
+}
+
+.settings-command-drop:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* --- a disclosure inside a group ------------------------------------------ */
+
+/*
+ * Release notes, and the deny list.
+ *
+ * Unstyled until now, which left the platform's own triangle in the platform's
+ * own colour on a panel where every other mark is drawn -- the one control in
+ * this window that visibly came from another application, which is the same
+ * complaint that moved the permission ladder in here.
+ *
+ * The marker is `▾`, the glyph both pickers in this panel already draw for
+ * "there is more under this", rotated rather than swapped so the open state is
+ * a movement.
+ */
+.settings-notes {
+  margin: 10px 0 0;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+}
+
+.settings-notes > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--fg-mute);
+  /* The native marker goes, and the drawn one takes its place. */
+  list-style: none;
+  transition: color var(--motion-fast) ease;
+}
+
+.settings-notes > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-notes > summary::before {
+  content: "▾";
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  transform: rotate(-90deg);
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.settings-notes[open] > summary::before {
+  transform: rotate(0deg);
+}
+
+.settings-notes > summary:hover {
+  color: var(--fg);
+}
+
+/* The prose inside a disclosure is its own note, indented to the summary's
+   text rather than to the marker, so the two start on one column. */
+.settings-notes > .settings-note {
+  margin: 8px 0 8px 14px;
+}
+
+.settings-notes pre {
+  margin: 8px 0 0 14px;
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  /* A release note is prose with line breaks, and GitHub's own wrapping is not
+     this panel's: `pre-wrap` keeps the breaks and lets a long line come back
+     rather than run under the scroll edge. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * The deny list, as the patterns they are.
+ *
+ * One per line and in mono, because they are regexes: wrapped mid-pattern, one
+ * reads as a different pattern -- and the difference between `\brm\b` and `rm`
+ * is the whole reason this list exists.
+ */
+.settings-denylist {
+  display: grid;
+  gap: 3px;
+  margin: 0 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-denylist code {
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}

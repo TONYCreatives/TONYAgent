@@ -271,6 +271,25 @@ export interface CoreMethods {
   "tools.get": Record<string, never>;
   /** One is the floor: zero would refuse every tool, not make a small budget. */
   "tools.set": { max_tool_calls: number };
+  /**
+   * The settings page's read.
+   *
+   * Both command lists, as the shell gate will read them: the allow-list the
+   * file holds, and the deny list the core unions with it. Read from the tool
+   * layer rather than the file, so what the page draws is the list a turn is
+   * held to rather than the half of it the file happens to carry.
+   */
+  "settings.get": Record<string, never>;
+  /**
+   * The settings page's write.
+   *
+   * `key` is dotted -- `section.name` -- and has to be one the core will
+   * accept; anything else is refused rather than written. A `value` of null
+   * means *unset*: remove the key and go back to the default, which is what
+   * "Restore defaults" sends. The reply carries the value now in force, read
+   * back the way the next turn reads it.
+   */
+  "settings.set": { key: string; value: unknown };
   search: {
     pattern: string;
     path?: string;

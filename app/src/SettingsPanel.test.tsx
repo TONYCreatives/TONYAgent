@@ -23,6 +23,7 @@ import { describe, test } from "node:test";
 import {
   SettingsPanel,
   updateMessage,
+  type CommandSettings,
   type KeyEntry,
   type ProviderInfo,
   type UpdateAnswer,
@@ -42,6 +43,19 @@ const LIST: KeyEntry[] = [
   { provider: "openrouter", name: "work", active: false },
   { provider: "opencode-go", name: "go", active: true },
 ];
+
+/**
+ * What `settings.get` answers with, in the shape the core sends it.
+ *
+ * The deny list is short here on purpose: it is a read-out in this panel, so
+ * what the tests need from it is that it is drawn and that there is no way to
+ * edit it -- not that all fifteen of the core's patterns survive the round trip.
+ */
+const COMMANDS: CommandSettings = {
+  command_allowlist: ["python", "git", "npm"],
+  command_allowlist_defaults: ["python", "python3", "node", "npm", "git"],
+  command_denylist: ["\\brm\\b[^|;&]*\\s-[a-z]*r[a-z]*", "shutdown"],
+};
 
 interface Overrides {
   providers?: ProviderInfo[];
@@ -64,6 +78,9 @@ interface Overrides {
   onSaveKey?: (provider: string, name: string, key: string) => Promise<boolean>;
   onListKeys?: (provider?: string) => Promise<KeyEntry[]>;
   onApplyEndpoint?: (url: string) => void;
+  commands?: CommandSettings | null;
+  onListCommands?: () => Promise<CommandSettings | null>;
+  onSetCommands?: (names: string[] | null) => Promise<string[] | null>;
 }
 
 function panel(overrides: Overrides = {}) {
@@ -105,6 +122,11 @@ function panel(overrides: Overrides = {}) {
       onRevealKey={overrides.onRevealKey ?? (async () => null)}
       onActivateKey={overrides.onActivateKey ?? (async () => true)}
       onListKeys={overrides.onListKeys ?? (async () => overrides.keys ?? LIST)}
+      onListCommands={overrides.onListCommands ?? (async () => overrides.commands ?? COMMANDS)}
+      onSetCommands={
+        overrides.onSetCommands ??
+        (async (names) => names ?? (overrides.commands ?? COMMANDS).command_allowlist_defaults)
+      }
     />
   );
 }
@@ -154,9 +176,13 @@ describe("the settings tabs", () => {
   test("it opens on the permission ladder, which is what the panel led with", async () => {
     // The tab is labelled Behavior and the section inside it is Permission: the
     // tab names the page, the heading names the control. See `SETTINGS_TABS`.
+    //
+    // Behavior carries a second group now -- the command allow-list, which is
+    // the list the ladder's ceiling is checked against. It is still the first
+    // heading, so the panel still opens on the permissions.
     const container = await render(panel());
 
-    assert.deepEqual(headings(container), ["Permission"]);
+    assert.deepEqual(headings(container), ["Permission", "Commands"]);
     assert.equal(
       one(container, ".settings-key-new"),
       null,
@@ -246,7 +272,7 @@ describe("the desktop pet, from the settings pane", () => {
     const container = await render(panel());
     assert.deepEqual(
       headings(container),
-      ["Permission"],
+      ["Permission", "Commands"],
       "the panel stopped opening on the permissions",
     );
 
@@ -808,5 +834,191 @@ describe("what the update check says", () => {
       all(container, ".btn").some((b) => /download the installer/i.test(b.textContent ?? "")),
       false,
     );
+  });
+});
+
+/**
+ * The command allow-list, on the Behavior tab.
+ *
+ * The list is the one the shell gate checks a command's first word against, so
+ * the tests here are about the round trip rather than the drawing: what is sent
+ * when a chip is dropped or a name is typed, and what is *not* sent. The deny
+ * list is the security half -- it is a read-out, and there must be no way to cut
+ * it from this page.
+ */
+describe("the command allow-list", () => {
+  const group = (container: HTMLElement) => section(container, "Commands")!;
+  const chips = (container: HTMLElement) =>
+    all(group(container), ".settings-command-name").map((n) => (n.textContent ?? "").trim());
+  const drops = (container: HTMLElement) => all(group(container), ".settings-command-drop");
+  const field = (container: HTMLElement) =>
+    one(group(container), '[aria-label="Add a program to the allow-list"]') as HTMLInputElement;
+  const addButton = (container: HTMLElement) =>
+    all(group(container), ".btn").find((b) => /^add$/i.test((b.textContent ?? "").trim()))!;
+  const restore = (container: HTMLElement) =>
+    all(group(container), ".btn").find((b) => /restore defaults/i.test(b.textContent ?? ""));
+
+  test("it is on Behavior, beside the ladder it is checked against", async () => {
+    // Not a tab of its own: the ladder is the ceiling on what a turn may do and
+    // this is the list underneath it, so a page that asked "how much may it do"
+    // and answered with only the ceiling would be answering half the question.
+    const container = await render(panel());
+    assert.deepEqual(chips(container), ["python", "git", "npm"]);
+  });
+
+  test("the list comes from the core rather than from the panel", async () => {
+    // A window that drew its own copy would be describing rules nobody is held
+    // to -- the same reason `tools.get` reads the session and not the file.
+    let asked = 0;
+    const container = await render(
+      panel({
+        onListCommands: async () => {
+          asked += 1;
+          return COMMANDS;
+        },
+      }),
+    );
+    await wait(0);
+    assert.equal(asked, 1, "the group did not read the list");
+    assert.deepEqual(chips(container), ["python", "git", "npm"]);
+  });
+
+  test("dropping a chip sends the list without it", async () => {
+    const sent: (string[] | null)[] = [];
+    const container = await render(
+      panel({
+        onSetCommands: async (names) => {
+          sent.push(names);
+          return names;
+        },
+      }),
+    );
+
+    await click(drops(container)[1]);
+    await wait(0);
+
+    assert.deepEqual(sent, [["python", "npm"]], "git was not the one dropped");
+    assert.deepEqual(chips(container), ["python", "npm"]);
+  });
+
+  test("a typed name is appended, and the field is cleared when it took", async () => {
+    const sent: (string[] | null)[] = [];
+    const container = await render(
+      panel({
+        onSetCommands: async (names) => {
+          sent.push(names);
+          return names;
+        },
+      }),
+    );
+
+    await setValue(field(container), "cargo");
+    await click(addButton(container));
+    await wait(0);
+
+    assert.deepEqual(sent, [["python", "git", "npm", "cargo"]]);
+    assert.equal(field(container).value, "", "the field kept a name that was added");
+  });
+
+  test("the field is cleared by what the core stored, not by what was typed", async () => {
+    // The core trims, folds duplicates and refuses a name that could never
+    // match, so the rows are redrawn from its answer.
+    const container = await render(
+      panel({ onSetCommands: async () => ["python", "git", "npm", "cargo"] }),
+    );
+    await setValue(field(container), "  cargo  ");
+    await click(addButton(container));
+    await wait(0);
+
+    assert.deepEqual(chips(container), ["python", "git", "npm", "cargo"]);
+  });
+
+  test("a write that did not take says so and keeps the list it had", async () => {
+    // For these settings the config file is the store, so a failed write means
+    // nothing changed -- unlike the tool budget, which the session holds.
+    const container = await render(panel({ onSetCommands: async () => null }));
+    await setValue(field(container), "cargo");
+    await click(addButton(container));
+    await wait(0);
+
+    assert.deepEqual(chips(container), ["python", "git", "npm"]);
+    assert.match(group(container).textContent ?? "", /could not save/i);
+    assert.equal(field(container).value, "cargo", "the name was thrown away");
+  });
+
+  test("Restore defaults sends null, and is offered only when it means something", async () => {
+    // Null is *unset*: the key comes out of the file so the core's own list
+    // applies, rather than a copy of today's default being frozen into it.
+    const sent: (string[] | null)[] = [];
+    const container = await render(
+      panel({
+        onSetCommands: async (names) => {
+          sent.push(names);
+          return names ?? COMMANDS.command_allowlist_defaults;
+        },
+      }),
+    );
+
+    await click(restore(container)!);
+    await wait(0);
+
+    assert.deepEqual(sent, [null]);
+    assert.deepEqual(chips(container), COMMANDS.command_allowlist_defaults);
+    assert.equal(restore(container), undefined, "offered again for a list that is the default");
+  });
+
+  test("an empty list is drawn as a state, not as an absence", async () => {
+    // "Nothing is allowed" and "the list has not been read" are different
+    // claims, and only one of them is about the user's settings.
+    const container = await render(
+      panel({ commands: { ...COMMANDS, command_allowlist: [] } }),
+    );
+    assert.match(group(container).textContent ?? "", /nothing is allowed/i);
+    assert.deepEqual(chips(container), []);
+  });
+
+  test("the deny list is drawn, and there is no control that edits it", async () => {
+    // It is a floor: the core's own patterns plus whatever the file adds, and
+    // the file cannot shorten it. A control here would be offering to cut it.
+    const container = await render(panel());
+    const readout = one(group(container), ".settings-denylist")!;
+
+    assert.deepEqual(
+      all(readout, "code").map((c) => (c.textContent ?? "").trim()),
+      COMMANDS.command_denylist,
+    );
+    assert.equal(
+      all(readout, "button").length,
+      0,
+      "the deny list grew an editor",
+    );
+    assert.equal(
+      all(group(container), "input[type='checkbox']").length,
+      0,
+      "the deny list grew a switch",
+    );
+  });
+
+  test("nothing is read or written while the core is down", async () => {
+    const sent: (string[] | null)[] = [];
+    let asked = 0;
+    const container = await render(
+      panel({
+        connected: false,
+        onListCommands: async () => {
+          asked += 1;
+          return COMMANDS;
+        },
+        onSetCommands: async (names) => {
+          sent.push(names);
+          return names;
+        },
+      }),
+    );
+    await wait(0);
+
+    assert.equal(asked, 0, "the group asked a core that is not running");
+    assert.equal(field(container).disabled, true);
+    assert.equal((addButton(container) as HTMLButtonElement).disabled, true);
   });
 });

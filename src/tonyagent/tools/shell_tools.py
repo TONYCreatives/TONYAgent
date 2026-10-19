@@ -172,7 +172,7 @@ def bounded_timeout(timeout: Any) -> int:
     return max(1, min(wanted, MAX_TIMEOUT_S))
 
 
-def _tool_lists() -> tuple[list[str], list[str]]:
+def effective_command_lists() -> tuple[list[str], list[str]]:
     """The allow and deny lists as they stand *now*, from the config file.
 
     Read per call rather than captured at import. The settings page writes these
@@ -192,6 +192,11 @@ def _tool_lists() -> tuple[list[str], list[str]]:
     not to trust, and at Full it is the only thing between the agent and the
     host -- so it is a floor. The settings page shows it rather than editing it.
     The allow list is a genuine choice of the user's, and the file owns it.
+
+    Public because the settings page reports what this returns rather than what
+    the file holds: the deny list a turn is held to is the union, and a panel
+    that showed the file's half of it would be describing a list nobody is
+    using.
     """
     from tonyagent.config.migration import load_section
 
@@ -211,10 +216,10 @@ def denylist_reason(command: str, patterns: list[str] | None = None) -> str | No
     disagreeing about ``rm -rf /``. One function, both callers.
 
     ``patterns`` is for the caller that has already read them. Left out, they
-    are read here -- see ``_tool_lists``.
+    are read here -- see ``effective_command_lists``.
     """
     if patterns is None:
-        patterns = _tool_lists()[1]
+        patterns = effective_command_lists()[1]
     normalized = normalize_for_denylist(command)
     for deny_pattern in patterns:
         if re.search(deny_pattern, normalized):
@@ -244,7 +249,7 @@ def _is_command_allowed(command: str, bypass_allowlist: bool = False) -> tuple[b
 
     # Read once and hand the deny list on: both lists come from the same
     # section, and `denylist_reason` is the one place the deny loop lives.
-    allow_patterns, deny_patterns = _tool_lists()
+    allow_patterns, deny_patterns = effective_command_lists()
 
     # Check denylist first, unconditionally. Shared with `execute_js` -- see
     # `denylist_reason` above for why there is one loop and not two.

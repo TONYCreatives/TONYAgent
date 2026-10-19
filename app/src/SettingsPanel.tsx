@@ -107,6 +107,21 @@ export interface KeyEntry {
 }
 
 /**
+ * The command lists, as `settings.get` reports them.
+ *
+ * `command_denylist` is what a turn is held to -- the core's own patterns plus
+ * anything the config file adds -- and it is here to be read rather than
+ * edited. `command_allowlist_defaults` is what "Restore defaults" goes back to,
+ * sent by the core so this component does not hold a copy of a list the core
+ * owns and would go stale the day the list changes.
+ */
+export interface CommandSettings {
+  command_allowlist: string[];
+  command_allowlist_defaults: string[];
+  command_denylist: string[];
+}
+
+/**
  * The panel's sections, as tabs.
  *
  * Four, because there are four questions in here and they get asked at
@@ -238,6 +253,26 @@ interface Props {
    * saying so if the delete had failed.
    */
   onListKeys: (provider?: string) => Promise<KeyEntry[]>;
+  /**
+   * The command lists, as the core reports them.
+   *
+   * Resolves to null when the core will not answer, which the group draws as
+   * "not read yet" rather than as an empty list: "nothing is allowed" and "I
+   * could not ask" are different claims, and only one of them is about the
+   * user's settings.
+   */
+  onListCommands: () => Promise<CommandSettings | null>;
+  /**
+   * Replace the command allow-list, or pass null to go back to the defaults.
+   *
+   * Resolves to the list now in force, or null when the write did not take.
+   * The value rather than a boolean, because the core normalises what it stores
+   * -- it trims, folds duplicates and refuses a name that could never match --
+   * and a panel that kept its own copy would go on showing the list as typed.
+   * For these settings the config file *is* the store, so a failed write means
+   * nothing changed at all.
+   */
+  onSetCommands: (names: string[] | null) => Promise<string[] | null>;
 }
 
 /** How long a revealed key stays on screen before it hides itself. */
@@ -303,6 +338,44 @@ function TrashIcon() {
   );
 }
 
+/**
+ * The remove glyph for one allowed program.
+ *
+ * An x rather than the bin the key rows carry: a row here is a chip in a
+ * wrapped list, and the bin is the wider of the two marks.
+ */
+function DropIcon() {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M6 6l12 12M18 6L6 18" />
+    </svg>
+  );
+}
+
+/**
+ * Whether two program lists hold the same names.
+ *
+ * Order and case aside, because both are incidental to the rule: the match is
+ * case-insensitive, and the list is drawn in the order it was written. This is
+ * what decides whether "Restore defaults" is worth offering, and a second
+ * button for a list that is already the default is a control that does nothing.
+ */
+function sameNames(left: string[], right: string[]): boolean {
+  const fold = (list: string[]) => list.map((name) => name.toLowerCase()).sort();
+  const a = fold(left);
+  const b = fold(right);
+  return a.length === b.length && a.every((name, index) => name === b[index]);
+}
+
 export function SettingsPanel({
   connected,
   busy,
@@ -340,6 +413,8 @@ export function SettingsPanel({
   onRevealKey,
   onActivateKey,
   onListKeys,
+  onListCommands,
+  onSetCommands,
 }: Props) {
   const [tab, setTab] = useState<SettingsTab>("permission");
 
@@ -365,6 +440,15 @@ export function SettingsPanel({
     null,
   );
   const rowTimer = useRef(0);
+
+  // The command lists, as the core last reported them. Null means "not read",
+  // which is drawn differently from an empty list -- see `onListCommands`.
+  const [commands, setCommands] = useState<CommandSettings | null>(null);
+  const [commandsBusy, setCommandsBusy] = useState(false);
+  const [commandsNotice, setCommandsNotice] = useState<string | null>(null);
+  // The program name being typed. Held here rather than in the core: it is not
+  // a setting until it is added, and a half-typed word is not a rule.
+  const [draftProgram, setDraftProgram] = useState("");
 
   // Adopt whatever the core reports, but only when the panel is not mid-edit:
   // an incoming event must not silently discard a half-typed endpoint.
@@ -422,6 +506,55 @@ export function SettingsPanel({
     void refreshKeys();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, tab]);
+
+  /** Re-read the command lists. */
+  const refreshCommands = async () => {
+    if (!connected) {
+      setCommands(null);
+      return;
+    }
+    setCommands(await onListCommands());
+  };
+
+  useEffect(() => {
+    // On Behavior, which is where the group is -- and Behavior is the tab the
+    // page opens on, so this is one call when Settings opens and nothing after.
+    if (tab !== "permission") return;
+    void refreshCommands();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, tab]);
+
+  /**
+   * Write the allow-list, or put the defaults back.
+   *
+   * The core answers with the list now in force, so the rows are redrawn from
+   * what it confirmed rather than from what was sent: it trims, folds
+   * duplicates and refuses a name that could never match, and the list on
+   * screen is the one the next command is held to.
+   */
+  const applyCommands = async (names: string[] | null): Promise<boolean> => {
+    setCommandsBusy(true);
+    setCommandsNotice(null);
+    const applied = await onSetCommands(names);
+    setCommandsBusy(false);
+    if (!applied) {
+      setCommandsNotice("Could not save the command list.");
+      return false;
+    }
+    setCommands((previous) =>
+      previous ? { ...previous, command_allowlist: applied } : previous,
+    );
+    return true;
+  };
+
+  /** Add the name in the field, then clear it if it took. */
+  const addProgram = async () => {
+    const name = draftProgram.trim();
+    if (!name || !commands) return;
+    if (await applyCommands([...commands.command_allowlist, name])) {
+      setDraftProgram("");
+    }
+  };
 
   /** Put a revealed row away again. Only the value this control fetched. */
   const hideRow = () => {
@@ -626,6 +759,136 @@ export function SettingsPanel({
                 />
               </section>
             )}
+
+            {/*
+              The programs the agent may run.
+
+              On Behavior rather than on a tab of its own, because that is what
+              this tab's own heading asks: the permission ladder is the ceiling
+              on what a turn may do, and this is the list it is checked against
+              underneath that ceiling. Full is the one rung that bypasses it, so
+              the note says so -- a user who has just widened the ladder needs to
+              know the list below stopped applying.
+
+              The deny list is a read-out, not an editor. It is the handful of
+              commands that destroy the machine rather than a set the app happens
+              not to trust, and the core unions it with whatever the file adds --
+              so a control here that could cut it would be offering to shorten a
+              floor. See `effective_command_lists`.
+            */}
+            <section className="settings-group">
+              <h3>Commands</h3>
+              <p className="settings-note">
+                The programs the agent may run. A command is matched against this
+                list by name, and anything else is refused -- except at Full,
+                which is the one level that runs outside it.
+              </p>
+
+              {commands && commands.command_allowlist.length === 0 ? (
+                <p className="settings-hint">
+                  Nothing is allowed, so no command runs outside the list below.
+                  Only Full will run one.
+                </p>
+              ) : (
+                <ul className="settings-commands">
+                  {(commands?.command_allowlist ?? []).map((name) => (
+                    <li key={name} className="settings-command">
+                      <span className="settings-command-name">{name}</span>
+                      <button
+                        type="button"
+                        className="settings-command-drop"
+                        title={"Stop allowing " + name}
+                        aria-label={"Stop allowing " + name}
+                        disabled={!connected || commandsBusy}
+                        onClick={() =>
+                          void applyCommands(
+                            (commands?.command_allowlist ?? []).filter(
+                              (one) => one !== name,
+                            ),
+                          )
+                        }
+                      >
+                        <DropIcon />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/*
+                Enter adds, as well as the button. The field holds one word, so
+                a key that does the obvious thing costs nothing and saves the
+                trip to the mouse -- the same pair the key rows' fields use.
+              */}
+              <div className="settings-row">
+                <input
+                  className="settings-input"
+                  type="text"
+                  value={draftProgram}
+                  onChange={(e) => {
+                    setDraftProgram(e.target.value);
+                    setCommandsNotice(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void addProgram();
+                    }
+                  }}
+                  placeholder="Add a program name"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  disabled={!connected || commandsBusy}
+                  aria-label="Add a program to the allow-list"
+                />
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={!connected || commandsBusy || !draftProgram.trim()}
+                  onClick={() => void addProgram()}
+                >
+                  Add
+                </button>
+              </div>
+
+              {commands && !sameNames(commands.command_allowlist, commands.command_allowlist_defaults) && (
+                <div className="settings-row">
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={!connected || commandsBusy}
+                    onClick={() => void applyCommands(null)}
+                  >
+                    Restore defaults
+                  </button>
+                </div>
+              )}
+
+              {commandsNotice && <p className="settings-hint">{commandsNotice}</p>}
+
+              <details className="settings-notes">
+                <summary>
+                  {commands
+                    ? commands.command_denylist.length +
+                      " commands are always refused"
+                    : "Commands that are always refused"}
+                </summary>
+                <p className="settings-note">
+                  Patterns matched against the whole command and checked before
+                  the allow-list, so they hold at every permission level. This
+                  list belongs to the core and cannot be shortened from here.
+                </p>
+                <ul className="settings-denylist">
+                  {(commands?.command_denylist ?? []).map((pattern) => (
+                    <li key={pattern}>
+                      <code>{pattern}</code>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </section>
           </>
         )}
 

@@ -18,6 +18,7 @@ from tonyagent.config.migration import (
     get_active_key_name,
     load_config,
     load_key_names,
+    load_section,
     remove_key_name,
     reset_config,
     save_config,
@@ -26,6 +27,7 @@ from tonyagent.config.migration import (
     save_max_tool_calls,
     save_provider_selection,
     save_reasoning_effort,
+    save_section_value,
     set_active_key_name,
 )
 from tonyagent.config.settings import (
@@ -66,6 +68,7 @@ __all__ = [
     "get_active_key_name",
     "load_config",
     "load_key_names",
+    "load_section",
     "remove_key_name",
     "reset_config",
     "save_config",
@@ -74,5 +77,6 @@ __all__ = [
     "save_max_tool_calls",
     "save_provider_selection",
     "save_reasoning_effort",
+    "save_section_value",
     "set_active_key_name",
 ]

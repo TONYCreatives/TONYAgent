@@ -40,7 +40,7 @@ import { QuestionDialog } from "./QuestionDialog.js";
 import { SearchPanel, type SearchMatch } from "./SearchPanel.js";
 import type { PermissionList, ReasoningInfo } from "./SettingsMenus.js";
 import type { SkillInfo } from "./SkillPicker.js";
-import { SettingsPanel, type KeyEntry, type ProviderInfo, type UpdateAnswer, type UpdateDownload } from "./SettingsPanel.js";
+import { SettingsPanel, type CommandSettings, type KeyEntry, type ProviderInfo, type UpdateAnswer, type UpdateDownload } from "./SettingsPanel.js";
 import { StatusBar } from "./StatusBar.js";
 import { TopBar, type Tab } from "./TopBar.js";
 import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount.js";
@@ -2012,6 +2012,51 @@ export function App({
     [provider, model, applyBinding],
   );
 
+  /**
+   * The command lists, as the core reports them.
+   *
+   * Read from the core rather than assembled here. The deny list the panel
+   * draws is the union the shell gate enforces -- the core's own patterns plus
+   * whatever the config file adds -- and the core is also what normalises a
+   * name and refuses one that could never match. A window that kept its own
+   * copy would be describing rules nobody is held to.
+   */
+  const listCommands = useCallback(async (): Promise<CommandSettings | null> => {
+    try {
+      const reply = (await backendRef.current!.call("settings.get")) as {
+        tools?: CommandSettings;
+      };
+      return reply?.tools ?? null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  /**
+   * Replace the command allow-list, or put the defaults back with null.
+   *
+   * Resolves to the list now in force, or null when the write did not take.
+   * Unlike the tool budget -- which the session holds in memory and so keeps
+   * even when the save fails -- the config file *is* the store for these, so a
+   * failed write means nothing changed and the panel has to say so rather than
+   * draw the list that was typed.
+   */
+  const setCommands = useCallback(
+    async (names: string[] | null): Promise<string[] | null> => {
+      try {
+        const reply = (await backendRef.current!.call("settings.set", {
+          key: "tools.command_allowlist",
+          value: names,
+        })) as { value?: string[]; persisted?: boolean };
+        if (!reply?.persisted) return null;
+        return Array.isArray(reply.value) ? reply.value : null;
+      } catch {
+        return null;
+      }
+    },
+    [],
+  );
+
   const search = useCallback(async (pattern: string): Promise<SearchMatch[]> => {
     const result = (await backendRef.current!.call("search", { pattern })) as {
       matches?: SearchMatch[];
@@ -2526,6 +2571,8 @@ export function App({
             onRevealKey={revealKey}
             onActivateKey={activateKey}
             onListKeys={listKeys}
+            onListCommands={listCommands}
+            onSetCommands={setCommands}
             update={update}
             updateChecking={updateChecking}
             updateFetching={updateFetching}
