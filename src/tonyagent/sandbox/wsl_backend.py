@@ -48,6 +48,7 @@ from typing import Optional
 from loguru import logger
 
 from tonyagent.sandbox.base import (
+    NO_WINDOW,
     SandboxBackend,
     SandboxConfig,
     SandboxStatus,
@@ -131,6 +132,7 @@ def detect_wsl_distro() -> Optional[str]:
             [wsl, "-l", "-v"],
             capture_output=True,
             timeout=15,
+            creationflags=NO_WINDOW,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         logger.debug(f"wsl -l -v failed: {exc}")
@@ -227,6 +229,7 @@ class WslSandboxBackend(SandboxBackend):
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                creationflags=NO_WINDOW,
             )
 
             # Read responses before the first ping, or the pong lands nowhere.
@@ -416,6 +419,7 @@ class WslSandboxBackend(SandboxBackend):
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            creationflags=NO_WINDOW,
         )
         stdout, stderr = await process.communicate(payload)
         if process.returncode != 0:
@@ -517,6 +521,7 @@ class WslSandboxBackend(SandboxBackend):
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            creationflags=NO_WINDOW,
         )
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)

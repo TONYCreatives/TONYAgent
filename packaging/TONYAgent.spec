@@ -41,6 +41,29 @@ datas = [
     (str(ROOT / "app" / "dist"), "app/dist"),
     (str(ROOT / "app" / "icons"), "app/icons"),
     (str(ROOT / "logo"), "logo"),
+    # **The sandbox RPC server, which is a script rather than an import.**
+    #
+    # `docker/sandbox/rpc_server.py` is loaded *by path*, not imported: the
+    # container runs it as its main process, the local runtime execs it inside
+    # the agent's own process, and the WSL backend stages it into the distro --
+    # all three through `local_backend.find_rpc_server`. Nothing imports it, so
+    # PyInstaller never sees it and the bundle shipped without it, which meant
+    # the installed app could not start a runtime at all:
+    #
+    #     Local sandbox runtime failed to start: rpc_server.py not found.
+    #     Looked in: C:\Program Files\TONYAgent\_internal\tonyagent_sandbox\
+    #     rpc_server.py, C:\Program Files\TONYAgent\docker\sandbox\rpc_server.py
+    #
+    # That is the *Docker-free* runtime -- the one whose whole purpose is to
+    # work where nothing else does -- so every machine without a running Docker
+    # daemon had no runtime, and `sandbox.start` answered `running: false`. The
+    # project-folder picker reads that as "the folder did not take" and leaves
+    # the old one open.
+    #
+    # The destination directory is the one `find_rpc_server` looks in under
+    # `sys._MEIPASS`; the two have to agree, and
+    # `tests/unit/test_frozen_bundle.py` is what holds them together.
+    (str(ROOT / "docker" / "sandbox" / "rpc_server.py"), "tonyagent_sandbox"),
 ]
 
 # pywebview ships its JavaScript and the WebView2 .NET assemblies as data, and

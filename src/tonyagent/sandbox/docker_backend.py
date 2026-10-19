@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from tonyagent.sandbox.base import (
+    NO_WINDOW,
     SandboxBackend,
     SandboxConfig,
     SandboxStatus,
@@ -92,6 +93,7 @@ class DockerSandboxBackend(SandboxBackend):
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                creationflags=NO_WINDOW,
             )
 
             # Start the response reader BEFORE any RPC so ping replies land.

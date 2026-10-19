@@ -8,8 +8,35 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 import asyncio
+import subprocess
 
 from tonyagent.folder import folder_manager
+
+
+#: Suppress a child's console window.
+#:
+#: **The core is a windowed process, so its console children get windows of
+#: their own.** The core runs as a child of the host's GUI process and is built
+#: for the window subsystem, so it has no console to inherit. Windows answers
+#: that by giving every console program it spawns a *new* console, which it
+#: opens as a window and closes when the child exits. The user sees a black
+#: rectangle appear and vanish, once per spawn.
+#:
+#: A folder change spawns several before a sandbox is up. The distro probe, the
+#: host-to-distro path translation, the RPC server staging, the server itself, a
+#: capability probe and the teardown are seven ``wsl.exe`` runs, and Windows puts
+#: *two* windows on screen for each one -- Windows Terminal's and the console
+#: host's -- so a single folder change was measured at fourteen shown windows,
+#: appearing and vanishing over about eight seconds. That is the "cmd window
+#: appears and closes several times" on the project-folder picker, and it is also
+#: why the picker looked like it did nothing: the flashes were the only sign of
+#: work.
+#:
+#: The host's own two spawns already asked for this (`window/core.py`,
+#: `window/update.py`); the sandbox did not. A spawn in this package that omits
+#: it is a regression -- `tests/unit/test_frozen_bundle.py` walks the package
+#: and fails on one.
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 class SandboxStatus(str, Enum):
@@ -412,10 +439,10 @@ class SandboxManager:
         import sys
         if sys.platform == "win32":
             try:
-                import subprocess
                 result = subprocess.run(
                     ["dism", "/online", "/get-featureinfo", "/featurename:Containers-DisposableClientVM"],
-                    capture_output=True, text=True, timeout=10
+                    capture_output=True, text=True, timeout=10,
+                    creationflags=NO_WINDOW,
                 )
                 if "State : Enabled" in result.stdout:
                     return "windows"
