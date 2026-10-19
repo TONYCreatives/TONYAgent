@@ -79,16 +79,22 @@ _UNRESOLVED = object()
 
 
 def _default_max_tool_calls() -> int:
-    """The per-turn tool budget, from settings, with a floor of one.
+    """The per-turn tool budget, from the config file, with a floor of one.
 
     A limit of zero would refuse every tool, which is not a small budget --
     it is a different product, expressed by removing tools from the model
     list. So the floor is one call rather than none.
+
+    Read through :func:`load_section`, which is what makes the number the
+    composer's budget control wrote come *back*. It was written to
+    ``config.toml`` and read from ``settings``, which is environment-only, so
+    every launch started on the default 10 whatever the file said -- a budget of
+    200 looked saved and was never once in force.
     """
     try:
-        from tonyagent.config.settings import settings
+        from tonyagent.config.migration import load_section
 
-        stored = int(settings.tools.max_tool_calls)
+        stored = int(load_section("tools").max_tool_calls)
         # 0 is the no-limit sentinel and survives a restart; anything below it
         # was never a budget and is corrected to the floor.
         return stored if stored == 0 else max(1, stored)
@@ -329,7 +335,6 @@ class AgentSession:
         way to restart a sandbox on an already-chosen folder -- raised
         ``NameError: folder_manager`` on every press of the new button.
         """
-        from tonyagent.config.settings import settings
         from tonyagent.folder import folder_manager
         from tonyagent.sandbox import SandboxConfig, get_shared_sandbox_manager
 
@@ -338,24 +343,32 @@ class AgentSession:
             self.emit(EventType.ERROR, {"message": "No project folder selected"})
             return False
 
-        backend_type = "windows" if settings.sandbox.type == "windows" else settings.sandbox.type
+        # Read once, from the file. Every field below is one the settings page
+        # can change, and `settings` is environment-only -- see
+        # `config.migration.load_section` -- so asking it was asking for a
+        # default, and a chosen backend, distro or network setting changed
+        # nothing.
+        from tonyagent.config.migration import load_section
+
+        sandbox_settings = load_section("sandbox")
+        backend_type = sandbox_settings.type
         self.emit(EventType.SANDBOX_STATUS, {"status": "starting", "type": backend_type})
         config = SandboxConfig(
             project_path=path,
             type=backend_type,
-            cpu_limit=settings.sandbox.cpu_limit,
-            memory_limit=settings.sandbox.memory_limit,
-            timeout=settings.sandbox.timeout,
-            enable_network=settings.sandbox.enable_network,
-            pids_limit=settings.sandbox.pids_limit,
-            no_new_privileges=settings.sandbox.no_new_privileges,
-            drop_capabilities=settings.sandbox.drop_capabilities,
-            tmpfs_size_mb=settings.sandbox.tmpfs_size_mb,
-            ulimit_nofile=settings.sandbox.ulimit_nofile,
-            ulimit_nproc=settings.sandbox.ulimit_nproc,
-            workspace_read_only=settings.sandbox.workspace_read_only,
-            container_user=settings.sandbox.container_user,
-            wsl_distro=settings.sandbox.wsl_distro,
+            cpu_limit=sandbox_settings.cpu_limit,
+            memory_limit=sandbox_settings.memory_limit,
+            timeout=sandbox_settings.timeout,
+            enable_network=sandbox_settings.enable_network,
+            pids_limit=sandbox_settings.pids_limit,
+            no_new_privileges=sandbox_settings.no_new_privileges,
+            drop_capabilities=sandbox_settings.drop_capabilities,
+            tmpfs_size_mb=sandbox_settings.tmpfs_size_mb,
+            ulimit_nofile=sandbox_settings.ulimit_nofile,
+            ulimit_nproc=sandbox_settings.ulimit_nproc,
+            workspace_read_only=sandbox_settings.workspace_read_only,
+            container_user=sandbox_settings.container_user,
+            wsl_distro=sandbox_settings.wsl_distro,
         )
         try:
             ok = await get_shared_sandbox_manager().start(config)

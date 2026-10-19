@@ -63,7 +63,10 @@ def test_every_other_section_survives(isolated_config):
         "tools": {"command_allowlist": ["python", "node", "git"], "max_output_size": 12345},
         "sandbox": {"enable_network": True, "memory_limit": "4g"},
         "ui": {"theme": "dark", "font_size": 13},
-        "meta": {"version": 1},
+        # The current version, so the migration does not run. It would drop the
+        # two tool lists -- see `migration.migrate_config`, version 1 -> 2 -- and
+        # this test is about the read-modify-write, not about the migration.
+        "meta": {"version": migration.CURRENT_CONFIG_VERSION},
     }
     _write(isolated_config, seeded)
     migration.save_provider_selection("openrouter", "stealth/space-bunny-alpha", "")

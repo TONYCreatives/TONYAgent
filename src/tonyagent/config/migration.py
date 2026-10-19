@@ -11,7 +11,7 @@ from loguru import logger
 from tonyagent.config.settings import settings
 
 
-CURRENT_CONFIG_VERSION = 1
+CURRENT_CONFIG_VERSION = 2
 
 
 def get_config_path() -> Path:
@@ -55,7 +55,78 @@ def migrate_config(config: dict) -> dict:
             if section not in config:
                 config[section] = default
 
+        version = 1
+
+    if version == 1:
+        # Version 1 -> 2: drop the two tool lists that were written and never
+        # read back.
+        #
+        # `[tools].command_allowlist` and `command_denylist` are the only keys
+        # in this file with that history. Nothing in the core has ever written
+        # them -- the old UI's exit handler wrote the whole config dict once --
+        # and nothing read them either: `settings` is built from the
+        # environment (`model_config` has no toml source) and the shell tools
+        # ask *it*, so the copy in the file was whatever default the version
+        # that wrote it happened to have.
+        #
+        # Left in place it would now win, because the read side is fixed in the
+        # same release -- and the v1 copy is a *safety* regression rather than
+        # a preference. It is missing `python3` and `pip3`, which are the
+        # spellings a WSL distro actually answers to (so `python3 x.py` would
+        # start being refused), and it is missing the `remove-item -recurse`,
+        # `rd /s` and `curl | sh` deny patterns, so the list that stands between
+        # a Full-permission turn and the machine would have got shorter.
+        #
+        # Removed rather than rewritten to today's default: absent means "the
+        # default", so a file carries a list only once somebody has chosen one.
+        logger.info("Migrating config from version 1 to 2 (dropping stale tool lists)")
+        tools = config.get("tools")
+        if isinstance(tools, dict):
+            tools.pop("command_allowlist", None)
+            tools.pop("command_denylist", None)
+
+        version = 2
+
+    config.setdefault("meta", {})["version"] = CURRENT_CONFIG_VERSION
     return config
+
+
+def load_section(name: str):
+    """One config section as a validated settings model.
+
+    **The file is the truth; ``settings`` is only the defaults.** ``settings``
+    is built from the environment (``TONYAGENT_*``) and nothing loads this file
+    into it -- ``model_config`` has no toml source -- so a reader asking
+    ``settings.sandbox.enable_network`` was asking for a *default*, and the
+    ``[sandbox]`` and ``[tools]`` tables written into this file were read by
+    nothing at all. Three things were live in that sense: the per-turn tool
+    budget (``[tools].max_tool_calls``, written by the composer's budget control
+    and restored from nowhere, so every launch came back on 10 whatever the file
+    said), the command lists, and every sandbox field.
+
+    Merged rather than taken whole, so a file written by an older version -- with
+    fewer keys than the model has today -- still answers with the current default
+    for anything it does not mention. A missing or unreadable file is the same
+    case: :func:`load_config` answers with a bare config rather than raising, and
+    the defaults are what a fresh install should get.
+
+    Validated through the section's own model, so a hand-edited file gets the
+    same type checking the environment path has always had -- and a section it
+    cannot validate is *ignored* rather than fatal. A typo in one key must not be
+    the reason the app will not start; it is logged and the defaults are used,
+    which is the same answer as a file that was never written.
+    """
+    from tonyagent.config.settings import settings
+
+    current = getattr(settings, name)
+    stored = load_config().get(name)
+    if not isinstance(stored, dict):
+        return current
+    try:
+        return type(current)(**{**current.model_dump(), **stored})
+    except Exception as exc:  # noqa: BLE001 - a bad edit must not stop a launch
+        logger.warning(f"Ignoring the [{name}] section of config.toml: {exc}")
+        return current
 
 
 def load_config() -> dict:

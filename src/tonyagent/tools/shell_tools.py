@@ -172,7 +172,36 @@ def bounded_timeout(timeout: Any) -> int:
     return max(1, min(wanted, MAX_TIMEOUT_S))
 
 
-def denylist_reason(command: str) -> str | None:
+def _tool_lists() -> tuple[list[str], list[str]]:
+    """The allow and deny lists as they stand *now*, from the config file.
+
+    Read per call rather than captured at import. The settings page writes these
+    while the core is running, and a list read once would keep refusing a program
+    the user has just allowed until the app restarted -- the same "the file said
+    one thing and the tool did another" the file was already guilty of, one
+    restart later. The cost is a parse of a file this size, paid against a
+    command that is about to be executed somewhere.
+
+    See ``config.migration.load_section`` for why the file rather than
+    ``settings``: the model is environment-only, so the copy in the file was
+    never read by anything until this release.
+
+    **The deny list is the code's own patterns plus anything the file adds, and
+    the file cannot shorten it.** That is not symmetry for its own sake: this is
+    the handful of commands that destroy the machine rather than a set we happen
+    not to trust, and at Full it is the only thing between the agent and the
+    host -- so it is a floor. The settings page shows it rather than editing it.
+    The allow list is a genuine choice of the user's, and the file owns it.
+    """
+    from tonyagent.config.migration import load_section
+
+    section = load_section("tools")
+    floor = list(settings.tools.command_denylist)
+    added = [pattern for pattern in section.command_denylist if pattern not in floor]
+    return list(section.command_allowlist), floor + added
+
+
+def denylist_reason(command: str, patterns: list[str] | None = None) -> str | None:
     """The denylist pattern this command matches, or ``None`` if none does.
 
     **Extracted from ``_is_command_allowed`` so the rule has a second
@@ -180,9 +209,14 @@ def denylist_reason(command: str) -> str | None:
     at the Full rung, where the isolation gate is passed without a container
     -- and giving it its own copy of this loop is how two tools end up
     disagreeing about ``rm -rf /``. One function, both callers.
+
+    ``patterns`` is for the caller that has already read them. Left out, they
+    are read here -- see ``_tool_lists``.
     """
+    if patterns is None:
+        patterns = _tool_lists()[1]
     normalized = normalize_for_denylist(command)
-    for deny_pattern in settings.tools.command_denylist:
+    for deny_pattern in patterns:
         if re.search(deny_pattern, normalized):
             return deny_pattern
     return None
@@ -208,9 +242,13 @@ def _is_command_allowed(command: str, bypass_allowlist: bool = False) -> tuple[b
 
     base_cmd = Path(parts[0]).name.lower()
 
+    # Read once and hand the deny list on: both lists come from the same
+    # section, and `denylist_reason` is the one place the deny loop lives.
+    allow_patterns, deny_patterns = _tool_lists()
+
     # Check denylist first, unconditionally. Shared with `execute_js` -- see
-    # `denylist_reason` below for why there is one loop and not two.
-    deny_pattern = denylist_reason(command)
+    # `denylist_reason` above for why there is one loop and not two.
+    deny_pattern = denylist_reason(command, deny_patterns)
     if deny_pattern:
         return False, f"Command matches denylist pattern: {deny_pattern}"
 
@@ -224,7 +262,7 @@ def _is_command_allowed(command: str, bypass_allowlist: bool = False) -> tuple[b
     # what the prefix form admitted.
     allowed = False
     candidates = _allowlist_names(base_cmd)
-    for allow_pattern in settings.tools.command_allowlist:
+    for allow_pattern in allow_patterns:
         if allow_pattern.lower() in candidates:
             allowed = True
             break

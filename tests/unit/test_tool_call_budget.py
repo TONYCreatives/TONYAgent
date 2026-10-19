@@ -549,7 +549,11 @@ class TestPersistence:
         from tonyagent.config import migration, save_max_tool_calls
 
         path = tmp_path / "config.toml"
+        # `version` at the current value, or the v1 -> v2 migration drops the
+        # allowlist before the save even runs -- see
+        # `migration.migrate_config`. This test is about the save.
         path.write_text(
+            f"[meta]\nversion = {migration.CURRENT_CONFIG_VERSION}\n\n"
             '[tools]\nmax_tool_calls = 4\ncommand_allowlist = ["python", "git"]\n',
             encoding="utf-8",
         )
