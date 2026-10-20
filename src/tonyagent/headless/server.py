@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import re
 import sys
 from typing import Any, Callable, TextIO
 
@@ -139,6 +140,108 @@ def _clean_command_list(value: Any) -> list[str] | None:
     return cleaned
 
 
+#: A Docker ``--memory`` value: a number and a unit.
+#:
+#: The unit is required, although Docker would accept bare bytes. "2" is then
+#: two bytes rather than two gigabytes, and a two-byte limit is not a smaller
+#: container -- it is one that cannot start.
+_SIZE = re.compile(r"^\d+(\.\d+)?[bkmg]$", re.IGNORECASE)
+
+#: A Docker ``--cpus`` value. A bare number, because that is what the flag takes.
+_CPUS = re.compile(r"^\d+(\.\d+)?$")
+
+
+def _clean_sandbox_type(value: Any) -> str:
+    """One sandbox backend, restricted to the ones that can actually start.
+
+    ``windows`` is in the settings model and is deliberately not accepted here:
+    ``WsbSandboxBackend`` is a documented stub whose transport methods are all
+    ``pass``, so writing it would configure a sandbox that cannot start. A file
+    that already names it still reads back -- the page draws it rather than
+    pretending it is ``auto`` -- but nothing this window can press selects it.
+    """
+    if not isinstance(value, str):
+        raise RpcError("a sandbox backend must be a name")
+    name = value.strip().lower()
+    if name not in ("auto", "docker", "wsl", "local"):
+        raise RpcError(
+            f"{value!r} is not a sandbox backend. Choose auto, docker, wsl or local."
+        )
+    return name
+
+
+def _clean_distro(value: Any) -> str | None:
+    """A WSL distro name, or None for "whichever one is the default".
+
+    **Not checked against what is installed**, and that is a decision. Asking
+    ``wsl.exe`` here would put a subprocess -- with its own timeout -- in a
+    request the page makes every time it opens, and a wedged WSL would then
+    wedge the settings page rather than one start. A name that does not exist
+    fails at ``sandbox.start``, which already reports what went wrong, and the
+    field is only consulted when the backend is WSL.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise RpcError("a distro name must be text")
+    name = value.strip()
+    if not name:
+        return None
+    if len(name) > 100:
+        raise RpcError("that is too long to be a distro name")
+    return name
+
+
+def _clean_flag(value: Any) -> bool:
+    """A yes/no setting.
+
+    Only a real boolean. ``"false"`` is a truthy string, so a shell script or a
+    hand-written JSON body that sends it would turn network access *on* while
+    reading as off -- the one direction this must never fail in.
+    """
+    if not isinstance(value, bool):
+        raise RpcError("that setting must be true or false")
+    return value
+
+
+def _clean_memory_limit(value: Any) -> str | None:
+    """A memory cap the container will accept, or None for the default.
+
+    Validated here rather than at ``sandbox.start``, where a bad value is a
+    container docker refuses to create and a sentence in the log -- which is
+    exactly the "edit a file and go and look" this page exists to remove.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise RpcError("a memory limit must be text, such as 2g")
+    size = value.strip().lower()
+    if not size:
+        return None
+    if not _SIZE.match(size):
+        raise RpcError(
+            f"{value!r} is not a memory limit. Use a number with a unit, "
+            "such as 2g or 512m."
+        )
+    return size
+
+
+def _clean_cpu_limit(value: Any) -> str | None:
+    """A CPU cap the container will accept, or None for the default."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise RpcError("a CPU limit must be text, such as 2 or 0.5")
+    amount = value.strip()
+    if not amount:
+        return None
+    if not _CPUS.match(amount) or float(amount) <= 0:
+        raise RpcError(
+            f"{value!r} is not a CPU limit. Use a number of cores, such as 2 or 0.5."
+        )
+    return amount
+
+
 #: The settings a window may write: dotted key -> the function that cleans a
 #: proposed value.
 #:
@@ -150,9 +253,47 @@ def _clean_command_list(value: Any) -> list[str] | None:
 #: ``tools.command_denylist`` is deliberately absent. It is a floor rather than
 #: a preference (see ``shell_tools.effective_command_lists``): the page reports
 #: it, and a write is refused by not being on this list.
+#:
+#: The rest of ``[sandbox]`` is absent too. `pids_limit`, `no_new_privileges`,
+#: `drop_capabilities` and the ulimits are the containment the backend
+#: guarantees, not knobs: a page that let them be loosened from a settings
+#: screen would be a page that can turn the sandbox off one switch at a time.
 _EDITABLE_SETTINGS: dict[str, Any] = {
     "tools.command_allowlist": _clean_command_list,
+    "sandbox.type": _clean_sandbox_type,
+    "sandbox.wsl_distro": _clean_distro,
+    "sandbox.enable_network": _clean_flag,
+    "sandbox.memory_limit": _clean_memory_limit,
+    "sandbox.cpu_limit": _clean_cpu_limit,
 }
+
+
+def _sandbox_runtime() -> dict[str, Any]:
+    """Which backend is serving right now, as the page has to name it.
+
+    Read from the manager rather than from the config. The config says what was
+    *asked for*, and the common answer is ``auto``; the manager is what knows
+    which backend that resolved to, which distro it landed in, and whether what
+    runs inside is actually contained. A page that could only echo "Auto" would
+    leave a user unable to tell whether they got the environment they expected,
+    which is the question this card exists to answer.
+    """
+    from tonyagent.sandbox import get_shared_sandbox_manager
+
+    manager = get_shared_sandbox_manager()
+    runtime = manager.get_runtime_backend()
+    if runtime is None:
+        return {"running": False, "kind": "", "distro": "", "isolated": False}
+    return {
+        "running": True,
+        # The backend's own name -- see `SandboxBackend.kind`. "" for a backend
+        # that has not named itself, which reads as "running, unnamed" rather
+        # than as a guess.
+        "kind": getattr(runtime, "kind", ""),
+        # Only WSL has one; every other backend answers "".
+        "distro": getattr(runtime, "distro", "") or "",
+        "isolated": manager.is_isolated(),
+    }
 
 
 def _current_setting(key: str) -> Any:
@@ -1581,29 +1722,55 @@ class StdioServer:
     # -- the settings file --------------------------------------------------
 
     def _h_settings_get(self, params: dict) -> Any:
-        """The command lists, as the shell gate will read them.
+        """The settings the page draws, as the core will read them.
 
-        Both come from the tool layer's own reader rather than from the config
-        file, for the reason `tools.get` reads the session rather than settings:
-        the deny list a turn is held to is the code's patterns *plus* whatever
-        the file adds, and a panel that showed the file's half would be showing
-        a list nobody is using.
+        The command lists come from the tool layer's own reader rather than
+        from the config file, for the reason `tools.get` reads the session
+        rather than settings: the deny list a turn is held to is the code's
+        patterns *plus* whatever the file adds, and a panel that showed the
+        file's half would be showing a list nobody is using.
 
         `command_allowlist_defaults` is what "Restore defaults" goes back to. It
         is the code's own list -- the answer `load_section` gives when the file
-        carries no list at all -- so the panel can mark the rows that are not
-        part of it without hardcoding a list the core owns.
+        carries no list at all -- so the panel can offer the reset without
+        hardcoding a list the core owns.
+
+        The sandbox section is the file's values plus `runtime`, which is what is
+        actually serving. They are separate on purpose: `type` is `auto` on most
+        machines and says nothing about what you got.
         """
+        from tonyagent.config.migration import load_section
         from tonyagent.config.settings import settings
         from tonyagent.tools.shell_tools import effective_command_lists
 
         allow, deny = effective_command_lists()
+        sandbox = load_section("sandbox")
         return {
             "tools": {
                 "command_allowlist": allow,
                 "command_allowlist_defaults": list(settings.tools.command_allowlist),
                 "command_denylist": deny,
-            }
+            },
+            "sandbox": {
+                "type": sandbox.type,
+                "wsl_distro": sandbox.wsl_distro,
+                "enable_network": sandbox.enable_network,
+                "memory_limit": sandbox.memory_limit,
+                "cpu_limit": sandbox.cpu_limit,
+                # The defaults, for the placeholder a field falls back to when
+                # it is empty -- an empty field is "unset", not "no limit".
+                # Read from the model rather than written out again: the model
+                # is what `load_section` falls back to, so a copy here would be
+                # the second list of defaults that goes stale.
+                "defaults": {
+                    "type": settings.sandbox.type,
+                    "wsl_distro": settings.sandbox.wsl_distro,
+                    "enable_network": settings.sandbox.enable_network,
+                    "memory_limit": settings.sandbox.memory_limit,
+                    "cpu_limit": settings.sandbox.cpu_limit,
+                },
+                "runtime": _sandbox_runtime(),
+            },
         }
 
     def _h_settings_set(self, params: dict) -> Any:

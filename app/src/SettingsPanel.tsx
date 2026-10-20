@@ -121,6 +121,106 @@ export interface CommandSettings {
   command_denylist: string[];
 }
 
+/** Where the sandbox is actually running, as `settings.get` reports it. */
+export interface SandboxRuntime {
+  running: boolean;
+  /**
+   * The backend's own name: "wsl", "docker", "local", or "" while stopped.
+   *
+   * Reported instead of the configured type, because `auto` is the common
+   * value and says nothing about what it resolved to. A page that could only
+   * echo "Auto" would leave a user unable to tell whether they got the
+   * environment they expected.
+   */
+  kind: string;
+  /** The distro in use, on WSL; "" on every other backend. */
+  distro: string;
+  /** Whether what runs inside is actually contained. */
+  isolated: boolean;
+}
+
+/**
+ * The sandbox section, as `settings.get` reports it.
+ *
+ * The five fields are the ones a person changes on purpose. The rest of the
+ * `[sandbox]` table -- pids, capabilities, ulimits -- is the containment the
+ * backend guarantees, and a settings page that could loosen it would be a page
+ * that can turn the sandbox off one switch at a time.
+ */
+export interface SandboxSettings {
+  type: string;
+  wsl_distro: string;
+  enable_network: boolean;
+  memory_limit: string;
+  cpu_limit: string;
+  /**
+   * What each field goes back to when it is empty.
+   *
+   * Sent rather than hardcoded here so the placeholders cannot drift from the
+   * model that actually answers when the file says nothing.
+   */
+  defaults: {
+    wsl_distro: string;
+    memory_limit: string;
+    cpu_limit: string;
+  };
+  runtime: SandboxRuntime;
+}
+
+/**
+ * Everything `settings.get` answers with.
+ *
+ * One read for both groups. They live on different tabs, but a second method
+ * for the second half would be a second chance for the two to disagree -- and
+ * they are read from the same file, so they can be answered together.
+ */
+export interface CoreSettings {
+  tools: CommandSettings;
+  sandbox: SandboxSettings;
+}
+
+/**
+ * The backends a window may choose, in display order.
+ *
+ * `windows` is missing on purpose: `WsbSandboxBackend` is a documented stub
+ * whose transport methods are all `pass`, so choosing it would configure a
+ * sandbox that cannot start. A file that already names it still draws it --
+ * see the select -- but nothing here selects it.
+ */
+const SANDBOX_BACKENDS = [
+  { id: "auto", label: "Automatic" },
+  { id: "docker", label: "Docker" },
+  { id: "wsl", label: "WSL" },
+  { id: "local", label: "None (on this computer)" },
+] as const;
+
+/** One sentence naming where code is running, from what the core reported. */
+export function sandboxIdentity(runtime: SandboxRuntime | null): string {
+  if (!runtime || !runtime.running) return "Not running.";
+  if (runtime.kind === "wsl") {
+    return runtime.distro
+      ? "Running in WSL (" + runtime.distro + ")."
+      : "Running in WSL.";
+  }
+  if (runtime.kind === "docker") return "Running in Docker.";
+  if (runtime.kind === "local") return "Running on this computer, without isolation.";
+  // A backend that did not name itself. Saying "Running" is weaker than naming
+  // it and stronger than claiming it is stopped, which is the only thing we
+  // know for certain is not true.
+  return "Running.";
+}
+
+/** What that means for the tools, in one sentence. */
+export function sandboxMeaning(runtime: SandboxRuntime | null): string {
+  if (!runtime || !runtime.running) {
+    return "Choose a project folder and press Start above.";
+  }
+  if (runtime.isolated) {
+    return "Code the agent writes runs in there. The permission level still decides whether it may run at all.";
+  }
+  return "Code the agent writes cannot run here unless the permission level is Full, which runs it on this computer.";
+}
+
 /**
  * The panel's sections, as tabs.
  *
@@ -254,25 +354,26 @@ interface Props {
    */
   onListKeys: (provider?: string) => Promise<KeyEntry[]>;
   /**
-   * The command lists, as the core reports them.
+   * Everything the page draws, as the core reports it.
    *
-   * Resolves to null when the core will not answer, which the group draws as
-   * "not read yet" rather than as an empty list: "nothing is allowed" and "I
-   * could not ask" are different claims, and only one of them is about the
-   * user's settings.
+   * One read for both groups rather than one per group: `settings.get` answers
+   * with both, and a second call for the second half would be a second chance
+   * for the two to disagree. Resolves to null when the core will not answer,
+   * which is drawn as "not read yet" rather than as an empty list: "nothing is
+   * allowed" and "I could not ask" are different claims, and only one of them
+   * is about the user's settings.
    */
-  onListCommands: () => Promise<CommandSettings | null>;
+  onReadSettings: () => Promise<CoreSettings | null>;
   /**
-   * Replace the command allow-list, or pass null to go back to the defaults.
+   * Write one setting.
    *
-   * Resolves to the list now in force, or null when the write did not take.
-   * The value rather than a boolean, because the core normalises what it stores
-   * -- it trims, folds duplicates and refuses a name that could never match --
-   * and a panel that kept its own copy would go on showing the list as typed.
-   * For these settings the config file *is* the store, so a failed write means
-   * nothing changed at all.
+   * Resolves to null when it took, or to the reason it did not. The core
+   * validates -- a memory limit with no unit, a program name that is really a
+   * path -- and its sentence is better than anything this component could
+   * invent from a boolean. For these settings the config file *is* the store,
+   * so a failure means nothing changed.
    */
-  onSetCommands: (names: string[] | null) => Promise<string[] | null>;
+  onSetSetting: (key: string, value: unknown) => Promise<string | null>;
 }
 
 /** How long a revealed key stays on screen before it hides itself. */
@@ -413,8 +514,8 @@ export function SettingsPanel({
   onRevealKey,
   onActivateKey,
   onListKeys,
-  onListCommands,
-  onSetCommands,
+  onReadSettings,
+  onSetSetting,
 }: Props) {
   const [tab, setTab] = useState<SettingsTab>("permission");
 
@@ -441,11 +542,15 @@ export function SettingsPanel({
   );
   const rowTimer = useRef(0);
 
-  // The command lists, as the core last reported them. Null means "not read",
-  // which is drawn differently from an empty list -- see `onListCommands`.
-  const [commands, setCommands] = useState<CommandSettings | null>(null);
-  const [commandsBusy, setCommandsBusy] = useState(false);
+  // Everything `settings.get` answered, as the core last reported it. Null
+  // means "not read", which is drawn differently from an empty list -- see
+  // `onReadSettings`.
+  const [settings, setSettings] = useState<CoreSettings | null>(null);
+  const [settingBusy, setSettingBusy] = useState(false);
+  // The two groups are on different tabs, so a failure belongs to one of them:
+  // an error about a program name has no business appearing over the sandbox.
   const [commandsNotice, setCommandsNotice] = useState<string | null>(null);
+  const [sandboxNotice, setSandboxNotice] = useState<string | null>(null);
   // The program name being typed. Held here rather than in the core: it is not
   // a setting until it is added, and a half-typed word is not a rule.
   const [draftProgram, setDraftProgram] = useState("");
@@ -507,51 +612,73 @@ export function SettingsPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, tab]);
 
-  /** Re-read the command lists. */
-  const refreshCommands = async () => {
+  /** Re-read what the core says about both sections. */
+  const refreshSettings = async () => {
     if (!connected) {
-      setCommands(null);
+      setSettings(null);
       return;
     }
-    setCommands(await onListCommands());
+    setSettings(await onReadSettings());
   };
 
   useEffect(() => {
-    // On Behavior, which is where the group is -- and Behavior is the tab the
-    // page opens on, so this is one call when Settings opens and nothing after.
-    if (tab !== "permission") return;
-    void refreshCommands();
+    // Behavior and Project are the two tabs that draw a section of this
+    // payload, and Behavior is the tab the page opens on -- so this is one call
+    // when Settings opens, one when Project is chosen, and nothing per render.
+    if (tab !== "permission" && tab !== "project") return;
+    void refreshSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, tab]);
 
+  useEffect(() => {
+    // Starting or stopping changes what `settings.get` reports as the runtime,
+    // without changing a single value in the file -- so the Project tab reads
+    // again when the sandbox's own status moves. Not while it is starting: the
+    // local runtime is already up at that point and the card would announce
+    // "running on this computer" over a sandbox that is on its way in. The
+    // settle is what the dep catches.
+    if (tab !== "project" || sandbox === "starting") return;
+    void refreshSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sandbox]);
+
   /**
-   * Write the allow-list, or put the defaults back.
+   * Write one setting, then adopt whatever the core says.
    *
-   * The core answers with the list now in force, so the rows are redrawn from
-   * what it confirmed rather than from what was sent: it trims, folds
-   * duplicates and refuses a name that could never match, and the list on
-   * screen is the one the next command is held to.
+   * Re-read rather than patch local state, for the reason the key rows do: a
+   * value that changed because the write worked and one that changed because it
+   * failed look identical, and the next read would put the failed one back
+   * under the user's cursor. It also means the rows always show what the core
+   * normalised -- it trims, folds duplicates and refuses a name that could
+   * never match -- rather than what was typed.
+   *
+   * `notice` is the setter of the group the message belongs to.
    */
-  const applyCommands = async (names: string[] | null): Promise<boolean> => {
-    setCommandsBusy(true);
-    setCommandsNotice(null);
-    const applied = await onSetCommands(names);
-    setCommandsBusy(false);
-    if (!applied) {
-      setCommandsNotice("Could not save the command list.");
-      return false;
-    }
-    setCommands((previous) =>
-      previous ? { ...previous, command_allowlist: applied } : previous,
-    );
-    return true;
+  const write = async (
+    key: string,
+    value: unknown,
+    notice: (text: string | null) => void,
+  ): Promise<boolean> => {
+    setSettingBusy(true);
+    notice(null);
+    const reason = await onSetSetting(key, value);
+    if (reason === null) await refreshSettings();
+    setSettingBusy(false);
+    if (reason !== null) notice(reason);
+    return reason === null;
   };
 
   /** Add the name in the field, then clear it if it took. */
   const addProgram = async () => {
     const name = draftProgram.trim();
-    if (!name || !commands) return;
-    if (await applyCommands([...commands.command_allowlist, name])) {
+    if (!name || !settings) return;
+    if (
+      await write(
+        "tools.command_allowlist",
+        [...settings.tools.command_allowlist, name],
+        setCommandsNotice,
+      )
+    ) {
       setDraftProgram("");
     }
   };
@@ -784,14 +911,14 @@ export function SettingsPanel({
                 which is the one level that runs outside it.
               </p>
 
-              {commands && commands.command_allowlist.length === 0 ? (
+              {settings && settings.tools.command_allowlist.length === 0 ? (
                 <p className="settings-hint">
                   Nothing is allowed, so no command runs outside the list below.
                   Only Full will run one.
                 </p>
               ) : (
                 <ul className="settings-commands">
-                  {(commands?.command_allowlist ?? []).map((name) => (
+                  {(settings?.tools.command_allowlist ?? []).map((name) => (
                     <li key={name} className="settings-command">
                       <span className="settings-command-name">{name}</span>
                       <button
@@ -799,12 +926,14 @@ export function SettingsPanel({
                         className="settings-command-drop"
                         title={"Stop allowing " + name}
                         aria-label={"Stop allowing " + name}
-                        disabled={!connected || commandsBusy}
+                        disabled={!connected || settingBusy}
                         onClick={() =>
-                          void applyCommands(
-                            (commands?.command_allowlist ?? []).filter(
+                          void write(
+                            "tools.command_allowlist",
+                            (settings?.tools.command_allowlist ?? []).filter(
                               (one) => one !== name,
                             ),
+                            setCommandsNotice,
                           )
                         }
                       >
@@ -840,26 +969,31 @@ export function SettingsPanel({
                   autoCorrect="off"
                   autoCapitalize="off"
                   spellCheck={false}
-                  disabled={!connected || commandsBusy}
+                  disabled={!connected || settingBusy}
                   aria-label="Add a program to the allow-list"
                 />
                 <button
                   type="button"
                   className="btn"
-                  disabled={!connected || commandsBusy || !draftProgram.trim()}
+                  disabled={!connected || settingBusy || !draftProgram.trim()}
                   onClick={() => void addProgram()}
                 >
                   Add
                 </button>
               </div>
 
-              {commands && !sameNames(commands.command_allowlist, commands.command_allowlist_defaults) && (
+              {settings && !sameNames(
+                settings.tools.command_allowlist,
+                settings.tools.command_allowlist_defaults,
+              ) && (
                 <div className="settings-row">
                   <button
                     type="button"
                     className="btn"
-                    disabled={!connected || commandsBusy}
-                    onClick={() => void applyCommands(null)}
+                    disabled={!connected || settingBusy}
+                    onClick={() =>
+                      void write("tools.command_allowlist", null, setCommandsNotice)
+                    }
                   >
                     Restore defaults
                   </button>
@@ -870,8 +1004,8 @@ export function SettingsPanel({
 
               <details className="settings-notes">
                 <summary>
-                  {commands
-                    ? commands.command_denylist.length +
+                  {settings
+                    ? settings.tools.command_denylist.length +
                       " commands are always refused"
                     : "Commands that are always refused"}
                 </summary>
@@ -881,7 +1015,7 @@ export function SettingsPanel({
                   list belongs to the core and cannot be shortened from here.
                 </p>
                 <ul className="settings-denylist">
-                  {(commands?.command_denylist ?? []).map((pattern) => (
+                  {(settings?.tools.command_denylist ?? []).map((pattern) => (
                     <li key={pattern}>
                       <code>{pattern}</code>
                     </li>
@@ -957,6 +1091,208 @@ export function SettingsPanel({
                   </span>
                 </label>
               )}
+            </section>
+
+            {/*
+              Where the agent's code actually runs.
+
+              **The identity comes first and the controls second**, because the
+              question this card answers is "what am I running in". The
+              configured type is `auto` on most machines and says nothing about
+              what it resolved to, so the sentence above the fields reports the
+              *runtime* and the select below reports the choice.
+
+              The five fields are the ones a person changes on purpose. The rest
+              of the `[sandbox]` table -- pids, capabilities, ulimits -- is the
+              containment the backend guarantees: a page that could loosen it
+              would be a page that can turn the sandbox off one switch at a
+              time. See `_EDITABLE_SETTINGS`.
+
+              Every field here is read at `sandbox.start`, so a change applies
+              to the next start rather than to the one already running. That is
+              said once at the foot of the group rather than repeated under each
+              control.
+            */}
+            <section className="settings-group">
+              <h3>Sandbox</h3>
+              <p className="settings-value">
+                {sandboxIdentity(settings?.sandbox.runtime ?? null)}
+              </p>
+              <p className="settings-note">
+                {sandboxMeaning(settings?.sandbox.runtime ?? null)}
+              </p>
+
+              <label className="settings-field">
+                <span className="settings-field-name">Backend</span>
+                <span className="settings-select-wrap">
+                  <select
+                    className="settings-select"
+                    value={settings?.sandbox.type ?? ""}
+                    disabled={!connected || settingBusy || !settings}
+                    onChange={(e) =>
+                      void write("sandbox.type", e.target.value, setSandboxNotice)
+                    }
+                  >
+                    {SANDBOX_BACKENDS.map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {entry.label}
+                      </option>
+                    ))}
+                    {/*
+                      A value the list does not offer -- `windows`, which is in
+                      the settings model and is a documented stub. Drawn rather
+                      than silently shown as Automatic, which would be this page
+                      reporting a backend the core is not configured for.
+                    */}
+                    {settings &&
+                      !SANDBOX_BACKENDS.some(
+                        (entry) => entry.id === settings.sandbox.type,
+                      ) && (
+                        <option value={settings.sandbox.type}>
+                          {settings.sandbox.type === "windows"
+                            ? "Windows Sandbox (not available)"
+                            : settings.sandbox.type}
+                        </option>
+                      )}
+                  </select>
+                </span>
+              </label>
+              <p className="settings-hint">
+                Automatic prefers Docker, then WSL, and falls back to running on
+                this computer.
+              </p>
+
+              {/*
+                A text field rather than a list of installed distros. Listing
+                them means running `wsl.exe` inside the request the page makes
+                every time it opens, so a wedged WSL would wedge Settings
+                instead of one start -- see `_clean_distro`. Empty is the
+                default distro, which is what this machine already uses.
+              */}
+              <label className="settings-field">
+                <span className="settings-field-name">WSL distro</span>
+                <input
+                  className="settings-input"
+                  type="text"
+                  key={settings?.sandbox.wsl_distro ?? ""}
+                  defaultValue={settings?.sandbox.wsl_distro ?? ""}
+                  placeholder={
+                    settings?.sandbox.defaults.wsl_distro || "Default distro"
+                  }
+                  disabled={!connected || settingBusy || !settings}
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={() => setSandboxNotice(null)}
+                  onBlur={(e) =>
+                    void write(
+                      "sandbox.wsl_distro",
+                      e.currentTarget.value.trim() || null,
+                      setSandboxNotice,
+                    )
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") e.currentTarget.blur();
+                  }}
+                  aria-label="WSL distro"
+                />
+              </label>
+              <p className="settings-hint">
+                Only used by the WSL backend. Leave it empty to use the default
+                distro.
+              </p>
+
+              <label className="settings-check">
+                <input
+                  type="checkbox"
+                  checked={settings?.sandbox.enable_network ?? false}
+                  disabled={!connected || settingBusy || !settings}
+                  onChange={(e) =>
+                    void write(
+                      "sandbox.enable_network",
+                      e.target.checked,
+                      setSandboxNotice,
+                    )
+                  }
+                />
+                <span>
+                  Allow network access
+                  <em>
+                    Docker and WSL start with the network off. The browser tools
+                    need it on; a shell command does not.
+                  </em>
+                </span>
+              </label>
+
+              {/*
+                Docker's two resource caps, behind a disclosure because they are
+                the only fields here that a WSL machine ignores entirely. Kept
+                visible rather than hidden: a Docker user needs them, and a note
+                that says which backend reads them is more honest than a control
+                that appears and disappears with the backend above.
+              */}
+              <details className="settings-notes">
+                <summary>Docker limits</summary>
+                <p className="settings-note">
+                  Only used when the backend is Docker. Leave a field empty for
+                  the default.
+                </p>
+                <label className="settings-field">
+                  <span className="settings-field-name">Memory</span>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    key={settings?.sandbox.memory_limit ?? ""}
+                    defaultValue={settings?.sandbox.memory_limit ?? ""}
+                    placeholder={settings?.sandbox.defaults.memory_limit || "2g"}
+                    disabled={!connected || settingBusy || !settings}
+                    spellCheck={false}
+                    autoComplete="off"
+                    onChange={() => setSandboxNotice(null)}
+                    onBlur={(e) =>
+                      void write(
+                        "sandbox.memory_limit",
+                        e.currentTarget.value.trim() || null,
+                        setSandboxNotice,
+                      )
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                    }}
+                    aria-label="Container memory limit"
+                  />
+                </label>
+                <label className="settings-field">
+                  <span className="settings-field-name">CPU</span>
+                  <input
+                    className="settings-input"
+                    type="text"
+                    key={settings?.sandbox.cpu_limit ?? ""}
+                    defaultValue={settings?.sandbox.cpu_limit ?? ""}
+                    placeholder={settings?.sandbox.defaults.cpu_limit || "2.0"}
+                    disabled={!connected || settingBusy || !settings}
+                    spellCheck={false}
+                    autoComplete="off"
+                    onChange={() => setSandboxNotice(null)}
+                    onBlur={(e) =>
+                      void write(
+                        "sandbox.cpu_limit",
+                        e.currentTarget.value.trim() || null,
+                        setSandboxNotice,
+                      )
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                    }}
+                    aria-label="Container CPU limit"
+                  />
+                </label>
+              </details>
+
+              {sandboxNotice && <p className="settings-hint">{sandboxNotice}</p>}
+
+              <p className="settings-hint">
+                Changes apply the next time the sandbox starts.
+              </p>
             </section>
           </>
         )}

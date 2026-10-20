@@ -110,6 +110,8 @@ def _load_rpc_server() -> ModuleType:
 class LocalBackend(SandboxBackend):
     """Runs the sandbox RPC server in this process, with no container."""
 
+    kind = "local"
+
     provides_isolation = False
 
     @property

@@ -29,6 +29,8 @@ from loguru import logger
 class DockerSandboxBackend(SandboxBackend):
     """Docker backend speaking JSON-RPC to the container over stdio."""
 
+    kind = "docker"
+
     #: A container genuinely contains what runs inside it, so this backend
     #: satisfies the code-execution tools that the local runtime refuses.
     provides_isolation = True

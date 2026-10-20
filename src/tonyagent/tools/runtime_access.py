@@ -63,8 +63,8 @@ def check_runtime(needs_network: bool = False, needs_isolation: bool = False) ->
     if needs_network and not getattr(backend, "has_network", False):
         return (
             "Browser tools need network access, but the sandbox is running with "
-            "--network none. Enable it in Settings > Sandbox > 'Allow network "
-            "access', restart the sandbox, then try again."
+            "--network none. Enable it in Settings > Project > Sandbox > 'Allow "
+            "network access', restart the sandbox, then try again."
         )
     return None
 

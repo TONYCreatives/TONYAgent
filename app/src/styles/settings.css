@@ -1209,3 +1209,49 @@
   font-size: var(--text-xs);
   overflow-wrap: anywhere;
 }
+
+/* --- a labelled form row --------------------------------------------------- */
+
+/*
+ * The field's name on the left, its control beside it.
+ *
+ * The page has the width for a label now. The 252px pane this page replaced had
+ * to stack a label over every field, or lean on a placeholder -- and a
+ * placeholder vanishes the moment the field has a value, which leaves a form
+ * that has to be remembered rather than read.
+ *
+ * 96px is the widest of the names here ("WSL distro") with room to spare. A
+ * fixed track rather than `auto`, so the four controls start on one column: a
+ * settings form whose inputs each begin somewhere different reads as four
+ * unrelated rows.
+ */
+.settings-field {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  color: var(--fg);
+  font-size: var(--text-sm);
+}
+
+/*
+ * The space between two of them, and 13 rather than the 8 inside a row: a
+ * labelled row already has a column of its own to separate it from the next,
+ * so the gap wants to read as a list rather than as a block of text.
+ */
+.settings-field + .settings-field,
+.settings-field + .settings-hint + .settings-field {
+  margin-top: 13px;
+}
+
+.settings-field-name {
+  color: var(--fg-dim);
+}
+
+/*
+ * A field inside a disclosure, which is already indented to the summary's text
+ * -- so its label column starts with it rather than at the group's left edge.
+ */
+.settings-notes > .settings-field {
+  margin-top: 10px;
+}

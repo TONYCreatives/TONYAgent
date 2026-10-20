@@ -40,7 +40,7 @@ import { QuestionDialog } from "./QuestionDialog.js";
 import { SearchPanel, type SearchMatch } from "./SearchPanel.js";
 import type { PermissionList, ReasoningInfo } from "./SettingsMenus.js";
 import type { SkillInfo } from "./SkillPicker.js";
-import { SettingsPanel, type CommandSettings, type KeyEntry, type ProviderInfo, type UpdateAnswer, type UpdateDownload } from "./SettingsPanel.js";
+import { SettingsPanel, type CoreSettings, type KeyEntry, type ProviderInfo, type UpdateAnswer, type UpdateDownload } from "./SettingsPanel.js";
 import { StatusBar } from "./StatusBar.js";
 import { TopBar, type Tab } from "./TopBar.js";
 import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount.js";
@@ -2013,45 +2013,50 @@ export function App({
   );
 
   /**
-   * The command lists, as the core reports them.
+   * Everything the settings page draws, as the core reports it.
    *
-   * Read from the core rather than assembled here. The deny list the panel
-   * draws is the union the shell gate enforces -- the core's own patterns plus
-   * whatever the config file adds -- and the core is also what normalises a
-   * name and refuses one that could never match. A window that kept its own
-   * copy would be describing rules nobody is held to.
+   * Read from the core rather than assembled here. The command lists are the
+   * union the shell gate enforces, and the sandbox section carries both the
+   * file's values and what is actually serving -- neither of which this window
+   * could work out for itself.
    */
-  const listCommands = useCallback(async (): Promise<CommandSettings | null> => {
+  const readSettings = useCallback(async (): Promise<CoreSettings | null> => {
     try {
       const reply = (await backendRef.current!.call("settings.get")) as {
-        tools?: CommandSettings;
+        tools?: CoreSettings["tools"];
+        sandbox?: CoreSettings["sandbox"];
       };
-      return reply?.tools ?? null;
+      // Checked rather than cast: an unanswered method resolves a marker
+      // object, and handing that to the panel's rows would throw in render.
+      if (!reply?.tools || !reply?.sandbox) return null;
+      return { tools: reply.tools, sandbox: reply.sandbox };
     } catch {
       return null;
     }
   }, []);
 
   /**
-   * Replace the command allow-list, or put the defaults back with null.
+   * Write one setting, or put it back to the default with a value of null.
    *
-   * Resolves to the list now in force, or null when the write did not take.
-   * Unlike the tool budget -- which the session holds in memory and so keeps
-   * even when the save fails -- the config file *is* the store for these, so a
-   * failed write means nothing changed and the panel has to say so rather than
-   * draw the list that was typed.
+   * Resolves to null when it took, or to the reason it did not. The core
+   * validates each value and its sentence is better than a boolean -- and for
+   * these settings the config file *is* the store, so a failed write means
+   * nothing changed and the panel has to say so rather than draw what was
+   * typed.
    */
-  const setCommands = useCallback(
-    async (names: string[] | null): Promise<string[] | null> => {
+  const setSetting = useCallback(
+    async (key: string, value: unknown): Promise<string | null> => {
       try {
         const reply = (await backendRef.current!.call("settings.set", {
-          key: "tools.command_allowlist",
-          value: names,
-        })) as { value?: string[]; persisted?: boolean };
-        if (!reply?.persisted) return null;
-        return Array.isArray(reply.value) ? reply.value : null;
-      } catch {
+          key,
+          value,
+        })) as { persisted?: boolean };
+        if (!reply?.persisted) {
+          return "That setting could not be written to config.toml.";
+        }
         return null;
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
       }
     },
     [],
@@ -2571,8 +2576,8 @@ export function App({
             onRevealKey={revealKey}
             onActivateKey={activateKey}
             onListKeys={listKeys}
-            onListCommands={listCommands}
-            onSetCommands={setCommands}
+            onReadSettings={readSettings}
+            onSetSetting={setSetting}
             update={update}
             updateChecking={updateChecking}
             updateFetching={updateFetching}

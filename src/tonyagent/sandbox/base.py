@@ -88,6 +88,14 @@ class BrowserResult:
     data: Any = None
     error: str | None = None
 class SandboxBackend(ABC):
+    #: What this backend is, for a window that has to name it.
+    #:
+    #: The config's ``type`` cannot answer this: ``auto`` is the common value,
+    #: and by the time a backend exists it has been resolved to one of these.
+    #: The settings page names the one that is actually running, so "Auto"
+    #: never leaves a user unable to tell what they got.
+    kind: str = ""
+
     #: Whether this backend actually *contains* what runs inside it.
     #:
     #: This is the distinction the whole module turns on, and conflating it

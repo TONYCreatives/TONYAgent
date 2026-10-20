@@ -2003,53 +2003,86 @@ describe("the window fetches a new version by itself", () => {
 });
 
 /**
- * The command allow-list, through the window rather than through the panel.
+ * The settings page, through the window rather than through the panel.
  *
- * `SettingsPanel.test.tsx` covers what the group sends; this covers that the
+ * `SettingsPanel.test.tsx` covers what each group sends; this covers that the
  * window is the thing sending it, and that the read happens when Settings opens
- * rather than at boot -- the page is a mode, and a list nobody is looking at is
- * not worth a round trip on every launch.
+ * rather than at boot -- the page is a mode, and two lists nobody is looking at
+ * are not worth a round trip on every launch.
  */
-describe("the command allow-list, wired to the core", () => {
-  const times = (transport: FakeTransport, method: string) =>
-    transport.sent.filter((r) => r.method === method).length;
-
-  const COMMANDS = {
+describe("the settings page, wired to the core", () => {
+  const SETTINGS = {
     tools: {
       command_allowlist: ["python", "git"],
       command_allowlist_defaults: ["python", "python3", "git"],
       command_denylist: ["shutdown"],
     },
+    sandbox: {
+      type: "auto",
+      wsl_distro: "",
+      enable_network: false,
+      memory_limit: "2g",
+      cpu_limit: "2.0",
+      defaults: { wsl_distro: "", memory_limit: "2g", cpu_limit: "2.0" },
+      runtime: { running: true, kind: "wsl", distro: "Ubuntu-24.04", isolated: true },
+    },
   };
+
+  const times = (transport: FakeTransport, method: string) =>
+    transport.sent.filter((r) => r.method === method).length;
 
   const openSettings = async (c: HTMLElement) => {
     await click(one(c, '.rail-btn[aria-label="Settings"]')!);
     for (let i = 0; i < 50 && !one(c, ".settings-page"); i++) await wait(20);
   };
 
-  test("the list is read when the page opens, not on every launch", async () => {
-    const { container, transport } = await mount({ "settings.get": COMMANDS });
+  const openProject = async (c: HTMLElement) => {
+    await click(all(c, ".settings-tab").find((b) => (b.textContent ?? "").trim() === "Project")!);
+    await wait(20);
+  };
+
+  // The Project tab has two `.settings-value` spans -- the folder's path and the
+  // sandbox's identity -- so a lookup has to say which group it means.
+  const sandboxGroup = (c: HTMLElement) =>
+    all(c, ".settings-group").find(
+      (g) => (one(g, "h3")?.textContent ?? "").trim() === "Sandbox",
+    )!;
+
+  test("both sections are read when the page opens, not on every launch", async () => {
+    const { container, transport } = await mount({ "settings.get": SETTINGS });
     assert.equal(
       times(transport, "settings.get"),
       0,
-      "the command list was read before anyone opened Settings",
+      "the settings were read before anyone opened Settings",
     );
 
     await openSettings(container);
     await wait(20);
 
     assert.equal(times(transport, "settings.get"), 1);
-    assert.deepEqual(
-      texts(container, ".settings-command-name"),
-      ["python", "git"],
+    assert.deepEqual(texts(container, ".settings-command-name"), ["python", "git"]);
+  });
+
+  test("the Project tab draws the runtime, which the file cannot answer", async () => {
+    // `type` is "auto", which is not an answer. The card names what is actually
+    // serving, and that comes from `runtime` in the same read.
+    const { container } = await mount({ "settings.get": SETTINGS });
+    await openSettings(container);
+    await openProject(container);
+
+    assert.match(
+      one(sandboxGroup(container), ".settings-value")?.textContent ?? "",
+      /Running in WSL \(Ubuntu-24\.04\)/,
     );
   });
 
   test("adding a program writes it through settings.set", async () => {
-    // The whole path: the field, the press, the method the core serves, and the
-    // list redrawn from what the core answered rather than from what was typed.
+    // The whole path: the field, the press, and the method the core serves.
+    // What the rows then show is the re-read, and the panel tests pin that --
+    // this fake answers `settings.get` with the same payload both times, so it
+    // is not the place to assert the redraw.
     const { container, transport } = await mount({
-      "settings.get": COMMANDS,
+      "settings.get": SETTINGS,
       "settings.set": {
         key: "tools.command_allowlist",
         value: ["python", "git", "cargo"],
@@ -2076,15 +2109,11 @@ describe("the command allow-list, wired to the core", () => {
       key: "tools.command_allowlist",
       value: ["python", "git", "cargo"],
     });
-    assert.deepEqual(
-      texts(container, ".settings-command-name"),
-      ["python", "git", "cargo"],
-    );
   });
 
   test("a write that the core refused is reported, not drawn as if it took", async () => {
     const { container } = await mount({
-      "settings.get": COMMANDS,
+      "settings.get": SETTINGS,
       "settings.set": {
         key: "tools.command_allowlist",
         value: ["python", "git"],
@@ -2106,6 +2135,30 @@ describe("the command allow-list, wired to the core", () => {
     await wait(20);
 
     assert.deepEqual(texts(container, ".settings-command-name"), ["python", "git"]);
-    assert.match(one(container, ".settings-group")!.parentElement!.textContent ?? "", /could not save/i);
+    assert.match(
+      container.textContent ?? "",
+      /could not be written to config\.toml/i,
+    );
+  });
+
+  test("choosing a backend writes sandbox.type", async () => {
+    // The same generic setter as the command list, with a different key -- which
+    // is the whole reason `settings.set` takes a dotted key rather than having
+    // one method per setting.
+    const { container, transport } = await mount({
+      "settings.get": SETTINGS,
+      "settings.set": { key: "sandbox.type", value: "docker", persisted: true },
+    });
+    await openSettings(container);
+    await openProject(container);
+
+    await setValue(
+      one(sandboxGroup(container), ".settings-select") as HTMLSelectElement,
+      "docker",
+    );
+    await wait(20);
+
+    const written = transport.sent.filter((r) => r.method === "settings.set");
+    assert.deepEqual(written[0].params, { key: "sandbox.type", value: "docker" });
   });
 });

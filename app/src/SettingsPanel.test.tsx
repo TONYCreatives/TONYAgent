@@ -22,14 +22,18 @@ import { describe, test } from "node:test";
 
 import {
   SettingsPanel,
+  sandboxIdentity,
+  sandboxMeaning,
   updateMessage,
   type CommandSettings,
+  type CoreSettings,
   type KeyEntry,
   type ProviderInfo,
+  type SandboxSettings,
   type UpdateAnswer,
   type UpdateDownload,
 } from "./SettingsPanel.js";
-import { all, click, one, render, setValue, wait } from "./test-render.js";
+import { all, blur, click, one, render, setValue, wait } from "./test-render.js";
 
 const noop = () => {};
 
@@ -57,6 +61,93 @@ const COMMANDS: CommandSettings = {
   command_denylist: ["\\brm\\b[^|;&]*\\s-[a-z]*r[a-z]*", "shutdown"],
 };
 
+/** A sandbox that is running and contained, which is what most tests want. */
+const SANDBOX: SandboxSettings = {
+  type: "auto",
+  wsl_distro: "",
+  enable_network: false,
+  memory_limit: "2g",
+  cpu_limit: "2.0",
+  defaults: { wsl_distro: "", memory_limit: "2g", cpu_limit: "2.0" },
+  runtime: {
+    running: true,
+    kind: "wsl",
+    distro: "Ubuntu-24.04",
+    isolated: true,
+  },
+};
+
+const SETTINGS: CoreSettings = { tools: COMMANDS, sandbox: SANDBOX };
+
+/**
+ * A core whose settings actually change when written.
+ *
+ * **The panel re-reads after every write**, on purpose -- a value that changed
+ * because the write worked and one that changed because it failed are the same
+ * thing to a component that trusts its own copy. So a fake that answered the
+ * same payload twice would leave every row exactly as it was and make "it
+ * changed" untestable. This is the smallest thing that behaves like the file:
+ * take the write, answer with the result.
+ */
+function core(initial: CoreSettings = SETTINGS) {
+  let state = initial;
+  const writes: { key: string; value: unknown }[] = [];
+  return {
+    writes,
+    read: async () => state,
+    set: async (key: string, value: unknown) => {
+      writes.push({ key, value });
+      state = applyWrite(state, key, value);
+      return null;
+    },
+  };
+}
+
+/** The one-key write, as the config file would apply it. */
+function applyWrite(state: CoreSettings, key: string, value: unknown): CoreSettings {
+  const tools = state.tools;
+  const sandbox = state.sandbox;
+  switch (key) {
+    case "tools.command_allowlist":
+      return {
+        ...state,
+        tools: {
+          ...tools,
+          command_allowlist:
+            value === null ? [...tools.command_allowlist_defaults] : (value as string[]),
+        },
+      };
+    case "sandbox.type":
+      return { ...state, sandbox: { ...sandbox, type: String(value) } };
+    case "sandbox.wsl_distro":
+      return {
+        ...state,
+        sandbox: { ...sandbox, wsl_distro: value === null ? "" : String(value) },
+      };
+    case "sandbox.enable_network":
+      return { ...state, sandbox: { ...sandbox, enable_network: value === true } };
+    case "sandbox.memory_limit":
+      return {
+        ...state,
+        sandbox: {
+          ...sandbox,
+          memory_limit:
+            value === null ? sandbox.defaults.memory_limit : String(value),
+        },
+      };
+    case "sandbox.cpu_limit":
+      return {
+        ...state,
+        sandbox: {
+          ...sandbox,
+          cpu_limit: value === null ? sandbox.defaults.cpu_limit : String(value),
+        },
+      };
+    default:
+      return state;
+  }
+}
+
 interface Overrides {
   providers?: ProviderInfo[];
   keys?: KeyEntry[];
@@ -78,9 +169,9 @@ interface Overrides {
   onSaveKey?: (provider: string, name: string, key: string) => Promise<boolean>;
   onListKeys?: (provider?: string) => Promise<KeyEntry[]>;
   onApplyEndpoint?: (url: string) => void;
-  commands?: CommandSettings | null;
-  onListCommands?: () => Promise<CommandSettings | null>;
-  onSetCommands?: (names: string[] | null) => Promise<string[] | null>;
+  settings?: CoreSettings | null;
+  onReadSettings?: () => Promise<CoreSettings | null>;
+  onSetSetting?: (key: string, value: unknown) => Promise<string | null>;
 }
 
 function panel(overrides: Overrides = {}) {
@@ -122,11 +213,8 @@ function panel(overrides: Overrides = {}) {
       onRevealKey={overrides.onRevealKey ?? (async () => null)}
       onActivateKey={overrides.onActivateKey ?? (async () => true)}
       onListKeys={overrides.onListKeys ?? (async () => overrides.keys ?? LIST)}
-      onListCommands={overrides.onListCommands ?? (async () => overrides.commands ?? COMMANDS)}
-      onSetCommands={
-        overrides.onSetCommands ??
-        (async (names) => names ?? (overrides.commands ?? COMMANDS).command_allowlist_defaults)
-      }
+      onReadSettings={overrides.onReadSettings ?? (async () => overrides.settings ?? SETTINGS)}
+      onSetSetting={overrides.onSetSetting ?? (async () => null)}
     />
   );
 }
@@ -842,9 +930,10 @@ describe("what the update check says", () => {
  *
  * The list is the one the shell gate checks a command's first word against, so
  * the tests here are about the round trip rather than the drawing: what is sent
- * when a chip is dropped or a name is typed, and what is *not* sent. The deny
- * list is the security half -- it is a read-out, and there must be no way to cut
- * it from this page.
+ * when a chip is dropped or a name is typed, and that the rows are redrawn from
+ * what the core answered rather than from what was typed. The deny list is the
+ * security half -- it is a read-out, and there must be no way to cut it from
+ * this page.
  */
 describe("the command allow-list", () => {
   const group = (container: HTMLElement) => section(container, "Commands")!;
@@ -858,11 +947,22 @@ describe("the command allow-list", () => {
   const restore = (container: HTMLElement) =>
     all(group(container), ".btn").find((b) => /restore defaults/i.test(b.textContent ?? ""));
 
+  /** Mount with a fake core whose writes actually take. */
+  async function writable(overrides: Overrides = {}) {
+    const fake = core(overrides.settings ?? SETTINGS);
+    const container = await render(
+      panel({ onReadSettings: fake.read, onSetSetting: fake.set, ...overrides }),
+    );
+    await wait(0);
+    return { container, fake };
+  }
+
   test("it is on Behavior, beside the ladder it is checked against", async () => {
     // Not a tab of its own: the ladder is the ceiling on what a turn may do and
     // this is the list underneath it, so a page that asked "how much may it do"
     // and answered with only the ceiling would be answering half the question.
     const container = await render(panel());
+    await wait(0);
     assert.deepEqual(chips(container), ["python", "git", "npm"]);
   });
 
@@ -872,97 +972,94 @@ describe("the command allow-list", () => {
     let asked = 0;
     const container = await render(
       panel({
-        onListCommands: async () => {
+        onReadSettings: async () => {
           asked += 1;
-          return COMMANDS;
+          return SETTINGS;
         },
       }),
     );
     await wait(0);
-    assert.equal(asked, 1, "the group did not read the list");
+    assert.equal(asked, 1, "the group did not read the settings");
     assert.deepEqual(chips(container), ["python", "git", "npm"]);
   });
 
   test("dropping a chip sends the list without it", async () => {
-    const sent: (string[] | null)[] = [];
-    const container = await render(
-      panel({
-        onSetCommands: async (names) => {
-          sent.push(names);
-          return names;
-        },
-      }),
-    );
+    const { container, fake } = await writable();
+    assert.deepEqual(fake.writes, [], "a write before anything was pressed");
 
     await click(drops(container)[1]);
     await wait(0);
 
-    assert.deepEqual(sent, [["python", "npm"]], "git was not the one dropped");
+    assert.deepEqual(fake.writes, [{ key: "tools.command_allowlist", value: ["python", "npm"] }]);
     assert.deepEqual(chips(container), ["python", "npm"]);
   });
 
   test("a typed name is appended, and the field is cleared when it took", async () => {
-    const sent: (string[] | null)[] = [];
-    const container = await render(
-      panel({
-        onSetCommands: async (names) => {
-          sent.push(names);
-          return names;
-        },
-      }),
-    );
+    const { container, fake } = await writable();
 
     await setValue(field(container), "cargo");
     await click(addButton(container));
     await wait(0);
 
-    assert.deepEqual(sent, [["python", "git", "npm", "cargo"]]);
+    assert.deepEqual(fake.writes, [
+      { key: "tools.command_allowlist", value: ["python", "git", "npm", "cargo"] },
+    ]);
     assert.equal(field(container).value, "", "the field kept a name that was added");
+    assert.deepEqual(chips(container), ["python", "git", "npm", "cargo"]);
   });
 
-  test("the field is cleared by what the core stored, not by what was typed", async () => {
+  test("the rows are redrawn from what the core stored, not from what was typed", async () => {
     // The core trims, folds duplicates and refuses a name that could never
-    // match, so the rows are redrawn from its answer.
+    // match, so the panel re-reads instead of patching its own copy. This fake
+    // answers with its version of the list rather than the one it was handed.
+    const fake = core();
     const container = await render(
-      panel({ onSetCommands: async () => ["python", "git", "npm", "cargo"] }),
+      panel({
+        onReadSettings: fake.read,
+        onSetSetting: async () => {
+          await fake.set("tools.command_allowlist", ["python", "git", "npm", "cargo"]);
+          return null;
+        },
+      }),
     );
-    await setValue(field(container), "  cargo  ");
+    await wait(0);
+
+    await setValue(field(container), "  CARGO  ");
     await click(addButton(container));
     await wait(0);
 
     assert.deepEqual(chips(container), ["python", "git", "npm", "cargo"]);
   });
 
-  test("a write that did not take says so and keeps the list it had", async () => {
+  test("a refused write says why and keeps the list it had", async () => {
     // For these settings the config file is the store, so a failed write means
-    // nothing changed -- unlike the tool budget, which the session holds.
-    const container = await render(panel({ onSetCommands: async () => null }));
-    await setValue(field(container), "cargo");
+    // nothing changed -- unlike the tool budget, which the session holds. The
+    // core's own sentence is shown, because it is the one that names the rule.
+    const container = await render(
+      panel({
+        onSetSetting: async () => "'/usr/bin/git' is a path, and the allow-list matches the program's name",
+      }),
+    );
+    await wait(0);
+
+    await setValue(field(container), "/usr/bin/git");
     await click(addButton(container));
     await wait(0);
 
     assert.deepEqual(chips(container), ["python", "git", "npm"]);
-    assert.match(group(container).textContent ?? "", /could not save/i);
-    assert.equal(field(container).value, "cargo", "the name was thrown away");
+    assert.match(group(container).textContent ?? "", /is a path/i);
+    assert.equal(field(container).value, "/usr/bin/git", "the name was thrown away");
   });
 
   test("Restore defaults sends null, and is offered only when it means something", async () => {
     // Null is *unset*: the key comes out of the file so the core's own list
     // applies, rather than a copy of today's default being frozen into it.
-    const sent: (string[] | null)[] = [];
-    const container = await render(
-      panel({
-        onSetCommands: async (names) => {
-          sent.push(names);
-          return names ?? COMMANDS.command_allowlist_defaults;
-        },
-      }),
-    );
+    const { container, fake } = await writable();
 
     await click(restore(container)!);
     await wait(0);
 
-    assert.deepEqual(sent, [null]);
+    assert.deepEqual(fake.writes, [{ key: "tools.command_allowlist", value: null }]);
     assert.deepEqual(chips(container), COMMANDS.command_allowlist_defaults);
     assert.equal(restore(container), undefined, "offered again for a list that is the default");
   });
@@ -971,8 +1068,11 @@ describe("the command allow-list", () => {
     // "Nothing is allowed" and "the list has not been read" are different
     // claims, and only one of them is about the user's settings.
     const container = await render(
-      panel({ commands: { ...COMMANDS, command_allowlist: [] } }),
+      panel({
+        settings: { tools: { ...COMMANDS, command_allowlist: [] }, sandbox: SANDBOX },
+      }),
     );
+    await wait(0);
     assert.match(group(container).textContent ?? "", /nothing is allowed/i);
     assert.deepEqual(chips(container), []);
   });
@@ -981,38 +1081,27 @@ describe("the command allow-list", () => {
     // It is a floor: the core's own patterns plus whatever the file adds, and
     // the file cannot shorten it. A control here would be offering to cut it.
     const container = await render(panel());
+    await wait(0);
     const readout = one(group(container), ".settings-denylist")!;
 
     assert.deepEqual(
       all(readout, "code").map((c) => (c.textContent ?? "").trim()),
       COMMANDS.command_denylist,
     );
-    assert.equal(
-      all(readout, "button").length,
-      0,
-      "the deny list grew an editor",
-    );
-    assert.equal(
-      all(group(container), "input[type='checkbox']").length,
-      0,
-      "the deny list grew a switch",
-    );
+    assert.equal(all(readout, "button").length, 0, "the deny list grew an editor");
   });
 
   test("nothing is read or written while the core is down", async () => {
-    const sent: (string[] | null)[] = [];
+    const fake = core();
     let asked = 0;
     const container = await render(
       panel({
         connected: false,
-        onListCommands: async () => {
+        onReadSettings: async () => {
           asked += 1;
-          return COMMANDS;
+          return fake.read();
         },
-        onSetCommands: async (names) => {
-          sent.push(names);
-          return names;
-        },
+        onSetSetting: fake.set,
       }),
     );
     await wait(0);
@@ -1020,5 +1109,274 @@ describe("the command allow-list", () => {
     assert.equal(asked, 0, "the group asked a core that is not running");
     assert.equal(field(container).disabled, true);
     assert.equal((addButton(container) as HTMLButtonElement).disabled, true);
+  });
+});
+
+/**
+ * The sandbox card, on the Project tab.
+ *
+ * The question it answers is "what am I running in", and the reason it is two
+ * halves -- the runtime sentence above, the controls below -- is that the
+ * configured type is `auto` on most machines and says nothing about what it
+ * resolved to. So the tests are about both: the identity comes from `runtime`
+ * rather than from `type`, and each control writes the key it owns.
+ */
+describe("the sandbox card", () => {
+  const group = (container: HTMLElement) => section(container, "Sandbox")!;
+  const backend = (container: HTMLElement) =>
+    one(group(container), ".settings-select") as HTMLSelectElement;
+  const distro = (container: HTMLElement) =>
+    one(group(container), '[aria-label="WSL distro"]') as HTMLInputElement;
+  const network = (container: HTMLElement) =>
+    one(group(container), "input[type='checkbox']") as HTMLInputElement;
+  const memory = (container: HTMLElement) =>
+    one(group(container), '[aria-label="Container memory limit"]') as HTMLInputElement;
+  const cpu = (container: HTMLElement) =>
+    one(group(container), '[aria-label="Container CPU limit"]') as HTMLInputElement;
+  const identity = (container: HTMLElement) =>
+    (one(group(container), ".settings-value")?.textContent ?? "").trim();
+
+  /** Mount, then open the Project tab, with a fake core whose writes take. */
+  async function opened(overrides: Overrides = {}) {
+    const fake = core(overrides.settings ?? SETTINGS);
+    const container = await render(
+      panel({ onReadSettings: fake.read, onSetSetting: fake.set, ...overrides }),
+    );
+    await click(tab(container, "Project"));
+    await wait(0);
+    return { container, fake };
+  }
+
+  test("it sits under the folder it runs against", async () => {
+    const container = await render(panel());
+    await click(tab(container, "Project"));
+    assert.deepEqual(
+      all(container, ".settings-group h3").map((h) => (h.textContent ?? "").trim()),
+      ["Project folder", "Sandbox"],
+    );
+  });
+
+  test("the identity names the runtime, not the configured type", async () => {
+    // The type is `auto`, which is not an answer. `runtime` is.
+    const { container } = await opened();
+    assert.equal(identity(container), "Running in WSL (Ubuntu-24.04).");
+    assert.equal(backend(container).value, "auto", "the select stopped showing the choice");
+  });
+
+  test("a local runtime says so, and says what that costs", async () => {
+    // The second sentence is the one that matters: on this runtime the
+    // code-execution tools are refused below Full, and a user who is told only
+    // "not isolated" has to work out what that means for their tools.
+    const container = await render(
+      panel({
+        settings: {
+          tools: COMMANDS,
+          sandbox: {
+            ...SANDBOX,
+            type: "local",
+            runtime: { running: true, kind: "local", distro: "", isolated: false },
+          },
+        },
+      }),
+    );
+    await click(tab(container, "Project"));
+    await wait(0);
+
+    assert.equal(identity(container), "Running on this computer, without isolation.");
+    assert.match(group(container).textContent ?? "", /unless the permission level is Full/i);
+  });
+
+  test("a stopped sandbox is a state, not an empty card", async () => {
+    const container = await render(
+      panel({
+        settings: {
+          tools: COMMANDS,
+          sandbox: {
+            ...SANDBOX,
+            runtime: { running: false, kind: "", distro: "", isolated: false },
+          },
+        },
+      }),
+    );
+    await click(tab(container, "Project"));
+    await wait(0);
+
+    assert.equal(identity(container), "Not running.");
+    assert.equal(backend(container).value, "auto", "the controls vanished with the runtime");
+  });
+
+  test("the identity helpers cover a backend that did not name itself", () => {
+    // A backend that reports no kind must not be drawn as stopped: it is
+    // running, and the only fact missing is its name.
+    const running = { running: true, kind: "", distro: "", isolated: true };
+    assert.equal(sandboxIdentity(running), "Running.");
+    assert.match(sandboxMeaning(running), /runs in there/i);
+    assert.equal(sandboxIdentity(null), "Not running.");
+    assert.match(sandboxMeaning(null), /press Start/i);
+  });
+
+  test("choosing a backend writes the type", async () => {
+    const { container, fake } = await opened();
+
+    await setValue(backend(container), "docker");
+    await wait(0);
+
+    assert.deepEqual(fake.writes, [{ key: "sandbox.type", value: "docker" }]);
+    assert.equal(backend(container).value, "docker");
+  });
+
+  test("a stored backend the list does not offer is still drawn", async () => {
+    // `windows` is in the settings model and is a documented stub. Showing it
+    // as Automatic would be this page reporting a backend the core is not
+    // configured for.
+    const { container } = await opened({
+      settings: {
+        tools: COMMANDS,
+        sandbox: { ...SANDBOX, type: "windows" },
+      },
+    });
+
+    assert.equal(backend(container).value, "windows");
+    assert.match(backend(container).textContent ?? "", /not available/i);
+  });
+
+  test("the distro field is committed on blur, trimmed, and empty means default", async () => {
+    const { container, fake } = await opened();
+    assert.equal(
+      distro(container).placeholder,
+      "Default distro",
+      "an empty distro field does not say what empty means",
+    );
+
+    await setValue(distro(container), "  Ubuntu-24.04  ");
+    distro(container).focus();
+    await blur(distro(container));
+    await wait(0);
+    assert.deepEqual(fake.writes, [
+      { key: "sandbox.wsl_distro", value: "Ubuntu-24.04" },
+    ]);
+
+    // Nothing is written per keystroke: a half-typed distro is not a choice.
+    assert.equal(fake.writes.length, 1);
+
+    await setValue(distro(container), "   ");
+    distro(container).focus();
+    await blur(distro(container));
+    await wait(0);
+    assert.deepEqual(fake.writes[1], { key: "sandbox.wsl_distro", value: null });
+  });
+
+  test("the network toggle writes a real boolean", async () => {
+    // "false" would be a truthy string, which is the one direction this must
+    // never fail in -- so the core only takes a bool and the box sends one.
+    const { container, fake } = await opened();
+
+    await click(network(container));
+    await wait(0);
+
+    assert.deepEqual(fake.writes, [{ key: "sandbox.enable_network", value: true }]);
+    assert.equal(network(container).checked, true);
+  });
+
+  test("the Docker limits show the values the container would be given", async () => {
+    // The effective values, not blank fields with defaults hidden behind them:
+    // a cap the user cannot see is a cap they cannot reason about.
+    const { container } = await opened();
+    assert.equal(memory(container).value, "2g");
+    assert.equal(cpu(container).value, "2.0");
+  });
+
+  test("clearing a Docker limit puts the core's default back", async () => {
+    // `null` is unset, so the core answers with the default -- and the field
+    // redraws to it. An empty field is how you say "default"; it does not stay
+    // empty, because the effective limit is a number and this card shows what
+    // is in force.
+    const { container, fake } = await opened({
+      settings: { tools: COMMANDS, sandbox: { ...SANDBOX, memory_limit: "4g" } },
+    });
+    assert.equal(memory(container).value, "4g");
+
+    await setValue(memory(container), "");
+    memory(container).focus();
+    await blur(memory(container));
+    await wait(0);
+
+    assert.deepEqual(fake.writes, [{ key: "sandbox.memory_limit", value: null }]);
+    assert.equal(memory(container).value, "2g", "the field did not redraw to the default");
+  });
+
+  test("a validation refusal is shown in the core's words", async () => {
+    // The sentence names the rule ("a number with a unit"), which is the whole
+    // reason the core validates rather than the panel.
+    const container = await render(
+      panel({
+        onSetSetting: async () =>
+          "'2' is not a memory limit. Use a number with a unit, such as 2g or 512m.",
+      }),
+    );
+    await click(tab(container, "Project"));
+    await wait(0);
+
+    await setValue(memory(container), "2");
+    memory(container).focus();
+    await blur(memory(container));
+    await wait(0);
+
+    assert.match(group(container).textContent ?? "", /number with a unit/i);
+    assert.equal(memory(container).value, "2", "the value was lost with the message");
+  });
+
+  test("a field adopts the core's spelling again, not the one that was typed", async () => {
+    // The fields are uncontrolled, so a half-typed value is never fought over
+    // by a re-render; `key` is what makes them adopt the stored value again
+    // once it changes. The core lowercases a memory limit, so "4G" comes back
+    // "4g".
+    const fake = core();
+    const container = await render(
+      panel({
+        onReadSettings: fake.read,
+        onSetSetting: async (key, value) => {
+          await fake.set(key, String(value).toLowerCase());
+          return null;
+        },
+      }),
+    );
+    await click(tab(container, "Project"));
+    await wait(0);
+
+    await setValue(memory(container), "4G");
+    memory(container).focus();
+    await blur(memory(container));
+    await wait(0);
+
+    assert.equal(memory(container).value, "4g");
+  });
+
+  test("it says when a change takes effect", async () => {
+    // Every field here is read at `sandbox.start`, so a change to the running
+    // one is not a change to the running one. Said once, at the foot.
+    const { container } = await opened();
+    assert.match(group(container).textContent ?? "", /next time the sandbox starts/i);
+  });
+
+  test("the settings are read when Project opens, not per render", async () => {
+    let asked = 0;
+    const container = await render(
+      panel({
+        onReadSettings: async () => {
+          asked += 1;
+          return SETTINGS;
+        },
+      }),
+    );
+    const afterMount = asked;
+    await click(tab(container, "Project"));
+    await wait(0);
+
+    assert.equal(asked, afterMount + 1, "opening Project did not read the settings");
+    await click(tab(container, "Keys"));
+    await click(tab(container, "Project"));
+    await wait(0);
+    assert.equal(asked, afterMount + 2);
   });
 });

@@ -164,6 +164,8 @@ def detect_wsl_distro() -> Optional[str]:
 class WslSandboxBackend(SandboxBackend):
     """The sandbox runtime, served from inside a WSL2 distro."""
 
+    kind = "wsl"
+
     #: A distro with ``unshare`` is a boundary the same way a container is:
     #: what runs inside cannot see the host's filesystem (bar the mounted
     #: workspace), its network namespaces, or outlive this process tree.

@@ -224,3 +224,202 @@ def test_an_empty_list_is_allowed(isolated_config):
     reply = _call("settings.set", {"key": "tools.command_allowlist", "value": []})
     assert reply["result"]["persisted"] is True
     assert reply["result"]["value"] == []
+
+
+# --- the sandbox section ------------------------------------------------------
+
+
+class _Backend:
+    """Just enough of a backend for the identity read."""
+
+    def __init__(self, kind: str, distro: str = "") -> None:
+        self.kind = kind
+        self.distro = distro
+        self.has_network = True
+
+
+class _Manager:
+    """Just enough of a manager for the identity read."""
+
+    def __init__(self, backend: _Backend | None = None, isolated: bool = False) -> None:
+        self._backend = backend
+        self._isolated = isolated
+
+    def get_runtime_backend(self) -> _Backend | None:
+        return self._backend
+
+    def is_isolated(self) -> bool:
+        return self._isolated
+
+
+def test_get_reports_the_sandbox_section(isolated_config):
+    section = _call("settings.get")["result"]["sandbox"]
+    assert section["type"] == "auto"
+    assert section["enable_network"] is False
+    assert section["memory_limit"] == "2g"
+    assert section["cpu_limit"] == "2.0"
+    assert section["defaults"]["memory_limit"] == "2g"
+    assert section["defaults"]["cpu_limit"] == "2.0"
+
+
+def test_get_reads_the_sandbox_section_from_the_file(isolated_config):
+    """The read side, for the section the card draws."""
+    migration.save_section_value("sandbox", "memory_limit", "8g")
+    migration.save_section_value("sandbox", "wsl_distro", "Debian")
+
+    section = _call("settings.get")["result"]["sandbox"]
+    assert section["memory_limit"] == "8g"
+    assert section["wsl_distro"] == "Debian"
+
+
+def test_a_stopped_runtime_says_so(isolated_config, monkeypatch):
+    monkeypatch.setattr(
+        "tonyagent.sandbox.get_shared_sandbox_manager", lambda: _Manager()
+    )
+    assert _call("settings.get")["result"]["sandbox"]["runtime"] == {
+        "running": False,
+        "kind": "",
+        "distro": "",
+        "isolated": False,
+    }
+
+
+def test_the_runtime_names_the_backend_and_the_distro(isolated_config, monkeypatch):
+    """`type` is "auto" on most machines, which is not an answer.
+
+    This is the read that makes the card able to say what the user actually got
+    -- the backend it resolved to, the distro it landed in, and whether what
+    runs inside is contained.
+    """
+    backend = _Backend("wsl", "Ubuntu-24.04")
+    monkeypatch.setattr(
+        "tonyagent.sandbox.get_shared_sandbox_manager",
+        lambda: _Manager(backend, isolated=True),
+    )
+
+    assert _call("settings.get")["result"]["sandbox"]["runtime"] == {
+        "running": True,
+        "kind": "wsl",
+        "distro": "Ubuntu-24.04",
+        "isolated": True,
+    }
+
+
+def test_a_runtime_without_a_name_does_not_read_as_stopped(isolated_config, monkeypatch):
+    """A backend that cannot name itself is running; only the name is missing."""
+    monkeypatch.setattr(
+        "tonyagent.sandbox.get_shared_sandbox_manager",
+        lambda: _Manager(_Backend(""), isolated=True),
+    )
+    runtime = _call("settings.get")["result"]["sandbox"]["runtime"]
+    assert runtime["running"] is True
+    assert runtime["kind"] == ""
+
+
+@pytest.mark.parametrize(
+    "key, value",
+    [
+        ("sandbox.type", "docker"),
+        ("sandbox.wsl_distro", "Ubuntu-24.04"),
+        ("sandbox.enable_network", True),
+        ("sandbox.memory_limit", "4g"),
+        ("sandbox.cpu_limit", "0.5"),
+    ],
+)
+def test_each_sandbox_field_writes(isolated_config, key, value):
+    reply = _call("settings.set", {"key": key, "value": value})["result"]
+    assert reply["persisted"] is True
+    assert reply["value"] == value
+
+    _section, _, name = key.partition(".")
+    assert _read(isolated_config)["sandbox"][name] == value
+
+
+def test_unsetting_a_sandbox_field_goes_back_to_the_default(isolated_config):
+    _call("settings.set", {"key": "sandbox.memory_limit", "value": "4g"})
+    reply = _call(
+        "settings.set", {"key": "sandbox.memory_limit", "value": None}
+    )["result"]
+
+    assert reply["value"] == "2g"
+    assert "memory_limit" not in _read(isolated_config)["sandbox"]
+
+
+@pytest.mark.parametrize(
+    "key, value, expected",
+    [
+        ("sandbox.type", "windows", "not a sandbox backend"),
+        ("sandbox.type", "podman", "not a sandbox backend"),
+        ("sandbox.enable_network", "false", "true or false"),
+        ("sandbox.enable_network", 1, "true or false"),
+        ("sandbox.memory_limit", "2", "number with a unit"),
+        ("sandbox.memory_limit", "lots", "number with a unit"),
+        ("sandbox.memory_limit", 2048, "must be text"),
+        ("sandbox.cpu_limit", "0", "number of cores"),
+        ("sandbox.cpu_limit", "-1", "number of cores"),
+        ("sandbox.wsl_distro", 3, "must be text"),
+    ],
+)
+def test_a_sandbox_value_that_cannot_work_is_refused(isolated_config, key, value, expected):
+    """Refused with a sentence that names the rule.
+
+    A bad memory limit used to be a container docker declines to create and a
+    line in the log; this is the layer that can say "a number with a unit"
+    while the user is still looking at the field.
+    """
+    reply = _call("settings.set", {"key": key, "value": value})
+    assert expected in reply["error"]["message"]
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "sandbox.pids_limit",
+        "sandbox.no_new_privileges",
+        "sandbox.drop_capabilities",
+        "sandbox.ulimit_nproc",
+        "sandbox.workspace_read_only",
+    ],
+)
+def test_the_containment_settings_are_not_writable(isolated_config, key):
+    """The rest of the table is what the backend guarantees.
+
+    A page that could loosen it would be a page that can turn the sandbox off
+    one switch at a time.
+    """
+    reply = _call("settings.set", {"key": key, "value": 1})
+    assert key in reply["error"]["message"]
+
+
+def test_every_backend_that_can_run_names_itself():
+    """The card falls back to "Running." for a backend with no name, which is
+    weaker than it has to be. The three that can run all have one."""
+    from tonyagent.sandbox.docker_backend import DockerSandboxBackend
+    from tonyagent.sandbox.local_backend import LocalBackend
+    from tonyagent.sandbox.wsl_backend import WslSandboxBackend
+
+    assert DockerSandboxBackend.kind == "docker"
+    assert LocalBackend.kind == "local"
+    assert WslSandboxBackend.kind == "wsl"
+
+
+def test_the_network_refusal_names_the_switch_that_fixes_it(monkeypatch):
+    """The message has always sent the user to a page that did not exist.
+
+    It said "Settings > Sandbox", and there was no Sandbox section anywhere in
+    the window. Now there is one, on Project, and the switch is called what the
+    message calls it.
+    """
+    backend = _Backend("wsl")
+    backend.has_network = False
+    monkeypatch.setattr(
+        "tonyagent.tools.runtime_access.get_shared_sandbox_manager",
+        lambda: _Manager(backend),
+    )
+
+    from tonyagent.tools.runtime_access import check_runtime
+
+    message = check_runtime(needs_network=True)
+    assert message is not None
+    assert "Settings > Project > Sandbox" in message
+    assert "Allow network access" in message
