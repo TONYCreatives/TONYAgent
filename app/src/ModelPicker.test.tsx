@@ -223,9 +223,9 @@ describe("choosing a model", () => {
     assert.deepEqual(texts(container, ".modelpicker-vendor"), [
       "Anthropic",
       "Anthropic",
-      "Openai",
+      "OpenAI",
       "Google",
-      "Deepseek",
+      "DeepSeek",
     ]);
   });
 
@@ -244,7 +244,7 @@ describe("choosing a model", () => {
     // it. The id is what gets bound on click, so it rides in the tooltip --
     // a display that hid the address would be a chip that cannot be checked.
     const { container } = await live({ model: "deepseek/deepseek-chat" });
-    assert.match(chip(container).textContent ?? "", /Deepseek Chat/);
+    assert.match(chip(container).textContent ?? "", /DeepSeek Chat/);
     assert.match(chip(container).getAttribute("title") ?? "", /deepseek\/deepseek-chat/);
   });
 
@@ -474,7 +474,7 @@ describe("catalog detail lines", () => {
     const container = await catalogued();
     await click(chip(container));
     const rows = texts(container, ".modelpicker-item").map((t) => t ?? "");
-    assert.match(rows[2], /Glm 5\.3/);
+    assert.match(rows[2], /GLM 5\.3/);
     assert.equal(all(container, ".modelpicker-detail").length, 2);
   });
 });

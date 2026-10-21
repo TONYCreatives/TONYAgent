@@ -309,7 +309,7 @@ describe("the settings tabs", () => {
   test("the Keys tab is one section per provider, and nothing to pick a model with", async () => {
     const container = await opened();
 
-    assert.deepEqual(headings(container), ["openrouter", "opencode-go", "Base URL"]);
+    assert.deepEqual(headings(container), ["OpenRouter", "OpenCode Go", "Base URL"]);
     // The regression this pins: the provider and model pickers used to be here,
     // and a panel that still offered them would be a second place to bind the
     // window's provider while the composer has the first.
@@ -433,13 +433,13 @@ describe("the stored keys list", () => {
   test("every provider gets its own section and its own rows, from the core", async () => {
     const container = await opened();
 
-    assert.deepEqual(names(section(container, "openrouter")), ["default", "work"]);
-    assert.deepEqual(names(section(container, "opencode-go")), ["go"]);
+    assert.deepEqual(names(section(container, "OpenRouter")), ["default", "work"]);
+    assert.deepEqual(names(section(container, "OpenCode Go")), ["go"]);
   });
 
   test("the active key is a flag, and every other key is offered as a Use", async () => {
     const container = await opened();
-    const openrouter = section(container, "openrouter");
+    const openrouter = section(container, "OpenRouter");
 
     assert.ok(
       one(rowFor(openrouter, "default"), ".settings-key-flag"),
@@ -460,7 +460,7 @@ describe("the stored keys list", () => {
     const container = await opened({
       keys: [{ provider: "openrouter", name: "default", active: true }],
     });
-    const go = section(container, "opencode-go");
+    const go = section(container, "OpenCode Go");
 
     assert.deepEqual(names(go), []);
     assert.match(go.textContent ?? "", /No keys stored for this provider yet/);
@@ -483,7 +483,7 @@ describe("revealing a stored key", () => {
         return "sk-for-" + name;
       },
     });
-    const openrouter = section(container, "openrouter");
+    const openrouter = section(container, "OpenRouter");
 
     await click(eyes(openrouter)[1]);
     await wait(0);
@@ -496,7 +496,7 @@ describe("revealing a stored key", () => {
     const container = await opened({
       onRevealKey: async (_provider, name) => "sk-for-" + name,
     });
-    const openrouter = section(container, "openrouter");
+    const openrouter = section(container, "OpenRouter");
 
     await click(eyes(openrouter)[1]);
     await wait(0);
@@ -511,7 +511,7 @@ describe("revealing a stored key", () => {
     const container = await opened({
       onRevealKey: async (_provider, name) => "sk-for-" + name,
     });
-    const openrouter = section(container, "openrouter");
+    const openrouter = section(container, "OpenRouter");
 
     await click(eyes(openrouter)[0]);
     await wait(0);
@@ -526,7 +526,7 @@ describe("revealing a stored key", () => {
       onRevealKey: async (_provider, name) => "sk-for-" + name,
       onDeleteKey: async () => true,
     });
-    const openrouter = section(container, "openrouter");
+    const openrouter = section(container, "OpenRouter");
 
     await click(eyes(openrouter)[0]);
     await wait(0);
@@ -542,7 +542,7 @@ describe("revealing a stored key", () => {
     const container = await opened({
       onRevealKey: async () => null,
     });
-    const openrouter = section(container, "openrouter");
+    const openrouter = section(container, "OpenRouter");
 
     await click(eyes(openrouter)[0]);
     await wait(0);
@@ -565,7 +565,7 @@ describe("deleting a stored key", () => {
         return true;
       },
     });
-    const openrouter = section(container, "openrouter");
+    const openrouter = section(container, "OpenRouter");
 
     await click(bins(openrouter)[1]);
     await wait(0);
@@ -577,7 +577,7 @@ describe("deleting a stored key", () => {
 
   test("a removal the core refused says so rather than looking like it worked", async () => {
     const container = await opened({ onDeleteKey: async () => false });
-    const openrouter = section(container, "openrouter");
+    const openrouter = section(container, "OpenRouter");
 
     await click(bins(openrouter)[0]);
     await wait(0);
@@ -600,7 +600,7 @@ describe("activating a stored key", () => {
         return true;
       },
     });
-    const openrouter = section(container, "openrouter");
+    const openrouter = section(container, "OpenRouter");
 
     await click(uses(openrouter)[0]);
     await wait(0);
@@ -615,7 +615,7 @@ describe("activating a stored key", () => {
 
   test("a refused activation says so and leaves the choice where it was", async () => {
     const container = await opened({ onActivateKey: async () => false });
-    const openrouter = section(container, "openrouter");
+    const openrouter = section(container, "OpenRouter");
 
     await click(uses(openrouter)[0]);
     await wait(0);
@@ -628,7 +628,7 @@ describe("activating a stored key", () => {
 describe("adding a key", () => {
   test("Save waits for a key, and the name alone is not enough", async () => {
     const container = await opened();
-    const openrouter = section(container, "openrouter");
+    const openrouter = section(container, "OpenRouter");
 
     assert.equal(saveButton(openrouter).disabled, true, "Save is offered with nothing typed");
     await setValue(nameField(openrouter, "openrouter"), "personal");
@@ -655,7 +655,7 @@ describe("adding a key", () => {
         return true;
       },
     });
-    const openrouter = section(container, "openrouter");
+    const openrouter = section(container, "OpenRouter");
 
     await setValue(nameField(openrouter, "openrouter"), "personal");
     await setValue(keyField(openrouter, "openrouter"), "sk-typed");
@@ -680,7 +680,7 @@ describe("adding a key", () => {
         return true;
       },
     });
-    const openrouter = section(container, "openrouter");
+    const openrouter = section(container, "OpenRouter");
 
     await setValue(keyField(openrouter, "openrouter"), "sk-typed");
     await click(saveButton(openrouter));
@@ -691,8 +691,8 @@ describe("adding a key", () => {
 
   test("the two providers' add rows do not share a draft", async () => {
     const container = await opened();
-    const openrouter = section(container, "openrouter");
-    const go = section(container, "opencode-go");
+    const openrouter = section(container, "OpenRouter");
+    const go = section(container, "OpenCode Go");
 
     await setValue(nameField(openrouter, "openrouter"), "personal");
     await setValue(keyField(openrouter, "openrouter"), "sk-typed");
@@ -703,7 +703,7 @@ describe("adding a key", () => {
 
   test("a save the core refused keeps the name for a retry", async () => {
     const container = await opened({ onSaveKey: async () => false });
-    const openrouter = section(container, "openrouter");
+    const openrouter = section(container, "OpenRouter");
 
     await setValue(nameField(openrouter, "openrouter"), "personal");
     await setValue(keyField(openrouter, "openrouter"), "sk-typed");
@@ -1434,7 +1434,7 @@ describe("a chat-only provider says what it is", () => {
   test("it is labelled as a local, keyless, chat-mode model", async () => {
     const container = await opened({ providers: LOCAL });
 
-    const note = section(container, "airllm").textContent ?? "";
+    const note = section(container, "Airllm").textContent ?? "";
     assert.match(note, /Chat mode only/, "the provider is not marked chat-only");
     assert.match(note, /no API key/i, "the provider is not marked keyless");
   });
@@ -1442,7 +1442,7 @@ describe("a chat-only provider says what it is", () => {
   test("an ordinary provider is not marked that way", async () => {
     const container = await opened({ providers: LOCAL });
 
-    const note = section(container, "openrouter").textContent ?? "";
+    const note = section(container, "OpenRouter").textContent ?? "";
     assert.doesNotMatch(note, /Chat mode only/);
   });
 });

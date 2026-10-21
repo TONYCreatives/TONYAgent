@@ -266,7 +266,7 @@ async function mountWithPicker(
   );
 
   for (let i = 0; i < 50; i++) {
-    if (texts(container, ".statusbar").join(" ").includes("openrouter")) break;
+    if (texts(container, ".statusbar").join(" ").includes("OpenRouter")) break;
     await wait(20);
   }
   await wait(80);
@@ -287,7 +287,7 @@ async function mount(results: Record<string, unknown> = {}): Promise<Mounted> {
   const container = await render(<App backend={backend} />);
 
   for (let i = 0; i < 50; i++) {
-    if (texts(container, ".statusbar").join(" ").includes("openrouter")) break;
+    if (texts(container, ".statusbar").join(" ").includes("OpenRouter")) break;
     await wait(20);
   }
 
@@ -353,7 +353,7 @@ describe("the window boots against a core", () => {
     const { container } = await mount();
 
     const status = texts(container, ".statusbar").join(" ");
-    assert.match(status, /openrouter/, "the bound provider is not in the status bar");
+    assert.match(status, /OpenRouter/, "the bound provider is not in the status bar");
     assert.match(status, /Stealth Space Bunny Alpha/, "the bound model is not in the status bar");
 
     // No error banner. This is the assertion that would catch a boot call going
@@ -1340,7 +1340,7 @@ describe("the keys pane over the real protocol", () => {
 
   const keyGroup = (c: HTMLElement) =>
     all(c, ".settings-group").find(
-      (g) => (one(g, "h3")?.textContent ?? "").trim() === "openrouter",
+      (g) => (one(g, "h3")?.textContent ?? "").trim() === "OpenRouter",
     )!;
 
   // The boot table's own provider entry is stale (a display name and has_key),

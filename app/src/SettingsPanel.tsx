@@ -35,6 +35,7 @@ import {
   type PermissionList,
   type ReasoningInfo,
 } from "./SettingsMenus.js";
+import { prettifyModelName } from "./displayNames.js";
 
 /**
  * One `update.check` reply.
@@ -1419,7 +1420,10 @@ export function SettingsPanel({
               const rows = keys.filter((row) => row.provider === entry.name);
               return (
                 <section className="settings-group" key={entry.name}>
-                  <h3>{entry.name}</h3>
+                  {/* Words, with the id one hover away: `opencode-go` reads
+                      `OpenCode Go`, and the tooltip keeps the address the keys
+                      are stored under. */}
+                  <h3 title={entry.name}>{prettifyModelName(entry.name)}</h3>
                   {entry.chat_only && (
                     <p className="settings-note">
                       A local model. It works in Chat mode only, and it needs no

@@ -16,15 +16,37 @@ export function capitalizeFirst(word: string): string {
 }
 
 /**
+ * Tokens naive capitalisation gets wrong.
+ *
+ * `capitalizeFirst("opencode")` reads "Opencode", which is a misspelling of a
+ * brand, not a simplification of an id. The map holds only those: anything
+ * else keeps the naive reading, and an unknown vendor still reads better
+ * capitalised than raw. Small on purpose -- the catalog is what knows model
+ * names, and this is the fallback for what it does not.
+ */
+const BRANDS: Record<string, string> = {
+  opencode: "OpenCode",
+  openai: "OpenAI",
+  openrouter: "OpenRouter",
+  deepseek: "DeepSeek",
+  glm: "GLM",
+  gpt: "GPT",
+};
+
+/** One token as a person would write it: brand readings first, then naive. */
+export function brandToken(token: string): string {
+  return BRANDS[token.toLowerCase()] ?? capitalizeFirst(token);
+}
+
+/**
  * An id as a person would write it: `deepseek/deepseek-v4.1-flash` becomes
- * `DeepSeek V4.1 Flash`.
+ * `DeepSeek V4.1 Flash`, and `opencode-go` becomes `OpenCode Go`.
  *
  * Split on the separators ids are built from, drop a vendor prefix the name
  * already starts with (so `deepseek/deepseek-chat` does not read the vendor
- * twice), and capitalise each token. A fallback, not a catalog: rows the
- * catalog knows keep the catalog's own name, and this is what the rest read
- * as. It cannot know camel boundaries (`Deepseek`, not `DeepSeek`), which is
- * exactly why the catalog wins wherever it has an answer.
+ * twice), and read each token through `brandToken`. A fallback, not a
+ * catalog: rows the catalog knows keep the catalog's own name, and this is
+ * what the rest read as.
  */
 export function prettifyModelName(id: string): string {
   const tokens = id.split(/[/\-_ :]+/).filter(Boolean);
@@ -34,5 +56,5 @@ export function prettifyModelName(id: string): string {
   ) {
     tokens.shift();
   }
-  return tokens.map(capitalizeFirst).join(" ");
+  return tokens.map(brandToken).join(" ");
 }

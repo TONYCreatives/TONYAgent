@@ -11,7 +11,7 @@ import "./test-dom.js";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { capitalizeFirst, prettifyModelName } from "./displayNames.js";
+import { brandToken, capitalizeFirst, prettifyModelName } from "./displayNames.js";
 
 describe("capitalise one word", () => {
   test("the first letter goes up and the rest is untouched", () => {
@@ -25,15 +25,30 @@ describe("capitalise one word", () => {
   });
 });
 
+describe("brand readings", () => {
+  test("a brand reads as itself, whatever the case of the id", () => {
+    assert.equal(brandToken("opencode"), "OpenCode");
+    assert.equal(brandToken("OpenRouter"), "OpenRouter");
+    assert.equal(brandToken("DEEPSEEK"), "DeepSeek");
+    assert.equal(brandToken("gpt"), "GPT");
+  });
+
+  test("anything else keeps the naive reading", () => {
+    assert.equal(brandToken("anthropic"), "Anthropic");
+    assert.equal(brandToken("kimi"), "Kimi");
+  });
+});
+
 describe("a model id as a person would write it", () => {
-  test("dashes become spaces and every token is capitalised", () => {
-    assert.equal(prettifyModelName("deepseek-v4.1-flash"), "Deepseek V4.1 Flash");
+  test("dashes become spaces and brands read as themselves", () => {
+    assert.equal(prettifyModelName("deepseek-v4.1-flash"), "DeepSeek V4.1 Flash");
+    assert.equal(prettifyModelName("opencode-go"), "OpenCode Go");
   });
 
   test("a vendor prefix the name repeats is said once", () => {
     assert.equal(
       prettifyModelName("deepseek/deepseek-chat-v3-0324"),
-      "Deepseek Chat V3 0324",
+      "DeepSeek Chat V3 0324",
     );
   });
 
@@ -52,7 +67,14 @@ describe("a model id as a person would write it", () => {
   });
 
   test("an id with no separators is one capitalised word", () => {
-    assert.equal(prettifyModelName("gpt-5"), "Gpt 5");
+    assert.equal(prettifyModelName("gpt-5"), "GPT 5");
     assert.equal(prettifyModelName("ollama"), "Ollama");
+  });
+
+  test("an already-pretty name survives untouched", () => {
+    // Provider lists sometimes carry display names rather than ids. Reading
+    // them through the same helper must not mangle what is already words.
+    assert.equal(prettifyModelName("OpenRouter"), "OpenRouter");
+    assert.equal(prettifyModelName("OpenCode Go"), "OpenCode Go");
   });
 });

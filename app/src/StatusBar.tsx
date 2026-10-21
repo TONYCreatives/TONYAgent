@@ -48,8 +48,8 @@ export function StatusBar({
           No provider &mdash; choose one to start
         </button>
       ) : (
-        <span title={model || undefined}>
-          {provider || "No provider"}
+        <span title={`${provider}${model ? ` / ${model}` : ""}`}>
+          {provider ? prettifyModelName(provider) : "No provider"}
           {model && ` / ${prettifyModelName(model)}`}
         </span>
       )}

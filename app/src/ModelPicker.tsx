@@ -23,7 +23,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useDismiss } from "./useDismiss.js";
-import { capitalizeFirst, prettifyModelName } from "./displayNames.js";
+import { brandToken, prettifyModelName } from "./displayNames.js";
 import { useDelayedUnmount } from "./useDelayedUnmount.js";
 import { useMenuPlacement } from "./useMenuPlacement.js";
 
@@ -324,7 +324,7 @@ export function ModelPicker({
                       */}
                       <span className="modelpicker-vendor">
                         {id.includes("/")
-                          ? capitalizeFirst(id.slice(0, id.indexOf("/")))
+                          ? brandToken(id.slice(0, id.indexOf("/")))
                           : ""}
                       </span>
                       <span className="modelpicker-text">
