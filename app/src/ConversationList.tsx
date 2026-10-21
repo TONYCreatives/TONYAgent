@@ -54,6 +54,8 @@ export interface ConversationSummary {
   created_at: number;
   updated_at: number;
   message_count: number;
+  /** Which track this conversation belongs to: "chat" or "build". */
+  track: string;
 }
 
 /**

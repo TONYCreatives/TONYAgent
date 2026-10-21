@@ -207,6 +207,7 @@ const conversation = (over: Record<string, unknown> = {}) => ({
   created_at: 1_700_000_000,
   updated_at: 1_700_000_000,
   message_count: 2,
+  track: "build",
   ...over,
 });
 
@@ -1411,6 +1412,7 @@ describe("the keys pane over the real protocol", () => {
  * would go stale the moment the mode changed.
  */
 describe("a chat-only provider is offered in Chat mode only", () => {
+  const FOLDER = "D:/work/api";
   const LOCAL = {
     providers: [
       { name: "openrouter", models: [], has_credentials: true },
@@ -1431,11 +1433,15 @@ describe("a chat-only provider is offered in Chat mode only", () => {
   /**
    * Press a mode pill.
    *
+   * Scoped to the Mode group, because the Track group beside it carries its
+   * own "Build" button: an unscoped find would press the toggle and mint a
+   * conversation instead of re-moding the open one.
+   *
    * The same press a person makes, because the wiring under test is the
    * request the window sends, not the callback it calls.
    */
   const pressMode = async (c: HTMLElement, label: string) => {
-    const pill = all(c, ".mode-group .mode").find(
+    const pill = all(c, '.mode-group[aria-label="Mode"] .mode').find(
       (b) => (b.textContent ?? "").trim() === label,
     );
     assert.ok(pill, `there is no "${label}" mode pill`);
@@ -1443,22 +1449,111 @@ describe("a chat-only provider is offered in Chat mode only", () => {
     await wait(80);
   };
 
-  test("switching mode asks for the provider list again", async () => {
+  /**
+   * Press the track toggle.
+   *
+   * Crossing tracks mints a fresh conversation in the other one, so this
+   * needs a `conversations.create` answer the way a mode press needs a
+   * `mode.set` one.
+   */
+  const pressTrack = async (c: HTMLElement, label: string) => {
+    const toggle = all(c, '.mode-group[aria-label="Track"] .mode').find(
+      (b) => (b.textContent ?? "").trim() === label,
+    );
+    assert.ok(toggle, `there is no "${label}" track toggle`);
+    await click(toggle);
+    await wait(80);
+  };
+
+  test("crossing to the chat track mints a conversation and re-reads providers", async () => {
+    // Not a mode switch: the toggle starts a fresh chat-track conversation
+    // rather than re-moding the open one, so nothing is cleared and nothing
+    // needs confirming. The provider list is still re-read, because what may
+    // be offered depends on where the window landed.
     const { container, transport } = await mount({
+      state: { ...BOOT.state, project: FOLDER },
       "providers.list": LOCAL,
       "mode.list": MODES,
-      "mode.set": { mode: "chat", label: "Chat", writes: false },
+      "conversations.create": {
+        conversation: conversation({
+          id: "b".repeat(32),
+          title: "New chat",
+          project: FOLDER,
+          message_count: 0,
+          track: "chat",
+        }),
+        mode: "chat",
+        disconnected_provider: "",
+      },
     });
 
     const before = transport.sent.filter((r) => r.method === "providers.list").length;
 
-    await pressMode(container, "Chat");
+    await pressTrack(container, "Chat");
     await wait(80);
 
+    const created = transport.sent.find((r) => r.method === "conversations.create");
+    assert.deepEqual(
+      created?.params,
+      { project: FOLDER, track: "chat" },
+      "the toggle did not ask for a chat-track conversation",
+    );
+    assert.equal(
+      transport.sent.filter((r) => r.method === "mode.set").length,
+      0,
+      "crossing tracks re-moded the open conversation instead of minting",
+    );
     const after = transport.sent.filter((r) => r.method === "providers.list").length;
     assert.ok(
       after > before,
-      "the provider list was not re-read after the mode changed",
+      "the provider list was not re-read after the track changed",
+    );
+    assert.deepEqual(
+      all(container, '.mode-group[aria-label="Mode"] .mode').map((b) =>
+        (b.textContent ?? "").trim(),
+      ),
+      ["Chat"],
+      "the composer still offers working modes in a chat-track conversation",
+    );
+  });
+
+  test("opening a chat-track conversation adopts it without re-moding", async () => {
+    // The core sets the track's mode while loading, so the window paints the
+    // reply's mode rather than sending a `mode.set` of its own -- which would
+    // clear the transcript that was just loaded.
+    const { container, transport } = await mount({
+      "providers.list": LOCAL,
+      "mode.list": MODES,
+      "conversations.list": {
+        conversations: [conversation({ title: "Talk", track: "chat" })],
+      },
+      "conversations.switch": {
+        conversation: conversation({ title: "Talk", track: "chat" }),
+        messages: [],
+        mode: "chat",
+        disconnected_provider: "",
+      },
+    });
+
+    await click(one(container, ".rail-toggle")!);
+    await click(one(container, ".chatrow-open")!);
+    await wait(120);
+
+    assert.ok(
+      transport.methods().includes("conversations.switch"),
+      "the row did not switch",
+    );
+    assert.equal(
+      transport.methods().filter((m) => m === "mode.set").length,
+      0,
+      "opening the conversation re-moded instead of adopting the reply",
+    );
+    assert.deepEqual(
+      all(container, '.mode-group[aria-label="Mode"] .mode').map((b) =>
+        (b.textContent ?? "").trim(),
+      ),
+      ["Chat"],
+      "the composer still offers working modes in a chat-track conversation",
     );
   });
 
@@ -1528,7 +1623,7 @@ describe("Code mode takes over the window", () => {
   // never had a tab and prove nothing about the switch.
   const OPEN = "open-chat";
 
-  const mountCode = () =>
+  const mountCode = (results: Record<string, unknown> = {}) =>
     mount({
       state: { ...BOOT.state, project: FOLDER, conversation: OPEN },
       "conversations.list": {
@@ -1546,6 +1641,7 @@ describe("Code mode takes over the window", () => {
       },
       "files.tree": TREE,
       "files.read": SOURCE,
+      ...results,
     });
 
   const modeButton = (c: HTMLElement, label: string) =>
@@ -1627,21 +1723,59 @@ describe("Code mode takes over the window", () => {
     assert.equal(all(container, ".composer").length, 1, "restoring the helper duplicated the conversation");
   });
 
-  test("plain chatting is offered beside the agent modes", async () => {
-    const { container, transport } = await mountCode();
+  test("the track toggle offers chatting beside the agent modes", async () => {
+    const { container } = await mountCode();
     await click(modeButton(container, "Code"));
     await wait(40);
 
     assert.deepEqual(
-      all(container, ".helper .mode").map((pill) => (pill.textContent ?? "").trim()),
-      ["Chat", "Build", "Plan"],
+      all(container, '.helper .mode-group[aria-label="Track"] .mode').map(
+        (pill) => (pill.textContent ?? "").trim(),
+      ),
+      ["Chat", "Build"],
     );
+    assert.deepEqual(
+      all(container, '.helper .mode-group[aria-label="Mode"] .mode').map(
+        (pill) => (pill.textContent ?? "").trim(),
+      ),
+      ["Build", "Plan"],
+    );
+  });
 
-    await click(all(container, ".helper .mode")[0]!);
+  test("the toggle mints in the other track instead of re-moding", async () => {
+    const { container, transport } = await mountCode({
+      "conversations.create": {
+        conversation: conversation({
+          id: "b".repeat(32),
+          title: "New chat",
+          project: FOLDER,
+          message_count: 0,
+          track: "chat",
+        }),
+        mode: "chat",
+        disconnected_provider: "",
+      },
+    });
+    await click(modeButton(container, "Code"));
+    await wait(40);
+
+    const toggle = all(container, '.helper .mode-group[aria-label="Track"] .mode').find(
+      (b) => (b.textContent ?? "").trim() === "Chat",
+    )!;
+    await click(toggle);
     await wait(80);
 
-    const request = transport.sent.find((r) => r.method === "mode.set");
-    assert.equal(request?.params?.mode, "chat", "selecting Chat did not ask the core for Chat");
+    const created = transport.sent.find((r) => r.method === "conversations.create");
+    assert.deepEqual(
+      created?.params,
+      { project: FOLDER, track: "chat" },
+      "selecting Chat did not ask the core for a chat-track conversation",
+    );
+    assert.equal(
+      transport.sent.filter((r) => r.method === "mode.set").length,
+      0,
+      "the toggle re-moded instead of minting, clearing the open transcript",
+    );
     assert.match(
       one(container, ".helper .hint")?.textContent ?? "",
       /Nothing is read, run or changed/,

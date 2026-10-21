@@ -33,6 +33,22 @@ interface Props {
   /** The mode actually in force, as the core last reported it. */
   mode: string;
   onModeChange: (name: string) => void;
+  /**
+   * The track the open conversation belongs to: "chat" or "build".
+   *
+   * Decides which pills are drawn -- Chat alone, or the four working modes.
+   * Defaults to "build" so a harness that mounts the composer to drive its
+   * send button does not have to stand up tracks to do it.
+   */
+  track?: string;
+  /**
+   * Start a fresh conversation in the other track.
+   *
+   * A mint, not a switch: crossing tracks clears nothing because there is
+   * nothing to clear -- the new conversation is empty by definition. That is
+   * what lets this sit beside the pills with no confirm dialog.
+   */
+  onTrackChange?: (track: string) => void;
   onSend: (text: string, attachments: PendingAttachment[]) => void;
   onCancel: () => void;
   /**
@@ -83,6 +99,8 @@ export function Composer({
   modes,
   mode,
   onModeChange,
+  track = "build",
+  onTrackChange,
   onSend,
   onCancel,
   maxToolCalls,
@@ -115,6 +133,22 @@ export function Composer({
   // lie this project keeps having to unpick.
   const active = modes.find((m) => m.name === mode);
   const readOnly = active !== undefined && !active.writes;
+
+  /*
+    The track, and the pills it allows.
+
+    Chat is not one pill among five: it is the other kind of conversation, so
+    it gets its own group and the working modes get theirs. The labels come
+    from the core's own list rather than being written out here, for the
+    reason `modes` gives -- and when the list has no chat entry at all, the
+    toggle falls back to the words themselves rather than drawing nothing.
+  */
+  const chatLabel = modes.find((m) => m.name === "chat")?.label ?? "Chat";
+  const buildLabel = modes.find((m) => m.name === "build")?.label ?? "Build";
+  const pills = modes.filter((m) => (track === "chat" ? m.name === "chat" : m.name !== "chat"));
+  // A composer with no pills is a composer that cannot switch, so a filter
+  // that matched nothing draws everything rather than nothing.
+  const shown = pills.length > 0 ? pills : modes;
 
   /**
    * The `/name` being typed, or null. See `slashToken` for the three rules.
@@ -381,8 +415,30 @@ export function Composer({
         )}
 
         <div className="composer-row">
+          <div className="mode-group" role="group" aria-label="Track">
+            {(
+              [
+                { name: "chat", label: chatLabel, hint: "A conversation and nothing else. Starts a fresh chat." },
+                { name: "build", label: buildLabel, hint: "Act on the project. Starts a fresh build chat." },
+              ] as const
+            ).map((t) => (
+              <button
+                key={t.name}
+                type="button"
+                className={`mode${t.name === track ? " is-active" : ""}`}
+                title={t.hint}
+                onClick={() => onTrackChange?.(t.name)}
+                aria-pressed={t.name === track}
+                disabled={disabled}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <span className="mode-divider" aria-hidden="true" />
+
           <div className="mode-group" role="group" aria-label="Mode">
-            {modes.map((m) => (
+            {shown.map((m) => (
               <button
                 key={m.name}
                 type="button"

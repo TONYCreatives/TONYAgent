@@ -210,7 +210,7 @@ export interface CoreMethods {
    * across the pipe on every launch.
    */
   "conversations.list": Record<string, never>;
-  "conversations.create": { project?: string };
+  "conversations.create": { project?: string; track?: string };
   "conversations.switch": { id: string };
   "conversations.delete": { id: string };
   "conversations.rename": { id: string; title: string };

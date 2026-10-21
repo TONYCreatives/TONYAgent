@@ -67,6 +67,7 @@ function conversation(over: Partial<ConversationSummary> = {}): ConversationSumm
     created_at: 1_700_000_000,
     updated_at: 1_700_000_000,
     message_count: 3,
+    track: "build",
     ...over,
   };
 }

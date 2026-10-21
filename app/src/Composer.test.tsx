@@ -20,7 +20,7 @@ import { describe, test } from "node:test";
 import { createRef, type RefObject } from "react";
 
 import { Composer, type ModeInfo } from "./Composer.js";
-import { click, one, press, render, setValue } from "./test-render.js";
+import { all, click, one, press, render, setValue } from "./test-render.js";
 import { dom } from "./test-dom.js";
 
 const MODES: ModeInfo[] = [
@@ -231,5 +231,102 @@ describe("the field the window can put the caret in", () => {
     // A required ref would be a prop with exactly one caller.
     const { container } = await composer({ });
     assert.ok(messageField(container), "the field went missing without a ref");
+  });
+});
+
+// --- the track toggle ---------------------------------------------------------
+/*
+ * Chat is not one pill among five: it is the other kind of conversation, so
+ * the composer draws a Track group (which conversation) beside the Mode group
+ * (what a turn may do). The pills shown follow the track -- Chat alone, or
+ * the working modes -- and pressing the other track mints rather than
+ * switching, so these assert the callback fires rather than a request.
+ */
+describe("the track toggle", () => {
+  const TRACK_MODES: ModeInfo[] = [
+    { name: "chat", label: "Chat", description: "Talk.", writes: false },
+    { name: "build", label: "Build", description: "Act.", writes: true },
+    { name: "plan", label: "Plan", description: "Read only.", writes: false },
+  ];
+
+  async function tracked(props: {
+    track?: string;
+    onTrackChange?: (track: string) => void;
+  }) {
+    const changes: string[] = [];
+    const container = await render(
+      <Composer
+        busy={false}
+        disabled={false}
+        modes={TRACK_MODES}
+        mode="build"
+        track={props.track}
+        onTrackChange={(t) => {
+          changes.push(t);
+          props.onTrackChange?.(t);
+        }}
+        onModeChange={() => {}}
+        onSend={() => {}}
+        onCancel={() => {}}
+        maxToolCalls={10}
+        budgetOpen={false}
+        onBudgetOpen={() => {}}
+        onBudgetClose={() => {}}
+        onBudgetChange={() => {}}
+      />,
+    );
+    return { container, changes };
+  }
+
+  const group = (container: HTMLElement, label: string) =>
+    all(container, `.mode-group[aria-label="${label}"] .mode`);
+
+  test("both tracks are offered, with the current one pressed", async () => {
+    const { container } = await tracked({ track: "build" });
+    assert.deepEqual(
+      group(container, "Track").map((b) => (b.textContent ?? "").trim()),
+      ["Chat", "Build"],
+    );
+    assert.equal(
+      group(container, "Track").find((b) => b.classList.contains("is-active"))?.textContent,
+      "Build",
+    );
+  });
+
+  test("a chat-track conversation shows only the Chat pill", async () => {
+    const { container } = await tracked({ track: "chat" });
+    assert.deepEqual(
+      group(container, "Mode").map((b) => (b.textContent ?? "").trim()),
+      ["Chat"],
+    );
+  });
+
+  test("a build-track conversation hides the Chat pill", async () => {
+    const { container } = await tracked({ track: "build" });
+    assert.deepEqual(
+      group(container, "Mode").map((b) => (b.textContent ?? "").trim()),
+      ["Build", "Plan"],
+    );
+  });
+
+  test("pressing the other track reports it rather than requesting it", async () => {
+    // A mint, not a switch: the window starts a fresh conversation, so the
+    // composer fires the callback and the request is the window's to make.
+    const { container, changes } = await tracked({ track: "build" });
+    await click(
+      group(container, "Track").find((b) => (b.textContent ?? "").trim() === "Chat")!,
+    );
+    assert.deepEqual(changes, ["chat"]);
+  });
+
+  test("without a track the working pills still draw", async () => {
+    // The default is "build", so a harness that mounts the composer to drive
+    // its send button -- and the window before it ever hears of tracks --
+    // draws the modes it always drew rather than nothing.
+    const { container } = await tracked({});
+    assert.deepEqual(
+      group(container, "Mode").map((b) => (b.textContent ?? "").trim()),
+      ["Build", "Plan"],
+    );
   });
 });

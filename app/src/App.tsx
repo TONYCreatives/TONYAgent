@@ -229,6 +229,15 @@ export function App({
   const [modes, setModes] = useState<ModeInfo[]>([]);
   const [mode, setMode] = useState("build");
   /**
+   * Which track the open conversation belongs to: "chat" or "build".
+   *
+   * Decides which pills the composer draws -- Chat alone, or the four working
+   * modes. Read from the conversation's summary (create/switch/list), never
+   * guessed from the mode: the mode is per turn and the track is per
+   * conversation, and the two only agree right after a switch.
+   */
+  const [track, setTrack] = useState("build");
+  /**
    * What the `/` menu offers. Read when the menu opens, not at mount.
    *
    * Deliberately not fetched alongside the modes above: the mode list is fixed
@@ -642,7 +651,13 @@ export function App({
         // "stopped" would offer Start over a runtime that is already up, and a
         // reload that assumed "running" would hide Stop over one that is not.
         if (snapshot.sandbox) setSandbox(snapshot.sandbox);
-        await refreshConversations();
+        const rows = await refreshConversations();
+        // The core adopted the reopened conversation's track while loading it,
+        // so the pills follow the row rather than assuming Build: a reload
+        // into a chat-track conversation showing four working pills would
+        // offer modes its transcript was never written under.
+        const open = rows.find((row) => row.id === snapshot.conversation);
+        setTrack(open?.track === "chat" ? "chat" : "build");
         // Modes come from the core for the same reason providers do: a pill
         // list hardcoded here would drift from the tool allow-lists behind
         // it, and the user would be offered a mode that does not exist.
@@ -738,11 +753,13 @@ export function App({
    * the one path someone forgets is the one that leaves a stale row on screen
    * pointing at a conversation that no longer exists.
    */
-  const refreshConversations = useCallback(async () => {
+  const refreshConversations = useCallback(async (): Promise<ConversationSummary[]> => {
     const listed = (await backendRef.current!.call("conversations.list")) as {
       conversations?: ConversationSummary[];
     };
-    setConversations(listed.conversations ?? []);
+    const rows = listed.conversations ?? [];
+    setConversations(rows);
+    return rows;
   }, []);
 
   const refreshConversationsRef = useRef(refreshConversations);
@@ -1495,6 +1512,43 @@ export function App({
     requestAnimationFrame(() => composerRef.current?.focus());
   }, []);
 
+  /**
+   * Believe a reply about what mode is in force.
+   *
+   * `mode.set`, `conversations.create` and `conversations.switch` all answer
+   * the same pair -- the mode actually in force, and the provider that could
+   * not follow it -- so one routine adopts all three. The mode is painted as
+   * reported rather than as requested, the mode-filtered provider list is
+   * re-read, and a dropped chat-only provider gets the banner rather than a
+   * session that has quietly lost its model.
+   *
+   * Declared before the conversation callbacks that use it: `const` does not
+   * hoist, and a helper used before its declaration is a runtime hole the
+   * compiler catches.
+   */
+  const adoptMode = useCallback(
+    (modeName: string | undefined, disconnectedProvider: string | undefined) => {
+      if (modeName) setMode(modeName);
+      // Which providers may be used depends on the mode, so the list is
+      // read again. A local chat model is not offered outside Chat mode,
+      // and a list still carrying it would offer something the core
+      // refuses.
+      void refreshProviders();
+      if (disconnectedProvider) {
+        setState((prev) => ({
+          ...prev,
+          error:
+            `${disconnectedProvider} works in Chat mode only, so it ` +
+            `was disconnected when the mode changed.`,
+        }));
+        setNeedsProvider(true);
+        setProvider("");
+        setModel("");
+      }
+    },
+    [refreshProviders],
+  );
+
   const openConversation = useCallback(
     async (id: string) => {
       setState((prev) => ({ ...prev, error: null, busy: true }));
@@ -1510,11 +1564,19 @@ export function App({
         })) as {
           conversation?: ConversationSummary;
           messages?: unknown[];
+          mode?: string;
+          disconnected_provider?: string;
         };
         showMessages(result.messages ?? []);
         const opened = result.conversation;
         if (opened) {
           setConversation(opened.id);
+          // The track rides the summary, and the mode rides the reply: the
+          // core adopted both while loading, so the window paints what is in
+          // force rather than sending a `mode.set` of its own -- which would
+          // clear the transcript that was just loaded.
+          setTrack(opened.track === "chat" ? "chat" : "build");
+          adoptMode(result.mode, result.disconnected_provider);
           // Opening a chat gives it a tab. Clicking one that is already open
           // activates the tab it has rather than adding a second -- two tabs on
           // one conversation are two views of one session, and the only thing
@@ -1530,7 +1592,7 @@ export function App({
         }));
       }
     },
-    [showMessages, refreshConversations, closePanelToComposer],
+    [showMessages, refreshConversations, closePanelToComposer, adoptMode],
   );
 
   /**
@@ -1631,23 +1693,42 @@ export function App({
   }, []);
 
   const createConversation = useCallback(
-    async (project = "") => {
+    async (project = "", trackName?: string, stay = false) => {
       // Any act that opens a conversation brings the transcript back, so a new
       // chat cannot be typed into a window that is showing a chart. The tab
       // stays open behind it, the way a tab you switched away from does.
-      setUsageTab((open) => (open === "active" ? "open" : open));
-      setMainMode("agent");
+      //
+      // `stay` skips the move to the agent view: the track toggle in Code
+      // mode's helper mints where it is pressed, and dragging the window out
+      // of Code mode to show the same conversation elsewhere would be a
+      // switch the user never asked for. Every other caller wants agent.
+      if (!stay) {
+        setUsageTab((open) => (open === "active" ? "open" : open));
+        setMainMode("agent");
+      }
       setState((prev) => ({ ...prev, error: null, busy: true }));
+      // An explicit track wins; otherwise the new conversation joins the one
+      // open -- the "+" mints in the current track, and only the track toggle
+      // asks for the other one.
+      const wanted = trackName ?? track;
       try {
         const result = (await backendRef.current!.call("conversations.create", {
           project,
+          track: wanted,
         })) as {
           conversation?: ConversationSummary;
+          mode?: string;
+          disconnected_provider?: string;
         };
         showMessages([]);
         const created = result.conversation;
         if (created) {
           setConversation(created.id);
+          // The reply's track, not the request's: an empty conversation of the
+          // other track may have been reused and retracked, and the row is
+          // what is actually in force.
+          setTrack(created.track === "chat" ? "chat" : "build");
+          adoptMode(result.mode, result.disconnected_provider);
           setTabs((prev) => (prev.includes(created.id) ? prev : [...prev, created.id]));
         }
         await refreshConversations();
@@ -1659,7 +1740,7 @@ export function App({
         }));
       }
     },
-    [showMessages, refreshConversations],
+    [showMessages, refreshConversations, track, adoptMode],
   );
 
   /**
@@ -1680,7 +1761,7 @@ export function App({
    * empty untitled conversation left behind would make the button look like it
    * had worked.
    */
-  const startNewChat = useCallback(async () => {
+  const startNewChat = useCallback(async (trackName?: string, stay = false) => {
     // "New chat" leaves an empty transcript behind, which the panel would then
     // sit on top of -- the same problem as picking a conversation, and the same
     // fix. See `closePanelToComposer`.
@@ -1699,8 +1780,29 @@ export function App({
       target = await attachProject(chosen);
       if (!target) return;
     }
-    await createConversation(target);
+    await createConversation(target, trackName, stay);
   }, [project, attachProject, closePanelToComposer, createConversation]);
+
+  /**
+   * Cross to the other track by minting, never by converting.
+   *
+   * A press here starts a fresh conversation in the other track rather than
+   * re-moding the open one -- so nothing is cleared, nothing needs confirming,
+   * and the chat left behind keeps the track it was written under. Pressing
+   * the track already in force does nothing, for the same reason re-picking
+   * the mode in force does.
+   *
+   * It stays where it was pressed: the toggle also sits in Code mode's
+   * helper, and minting there must not drag the window back to the agent
+   * view to show the same conversation elsewhere.
+   */
+  const switchTrack = useCallback(
+    (next: string) => {
+      if (next === track) return;
+      void startNewChat(next, true);
+    },
+    [track, startNewChat],
+  );
 
   /**
    * Delete a conversation, and start a fresh one if it was the open one.
@@ -2231,25 +2333,7 @@ export function App({
           error: null,
           activeTurnId: null,
         }));
-        // Which providers may be used depends on the mode, so the list is
-        // read again. A local chat model is not offered outside Chat mode,
-        // and a list still carrying it would offer something the core
-        // refuses.
-        void refreshProviders();
-        // A provider that could not follow the session into the new mode was
-        // unbound. Say so, rather than leaving the user to type into a
-        // session that has quietly lost its model.
-        if (applied.disconnected_provider) {
-          setState((prev) => ({
-            ...prev,
-            error:
-              `${applied.disconnected_provider} works in Chat mode only, so it ` +
-              `was disconnected when the mode changed.`,
-          }));
-          setNeedsProvider(true);
-          setProvider("");
-          setModel("");
-        }
+        adoptMode(applied.mode, applied.disconnected_provider);
       })
       .catch((error: unknown) => {
         setState((prev) => ({
@@ -2266,7 +2350,7 @@ export function App({
             /* The banner already says the switch failed. */
           });
       });
-  }, [refreshProviders]);
+  }, [refreshProviders, adoptMode]);
 
   const respond = useCallback((id: string, confirmed: boolean) => {
     // Clear locally first. The core will also emit confirmation.resolved, but
@@ -2373,6 +2457,8 @@ export function App({
         disabled={!connected}
         modes={modes}
         mode={mode}
+        track={track}
+        onTrackChange={switchTrack}
         skills={skills}
         onSkillsNeeded={loadSkills}
         onModeChange={changeMode}
