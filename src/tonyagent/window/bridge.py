@@ -329,6 +329,43 @@ class Bridge:
             opened = False
         return {"url": RELEASES_PAGE, "opened": opened}
 
+    def open_logs(self) -> dict[str, Any]:
+        """Open the folder the core's log files live in.
+
+        **The folder, not a file, and chosen here rather than named by the
+        page.** A method the page could point at any path is a method the page
+        could point at anything -- the same rule `open_releases` and
+        `update_install` keep, so this takes no arguments and opens the one
+        directory the logging setup writes: the config path's parent, which is
+        the same directory `diagnostics.get` reports as `log_dir`.
+
+        Made first, then opened: Explorer on a missing folder shows an error
+        rather than the logs, and a button that errors is the thing this panel
+        avoids everywhere else. A folder that cannot be made is reported rather
+        than raised, for the same reason `open_releases` reports.
+        """
+        import os
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        from tonyagent.config.migration import get_config_path
+
+        path = str(get_config_path().parent / "logs")
+        try:
+            Path(path).mkdir(parents=True, exist_ok=True)
+            if sys.platform == "win32":
+                os.startfile(path)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.run(["open", path], check=False)
+            else:
+                subprocess.run(["xdg-open", path], check=False)
+            opened = True
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.debug(f"Could not open the log folder: {exc}")
+            opened = False
+        return {"path": path, "opened": opened}
+
     def update_install(self) -> dict[str, Any]:
         """Run the verified installer, then close the window.
 

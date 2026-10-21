@@ -40,7 +40,7 @@ import { QuestionDialog } from "./QuestionDialog.js";
 import { SearchPanel, type SearchMatch } from "./SearchPanel.js";
 import type { PermissionList, ReasoningInfo } from "./SettingsMenus.js";
 import type { SkillInfo } from "./SkillPicker.js";
-import { SettingsPanel, type CoreSettings, type KeyEntry, type ProviderInfo, type UpdateAnswer, type UpdateDownload } from "./SettingsPanel.js";
+import { SettingsPanel, type CoreSettings, type DiagnosticsInfo, type KeyEntry, type ProviderInfo, type UpdateAnswer, type UpdateDownload } from "./SettingsPanel.js";
 import { StatusBar } from "./StatusBar.js";
 import { TopBar, type Tab } from "./TopBar.js";
 import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount.js";
@@ -575,6 +575,26 @@ export function App({
     },
     [],
   );
+
+  /**
+   * Re-read the providers the core will currently accept.
+   *
+   * The list depends on the mode in force, so it is read again whenever the
+   * mode changes rather than kept from the last time it happened to be
+   * fetched. A stale list would offer a provider the core refuses -- a
+   * local chat model outside Chat mode -- and the failure would land on the
+   * next press rather than on the click that caused it.
+   */
+  const refreshProviders = useCallback(async () => {
+    try {
+      const listed = (await backendRef.current!.call("providers.list")) as {
+        providers?: ProviderInfo[];
+      };
+      setProviders(listed.providers ?? []);
+    } catch {
+      /* The panel draws what it has; the core is the authority. */
+    }
+  }, []);
 
   useEffect(() => {
     const backend = backendRef.current!;
@@ -1212,6 +1232,58 @@ export function App({
       await api.open_releases();
     } catch {
       // Opening a browser is best effort; there is nowhere to report it to.
+    }
+  }, []);
+
+  /**
+   * Open the folder the core's log files live in.
+   *
+   * Best effort like `openReleases`: the host reports whether it opened, but a
+   * settings card is not the place that could do anything with a no -- and the
+   * path it opened is the one `diagnostics.get` already shows on the card, so
+   * the user can see where to look regardless.
+   */
+  const openLogFolder = useCallback(async () => {
+    const api = host();
+    if (!api) return;
+    try {
+      await api.open_logs();
+    } catch {
+      // Opening a folder is best effort; there is nowhere to report it to.
+    }
+  }, []);
+
+  /**
+   * Copy text to the clipboard, for the diagnostics card.
+   *
+   * The async clipboard first and a focused field second. The second exists
+   * because the clipboard API is unavailable in exactly the situation the card
+   * is for -- an insecure context, or a permission the browser withheld -- and
+   * "Copy diagnostics" failing there would be the button failing when it is
+   * needed most. Resolves true when the text is on the clipboard either way.
+   */
+  const copyDiagnostics = useCallback(async (text: string): Promise<boolean> => {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // Fall through to the field below.
+    }
+    try {
+      const field = document.createElement("textarea");
+      field.value = text;
+      field.setAttribute("readonly", "");
+      field.style.position = "fixed";
+      field.style.opacity = "0";
+      document.body.appendChild(field);
+      field.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(field);
+      return ok;
+    } catch {
+      return false;
     }
   }, []);
 
@@ -2062,6 +2134,41 @@ export function App({
     [],
   );
 
+  /**
+   * The facts a bug report needs, as the core knows them.
+   *
+   * Read from the core rather than assembled here, for the reason the method's
+   * own docstring gives: the config path depends on the platform and on which
+   * APPDATA the core sees, and a path this window guessed at is how a user ends
+   * up looking for logs in a folder that was never written to. Checked rather
+   * than cast, like `readSettings`: an unanswered method resolves a marker.
+   */
+  const readDiagnostics = useCallback(async (): Promise<DiagnosticsInfo | null> => {
+    try {
+      const reply = (await backendRef.current!.call("diagnostics.get")) as Partial<DiagnosticsInfo>;
+      if (
+        typeof reply?.version !== "string" ||
+        typeof reply?.author !== "string" ||
+        typeof reply?.python !== "string" ||
+        typeof reply?.frozen !== "boolean" ||
+        typeof reply?.config_path !== "string" ||
+        typeof reply?.log_dir !== "string"
+      ) {
+        return null;
+      }
+      return {
+        version: reply.version,
+        author: reply.author,
+        python: reply.python,
+        frozen: reply.frozen,
+        config_path: reply.config_path,
+        log_dir: reply.log_dir,
+      };
+    } catch {
+      return null;
+    }
+  }, []);
+
   const search = useCallback(async (pattern: string): Promise<SearchMatch[]> => {
     const result = (await backendRef.current!.call("search", { pattern })) as {
       matches?: SearchMatch[];
@@ -2112,7 +2219,7 @@ export function App({
     void backendRef.current!
       .call("mode.set", { mode: name })
       .then((result) => {
-        const applied = result as { mode?: string };
+        const applied = result as { mode?: string; disconnected_provider?: string };
         if (applied.mode && applied.mode !== name) setMode(applied.mode);
         // The core clears the conversation on a mode change, so the view has
         // to follow or the transcript would show turns the core has dropped.
@@ -2124,6 +2231,25 @@ export function App({
           error: null,
           activeTurnId: null,
         }));
+        // Which providers may be used depends on the mode, so the list is
+        // read again. A local chat model is not offered outside Chat mode,
+        // and a list still carrying it would offer something the core
+        // refuses.
+        void refreshProviders();
+        // A provider that could not follow the session into the new mode was
+        // unbound. Say so, rather than leaving the user to type into a
+        // session that has quietly lost its model.
+        if (applied.disconnected_provider) {
+          setState((prev) => ({
+            ...prev,
+            error:
+              `${applied.disconnected_provider} works in Chat mode only, so it ` +
+              `was disconnected when the mode changed.`,
+          }));
+          setNeedsProvider(true);
+          setProvider("");
+          setModel("");
+        }
       })
       .catch((error: unknown) => {
         setState((prev) => ({
@@ -2140,7 +2266,7 @@ export function App({
             /* The banner already says the switch failed. */
           });
       });
-  }, []);
+  }, [refreshProviders]);
 
   const respond = useCallback((id: string, confirmed: boolean) => {
     // Clear locally first. The core will also emit confirmation.resolved, but
@@ -2578,6 +2704,9 @@ export function App({
             onListKeys={listKeys}
             onReadSettings={readSettings}
             onSetSetting={setSetting}
+            onReadDiagnostics={readDiagnostics}
+            onCopyDiagnostics={copyDiagnostics}
+            onOpenLogFolder={() => void openLogFolder()}
             update={update}
             updateChecking={updateChecking}
             updateFetching={updateFetching}

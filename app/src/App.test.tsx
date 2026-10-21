@@ -70,10 +70,18 @@ class FakeTransport implements LineTransport {
   async write(line: string): Promise<void> {
     const request = JSON.parse(line) as CoreRequest;
     this.sent.push(request);
-    const result =
+    // A result may be a function, so a test can answer the same method
+    // differently on different calls. The core does exactly this -- one
+    // method can say one thing now and another thing after the mode changed
+    // -- and a fake that can only answer once cannot express it.
+    const canned =
       request.method in this.results
         ? this.results[request.method]
         : { __unanswered: request.method };
+    const result =
+      typeof canned === "function"
+        ? (canned as (req: CoreRequest) => unknown)(request)
+        : canned;
     setTimeout(() => {
       this.stdout?.(
         JSON.stringify({ id: request.id, result }) + "\n",
@@ -1394,6 +1402,105 @@ describe("the keys pane over the real protocol", () => {
 });
 
 
+/**
+ * A local model on this machine's CPU is a plain chat model.
+ *
+ * It is offered in Chat mode and nowhere else, because every other mode exists
+ * to have the model *act*. The window has to reflect that, and it has to keep
+ * reflecting it: the list depends on the mode, so a list read once at boot
+ * would go stale the moment the mode changed.
+ */
+describe("a chat-only provider is offered in Chat mode only", () => {
+  const LOCAL = {
+    providers: [
+      { name: "openrouter", models: [], has_credentials: true },
+      { name: "airllm", models: ["Qwen/Qwen2.5-Coder-0.5B-Instruct"], has_credentials: false, chat_only: true },
+    ],
+  };
+
+  // The boot table has no Chat mode, and Chat is the mode this is about.
+  const MODES = {
+    modes: [
+      { name: "chat", label: "Chat", writes: false },
+      { name: "build", label: "Build", writes: true },
+      { name: "plan", label: "Plan", writes: false },
+    ],
+    mode: "build",
+  };
+
+  /**
+   * Press a mode pill.
+   *
+   * The same press a person makes, because the wiring under test is the
+   * request the window sends, not the callback it calls.
+   */
+  const pressMode = async (c: HTMLElement, label: string) => {
+    const pill = all(c, ".mode-group .mode").find(
+      (b) => (b.textContent ?? "").trim() === label,
+    );
+    assert.ok(pill, `there is no "${label}" mode pill`);
+    await click(pill);
+    await wait(80);
+  };
+
+  test("switching mode asks for the provider list again", async () => {
+    const { container, transport } = await mount({
+      "providers.list": LOCAL,
+      "mode.list": MODES,
+      "mode.set": { mode: "chat", label: "Chat", writes: false },
+    });
+
+    const before = transport.sent.filter((r) => r.method === "providers.list").length;
+
+    await pressMode(container, "Chat");
+    await wait(80);
+
+    const after = transport.sent.filter((r) => r.method === "providers.list").length;
+    assert.ok(
+      after > before,
+      "the provider list was not re-read after the mode changed",
+    );
+  });
+
+  test("a provider the mode could not keep is reported, not silently dropped", async () => {
+    const { container } = await mount({
+      "providers.list": LOCAL,
+      "mode.list": MODES,
+      "mode.set": {
+        mode: "build",
+        label: "Build",
+        writes: true,
+        disconnected_provider: "airllm",
+      },
+    });
+
+    await pressMode(container, "Build");
+    await wait(120);
+
+    const banner = texts(container, ".banner").join(" ");
+    assert.match(
+      banner,
+      /airllm/,
+      "the user was not told the local model was disconnected",
+    );
+  });
+
+  test("no disconnection means no banner", async () => {
+    const { container } = await mount({
+      "providers.list": LOCAL,
+      "mode.list": MODES,
+      "mode.set": { mode: "build", label: "Build", writes: true },
+    });
+
+    await pressMode(container, "Build");
+    await wait(120);
+
+    const banner = texts(container, ".banner").join(" ");
+    assert.doesNotMatch(banner, /airllm/);
+  });
+});
+
+
 // --- Code mode: a different window, not a different pane ---------------------
 describe("Code mode takes over the window", () => {
   const FOLDER = "D:/work/api";
@@ -2041,6 +2148,21 @@ describe("the settings page, wired to the core", () => {
     await wait(20);
   };
 
+  const openAppTab = async (c: HTMLElement) => {
+    await click(all(c, ".settings-tab").find((b) => (b.textContent ?? "").trim() === "App")!);
+    await wait(20);
+  };
+
+  /** What `diagnostics.get` answers with: a frozen build's facts. */
+  const DIAG = {
+    version: "0.3.5",
+    author: "Tony Lee",
+    python: "3.13.2",
+    frozen: true,
+    config_path: "C:/Users/someone/AppData/Roaming/TONYAgent/config.toml",
+    log_dir: "C:/Users/someone/AppData/Roaming/TONYAgent/logs",
+  };
+
   // The Project tab has two `.settings-value` spans -- the folder's path and the
   // sandbox's identity -- so a lookup has to say which group it means.
   const sandboxGroup = (c: HTMLElement) =>
@@ -2160,5 +2282,117 @@ describe("the settings page, wired to the core", () => {
 
     const written = transport.sent.filter((r) => r.method === "settings.set");
     assert.deepEqual(written[0].params, { key: "sandbox.type", value: "docker" });
+  });
+
+  test("the facts are read when the App tab opens, not on every launch", async () => {
+    // The card's facts are only drawn on one tab, so they are read the way the
+    // key list is: when the tab opens, never at boot.
+    const { container, transport } = await mount({
+      "settings.get": SETTINGS,
+      "diagnostics.get": DIAG,
+    });
+    assert.equal(
+      times(transport, "diagnostics.get"),
+      0,
+      "the facts were read before anyone opened the App tab",
+    );
+
+    await openSettings(container);
+    await openAppTab(container);
+
+    assert.equal(times(transport, "diagnostics.get"), 1);
+    assert.match(
+      container.textContent ?? "",
+      /TONYAgent 0\.3\.5 by Tony Lee/,
+    );
+  });
+
+  test("a malformed answer draws as not read rather than throwing in render", async () => {
+    // An unanswered method resolves a marker object, and handing that to the
+    // card's rows would throw where the user is looking.
+    const { container } = await mount({
+      "settings.get": SETTINGS,
+      "diagnostics.get": { __unanswered: "diagnostics.get" },
+    });
+    await openSettings(container);
+    await openAppTab(container);
+
+    assert.match(container.textContent ?? "", /Not read yet\./);
+  });
+
+  test("copying the card puts the core's facts on the clipboard", async () => {
+    // Through the window's own copy chain rather than a stubbed prop: the
+    // clipboard is the one link the panel tests cannot cover, and a "Copy"
+    // button that never reaches it is a button that does nothing.
+    const pasted: string[] = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async (text: string) => void pasted.push(text),
+      },
+      configurable: true,
+    });
+    try {
+      const { container } = await mount({
+        "settings.get": SETTINGS,
+        "diagnostics.get": DIAG,
+      });
+      await openSettings(container);
+      await openAppTab(container);
+
+      await click(
+        all(container, ".settings-group .btn").find((b) =>
+          /copy diagnostics/i.test(b.textContent ?? ""),
+        )!,
+      );
+      await wait(20);
+
+      assert.equal(pasted.length, 1, "the press never reached the clipboard");
+      assert.match(pasted[0], /TONYAgent 0\.3\.5 by Tony Lee/);
+      assert.match(pasted[0], /Config: C:\/Users\/someone\/AppData\/Roaming\/TONYAgent\/config\.toml/);
+      assert.match(container.textContent ?? "", /Copied\./);
+    } finally {
+      delete (navigator as unknown as Record<string, unknown>).clipboard;
+    }
+  });
+
+  test("opening the log folder reaches the host, not the core", async () => {
+    // The folder is opened by the shell around the page, which is the only
+    // thing that can reach the file explorer -- so this is a host call, and a
+    // test that watched the core's traffic could not see it happen.
+    const opened: string[] = [];
+    (window as unknown as Record<string, unknown>).pywebview = {
+      api: {
+        open_logs: () => {
+          opened.push("logs");
+          return Promise.resolve({ path: "C:/x/logs", opened: true });
+        },
+        // The pet is the app's: it asks whether a card was left open on mount,
+        // and a host without it fails the window before the test starts.
+        pet: () => Promise.resolve({ open: false, wanted: false }),
+        // Not the log folder's, and here because it is the app's:
+        // `useWindowControls` reads the maximized state on mount.
+        window_state: () => Promise.resolve({ maximized: false }),
+      },
+    };
+    const { container, transport } = await mount({
+      "settings.get": SETTINGS,
+      "diagnostics.get": DIAG,
+    });
+    await openSettings(container);
+    await openAppTab(container);
+
+    await click(
+      all(container, ".settings-group .btn").find((b) =>
+        /open log folder/i.test(b.textContent ?? ""),
+      )!,
+    );
+    await wait(20);
+
+    assert.ok(opened.includes("logs"), "the press never reached the host");
+    assert.equal(
+      times(transport, "diagnostics.get"),
+      1,
+      "opening a folder asked the core instead of the host",
+    );
   });
 });

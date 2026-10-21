@@ -390,6 +390,7 @@ class StdioServer:
             "tools.set": self._h_tools_set,
             "settings.get": self._h_settings_get,
             "settings.set": self._h_settings_set,
+            "diagnostics.get": self._h_diagnostics_get,
             "plan.get": self._h_plan_get,
             "permission.list": self._h_permission_list,
             "permission.set": self._h_permission_set,
@@ -816,11 +817,25 @@ class StdioServer:
 
         ``get_available_providers`` reports ``has_credentials`` as a boolean
         only; the key itself never leaves the keyring.
+
+        The mode in force is passed along, so a provider that cannot be used
+        here is left out rather than listed and then refused. The list is
+        what the picker draws, and a picker that offers a row the core will
+        reject is a picker that lies.
+
+        ``all`` asks for the whole registry instead, with each provider's
+        ``chat_only`` flag intact. That is for reconciling keys against
+        providers -- a key can outlive the provider it was saved for, and
+        deciding whether to offer that row needs to know what the provider
+        *is*, not merely whether it is usable right now.
         """
         from tonyagent.providers import ProviderFactory
 
+        mode = "" if params.get("all") else self.session.mode_name
         try:
-            return {"providers": ProviderFactory.get_available_providers()}
+            return {
+                "providers": ProviderFactory.get_available_providers(mode)
+            }
         except Exception as exc:  # noqa: BLE001 - an empty list beats a dead UI
             logger.warning(f"providers.list failed: {exc}")
             return {"providers": []}
@@ -1814,6 +1829,39 @@ class StdioServer:
             "persisted": persisted,
         }
 
+    def _h_diagnostics_get(self, params: dict) -> Any:
+        """The facts a bug report needs, as the core knows them.
+
+        **Read, not assembled by the window.** The config path depends on the
+        platform and on which APPDATA this process sees, frozen-vs-source is a
+        property of this process, and the log directory is the one the logging
+        setup writes -- none of which the page can work out for itself, and
+        each of which it would get subtly wrong if it tried. A path the page
+        guessed at is how a user ends up looking for logs in a folder that was
+        never written to.
+
+        The log directory is derived from the config path's parent rather than
+        from `settings.get_logs_dir()`: the two are the same directory, and a
+        read must not create anything. `get_logs_dir` makes the folders, and a
+        `diagnostics.get` that created the thing it reports would be a read
+        with a side effect.
+        """
+        import platform
+        import sys
+
+        from tonyagent import __author__, __version__
+        from tonyagent.config.migration import get_config_path
+
+        config_path = get_config_path()
+        return {
+            "version": __version__,
+            "author": __author__,
+            "python": platform.python_version(),
+            "frozen": bool(getattr(sys, "frozen", False)),
+            "config_path": str(config_path),
+            "log_dir": str(config_path.parent / "logs"),
+        }
+
     # -- permissions --------------------------------------------------------
     def _h_permission_set(self, params: dict) -> Any:
         """Change what the agent is allowed to do on the next turn.
@@ -1856,6 +1904,11 @@ class StdioServer:
             "label": mode.label,
             "description": mode.description,
             "writes": mode.writes,
+            # The provider that was dropped, if the mode change dropped one.
+            # A chat-only model cannot follow the session out of Chat mode,
+            # and the frontend needs to know so it can show the reason rather
+            # than the user discovering an unbound session by typing.
+            "disconnected_provider": self.session.last_disconnected_provider,
         }
 
     def _h_skills_list(self, params: dict) -> Any:
@@ -2067,6 +2120,18 @@ def build_session() -> AgentSession:
             return session
         model = str(provider.get("model") or "")
         base_url = str(provider.get("base_url") or "")
+        # A chat-only provider cannot be restored into any mode but Chat, and
+        # the mode itself is not persisted -- the app comes up in Build. So
+        # restoring one means choosing Chat, because the alternative is
+        # starting unbound and throwing away a selection the user made on
+        # purpose. The mode is set before the bind, because the bind refuses
+        # a chat-only provider outside Chat.
+        from tonyagent.providers.base import provider_registry
+        from tonyagent.providers.factory import CHAT_MODE
+
+        provider_class = provider_registry.get(name)
+        if provider_class is not None and getattr(provider_class, "chat_only", False):
+            session.set_mode(CHAT_MODE)
         bound = session.bind_provider(name, model, base_url)
         if bound is None:
             logger.warning(

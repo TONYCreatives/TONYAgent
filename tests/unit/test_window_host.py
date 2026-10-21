@@ -44,6 +44,7 @@ SRC = REPO / "src"
 PAGE_API = [
     "core_alive",
     "open_account_view",
+    "open_logs",
     "open_releases",
     "pet",
     "pick_files",
@@ -733,3 +734,49 @@ def test_a_frozen_core_does_not_inherit_a_pythonpath(monkeypatch):
     monkeypatch.delattr(sys, "frozen", raising=False)
     env = core.source_env()
     assert env["PYTHONPATH"].startswith(str(REPO / "src"))
+
+
+# --- the log folder ----------------------------------------------------------
+
+#: Everything under `tonyagent.window` needs the real shell modules, which is
+#: why this test lives here rather than beside `diagnostics.get`: importing the
+#: bridge pulls the package's `__init__`, and that needs `webview`.
+
+
+@pytest.fixture
+def isolated_config(tmp_path, monkeypatch):
+    """Redirect the config path itself, so the real one is never touched."""
+    from tonyagent.config import migration
+
+    path = tmp_path / "TONYAgent" / "config.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(migration, "get_config_path", lambda: path)
+    return path
+
+
+def test_open_logs_opens_the_directory_diagnostics_reports(
+    isolated_config, monkeypatch
+):
+    """The button and the card name the same folder.
+
+    A card that shows one path while the host opens another is how a user ends
+    up looking for logs in a folder that was never written to -- so both are
+    derived from the config path rather than written out twice, and this test
+    asks both ends. Made first, then opened: Explorer on a missing folder shows
+    an error rather than the logs.
+    """
+    import subprocess
+
+    from tonyagent.config.migration import get_config_path
+    from tonyagent.window.bridge import Bridge
+
+    opened: list[list[str]] = []
+    monkeypatch.setattr(subprocess, "run", lambda argv, **kwargs: opened.append(argv))
+    monkeypatch.setattr("sys.platform", "linux")
+
+    reply = Bridge().open_logs()
+
+    expected = str(get_config_path().parent / "logs")
+    assert reply == {"path": expected, "opened": True}
+    assert opened == [["xdg-open", expected]]
+    assert (isolated_config.parent / "logs").is_dir(), "the folder was not made first"

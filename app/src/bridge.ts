@@ -174,6 +174,13 @@ export interface HostApi {
    * needs no remembered sign-in, and it is where a manual download belongs.
    */
   open_releases(): Promise<{ url: string; opened: boolean }>;
+  /**
+   * Open the folder the core's log files live in.
+   *
+   * No arguments, like `update_install`: the folder is the one `diagnostics.get`
+   * reports, chosen by the host, so the page cannot point this anywhere.
+   */
+  open_logs(): Promise<{ path: string; opened: boolean }>;
 }
 
 /** What the host pushes into the page. */

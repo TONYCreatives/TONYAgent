@@ -290,6 +290,16 @@ export interface CoreMethods {
    * back the way the next turn reads it.
    */
   "settings.set": { key: string; value: unknown };
+  /**
+   * The facts a bug report needs, as the core knows them.
+   *
+   * Version, author, the Python it runs on, whether this is the frozen bundle
+   * or a source checkout, and the config and log paths. Read rather than
+   * assembled here: the config path depends on the platform and on which
+   * APPDATA the core sees, and a path the window guessed at is how a user ends
+   * up looking for logs in a folder that was never written to.
+   */
+  "diagnostics.get": Record<string, never>;
   search: {
     pattern: string;
     path?: string;

@@ -22,11 +22,13 @@ import { describe, test } from "node:test";
 
 import {
   SettingsPanel,
+  diagnosticsText,
   sandboxIdentity,
   sandboxMeaning,
   updateMessage,
   type CommandSettings,
   type CoreSettings,
+  type DiagnosticsInfo,
   type KeyEntry,
   type ProviderInfo,
   type SandboxSettings,
@@ -78,6 +80,22 @@ const SANDBOX: SandboxSettings = {
 };
 
 const SETTINGS: CoreSettings = { tools: COMMANDS, sandbox: SANDBOX };
+
+/**
+ * What `diagnostics.get` answers with: a frozen build's facts.
+ *
+ * Frozen on purpose, because that is the shape the card has to name honestly:
+ * a source checkout answering `frozen: true` would be the card claiming an
+ * installed build it is not.
+ */
+const DIAGNOSTICS: DiagnosticsInfo = {
+  version: "0.3.5",
+  author: "Tony Lee",
+  python: "3.13.2",
+  frozen: true,
+  config_path: "C:/Users/someone/AppData/Roaming/TONYAgent/config.toml",
+  log_dir: "C:/Users/someone/AppData/Roaming/TONYAgent/logs",
+};
 
 /**
  * A core whose settings actually change when written.
@@ -172,6 +190,10 @@ interface Overrides {
   settings?: CoreSettings | null;
   onReadSettings?: () => Promise<CoreSettings | null>;
   onSetSetting?: (key: string, value: unknown) => Promise<string | null>;
+  diagnostics?: DiagnosticsInfo | null;
+  onReadDiagnostics?: () => Promise<DiagnosticsInfo | null>;
+  onCopyDiagnostics?: (text: string) => Promise<boolean>;
+  onOpenLogFolder?: () => void;
 }
 
 function panel(overrides: Overrides = {}) {
@@ -215,6 +237,12 @@ function panel(overrides: Overrides = {}) {
       onListKeys={overrides.onListKeys ?? (async () => overrides.keys ?? LIST)}
       onReadSettings={overrides.onReadSettings ?? (async () => overrides.settings ?? SETTINGS)}
       onSetSetting={overrides.onSetSetting ?? (async () => null)}
+      onReadDiagnostics={
+        overrides.onReadDiagnostics ??
+        (async () => (overrides.diagnostics !== undefined ? overrides.diagnostics : DIAGNOSTICS))
+      }
+      onCopyDiagnostics={overrides.onCopyDiagnostics ?? (async () => true)}
+      onOpenLogFolder={overrides.onOpenLogFolder ?? noop}
     />
   );
 }
@@ -365,10 +393,11 @@ describe("the desktop pet, from the settings pane", () => {
     );
 
     await click(tab(container, "App"));
-    // Two sections, and the second is why the tab is called App rather than
-    // Window: the version and the update check are about the program, the same
-    // kind of setting as the card, and neither is a property of the agent.
-    assert.deepEqual(headings(container), ["Desktop pet", "Version"]);
+    // Three sections, and the third is why the tab is called App rather than
+    // Window: the version, the update check and the diagnostics are about the
+    // program, the same kind of setting as the card, and none is a property of
+    // the agent.
+    assert.deepEqual(headings(container), ["Desktop pet", "Version", "Diagnostics"]);
   });
 
   test("it draws the card's real state, and a press asks for the other one", async () => {
@@ -824,9 +853,9 @@ describe("what the update check says", () => {
     );
     await click(tab(container, "App"));
 
-    // Still two headings, and no Install among them -- with an update waiting,
-    // which is the state that used to add the third.
-    assert.deepEqual(headings(container), ["Desktop pet", "Version"]);
+    // Still three headings, and no Install among them -- with an update waiting,
+    // which is the state that used to add a fourth.
+    assert.deepEqual(headings(container), ["Desktop pet", "Version", "Diagnostics"]);
 
     // And the press that runs it is inside that card, under the version it
     // belongs to rather than beside a heading of its own.
@@ -1378,5 +1407,196 @@ describe("the sandbox card", () => {
     await click(tab(container, "Project"));
     await wait(0);
     assert.equal(asked, afterMount + 2);
+  });
+});
+
+
+/**
+ * A local model on this machine's CPU is a plain chat model.
+ *
+ * The core only offers it in Chat mode, so the panel has to say what it is
+ * rather than leave the user to find out by switching modes and watching the
+ * row disappear. It also has to say it needs no key -- the panel is about
+ * keys, and a local provider with a key form on it is asking for a secret
+ * that does not exist.
+ */
+describe("a chat-only provider says what it is", () => {
+  const LOCAL: ProviderInfo[] = [
+    { name: "openrouter", models: ["a/b"], has_credentials: true },
+    {
+      name: "airllm",
+      models: ["Qwen/Qwen2.5-Coder-0.5B-Instruct"],
+      has_credentials: false,
+      chat_only: true,
+    },
+  ];
+
+  test("it is labelled as a local, keyless, chat-mode model", async () => {
+    const container = await opened({ providers: LOCAL });
+
+    const note = section(container, "airllm").textContent ?? "";
+    assert.match(note, /Chat mode only/, "the provider is not marked chat-only");
+    assert.match(note, /no API key/i, "the provider is not marked keyless");
+  });
+
+  test("an ordinary provider is not marked that way", async () => {
+    const container = await opened({ providers: LOCAL });
+
+    const note = section(container, "openrouter").textContent ?? "";
+    assert.doesNotMatch(note, /Chat mode only/);
+  });
+});
+
+/**
+ * The diagnostics card, on the App tab beside the version.
+ *
+ * "Which build am I running" and "where does it keep its files" are one
+ * question read twice, so the card sits under the version it belongs to rather
+ * than in a tab of its own. The tests are about the round trip and the text:
+ * the facts come from the core, and what gets pasted into an issue has to be
+ * exactly what the card shows.
+ */
+describe("the diagnostics card", () => {
+  const group = (container: HTMLElement) => section(container, "Diagnostics")!;
+  const copyButton = (container: HTMLElement) =>
+    all(group(container), ".btn").find((b) => /copy diagnostics/i.test(b.textContent ?? ""))!;
+  const openButton = (container: HTMLElement) =>
+    all(group(container), ".btn").find((b) => /open log folder/i.test(b.textContent ?? ""))!;
+
+  /** Mount, then open the App tab, counting what the card asked for. */
+  async function opened(overrides: Overrides = {}) {
+    let asked = 0;
+    const container = await render(
+      panel({
+        onReadDiagnostics: async () => {
+          asked += 1;
+          return DIAGNOSTICS;
+        },
+        ...overrides,
+      }),
+    );
+    const before = asked;
+    await click(tab(container, "App"));
+    await wait(0);
+    return { container, asked: () => asked, before };
+  }
+
+  test("it sits under the version it belongs to", async () => {
+    const container = await render(panel());
+    await click(tab(container, "App"));
+    assert.deepEqual(
+      all(container, ".settings-group h3").map((h) => (h.textContent ?? "").trim()),
+      ["Desktop pet", "Version", "Diagnostics"],
+    );
+  });
+
+  test("nothing is read until the App tab opens", async () => {
+    // The panel opens on Behavior, and facts nobody is looking at are not
+    // worth a round trip -- the same reason the key list waits for its tab.
+    const { asked, before } = await opened();
+    assert.equal(before, 0, "the card asked before its tab opened");
+    assert.equal(asked(), 1, "opening the App tab did not read the facts");
+  });
+
+  test("the card draws the build, the runtime and both paths", async () => {
+    const { container } = await opened();
+    const text = group(container).textContent ?? "";
+
+    assert.match(text, /TONYAgent 0\.3\.5 by Tony Lee/);
+    assert.match(text, /Installed app \(frozen bundle\), Python 3\.13\.2/);
+    assert.match(text, /Config: C:\/Users\/someone\/AppData\/Roaming\/TONYAgent\/config\.toml/);
+    assert.match(text, /Logs: C:\/Users\/someone\/AppData\/Roaming\/TONYAgent\/logs/);
+  });
+
+  test("a source checkout says so instead of claiming a bundle", async () => {
+    const container = await render(
+      panel({ diagnostics: { ...DIAGNOSTICS, frozen: false } }),
+    );
+    await click(tab(container, "App"));
+    await wait(0);
+
+    assert.match(group(container).textContent ?? "", /From source, Python/);
+  });
+
+  test("copying sends the card as text and says so", async () => {
+    const copied: string[] = [];
+    const { container } = await opened({
+      onCopyDiagnostics: async (text) => {
+        copied.push(text);
+        return true;
+      },
+    });
+
+    await click(copyButton(container));
+    await wait(0);
+
+    assert.equal(copied.length, 1, "the press copied nothing");
+    assert.equal(copied[0], diagnosticsText(DIAGNOSTICS));
+    assert.match(group(container).textContent ?? "", /Copied\./);
+  });
+
+  test("the pasted text is the card, not a second rendering of it", async () => {
+    // One rendering, drawn and pasted alike: two copies of these facts are two
+    // chances for the issue to say something the card does not.
+    assert.equal(
+      diagnosticsText(DIAGNOSTICS),
+      [
+        "TONYAgent 0.3.5 by Tony Lee",
+        "Installed app (frozen bundle), Python 3.13.2.",
+        "Config: C:/Users/someone/AppData/Roaming/TONYAgent/config.toml",
+        "Logs: C:/Users/someone/AppData/Roaming/TONYAgent/logs",
+      ].join("\n"),
+    );
+  });
+
+  test("a copy that failed says so instead of claiming it took", async () => {
+    const { container } = await opened({ onCopyDiagnostics: async () => false });
+
+    await click(copyButton(container));
+    await wait(0);
+
+    assert.match(group(container).textContent ?? "", /Could not copy to the clipboard\./);
+  });
+
+  test("opening the log folder asks the host, not the core", async () => {
+    // The folder is opened by the shell around the page, which is the only
+    // thing that can reach the file explorer -- so this is a host call, and a
+    // test that watched the core's traffic could not see it happen.
+    let openedFolder = 0;
+    const { container } = await opened({ onOpenLogFolder: () => void (openedFolder += 1) });
+
+    await click(openButton(container));
+
+    assert.equal(openedFolder, 1, "the press never reached the host");
+  });
+
+  test("with nothing read there is nothing to copy or open", async () => {
+    // "Not read yet" and empty facts are different claims, and the buttons for
+    // facts that are not there would be controls that cannot work.
+    const container = await render(panel({ diagnostics: null }));
+    await click(tab(container, "App"));
+    await wait(0);
+
+    assert.match(group(container).textContent ?? "", /Not read yet\./);
+    assert.equal((copyButton(container) as HTMLButtonElement).disabled, true);
+    assert.equal((openButton(container) as HTMLButtonElement).disabled, true);
+  });
+
+  test("nothing is read or offered while the core is down", async () => {
+    let asked = 0;
+    const container = await render(
+      panel({
+        connected: false,
+        onReadDiagnostics: async () => {
+          asked += 1;
+          return DIAGNOSTICS;
+        },
+      }),
+    );
+    await click(tab(container, "App"));
+    await wait(0);
+
+    assert.equal(asked, 0, "the card asked a core that is not running");
+    assert.match(group(container).textContent ?? "", /Not read yet\./);
   });
 });

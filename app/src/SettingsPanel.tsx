@@ -97,6 +97,16 @@ export function updateMessage(answer: UpdateAnswer | null): string {
 export interface ProviderInfo {  name: string;
   models: string[];
   has_credentials: boolean;
+  /**
+   * True when the provider is a plain chat model: usable in Chat mode and
+   * nowhere else.
+   *
+   * The core does not send these providers outside Chat mode at all, so this
+   * is only ever true for a row that is being drawn *in* Chat mode. It is
+   * carried so the panel can say what the provider is, rather than leaving
+   * the user to discover it by switching modes and watching the row vanish.
+   */
+  chat_only?: boolean;
 }
 
 /** One stored key, as key.list reports it. Never carries a value. */
@@ -177,6 +187,47 @@ export interface SandboxSettings {
 export interface CoreSettings {
   tools: CommandSettings;
   sandbox: SandboxSettings;
+}
+
+/**
+ * The facts a bug report needs, as `diagnostics.get` reports them.
+ *
+ * Paths rather than names: the config path depends on the platform and on
+ * which APPDATA the core sees, and the log directory is the one the logging
+ * setup writes. A window that guessed at either would send the user looking in
+ * a folder that was never written to.
+ */
+export interface DiagnosticsInfo {
+  version: string;
+  author: string;
+  python: string;
+  /** Whether this is the installed build rather than a source checkout. */
+  frozen: boolean;
+  config_path: string;
+  log_dir: string;
+}
+
+/** Where this build runs from, in one sentence. */
+export function diagnosticsRuntime(info: DiagnosticsInfo): string {
+  return info.frozen
+    ? "Installed app (frozen bundle), Python " + info.python + "."
+    : "From source, Python " + info.python + ".";
+}
+
+/**
+ * The card as plain text, for the clipboard.
+ *
+ * Built here rather than in the window so the shape is testable without one:
+ * what gets pasted into an issue should be exactly what the card shows, and
+ * two renderings of the same facts are two chances to disagree.
+ */
+export function diagnosticsText(info: DiagnosticsInfo): string {
+  return [
+    "TONYAgent " + info.version + " by " + info.author,
+    diagnosticsRuntime(info),
+    "Config: " + info.config_path,
+    "Logs: " + info.log_dir,
+  ].join("\n");
 }
 
 /**
@@ -374,6 +425,24 @@ interface Props {
    * so a failure means nothing changed.
    */
   onSetSetting: (key: string, value: unknown) => Promise<string | null>;
+  /**
+   * The facts a bug report needs, as the core reports them.
+   *
+   * Resolves to null when the core will not answer, drawn as "not read yet"
+   * rather than as empty facts: a missing version and a missing log folder are
+   * different claims, and only one of them is about this build.
+   */
+  onReadDiagnostics: () => Promise<DiagnosticsInfo | null>;
+  /**
+   * Copy text to the clipboard. Resolves true when it is there.
+   *
+   * A callback rather than `navigator.clipboard` inline so the panel stays
+   * testable without a clipboard: the window owns the fallback chain, the card
+   * owns the text and the notice.
+   */
+  onCopyDiagnostics: (text: string) => Promise<boolean>;
+  /** Open the folder the core's log files live in, in the file explorer. */
+  onOpenLogFolder: () => void;
 }
 
 /** How long a revealed key stays on screen before it hides itself. */
@@ -516,6 +585,9 @@ export function SettingsPanel({
   onListKeys,
   onReadSettings,
   onSetSetting,
+  onReadDiagnostics,
+  onCopyDiagnostics,
+  onOpenLogFolder,
 }: Props) {
   const [tab, setTab] = useState<SettingsTab>("permission");
 
@@ -554,6 +626,12 @@ export function SettingsPanel({
   // The program name being typed. Held here rather than in the core: it is not
   // a setting until it is added, and a half-typed word is not a rule.
   const [draftProgram, setDraftProgram] = useState("");
+  // The facts a bug report needs, as the core last reported them. Null means
+  // "not read" -- see `onReadDiagnostics`.
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsInfo | null>(null);
+  // "Copied." or the reason it is not on the clipboard. The card's only notice:
+  // nothing here is written, so there is no failure that belongs anywhere else.
+  const [diagnosticsNotice, setDiagnosticsNotice] = useState<string | null>(null);
 
   // Adopt whatever the core reports, but only when the panel is not mid-edit:
   // an incoming event must not silently discard a half-typed endpoint.
@@ -641,6 +719,38 @@ export function SettingsPanel({
     void refreshSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sandbox]);
+
+  /** Re-read the facts a bug report needs. */
+  const refreshDiagnostics = async () => {
+    if (!connected) {
+      setDiagnostics(null);
+      return;
+    }
+    setDiagnostics(await onReadDiagnostics());
+  };
+
+  useEffect(() => {
+    // Only while the App tab is showing, for the reason the key list gives:
+    // opening Settings to flip a permission must not spend a round trip on
+    // facts nobody is looking at.
+    if (tab !== "app") return;
+    void refreshDiagnostics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, tab]);
+
+  /**
+   * Copy the card as text, and say whether it took.
+   *
+   * The text is built from what the core reported rather than from what the
+   * rows show, for the reason `diagnosticsText` gives: one rendering, drawn
+   * and pasted alike, so the issue gets exactly what the card says.
+   */
+  const copyDiagnostics = async () => {
+    if (!diagnostics) return;
+    setDiagnosticsNotice(null);
+    const copied = await onCopyDiagnostics(diagnosticsText(diagnostics));
+    setDiagnosticsNotice(copied ? "Copied." : "Could not copy to the clipboard.");
+  };
 
   /**
    * Write one setting, then adopt whatever the core says.
@@ -1308,6 +1418,12 @@ export function SettingsPanel({
               return (
                 <section className="settings-group" key={entry.name}>
                   <h3>{entry.name}</h3>
+                  {entry.chat_only && (
+                    <p className="settings-note">
+                      A local model. It works in Chat mode only, and it needs no
+                      API key -- the server runs on this machine.
+                    </p>
+                  )}
                   <p className="settings-note">
                     Keys stored for this provider. The one marked Active is the key
                     a turn spends; the others are kept but not used.
@@ -1639,6 +1755,73 @@ export function SettingsPanel({
                   Release notes
                 </button>
               </div>
+            </section>
+
+            {/*
+              What a bug report needs, in one place.
+
+              **Beside the version rather than in a tab of its own.** "Which
+              build am I running" and "where does it keep its files" are one
+              question read twice -- the version card names the number, and this
+              one names where it runs from and where to look when it misbehaves.
+              A tab of its own would be a fifth label in a row that already
+              renamed one to fit four.
+
+              The facts come from `diagnostics.get` rather than from constants
+              here: the config path depends on the platform and on which APPDATA
+              the core sees, and a path this window guessed at is how a user ends
+              up looking for logs in a folder that was never written to. "Not
+              read yet" is drawn instead of empty facts for the reason the other
+              reads give: a missing log folder and a missing answer are different
+              claims.
+            */}
+            <section className="settings-group">
+              <h3>Diagnostics</h3>
+              <p className="settings-note">
+                The build, where it runs from, and where its files live -- copied
+                as text, so it can be pasted straight into an issue.
+              </p>
+              {diagnostics ? (
+                <>
+                  <p className="settings-value">
+                    TONYAgent {diagnostics.version} by {diagnostics.author}
+                  </p>
+                  <p className="settings-value">{diagnosticsRuntime(diagnostics)}</p>
+                  <div className="settings-row">
+                    <span className="settings-value" title={diagnostics.config_path}>
+                      Config: {diagnostics.config_path}
+                    </span>
+                  </div>
+                  <div className="settings-row">
+                    <span className="settings-value" title={diagnostics.log_dir}>
+                      Logs: {diagnostics.log_dir}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <p className="settings-value">Not read yet.</p>
+              )}
+              <div className="settings-row">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={onOpenLogFolder}
+                  disabled={!connected || !diagnostics}
+                >
+                  Open log folder
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => void copyDiagnostics()}
+                  disabled={!connected || !diagnostics}
+                >
+                  Copy diagnostics
+                </button>
+              </div>
+              {diagnosticsNotice && (
+                <p className="settings-hint">{diagnosticsNotice}</p>
+              )}
             </section>
           </>
         )}
