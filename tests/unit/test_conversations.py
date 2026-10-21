@@ -118,6 +118,7 @@ def test_a_list_row_does_not_carry_the_transcript(store):
     row = store.summaries()[0]
     assert set(row) == {
         "id", "title", "project", "created_at", "updated_at", "message_count",
+        "track",
     }
     assert row["message_count"] == 500
     assert "messages" not in row

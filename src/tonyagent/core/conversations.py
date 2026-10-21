@@ -85,6 +85,27 @@ class EmptyTitle(ValueError):
     """
 
 
+#: The two tracks a conversation belongs to. ``chat`` is a conversation and
+#: nothing else; ``build`` is the agent acting, and build/plan/mission/skills
+#: are modes *within* it, chosen per turn. Set once at creation and never
+#: rewritten by a mode switch: the track is what the conversation *is*, the
+#: mode is what the current turn *does*. An empty conversation is unclaimed,
+#: though -- see ``create`` in the server -- and takes the requested track.
+TRACKS = ("chat", "build")
+
+
+def coerce_track(value: Any) -> str:
+    """A stored or requested track, or ``"build"`` for anything else.
+
+    Files written before the field existed have none, and a hand-edited one
+    may hold anything. Either way the conversation must still open, and Build
+    is the track the five-pill world behaved as -- the same fallback
+    ``get_mode`` uses for unknown names.
+    """
+    text = str(value or "").strip().lower()
+    return text if text in TRACKS else "build"
+
+
 @dataclass
 class Conversation:
     """One saved conversation.
@@ -109,6 +130,11 @@ class Conversation:
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     messages: list[dict[str, Any]] = field(default_factory=list)
+    #: Which track this conversation belongs to -- ``"chat"`` or ``"build"``.
+    #:
+    #: Absent in every file written before tracks existed, which reads back as
+    #: ``"build"`` (see ``coerce_track``), so no migration is needed.
+    track: str = "build"
     #: The plan and goal for this conversation -- see ``core.task_state``.
     #:
     #: A plain dict for the same reason ``messages`` are plain dicts: this module is
@@ -125,6 +151,7 @@ class Conversation:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "messages": self.messages,
+            "track": self.track,
             "state": self.state,
         }
 
@@ -142,6 +169,7 @@ class Conversation:
             created_at=float(data.get("created_at") or time.time()),
             updated_at=float(data.get("updated_at") or time.time()),
             messages=list(data.get("messages") or []),
+            track=coerce_track(data.get("track")),
             state=dict(raw_state) if isinstance(raw_state, dict) else {},
         )
 
@@ -159,6 +187,7 @@ class Conversation:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "message_count": len(self.messages),
+            "track": self.track,
         }
 
 
@@ -182,8 +211,12 @@ class ConversationStore:
             raise ValueError(f"Not a conversation id: {conversation_id!r}")
         return self.root / f"{conversation_id}.json"
 
-    def create(self, title: str = "New chat", project: str = "") -> Conversation:
-        conversation = Conversation(title=title, project=project)
+    def create(
+        self, title: str = "New chat", project: str = "", track: str = "build"
+    ) -> Conversation:
+        conversation = Conversation(
+            title=title, project=project, track=coerce_track(track)
+        )
         self.save(conversation)
         return conversation
 
@@ -362,6 +395,7 @@ class ConversationStore:
             created_at=time.time(),
             updated_at=original.updated_at,
             messages=copy.deepcopy(original.messages),
+            track=original.track,
             state=copy.deepcopy(original.state),
         )
         self.save(clone, touch=False)

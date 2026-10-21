@@ -450,7 +450,7 @@ class StdioServer:
         session.install_question_bridge()
         self._unsubscribe = session.bus.subscribe(self._on_event)
 
-    def _new_session(self) -> AgentSession:
+    def _new_session(self, mode: str | None = None) -> AgentSession:
         """A replacement session configured like the current one.
 
         Built bare it would come up with no provider bound, so switching chats
@@ -464,15 +464,38 @@ class StdioServer:
         printed each delta ten times over.
         """
         session = AgentSession(bus=EventBus())
+        if mode is not None:
+            # The incoming conversation's track, adopted before anything else:
+            # a fresh session has no transcript, so `set_mode`'s clear wipes
+            # nothing, and the provider carried over below is then checked
+            # against the rules that will actually hold the next turn. Setting
+            # it after the transcript loads instead would clear the transcript
+            # that was just loaded -- which is why this cannot live in the
+            # window as a `mode.set` after the switch.
+            session.set_mode(mode)
         if self.session.provider is not None:
-            session.bind_provider(
-                self.session.provider_name, self.session.model, self.session.base_url
-            )
-            # The replacement session carries a provider of its own, so the id has
-            # to be handed to *that* one: `_sync_provider_session` after the swap
-            # does exactly this, and this line is why the swap is not a request
-            # away from being wrong.
-            self._sync_provider_session()
+            from tonyagent.providers.factory import provider_allowed_in_mode
+
+            if provider_allowed_in_mode(
+                type(self.session.provider), session.mode_name
+            ):
+                session.bind_provider(
+                    self.session.provider_name, self.session.model, self.session.base_url
+                )
+                # The replacement session carries a provider of its own, so the id has
+                # to be handed to *that* one: `_sync_provider_session` after the swap
+                # does exactly this, and this line is why the swap is not a request
+                # away from being wrong.
+                self._sync_provider_session()
+            else:
+                # A chat-only provider carried into a build-track conversation.
+                # Left unbound rather than failing the switch: the transcript
+                # still opens, and the reply names what was dropped so the
+                # window can banner it -- the same shape `mode.set` answers
+                # with when it drops one. (Before tracks, this raised out of
+                # the switch, because a fresh session defaults to Build and
+                # the bind refused the carried provider.)
+                session.last_disconnected_provider = self.session.provider_name
         # The effort is a property of the window, not of one conversation, so
         # switching chats must not silently reset it to the model default.
         session.set_reasoning_effort(self.session.reasoning_effort)
@@ -593,7 +616,9 @@ class StdioServer:
             return
         from tonyagent.providers import ChatMessage
 
-        session = self._new_session()
+        session = self._new_session(
+            mode="chat" if conversation.track == "chat" else "build"
+        )
         for raw in conversation.messages:
             try:
                 # Through ``from_dict`` rather than picking fields here: it is
@@ -1250,16 +1275,34 @@ class StdioServer:
         """
         store = self._require_store()
         project = str(params.get("project") or self.project or "")
+        from tonyagent.core.conversations import coerce_track
+
+        track = coerce_track(params.get("track"))
         conversation = store.find_empty(project)
         if conversation is None:
-            conversation = store.create(title="New chat", project=project)
+            conversation = store.create(title="New chat", project=project, track=track)
+        elif conversation.track != track:
+            # An empty conversation is unclaimed: no transcript, so taking the
+            # requested track rewrites nothing a turn could contradict. Without
+            # this, alternating the track toggle would pile up one "New chat"
+            # row per track -- the duplication `find_empty` exists to prevent.
+            conversation.track = track
+            store.save(conversation)
         self._persist()  # Bank the outgoing conversation before leaving it.
         # The folder moves *before* the session is replaced, so the tools the
         # new chat will use already resolve against its own project. See
         # `_bind_project` for why this is not optional bookkeeping.
         self._bind_project(project)
         self._load_into_session(conversation.id)
-        return {"conversation": conversation.summary()}
+        return {
+            "conversation": conversation.summary(),
+            # What is actually in force, so the window can adopt it without a
+            # `mode.set` of its own -- which would clear the session the load
+            # just filled. Same pair `mode.set` answers with, for the same
+            # reason: the window must report, not guess.
+            "mode": self.session.mode_name,
+            "disconnected_provider": self.session.last_disconnected_provider or "",
+        }
 
     def _h_conversations_switch(self, params: dict) -> Any:
         conversation_id = str(params.get("id") or "")
@@ -1279,6 +1322,10 @@ class StdioServer:
             # looking at an empty pane wondering whether the click landed.
             "messages": conversation.messages,
             "project": conversation.project,
+            # The track's mode, adopted by the load -- see `create` for why the
+            # window adopts this rather than sending a `mode.set` of its own.
+            "mode": self.session.mode_name,
+            "disconnected_provider": self.session.last_disconnected_provider or "",
         }
 
     def _h_conversations_delete(self, params: dict) -> Any:
