@@ -296,6 +296,18 @@
 }
 
 /*
+ * The add-a-program field sits under the allow-list box, not under another
+ * row -- so the rule above does not reach it, and the box (margin 0) ran
+ * straight into the field. The empty state's hint has the same problem: its
+ * own margin is above it, not below. 10px, the same as a row under a row and
+ * a field under a note, so all three gaps agree.
+ */
+.settings-commands + .settings-row,
+.settings-group > .settings-hint + .settings-row {
+  margin-top: 10px;
+}
+
+/*
  * The provider row: two fields of equal width, then the button that applies
  * them.
  *
