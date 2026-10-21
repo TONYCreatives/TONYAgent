@@ -174,7 +174,7 @@ describe("the usage dashboard", () => {
     const text = container.textContent ?? "";
     assert.match(text, /1,234/, "the request count is not separated");
     assert.match(text, /3,000/, "the token count is not the total");
-    assert.match(text, /2 failed/);
+    assert.match(text, /2 Failed/);
   });
 
   test("a day with nothing still gets a bar, so the week is not reshaped", async () => {
@@ -251,7 +251,7 @@ describe("the provider's own pages", () => {
     const container = await open(summary());
     assert.deepEqual(
       all(container, ".usage-account-actions .btn").map((b) => (b.textContent ?? "").trim()),
-      ["Open usage", "Open credits", "Open API keys", "Read usage", "Read credits"],
+      ["Open Usage", "Open Credits", "Open API keys", "Read usage", "Read credits"],
     );
     assert.match(container.textContent ?? "", /requests that left from this app/);
   });
@@ -261,8 +261,8 @@ describe("the provider's own pages", () => {
     const container = await open(summary());
 
     for (const [label, id] of [
-      ["Open usage", "activity"],
-      ["Open credits", "credits"],
+      ["Open Usage", "activity"],
+      ["Open Credits", "credits"],
       ["Open API keys", "keys"],
     ] as const) {
       await click(accountButton(container, label));
@@ -344,7 +344,7 @@ describe("the provider's own pages", () => {
     // A browser preview is a legitimate place to run this page, so the button is
     // still there and the press still answers -- with the one honest sentence.
     const container = await open(summary());
-    await click(accountButton(container, "Open usage"));
+    await click(accountButton(container, "Open Usage"));
     await wait(0);
     assert.match(container.textContent ?? "", /not running inside the app/);
   });
@@ -354,7 +354,7 @@ describe("the provider's own pages", () => {
     // exist. The press must answer with the other sentence.
     insideHost({ opened: false });
     const container = await open(summary());
-    await click(accountButton(container, "Open credits"));
+    await click(accountButton(container, "Open Credits"));
     await wait(0);
     assert.match(container.textContent ?? "", /could not be opened/);
     assert.doesNotMatch(container.textContent ?? "", /Opened .* in a browser window/);

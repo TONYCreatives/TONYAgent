@@ -221,11 +221,11 @@ describe("choosing a model", () => {
     const { container } = await live();
     await click(chip(container));
     assert.deepEqual(texts(container, ".modelpicker-vendor"), [
-      "anthropic",
-      "anthropic",
-      "openai",
-      "google",
-      "deepseek",
+      "Anthropic",
+      "Anthropic",
+      "Openai",
+      "Google",
+      "Deepseek",
     ]);
   });
 
@@ -236,7 +236,16 @@ describe("choosing a model", () => {
     await click(chip(container));
     const current = all(container, ".modelpicker-item.is-current");
     assert.equal(current.length, 1);
-    assert.match(current[0].textContent ?? "", /gemini-2\.5-pro/);
+    assert.match(current[0].textContent ?? "", /Gemini 2\.5 Pro/);
+  });
+
+  test("the chip reads as words, and the tooltip keeps the exact id", async () => {
+    // The chip is what a person reads, so it reads as a person would write
+    // it. The id is what gets bound on click, so it rides in the tooltip --
+    // a display that hid the address would be a chip that cannot be checked.
+    const { container } = await live({ model: "deepseek/deepseek-chat" });
+    assert.match(chip(container).textContent ?? "", /Deepseek Chat/);
+    assert.match(chip(container).getAttribute("title") ?? "", /deepseek\/deepseek-chat/);
   });
 
   test("picking one asks for it", async () => {
@@ -458,13 +467,14 @@ describe("catalog detail lines", () => {
     assert.match(rows[1], /Responses/);
   });
 
-  test("rows without facts render id-only, as before", async () => {
-    // glm-5.3 has no entry: no display name to show and no facts to line up,
-    // so it renders exactly what it rendered before the catalog existed.
+  test("rows without facts render prettified words, and no detail line", async () => {
+    // glm-5.3 has no entry: no display name and no facts to line up. The row
+    // reads as words rather than the raw id -- the catalog wins wherever it
+    // answers, and this is the fallback -- but there is still no detail line.
     const container = await catalogued();
     await click(chip(container));
     const rows = texts(container, ".modelpicker-item").map((t) => t ?? "");
-    assert.match(rows[2], /glm-5\.3/);
+    assert.match(rows[2], /Glm 5\.3/);
     assert.equal(all(container, ".modelpicker-detail").length, 2);
   });
 });

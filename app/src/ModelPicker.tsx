@@ -23,6 +23,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useDismiss } from "./useDismiss.js";
+import { capitalizeFirst, prettifyModelName } from "./displayNames.js";
 import { useDelayedUnmount } from "./useDelayedUnmount.js";
 import { useMenuPlacement } from "./useMenuPlacement.js";
 
@@ -227,9 +228,18 @@ export function ModelPicker({
         disabled={disabled}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title={busy ? "Model — stop the turn to switch" : "Choose a model"}
+        // The exact id rides in the tooltip: the chip reads as a person would
+        // write it, and the id is what gets bound on click -- so both are one
+        // hover away rather than the display hiding the address.
+        title={
+          busy
+            ? "Model — stop the turn to switch"
+            : model
+              ? `Choose a model — ${model}`
+              : "Choose a model"
+        }
       >
-        <span>{model || "No model"}</span>
+        <span>{model ? prettifyModelName(model) : "No model"}</span>
         <span className="chip-caret">&#9662;</span>
       </button>
 
@@ -308,14 +318,18 @@ export function ModelPicker({
                         The vendor is shown separately because the id is
                         namespaced and the vendor is the part that tells you
                         whether you are about to switch to a different family of
-                        model.
+                        model. Capitalised like the name beside it, for the
+                        reason the chip gives: ids are addresses, and this row
+                        is words.
                       */}
                       <span className="modelpicker-vendor">
-                        {id.includes("/") ? id.slice(0, id.indexOf("/")) : ""}
+                        {id.includes("/")
+                          ? capitalizeFirst(id.slice(0, id.indexOf("/")))
+                          : ""}
                       </span>
                       <span className="modelpicker-text">
                         <span className="modelpicker-name">
-                          {fact?.name || shortName(id)}
+                          {fact?.name || prettifyModelName(shortName(id))}
                         </span>
                         {line && (
                           <span className="modelpicker-detail">{line}</span>

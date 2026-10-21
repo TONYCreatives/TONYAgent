@@ -354,7 +354,7 @@ describe("the window boots against a core", () => {
 
     const status = texts(container, ".statusbar").join(" ");
     assert.match(status, /openrouter/, "the bound provider is not in the status bar");
-    assert.match(status, /space-bunny-alpha/, "the bound model is not in the status bar");
+    assert.match(status, /Stealth Space Bunny Alpha/, "the bound model is not in the status bar");
 
     // No error banner. This is the assertion that would catch a boot call going
     // unanswered: `App` catches the rejection, shows the banner and keeps

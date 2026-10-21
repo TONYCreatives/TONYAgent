@@ -1,3 +1,5 @@
+import { capitalizeFirst, prettifyModelName } from "./displayNames.js";
+
 interface Props {
   provider: string;
   model: string;
@@ -33,30 +35,30 @@ export function StatusBar({
 }: Props) {
   return (
     <footer className="statusbar">
-      <span className={connected ? "dot dot-ok" : "dot dot-bad"} title={connected ? "backend running" : "backend stopped"} />
+      <span className={connected ? "dot dot-ok" : "dot dot-bad"} title={connected ? "Backend running" : "Backend stopped"} />
       {/*
         Named, the two of them, because the narrow-window rule drops them and
         a rule that drops "the second span" is a rule that drops something else
         the moment this row changes -- see the 560px block in `statusbar.css`.
       */}
-      <span className="statusbar-state">{connected ? "connected" : "disconnected"}</span>
+      <span className="statusbar-state">{connected ? "Connected" : "Disconnected"}</span>
       <span className="sep" />
       {needsProvider ? (
         <button type="button" className="linkish" onClick={onConfigure}>
-          no provider &mdash; choose one to start
+          No provider &mdash; choose one to start
         </button>
       ) : (
-        <span>
-          {provider || "no provider"}
-          {model && ` / ${model}`}
+        <span title={model || undefined}>
+          {provider || "No provider"}
+          {model && ` / ${prettifyModelName(model)}`}
         </span>
       )}
       <span className="sep" />
-      <span className="statusbar-sandbox">sandbox: {sandbox}</span>
+      <span className="statusbar-sandbox">Sandbox: {capitalizeFirst(sandbox)}</span>
       {busy && (
         <>
           <span className="sep" />
-          <span className="busy">working...</span>
+          <span className="busy">Working...</span>
         </>
       )}
       {onToggleLogs && (

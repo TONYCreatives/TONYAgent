@@ -80,8 +80,8 @@ const PERIODS = [
  * `AccountBrowser.VIEWS` checks them against.
  */
 const ACCOUNT_VIEWS = [
-  { id: "activity", label: "usage" },
-  { id: "credits", label: "credits" },
+  { id: "activity", label: "Usage" },
+  { id: "credits", label: "Credits" },
   { id: "keys", label: "API keys" },
 ] as const satisfies readonly { id: AccountView; label: string }[];
 
@@ -233,20 +233,20 @@ export function Dashboard({ connected, onClose, load }: Props) {
       {!connected && <p className="warn">The core is not connected, so there is nothing to read.</p>}
 
       <div className="usage-tiles">
-        <Tile label="Requests" value={n(totals.requests)} note={totals.failed ? `${n(totals.failed)} failed` : "no failures"} />
-        <Tile label="Tokens" value={n(totals.total_tokens)} note={`${n(totals.input_tokens)} in / ${n(totals.output_tokens)} out`} />
-        <Tile label="Reasoning" value={n(totals.reasoning_tokens)} note="inside the output count" />
+        <Tile label="Requests" value={n(totals.requests)} note={totals.failed ? `${n(totals.failed)} Failed` : "No failures"} />
+        <Tile label="Tokens" value={n(totals.total_tokens)} note={`${n(totals.input_tokens)} In / ${n(totals.output_tokens)} Out`} />
+        <Tile label="Reasoning" value={n(totals.reasoning_tokens)} note="Inside the output count" />
         <Tile
           label="Average"
           value={totals.requests ? duration(totals.duration_ms / totals.requests) : "--"}
-          note="per request"
+          note="Per request"
         />
       </div>
 
       <figure className="usage-figure">
         <figcaption>
           Requests per day
-          {busy && <span className="usage-busy"> reading...</span>}
+          {busy && <span className="usage-busy"> Reading...</span>}
         </figcaption>
         {none ? (
           <p className="usage-empty">
@@ -279,7 +279,7 @@ export function Dashboard({ connected, onClose, load }: Props) {
         {!none && buckets.length > 0 && (
           <div className="usage-axis">
             <span>{dayLabel(buckets[0].day)}</span>
-            <span>peak {n(peak)}/day</span>
+            <span>Peak {n(peak)}/day</span>
             <span>{dayLabel(buckets[buckets.length - 1].day)}</span>
           </div>
         )}
@@ -312,7 +312,7 @@ export function Dashboard({ connected, onClose, load }: Props) {
                 </span>
                 <div className="usage-key-meta">
                   <span>{n(entry.total_tokens)} tokens</span>
-                  {entry.failed > 0 && <span className="usage-key-failed">{n(entry.failed)} failed</span>}
+                  {entry.failed > 0 && <span className="usage-key-failed">{n(entry.failed)} Failed</span>}
                 </div>
               </li>
             ))}
