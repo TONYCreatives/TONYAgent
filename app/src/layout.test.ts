@@ -801,11 +801,16 @@ describe("every control is a stadium and every container is a box", () => {
     // The sidebar's controls.
     ".chatlist-toggle",
     ".chatlist-back",
-    ".chatlist-act",
+    // (`.chatlist-act` lives with the rail above: the foot is the rail's twin,
+    // so it wears the rail's corner rather than the pill.)
     // The title bar and the rail.
     ".tab-input",
     ".tab-close",
-    ".rail-btn",
+    // `.rail-btn` and `.chatlist-act` are not here on purpose: they are rounded
+    // squares (`--radius-sm`) rather than stadiums, because a full disc of wash
+    // on a 44px button read as a separate control bolted onto the strip rather
+    // than as the state of the button. A test that required the pill here would
+    // be requiring the circle back.
     ".helper-toggle",
     ".code-close",
     // The settings panel.
