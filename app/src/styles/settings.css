@@ -1047,36 +1047,41 @@
 /* --- the command allow-list ----------------------------------------------- */
 
 /*
- * The allowed programs, as chips that wrap.
+ * The allowed programs, as lines in a box.
  *
- * A wrapped row rather than a line each. These are short names -- `python`,
- * `git`, `npm` -- and eleven of them one per line would be a page of its own
- * between the permission ladder and the thinking dial. The chip is the stadium
- * this app already uses for a small tag, at the height of the controls beside
- * it rather than of a row.
+ * One per line, in the same box the permission ladder uses: a bordered
+ * `.permchoice-open` holds a stack of rows, and this list is the same kind of
+ * thing -- a set of rules in force, one per line, each removable. Chips were
+ * tried first and read as tags rather than rules: short names wrapped into a
+ * cloud, and the eye had to search it to say whether something was allowed.
+ * Lines scan top to bottom, and a name that is not on its own line is visibly
+ * not there.
+ *
+ * The box is drawn here rather than reused from the ladder, because the rows
+ * are not radios: there is no selected one, no summary, and hovering a row
+ * must not promise a press the row will ignore -- only the x at its end acts.
  */
 .settings-commands {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  gap: 2px;
   margin: 0;
-  padding: 0;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--input);
+  overflow: hidden;
   list-style: none;
 }
 
 .settings-command {
   display: flex;
   align-items: center;
-  gap: 2px;
-  height: 24px;
-  /* Asymmetric on purpose: the x is a disc with its own padding, so the name
-     gets the room and the button sits in the gap that is left. */
-  padding: 0 3px 0 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--input);
+  gap: 8px;
+  min-height: 30px;
+  padding: 4px 4px 4px 10px;
+  border-radius: var(--radius-xs);
   color: var(--fg);
-  font-size: var(--text-xs);
 }
 
 /*
@@ -1085,19 +1090,24 @@
  * where that difference is visible at a glance.
  */
 .settings-command-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   font-family: var(--mono);
+  font-size: var(--text-sm);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /*
- * The x on a chip. `.settings-unkey`'s smaller twin, and the same pairing: the
- * disc is the hit target, and the hover colour is the one that says this is the
- * control that removes something.
+ * The x on a row. `.settings-unkey`'s twin: the same 24px disc, the same
+ * hover that says this is the control that removes something.
  */
 .settings-command-drop {
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
+  width: 24px;
+  height: 24px;
   flex: none;
   padding: 0;
   border: 0;

@@ -511,18 +511,20 @@ function TrashIcon() {
 /**
  * The remove glyph for one allowed program.
  *
- * An x rather than the bin the key rows carry: a row here is a chip in a
- * wrapped list, and the bin is the wider of the two marks.
+ * An x rather than the bin the key rows carry: the eye is already the other
+ * button a key row can hold, and an x between them would read as "close" on a
+ * row that has nothing to close. Here the x is the only control on the line,
+ * so there is nothing to confuse it with.
  */
 function DropIcon() {
   return (
     <svg
-      width="11"
-      height="11"
+      width="14"
+      height="14"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2.4"
+      strokeWidth="2"
       strokeLinecap="round"
       aria-hidden="true"
     >
