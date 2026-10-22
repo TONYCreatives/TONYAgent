@@ -396,7 +396,8 @@ not part of that count.
 `design/AGENT_WORKSPACE_REFINE.md`. It proposes a three-pane agent workspace
 (persistent navigation, centre conversation, live context panel), one signal hue
 for live state, a launchpad, a run spine in the transcript, and a telemetry
-strip — phased over ~10–12 days. **No product code for it has been written.**
+strip — phased over ~13–17 days in eight phases. **No product code for it has
+been written.**
 The decisions it needs (direction B, signal hue, docked navigation, 14px base,
 read-only context panel, keep tabs, phase scope) are listed in §12 of that
 document.

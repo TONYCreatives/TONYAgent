@@ -1360,5 +1360,5 @@ The next visual pass is **planned, not started**. `design/AGENT_WORKSPACE_REFINE
 audits the current shell and proposes a three-pane agent workspace (persistent
 navigation, centre conversation, live context panel), a single signal hue for
 live agent state, a launchpad, a run spine in the transcript, and a window-wide
-telemetry strip. It is phased over ~10–12 days and lists the decisions that need
+telemetry strip. It is phased over ~13–17 days in eight phases and lists the decisions that need
 to be made before any pixel changes. The current tree is clean and green.
