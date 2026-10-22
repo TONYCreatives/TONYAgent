@@ -1271,6 +1271,23 @@ export function App({
   }, []);
 
   /**
+   * Open one project file in the OS default app.
+   *
+   * Best effort like `openLogFolder`: the host confines the path to the
+   * project, and a viewer button is not the place that could do anything
+   * with a refusal.
+   */
+  const openExternal = useCallback(async (path: string) => {
+    const api = host();
+    if (!api || typeof api.open_path !== "function") return;
+    try {
+      await api.open_path(path);
+    } catch {
+      // Opening a file is best effort; there is nowhere to report it to.
+    }
+  }, []);
+
+  /**
    * Copy text to the clipboard, for the diagnostics card.
    *
    * The async clipboard first and a focused field second. The second exists
@@ -2892,6 +2909,7 @@ export function App({
                 palette={palette}
                 onPalette={setPalette}
                 onClose={closeViewer}
+                onOpenExternal={(path) => void openExternal(path)}
               />
             )}
 

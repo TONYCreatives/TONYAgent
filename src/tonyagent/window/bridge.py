@@ -366,6 +366,45 @@ class Bridge:
             opened = False
         return {"path": path, "opened": opened}
 
+    def open_path(self, path: str) -> dict[str, Any]:
+        """Open one project file in the OS default app.
+
+        **The path is confined, not trusted.** It is project-relative and
+        resolved through the same `confine` the viewer reads through, so the
+        page cannot point this at anything outside the project -- the same
+        rule `open_logs` keeps by taking no path at all. A file the viewer
+        cannot draw (a PDF the webview refuses, a zip, an Office doc) still
+        opens somewhere real, which is a better outcome than a dead end.
+
+        Reported rather than raised, like `open_releases`: a button that
+        errors is the thing the viewer avoids everywhere else.
+        """
+        import os
+        import subprocess
+        import sys
+
+        from tonyagent.tools.workspace import confine
+
+        try:
+            target = confine(path)
+        except ValueError as exc:
+            logger.debug(f"Could not open {path!r}: {exc}")
+            return {"path": path, "opened": False}
+        if not target.is_file():
+            return {"path": path, "opened": False}
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(target))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.run(["open", str(target)], check=False)
+            else:
+                subprocess.run(["xdg-open", str(target)], check=False)
+            opened = True
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            logger.debug(f"Could not open {path!r}: {exc}")
+            opened = False
+        return {"path": path, "opened": opened}
+
     def update_install(self) -> dict[str, Any]:
         """Run the verified installer, then close the window.
 

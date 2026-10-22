@@ -181,6 +181,14 @@ export interface HostApi {
    * reports, chosen by the host, so the page cannot point this anywhere.
    */
   open_logs(): Promise<{ path: string; opened: boolean }>;
+  /**
+   * Open one project file in the OS default app.
+   *
+   * The path is project-relative and confined by the host, so the page
+   * cannot point this outside the project. Reported, not raised -- a
+   * button that errors is worse than one that quietly did nothing.
+   */
+  open_path(path: string): Promise<{ path: string; opened: boolean }>;
 }
 
 /** What the host pushes into the page. */

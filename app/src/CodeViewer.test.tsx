@@ -61,6 +61,7 @@ function props(over: Partial<React.ComponentProps<typeof CodeViewer>> = {}) {
     palette: "dark-plus",
     onPalette: () => {},
     onClose: () => {},
+    onOpenExternal: () => {},
     ...over,
   };
 }
@@ -208,6 +209,33 @@ describe("images and files with no preview", () => {
     assert.deepEqual(texts(container, ".code-chip"), ["no preview", "🔒 read-only"]);
     assert.match(one(container, ".code-notice")!.textContent ?? "", /binary file/);
     assert.equal(one(container, ".code-body"), null);
+  });
+
+  test("a binary file offers the OS default app, and names what it opens", async () => {
+    // The way out for everything the window cannot draw. Asserts the path,
+    // not just the press: a button that opened the wrong file would be
+    // worse than none.
+    const opened: string[] = [];
+    const container = await render(
+      <CodeViewer
+        {...props({
+          path: "blob.zip",
+          file: {
+            kind: "binary",
+            path: "blob.zip",
+            size: 4096,
+            reason: "blob.zip is a binary file, which the viewer does not show.",
+          },
+          onOpenExternal: (path) => opened.push(path),
+        })}
+      />,
+    );
+    const button = all(container, ".code-notice button").find(
+      (b) => (b.textContent ?? "").trim() === "Open externally",
+    );
+    assert.ok(button, "the binary screen has no Open externally button");
+    await click(button);
+    assert.deepEqual(opened, ["blob.zip"]);
   });
 });
 

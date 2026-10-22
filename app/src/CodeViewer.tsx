@@ -91,6 +91,8 @@ interface Props {
   palette: string;
   onPalette: (name: string) => void;
   onClose: () => void;
+  /** Open the file in the OS default app. Best effort; reported, not raised. */
+  onOpenExternal: (path: string) => void;
 }
 
 /** The row height the CSS uses; the virtualiser needs the same number. */
@@ -295,6 +297,7 @@ export function CodeViewer({
   palette,
   onPalette,
   onClose,
+  onOpenExternal,
 }: Props) {
   const [draft, setDraft] = useState<string | null>(null);
   const [view, setView] = useState<"source" | "preview">("source");
@@ -350,6 +353,22 @@ export function CodeViewer({
           <p>{file.reason}</p>
           <p className="code-hint">
             {readableSize(file.size)} · there is no preview for this kind of file in the window.
+          </p>
+          {/*
+            The way out for everything the window cannot draw: the OS default
+            app. A zip, an Office doc, an executable -- naming them without
+            offering anything is a dead end, and the host confines the path
+            so this cannot point outside the project.
+          */}
+          <p>
+            <button
+              type="button"
+              className="btn btn-quiet"
+              onClick={() => onOpenExternal(file.path)}
+              title="Open this file in the OS default app"
+            >
+              Open externally
+            </button>
           </p>
         </div>
       );
