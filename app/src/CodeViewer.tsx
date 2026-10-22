@@ -322,10 +322,16 @@ export function CodeViewer({
   // dependency is the *content* rather than the path: saving a file the user
   // is still looking at has to clear the dirty state, and the path has not
   // changed.
+  //
+  // Markdown opens on its rendered view: a README is read, not edited, nine
+  // times out of ten, and the source is one press away. CSV stays on source,
+  // because a table of a thousand rows is a wall the user did not ask for.
   const loaded = file?.kind === "text" ? file.content : null;
   useEffect(() => {
     setDraft(null);
-    setView("source");
+    setView(
+      file?.kind === "text" && file.language === "markdown" ? "preview" : "source",
+    );
   }, [path, loaded]);
 
   useEffect(() => {
@@ -457,9 +463,13 @@ export function CodeViewer({
       bits.push(file.language);
     }
     if (file.kind === "image") {
+      // An SVG has no pixel size: the raw text *is* the image, so there is
+      // nothing to measure, and "0×0" would be a lie about an empty picture.
       const size =
-        `${file.width}×${file.height}` +
-        (file.downscaled ? ` (shown at ${file.display_width}×${file.display_height})` : "");
+        file.mime === "image/svg+xml"
+          ? "vector"
+          : `${file.width}×${file.height}` +
+            (file.downscaled ? ` (shown at ${file.display_width}×${file.display_height})` : "");
       bits.push(size);
     }
     if (file.kind === "pdf") {

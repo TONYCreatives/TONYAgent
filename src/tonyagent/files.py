@@ -106,6 +106,11 @@ IMAGE_MIMES: dict[str, str] = {
     "bmp": "image/bmp",
     "ico": "image/x-icon",
     "avif": "image/avif",
+    # Decoded by Pillow and re-encoded as PNG by `read_image_file`, so the
+    # window never needs to draw the source format itself -- which matters
+    # because Chromium does not draw TIFF at all.
+    "tif": "image/tiff",
+    "tiff": "image/tiff",
 }
 
 
@@ -388,6 +393,53 @@ def _mime_for(path: Path) -> str | None:
     return IMAGE_MIMES.get(suffix)
 
 
+def read_svg_file(path: str) -> ImageFile:
+    """Read an SVG as an image the window draws natively.
+
+    Not through Pillow, which cannot open SVG: the raw text *is* the image,
+    so it is base64'd straight into the reply and the window's `<img>` draws
+    it as `image/svg+xml`. Dimensions are unknown without parsing the tag,
+    so they are zero and the footer says "vector" -- see the viewer.
+    """
+    import base64
+
+    target = confine(path)
+    if not target.is_file():
+        raise SourceError(f"Not a file: {path}")
+
+    try:
+        size = target.stat().st_size
+    except OSError as exc:
+        raise SourceError(f"Could not read {path}: {exc}") from exc
+    if size > MAX_IMAGE_BYTES:
+        raise SourceError(
+            f"{path} is {size / (1024 * 1024):.1f} MB, over the "
+            f"{MAX_IMAGE_BYTES // (1024 * 1024)} MB limit for an image preview."
+        )
+
+    try:
+        raw = target.read_bytes()
+    except OSError as exc:
+        raise SourceError(f"Could not read {path}: {exc}") from exc
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SourceError(f"{path} is not valid UTF-8 text ({exc.reason}).") from exc
+    if "<svg" not in text[:4096].lower():
+        raise SourceError(f"{path} is not an SVG image.")
+
+    return ImageFile(
+        path=str(target.relative_to(project_root()).as_posix()),
+        mime="image/svg+xml",
+        data=base64.b64encode(raw).decode("ascii"),
+        size=size,
+        width=0,
+        height=0,
+        display_width=0,
+        display_height=0,
+    )
+
+
 def read_image_file(path: str) -> ImageFile:
     """Read an image for the viewer, downscaled to `VIEWER_MAX_EDGE`.
 
@@ -495,6 +547,12 @@ def read_for_viewer(path: str) -> SourceFile | ImageFile | PdfFile | BinaryFile:
 
     if _mime_for(target) is not None:
         return read_image_file(path)
+
+    # SVG is text, so without this it would read as `xml` source. It draws
+    # natively as an image, which is the more useful view -- with the source
+    # one toggle away, like markdown's preview.
+    if target.suffix.lower() == ".svg":
+        return read_svg_file(path)
 
     if target.suffix.lower() == ".pdf":
         try:

@@ -192,6 +192,34 @@ describe("images and files with no preview", () => {
     assert.match(one(container, ".code-footer")!.textContent ?? "", /shown at 2048×26/);
   });
 
+  test("an SVG draws as an image, with no pixel size to report", async () => {
+    // SVG is text, so without the core's special case this would read as
+    // `xml` source. The raw text *is* the image: the `<img>` draws it, and
+    // the footer says "vector" rather than lying about a 0×0 picture.
+    const container = await render(
+      <CodeViewer
+        {...props({
+          path: "mark.svg",
+          file: {
+            kind: "image",
+            path: "mark.svg",
+            mime: "image/svg+xml",
+            data: "PHN2Zz48L3N2Zz4=",
+            size: 16,
+            width: 0,
+            height: 0,
+            display_width: 0,
+            display_height: 0,
+            downscaled: false,
+          },
+        })}
+      />,
+    );
+    const image = one(container, ".code-image img")! as HTMLImageElement;
+    assert.equal(image.getAttribute("src"), "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=");
+    assert.match(one(container, ".code-footer")!.textContent ?? "", /vector/);
+  });
+
   test("a binary file is named with its reason, not rendered as text", async () => {
     const container = await render(
       <CodeViewer
@@ -285,12 +313,10 @@ describe("a PDF draws in the native frame", () => {
 });
 
 describe("documents with a rendered view", () => {
-  test("markdown can be previewed, and the source is still there", async () => {
+  test("markdown opens on its preview, with the source one press away", async () => {
     const container = await render(<CodeViewer {...props({ path: "README.md", file: MARKDOWN })} />);
 
     assert.deepEqual(texts(container, ".code-viewswitch button"), ["Source", "Preview"]);
-    await click(all(container, ".code-viewswitch button")[1]);
-
     const rendered = one(container, ".code-preview")!;
     assert.equal(one(rendered, ".md-h1")!.textContent, "Title");
     assert.match(rendered.textContent ?? "", /bold/);

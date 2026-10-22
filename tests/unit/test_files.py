@@ -287,6 +287,27 @@ def test_a_mislabelled_image_is_an_error_not_a_broken_picture(project):
         read_for_viewer("fake.png")
 
 
+def test_an_svg_reads_as_an_image_the_window_draws(project):
+    (project / "mark.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg"><rect width="4" height="4"/></svg>\n',
+        encoding="utf-8",
+    )
+    reply = read_for_viewer("mark.svg").to_dict()
+
+    assert reply["kind"] == "image"
+    assert reply["mime"] == "image/svg+xml"
+    # The raw text is the image: decoded back, byte for byte.
+    import base64
+
+    assert base64.b64decode(reply["data"]).startswith(b"<svg")
+
+
+def test_a_mislabelled_svg_is_an_error_not_a_broken_picture(project):
+    (project / "fake.svg").write_text("<html>not svg</html>\n", encoding="utf-8")
+    with pytest.raises(SourceError, match="not an SVG"):
+        read_for_viewer("fake.svg")
+
+
 def test_a_binary_file_is_a_view_rather_than_a_failure(project):
     (project / "blob.zip").write_bytes(b"PK\x03\x04\x00\x00")
     reply = read_for_viewer("blob.zip").to_dict()
