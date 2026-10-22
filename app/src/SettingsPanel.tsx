@@ -622,6 +622,11 @@ export function SettingsPanel({
   // first -- the user did nothing to ask for that.
   const [draftNames, setDraftNames] = useState<Record<string, string>>({});
   const [draftKeys, setDraftKeys] = useState<Record<string, string>>({});
+  // The add form: one button, one form, one provider at a time. The drafts
+  // above stay keyed by provider, so switching the form's select mid-typing
+  // keeps each provider's half-typed row rather than clearing it.
+  const [addingKey, setAddingKey] = useState(false);
+  const [addProvider, setAddProvider] = useState("");
 
   // The revealed row, and only one at a time: a list that can show every key at
   // once is a page of plaintext credentials. openKey remembers which value was
@@ -867,10 +872,10 @@ export function SettingsPanel({
     );
   };
 
-  /** Store the key typed into one provider's add row. */
-  const saveDraft = async (target: string) => {
+  /** Store the key typed into the add form. Resolves whether it landed. */
+  const saveDraft = async (target: string): Promise<boolean> => {
     const apiKey = (draftKeys[target] ?? "").trim();
-    if (!apiKey) return;
+    if (!apiKey) return false;
     const name = (draftNames[target] ?? "").trim();
     setKeyBusy(true);
     setKeyNotice(null);
@@ -884,11 +889,53 @@ export function SettingsPanel({
     setKeyNotice(
       ok ? "Key saved to the system keyring." : "Could not save the key.",
     );
+    return ok;
+  };
+
+  /** Open the add form on the sensible provider: this window's, when it takes
+   * a key, else the first one that does. */
+  const openAddForm = () => {
+    const keyable = providers.filter((entry) => !entry.chat_only);
+    setAddProvider(
+      keyable.some((entry) => entry.name === provider)
+        ? provider
+        : (keyable[0]?.name ?? ""),
+    );
+    setKeyNotice(null);
+    setAddingKey(true);
+  };
+
+  /** Put the add form away. The secret leaves the DOM with it, and the draft
+   * is cleared too, so a cancelled key is not sitting in memory behind a
+   * closed form. The name stays: it was never a secret. */
+  const closeAddForm = () => {
+    setDraftKeys((prev) => ({ ...prev, [addProvider]: "" }));
+    setAddingKey(false);
   };
 
   const running = sandbox === "running";
   const starting = sandbox === "starting";
   const canStart = Boolean(project) && !running && !starting;
+
+  /*
+   * The Keys tab's shape: one stored list, one add form.
+   *
+   * A section per provider meant every provider drew its own add row whether
+   * or not it had a key, so the tab was N copies of the same two fields with
+   * N Save buttons. Now providers with rows share one list, providers with
+   * none are simply absent from it, and there is one form that names its
+   * provider up front.
+   */
+  const storedGroups = providers
+    .map((entry) => ({
+      provider: entry,
+      rows: keys.filter((row) => row.provider === entry.name),
+    }))
+    .filter((group) => group.rows.length > 0);
+  const keyableProviders = providers.filter((entry) => !entry.chat_only);
+  const keylessNames = providers
+    .filter((entry) => entry.chat_only)
+    .map((entry) => prettifyModelName(entry.name));
 
   return (
     /*
@@ -1443,28 +1490,26 @@ export function SettingsPanel({
               <p className="settings-hint">No providers are registered.</p>
             )}
 
-            {providers.map((entry) => {
-              const rows = keys.filter((row) => row.provider === entry.name);
-              return (
-                <section className="settings-group" key={entry.name}>
-                  {/* Words, with the id one hover away: `opencode-go` reads
+            {providers.length > 0 && (
+              <section className="settings-group">
+                <h3>Stored keys</h3>
+                <p className="settings-note">
+                  Keys stored for each provider. The one marked Active is the
+                  key a turn spends; the others are kept but not used.
+                </p>
+                {keys.length === 0 && (
+                  <p className="settings-hint">No API keys stored yet.</p>
+                )}
+                {storedGroups.map(({ provider: entry, rows }) => (
+                  <div className="settings-key-group" key={entry.name}>
+                    {/*
+                      Words, with the id one hover away: `opencode-go` reads
                       `OpenCode Go`, and the tooltip keeps the address the keys
-                      are stored under. */}
-                  <h3 title={entry.name}>{prettifyModelName(entry.name)}</h3>
-                  {entry.chat_only && (
-                    <p className="settings-note">
-                      A local model. It works in Chat mode only, and it needs no
-                      API key -- the server runs on this machine.
+                      are stored under.
+                    */}
+                    <p className="settings-key-provider" title={entry.name}>
+                      {prettifyModelName(entry.name)}
                     </p>
-                  )}
-                  <p className="settings-note">
-                    Keys stored for this provider. The one marked Active is the key
-                    a turn spends; the others are kept but not used.
-                  </p>
-
-                  {rows.length === 0 ? (
-                    <p className="settings-hint">No keys stored for this provider yet.</p>
-                  ) : (
                     <ul className="settings-keys">
                       {rows.map((row) => {
                         const open =
@@ -1531,22 +1576,66 @@ export function SettingsPanel({
                         );
                       })}
                     </ul>
-                  )}
+                  </div>
+                ))}
+                {keylessNames.length > 0 && (
+                  <p className="settings-note">
+                    {keylessNames.join(", ")} {keylessNames.length === 1 ? "works" : "work"} in
+                    Chat mode only, and {keylessNames.length === 1 ? "needs" : "need"} no
+                    API key -- the server runs on this machine.
+                  </p>
+                )}
+              </section>
+            )}
 
-                  {/*
-                    The add row. Name above key above button, because the sidebar
-                    gives this column 241px and two fields plus a button on one
-                    line is three controls fighting over it.
-                  */}
+            {keyableProviders.length > 0 && (
+              <section className="settings-group">
+                <h3>Add a key</h3>
+                {/*
+                  One form for every provider. Provider first, because the two
+                  fields below are labelled with it; name above key above
+                  buttons, because two fields plus two buttons on one line is
+                  four controls fighting over it.
+                */}
+                {!addingKey ? (
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={!connected || keyBusy}
+                    onClick={openAddForm}
+                  >
+                    Add new API key
+                  </button>
+                ) : (
                   <div className="settings-key settings-key-new">
+                    <div className="settings-row">
+                      <span className="settings-select-wrap">
+                        <select
+                          className="settings-select"
+                          value={addProvider}
+                          disabled={!connected || keyBusy}
+                          onChange={(e) => {
+                            setAddProvider(e.target.value);
+                            setKeyNotice(null);
+                          }}
+                          aria-label="Provider for the new key"
+                        >
+                          {keyableProviders.map((option) => (
+                            <option key={option.name} value={option.name}>
+                              {prettifyModelName(option.name)}
+                            </option>
+                          ))}
+                        </select>
+                      </span>
+                    </div>
                     <div className="settings-row">
                       <input
                         className="settings-input"
                         type="text"
-                        value={draftNames[entry.name] ?? ""}
+                        value={draftNames[addProvider] ?? ""}
                         onChange={(e) => {
                           const value = e.target.value;
-                          setDraftNames((prev) => ({ ...prev, [entry.name]: value }));
+                          setDraftNames((prev) => ({ ...prev, [addProvider]: value }));
                           setKeyNotice(null);
                         }}
                         placeholder="Name (optional)"
@@ -1555,26 +1644,26 @@ export function SettingsPanel({
                         autoCapitalize="off"
                         spellCheck={false}
                         disabled={!connected || keyBusy}
-                        aria-label={"Name for a new " + entry.name + " key"}
+                        aria-label={"Name for a new " + addProvider + " key"}
                       />
                     </div>
                     <div className="settings-row">
                       <input
                         className="settings-input"
                         type="password"
-                        value={draftKeys[entry.name] ?? ""}
+                        value={draftKeys[addProvider] ?? ""}
                         onChange={(e) => {
                           const value = e.target.value;
-                          setDraftKeys((prev) => ({ ...prev, [entry.name]: value }));
+                          setDraftKeys((prev) => ({ ...prev, [addProvider]: value }));
                           setKeyNotice(null);
                         }}
-                        placeholder={"API key for " + entry.name}
+                        placeholder={"API key for " + addProvider}
                         autoComplete="off"
                         autoCorrect="off"
                         autoCapitalize="off"
                         spellCheck={false}
                         disabled={!connected || keyBusy}
-                        aria-label={"New API key for " + entry.name}
+                        aria-label={"New API key for " + addProvider}
                       />
                     </div>
                     <div className="settings-row settings-key-actions">
@@ -1582,17 +1671,32 @@ export function SettingsPanel({
                         type="button"
                         className="btn"
                         disabled={
-                          !connected || keyBusy || !(draftKeys[entry.name] ?? "").trim()
+                          !connected ||
+                          keyBusy ||
+                          !addProvider ||
+                          !(draftKeys[addProvider] ?? "").trim()
                         }
-                        onClick={() => void saveDraft(entry.name)}
+                        onClick={() =>
+                          void saveDraft(addProvider).then((ok) => {
+                            if (ok) setAddingKey(false);
+                          })
+                        }
                       >
                         {keyBusy ? "Saving..." : "Save key"}
                       </button>
+                      <button
+                        type="button"
+                        className="btn btn-quiet"
+                        disabled={keyBusy}
+                        onClick={closeAddForm}
+                      >
+                        Cancel
+                      </button>
                     </div>
                   </div>
-                </section>
-              );
-            })}
+                )}
+              </section>
+            )}
 
             {keyNotice && <p className="settings-hint">{keyNotice}</p>}
             <p className="settings-hint">

@@ -666,6 +666,26 @@
   list-style: none;
 }
 
+/*
+ * One provider's rows inside the shared stored-keys list.
+ *
+ * Groups stack with the same 10px rhythm a row keeps under a note, so three
+ * providers read as one list in three labelled parts rather than three
+ * sections that each used to carry their own add form.
+ */
+.settings-key-group + .settings-key-group {
+  margin-top: 10px;
+}
+
+.settings-key-provider {
+  margin: 0 0 4px;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .settings-key-line {
   display: flex;
   align-items: center;

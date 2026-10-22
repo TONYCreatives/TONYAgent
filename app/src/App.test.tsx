@@ -1340,9 +1340,15 @@ describe("the keys pane over the real protocol", () => {
   };
 
   const keyGroup = (c: HTMLElement) =>
-    all(c, ".settings-group").find(
-      (g) => (one(g, "h3")?.textContent ?? "").trim() === "OpenRouter",
+    all(c, ".settings-key-group").find(
+      (g) => (one(g, ".settings-key-provider")?.textContent ?? "").trim() === "OpenRouter",
     )!;
+  const openAddForm = async (c: HTMLElement) => {
+    await click(
+      all(c, ".btn").find((b) => (b.textContent ?? "").trim() === "Add new API key")!,
+    );
+    await wait(60);
+  };
 
   // The boot table's own provider entry is stale (a display name and has_key),
   // so these tests answer providers.list with the registry shape the core
@@ -1359,17 +1365,17 @@ describe("the keys pane over the real protocol", () => {
       "key.save": { provider: "openrouter", name: "work", saved: true, listed: true },
     });
     await openKeys(container);
-    const group = keyGroup(container);
+    await openAddForm(container);
 
     await setValue(
-      one(group, '[aria-label="Name for a new openrouter key"]') as HTMLInputElement,
+      one(container, '[aria-label="Name for a new openrouter key"]') as HTMLInputElement,
       "work",
     );
     await setValue(
-      one(group, '[aria-label="New API key for openrouter"]') as HTMLInputElement,
+      one(container, '[aria-label="New API key for openrouter"]') as HTMLInputElement,
       "sk-typed",
     );
-    await click(one(group, ".settings-key-new .settings-key-actions .btn")!);
+    await click(one(container, ".settings-key-new .settings-key-actions .btn")!);
     await wait(80);
 
     const sent = transport.sent.find((r) => r.method === "key.save");

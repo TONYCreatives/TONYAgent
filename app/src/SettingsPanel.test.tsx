@@ -281,7 +281,25 @@ const nameField = (el: HTMLElement, provider: string) =>
 const keyField = (el: HTMLElement, provider: string) =>
   one(el, '[aria-label="New API key for ' + provider + '"]') as HTMLInputElement;
 const saveButton = (el: HTMLElement) =>
-  one(el, ".settings-key-new .settings-key-actions .btn") as HTMLButtonElement;
+  one(el, ".settings-key-actions .btn") as HTMLButtonElement;
+// One provider's rows in the shared stored list. Groups, not sections: the
+// tab draws one Stored section with a labelled group per provider that has
+// rows, so a provider with nothing stored is absent rather than empty.
+const group = (el: HTMLElement, label: string) =>
+  all(el, ".settings-key-group").find(
+    (g) => (one(g, ".settings-key-provider")?.textContent ?? "").trim() === label,
+  )!;
+// The add form, once opened. Absent until the button below is pressed: one
+// form names its provider up front instead of N forms, one per provider.
+const addForm = (el: HTMLElement) => one(el, ".settings-key-new");
+const openAddForm = async (container: HTMLElement) => {
+  await click(
+    all(container, ".btn").find((b) => (b.textContent ?? "").trim() === "Add new API key")!,
+  );
+  await wait(0);
+};
+const addProvider = (el: HTMLElement) =>
+  one(el, '[aria-label="Provider for the new key"]') as HTMLSelectElement;
 
 // The key rows live behind the Keys tab, and the panel opens on Permission.
 async function opened(overrides: Overrides = {}) {
@@ -309,10 +327,12 @@ describe("the settings tabs", () => {
     );
   });
 
-  test("the Keys tab is one section per provider, and nothing to pick a model with", async () => {
+  test("the Keys tab is one stored list, one add form, and nothing to pick a model with", async () => {
     const container = await opened();
 
-    assert.deepEqual(headings(container), ["OpenRouter", "OpenCode Go", "Base URL"]);
+    assert.deepEqual(headings(container), ["Stored keys", "Add a key", "Base URL"]);
+    assert.deepEqual(names(group(container, "OpenRouter")), ["default", "work"]);
+    assert.deepEqual(names(group(container, "OpenCode Go")), ["go"]);
     // The regression this pins: the provider and model pickers used to be here,
     // and a panel that still offered them would be a second place to bind the
     // window's provider while the composer has the first.
@@ -357,7 +377,7 @@ describe("the settings tabs", () => {
         .map((b) => (b.textContent ?? "").trim()),
       ["Keys"],
     );
-    assert.deepEqual(headings(container), ["OpenRouter", "OpenCode Go", "Base URL"]);
+    assert.deepEqual(headings(container), ["Stored keys", "Add a key", "Base URL"]);
   });
 });
 
@@ -448,16 +468,16 @@ describe("the desktop pet, from the settings pane", () => {
 });
 
 describe("the stored keys list", () => {
-  test("every provider gets its own section and its own rows, from the core", async () => {
+  test("every provider with keys gets its own group and its own rows, from the core", async () => {
     const container = await opened();
 
-    assert.deepEqual(names(section(container, "OpenRouter")), ["default", "work"]);
-    assert.deepEqual(names(section(container, "OpenCode Go")), ["go"]);
+    assert.deepEqual(names(group(container, "OpenRouter")), ["default", "work"]);
+    assert.deepEqual(names(group(container, "OpenCode Go")), ["go"]);
   });
 
   test("the active key is a flag, and every other key is offered as a Use", async () => {
     const container = await opened();
-    const openrouter = section(container, "OpenRouter");
+    const openrouter = group(container, "OpenRouter");
 
     assert.ok(
       one(rowFor(openrouter, "default"), ".settings-key-flag"),
@@ -474,15 +494,21 @@ describe("the stored keys list", () => {
     );
   });
 
-  test("a provider with no keys says so and still offers the add row", async () => {
-    const container = await opened({
-      keys: [{ provider: "openrouter", name: "default", active: true }],
-    });
-    const go = section(container, "OpenCode Go");
+  test("with nothing stored there are no groups, only the hint and the button", async () => {
+    const container = await opened({ keys: [] });
 
-    assert.deepEqual(names(go), []);
-    assert.match(go.textContent ?? "", /No keys stored for this provider yet/);
-    assert.ok(saveButton(go), "a provider with no keys has no way to get one");
+    assert.equal(
+      all(container, ".settings-key-group").length,
+      0,
+      "an empty provider still draws a group",
+    );
+    assert.match(container.textContent ?? "", /No API keys stored yet/);
+    assert.ok(
+      all(container, ".btn").some(
+        (b) => (b.textContent ?? "").trim() === "Add new API key",
+      ),
+      "a provider with no keys has no way to get one",
+    );
   });
 
   test("it draws no key value until one is asked for", async () => {
@@ -501,7 +527,7 @@ describe("revealing a stored key", () => {
         return "sk-for-" + name;
       },
     });
-    const openrouter = section(container, "OpenRouter");
+    const openrouter = group(container, "OpenRouter");
 
     await click(eyes(openrouter)[1]);
     await wait(0);
@@ -514,7 +540,7 @@ describe("revealing a stored key", () => {
     const container = await opened({
       onRevealKey: async (_provider, name) => "sk-for-" + name,
     });
-    const openrouter = section(container, "OpenRouter");
+    const openrouter = group(container, "OpenRouter");
 
     await click(eyes(openrouter)[1]);
     await wait(0);
@@ -529,7 +555,7 @@ describe("revealing a stored key", () => {
     const container = await opened({
       onRevealKey: async (_provider, name) => "sk-for-" + name,
     });
-    const openrouter = section(container, "OpenRouter");
+    const openrouter = group(container, "OpenRouter");
 
     await click(eyes(openrouter)[0]);
     await wait(0);
@@ -544,7 +570,7 @@ describe("revealing a stored key", () => {
       onRevealKey: async (_provider, name) => "sk-for-" + name,
       onDeleteKey: async () => true,
     });
-    const openrouter = section(container, "OpenRouter");
+    const openrouter = group(container, "OpenRouter");
 
     await click(eyes(openrouter)[0]);
     await wait(0);
@@ -560,7 +586,7 @@ describe("revealing a stored key", () => {
     const container = await opened({
       onRevealKey: async () => null,
     });
-    const openrouter = section(container, "OpenRouter");
+    const openrouter = group(container, "OpenRouter");
 
     await click(eyes(openrouter)[0]);
     await wait(0);
@@ -583,7 +609,7 @@ describe("deleting a stored key", () => {
         return true;
       },
     });
-    const openrouter = section(container, "OpenRouter");
+    const openrouter = group(container, "OpenRouter");
 
     await click(bins(openrouter)[1]);
     await wait(0);
@@ -595,7 +621,7 @@ describe("deleting a stored key", () => {
 
   test("a removal the core refused says so rather than looking like it worked", async () => {
     const container = await opened({ onDeleteKey: async () => false });
-    const openrouter = section(container, "OpenRouter");
+    const openrouter = group(container, "OpenRouter");
 
     await click(bins(openrouter)[0]);
     await wait(0);
@@ -618,7 +644,7 @@ describe("activating a stored key", () => {
         return true;
       },
     });
-    const openrouter = section(container, "OpenRouter");
+    const openrouter = group(container, "OpenRouter");
 
     await click(uses(openrouter)[0]);
     await wait(0);
@@ -633,7 +659,7 @@ describe("activating a stored key", () => {
 
   test("a refused activation says so and leaves the choice where it was", async () => {
     const container = await opened({ onActivateKey: async () => false });
-    const openrouter = section(container, "OpenRouter");
+    const openrouter = group(container, "OpenRouter");
 
     await click(uses(openrouter)[0]);
     await wait(0);
@@ -644,22 +670,40 @@ describe("activating a stored key", () => {
 });
 
 describe("adding a key", () => {
+  test("the form is behind one button, not one per provider", async () => {
+    const container = await opened();
+
+    assert.equal(addForm(container), null, "the add form is on screen unasked");
+    await openAddForm(container);
+    assert.ok(addForm(container), "the button did not open the add form");
+  });
+
+  test("the form opens on this window's provider", async () => {
+    // The panel is opened from a window bound to openrouter, so that is the
+    // provider preselected -- the common case needs no touch at all.
+    const container = await opened();
+    await openAddForm(container);
+
+    assert.equal(addProvider(container).value, "openrouter");
+  });
+
   test("Save waits for a key, and the name alone is not enough", async () => {
     const container = await opened();
-    const openrouter = section(container, "OpenRouter");
+    await openAddForm(container);
+    const form = addForm(container)!;
 
-    assert.equal(saveButton(openrouter).disabled, true, "Save is offered with nothing typed");
-    await setValue(nameField(openrouter, "openrouter"), "personal");
+    assert.equal(saveButton(form).disabled, true, "Save is offered with nothing typed");
+    await setValue(nameField(form, "openrouter"), "personal");
     assert.equal(
-      saveButton(openrouter).disabled,
+      saveButton(form).disabled,
       true,
       "a name with no key is still not a key to save",
     );
-    await setValue(keyField(openrouter, "openrouter"), "sk-typed");
-    assert.equal(saveButton(openrouter).disabled, false);
+    await setValue(keyField(form, "openrouter"), "sk-typed");
+    assert.equal(saveButton(form).disabled, false);
   });
 
-  test("Save sends the provider, the name and the key, then clears the secret", async () => {
+  test("Save sends the provider, the name and the key, then puts the form away", async () => {
     const state = { list: LIST.map((row) => ({ ...row })) };
     const saved: string[][] = [];
     const container = await opened({
@@ -673,21 +717,43 @@ describe("adding a key", () => {
         return true;
       },
     });
-    const openrouter = section(container, "OpenRouter");
+    await openAddForm(container);
+    const form = addForm(container)!;
 
-    await setValue(nameField(openrouter, "openrouter"), "personal");
-    await setValue(keyField(openrouter, "openrouter"), "sk-typed");
-    await click(saveButton(openrouter));
+    await setValue(nameField(form, "openrouter"), "personal");
+    await setValue(keyField(form, "openrouter"), "sk-typed");
+    await click(saveButton(form));
     await wait(0);
 
     assert.deepEqual(saved, [["openrouter", "personal", "sk-typed"]]);
-    assert.equal(
-      keyField(openrouter, "openrouter").value,
-      "",
-      "the key outlived the save that stored it",
+    // The secret outliving the save is the failure; the form closing is the
+    // confirmation. Both are asserted: the field is gone with the form, and
+    // the row is there without it.
+    assert.equal(addForm(container), null, "the form stayed open after a good save");
+    assert.ok(
+      names(group(container, "OpenRouter")).includes("personal"),
+      "the new row did not appear",
     );
-    assert.ok(names(openrouter).includes("personal"), "the new row did not appear");
     assert.match(container.textContent ?? "", /Key saved to the system keyring/);
+  });
+
+  test("the select sends to the provider it names", async () => {
+    const saved: string[][] = [];
+    const container = await opened({
+      onSaveKey: async (provider, name, key) => {
+        saved.push([provider, name, key]);
+        return true;
+      },
+    });
+    await openAddForm(container);
+
+    await setValue(addProvider(container), "opencode-go");
+    const form = addForm(container)!;
+    await setValue(keyField(form, "opencode-go"), "sk-typed");
+    await click(saveButton(form));
+    await wait(0);
+
+    assert.deepEqual(saved, [["opencode-go", "", "sk-typed"]]);
   });
 
   test("an empty name means the default slot", async () => {
@@ -698,38 +764,65 @@ describe("adding a key", () => {
         return true;
       },
     });
-    const openrouter = section(container, "OpenRouter");
+    await openAddForm(container);
+    const form = addForm(container)!;
 
-    await setValue(keyField(openrouter, "openrouter"), "sk-typed");
-    await click(saveButton(openrouter));
+    await setValue(keyField(form, "openrouter"), "sk-typed");
+    await click(saveButton(form));
     await wait(0);
 
     assert.deepEqual(saved, [["openrouter", "", "sk-typed"]]);
   });
 
-  test("the two providers' add rows do not share a draft", async () => {
+  test("switching the select keeps each provider's half-typed draft", async () => {
     const container = await opened();
-    const openrouter = section(container, "OpenRouter");
-    const go = section(container, "OpenCode Go");
+    await openAddForm(container);
 
-    await setValue(nameField(openrouter, "openrouter"), "personal");
-    await setValue(keyField(openrouter, "openrouter"), "sk-typed");
+    await setValue(nameField(container, "openrouter"), "personal");
+    await setValue(keyField(container, "openrouter"), "sk-typed");
+    await setValue(addProvider(container), "opencode-go");
 
-    assert.equal(nameField(go, "opencode-go").value, "");
-    assert.equal(keyField(go, "opencode-go").value, "");
+    assert.equal(nameField(container, "opencode-go").value, "");
+    assert.equal(keyField(container, "opencode-go").value, "");
+
+    await setValue(addProvider(container), "openrouter");
+    assert.equal(nameField(container, "openrouter").value, "personal");
+    assert.equal(keyField(container, "openrouter").value, "sk-typed");
   });
 
-  test("a save the core refused keeps the name for a retry", async () => {
-    const container = await opened({ onSaveKey: async () => false });
-    const openrouter = section(container, "OpenRouter");
+  test("Cancel puts the form away and clears the typed key", async () => {
+    const container = await opened();
+    await openAddForm(container);
 
-    await setValue(nameField(openrouter, "openrouter"), "personal");
-    await setValue(keyField(openrouter, "openrouter"), "sk-typed");
-    await click(saveButton(openrouter));
+    await setValue(nameField(container, "openrouter"), "personal");
+    await setValue(keyField(container, "openrouter"), "sk-typed");
+    await click(
+      all(container, ".settings-key-actions .btn").find(
+        (b) => (b.textContent ?? "").trim() === "Cancel",
+      )!,
+    );
     await wait(0);
 
-    assert.equal(nameField(openrouter, "openrouter").value, "personal");
-    assert.equal(keyField(openrouter, "openrouter").value, "");
+    assert.equal(addForm(container), null, "Cancel left the form on screen");
+    // Reopening is the only way back to the fields, and the secret must not
+    // have survived the trip.
+    await openAddForm(container);
+    assert.equal(keyField(container, "openrouter").value, "");
+  });
+
+  test("a save the core refused keeps the form open and the name for a retry", async () => {
+    const container = await opened({ onSaveKey: async () => false });
+    await openAddForm(container);
+    const form = addForm(container)!;
+
+    await setValue(nameField(form, "openrouter"), "personal");
+    await setValue(keyField(form, "openrouter"), "sk-typed");
+    await click(saveButton(form));
+    await wait(0);
+
+    assert.ok(addForm(container), "a failed save put the form away");
+    assert.equal(nameField(container, "openrouter").value, "personal");
+    assert.equal(keyField(container, "openrouter").value, "");
     assert.match(container.textContent ?? "", /Could not save the key/);
   });
 });
@@ -758,8 +851,11 @@ describe("the Base URL, which is not a model setting", () => {
 
   test("the key rows are a list and a form, not a second secret field elsewhere", async () => {
     const container = await opened();
-    // One key input per provider's add row, and no others.
-    assert.equal(all(container, 'input[type="password"]').length, 2);
+    // No secret field until the form is asked for: one add form, opened on
+    // purpose, and no others.
+    assert.equal(all(container, 'input[type="password"]').length, 0);
+    await openAddForm(container);
+    assert.equal(all(container, 'input[type="password"]').length, 1);
   });
 });
 
@@ -1449,19 +1545,29 @@ describe("a chat-only provider says what it is", () => {
     },
   ];
 
-  test("it is labelled as a local, keyless, chat-mode model", async () => {
+  test("it is named once as keyless, beside the stored list", async () => {
     const container = await opened({ providers: LOCAL });
 
-    const note = section(container, "Airllm").textContent ?? "";
-    assert.match(note, /Chat mode only/, "the provider is not marked chat-only");
-    assert.match(note, /no API key/i, "the provider is not marked keyless");
+    const stored = section(container, "Stored keys").textContent ?? "";
+    assert.match(stored, /Airllm works in Chat mode only, and needs no API key/);
+  });
+
+  test("it takes no key, so the add form does not offer it", async () => {
+    const container = await opened({ providers: LOCAL });
+    await openAddForm(container);
+
+    const options = Array.from(
+      addProvider(container).querySelectorAll("option"),
+    ).map((o) => o.value);
+    assert.deepEqual(options, ["openrouter"]);
   });
 
   test("an ordinary provider is not marked that way", async () => {
     const container = await opened({ providers: LOCAL });
 
-    const note = section(container, "OpenRouter").textContent ?? "";
-    assert.doesNotMatch(note, /Chat mode only/);
+    const stored = section(container, "Stored keys").textContent ?? "";
+    assert.doesNotMatch(stored, /OpenRouter works in Chat mode only/);
+    assert.ok(group(container, "OpenRouter"), "the ordinary provider lost its group");
   });
 });
 
