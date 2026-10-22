@@ -1,7 +1,16 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-10-13, after **the documentation-and-layout pass** -- the README and
+**Last updated:** 2026-10-22, after **the AirLLM / chat-only pass and the
+workspace-refine plan** — the local provider is registered and gated to Chat
+mode, the page-API gate matches the bridge again, and a reviewable plan for the
+next UI pass lives at `design/AGENT_WORKSPACE_REFINE.md`. See "2026-10-22:
+AirLLM, chat-only, and the refine plan" below.
+**Current state:** **41 tools, 4 providers** (`airllm`, `opencode-go`,
+`opencode-zen`, `openrouter`), version **0.4.1**. HEAD is `a049019`; the working
+tree is clean. Re-measured 2026-10-22: **Python 1685 passed / 24 skipped**
+(`-m "not docker"`), **TypeScript 996 passed** (160 suites).
+**Was:** 2026-10-13, after **the documentation-and-layout pass** -- the README and
 PROJECT_SUMMARY brought back in line with the pywebview app that actually ships, and the
 layout's six breakpoints and five panel insets reduced to one ladder and two tokens.
 See "The docs, and one layout instead of six" below.
@@ -241,7 +250,7 @@ data: preview had ever rendered.
 "가운데 폴더 버튼" just above section 2. The empty-chat panel now names the
 project folder in the middle and offers one Change... button; leaving it
 alone keeps the folder you had.
-**Test totals:** Python unit **1158 passed / 13 skipped** (`-m "not docker"`, in one
+**Test totals (historical, 2026-10-11):** Python unit **1158 passed / 13 skipped** (`-m "not docker"`, in one
 process), TypeScript **626 passed** (103 suites), and `scripts/e2e_all_tools.py --fast`
 **66 checks, 0 failed** across all **41 tools**. This line read "1029 / 606 / 50 checks /
 37 tools" until it was re-measured after the gate pass, and it sits directly above a
@@ -344,6 +353,59 @@ Ten phases of work landed since the MSVC blocker was cleared:
 These phases were written against the Tkinter UI, which is no longer in the source:
 the shell is `tonyagent.window` (pywebview) and the Tkinter modules are gone. See
 sections 1.3-1.6 and 1.13-1.17 for what each phase changed and why.
+
+---
+
+## 2026-10-22: AirLLM, chat-only, and the refine plan
+
+**What landed, in three commits on top of `d59030c`.**
+
+- `aebbe64` — **the AirLLM local provider and the `chat_only` gate.**
+  `AirLLMProvider` talks to an OpenAI-compatible server on loopback
+  (`http://127.0.0.1:8765/v1`), needs no key, and declares `chat_only`. The
+  capability is enforced in three places: the picker list
+  (`ProviderFactory.get_available_providers(mode)`), the bind
+  (`AgentSession.bind_provider` raises a `ValueError` that names the fix), and
+  the mode change (`set_mode` unbinds it and records
+  `last_disconnected_provider`). A chat-only provider is also sent **no tool
+  schemas at all** — the catalogue is 6,646 tokens, and CPU prefill is the
+  bottleneck the whole gate exists to protect.
+- `8e6fc1f` — **the CLI's stored-key reconciliation asks for the whole
+  registry.** A key can outlive the provider it was saved for; asking for `all`
+  keeps that row revocable, except for a chat-only provider, which must not
+  come back into the list outside Chat mode.
+- `a049019` — **the bridge's page-API gate admits `open_path`.** `cc8f071`
+  added the method to `Bridge` and to the page's declaration but not to the
+  allowlist in `tests/unit/test_window_host.py`, so HEAD had one red test. The
+  list gains the one name; the gate is unchanged.
+
+**A HEAD regression the first commit closes.** `headless/server.py` had been
+passing the mode to `get_available_providers`, while `factory.py` still defined
+it with no parameters. The handler's broad `except` turned that `TypeError` into
+an empty provider list — the picker would have had nothing to draw from a clean
+checkout. The `mode` argument in the factory is the missing half; the new tests
+pin the filtered list, the `all` list and the `chat_only` flag.
+
+**Verification.** Python **1685 passed / 24 skipped** (`-m "not docker"`, one
+process, 147s), TypeScript **996 passed** (160 suites, 31s). The one Python
+failure before the allowlist fix was `test_the_bridge_exposes_the_page_api_and_nothing_else`;
+it is green now. Docker integration tests remain environment-dependent and are
+not part of that count.
+
+**Next: the workspace refine, planned but not started.** The plan is
+`design/AGENT_WORKSPACE_REFINE.md`. It proposes a three-pane agent workspace
+(persistent navigation, centre conversation, live context panel), one signal hue
+for live state, a launchpad, a run spine in the transcript, and a telemetry
+strip — phased over ~10–12 days. **No product code for it has been written.**
+The decisions it needs (direction B, signal hue, docked navigation, 14px base,
+read-only context panel, keep tabs, phase scope) are listed in §12 of that
+document.
+
+**One loose end worth naming:** `local_airllm.py` names `airllm_server.py` as the
+server it talks to, but that file is not in this repository. It may live on the
+machine outside the checkout; if it is meant to ship, the README needs the
+instructions, and if it is not, the provider needs a sentence saying where to
+get it.
 
 ---
 

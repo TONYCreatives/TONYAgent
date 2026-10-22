@@ -1,6 +1,6 @@
 # TONYAgent — Project Summary
 
-**Current architecture (2026-10-13):** Python `pywebview` desktop host + React/Vite frontend + separate headless Python core (JSONL over stdio). The core currently registers **41 tools** and **2 providers** (OpenRouter and OpenCode Go).
+**Current architecture (2026-10-22):** Python `pywebview` desktop host + React/Vite frontend + separate headless Python core (JSONL over stdio). The core currently registers **41 tools** and **4 providers** (OpenRouter, OpenCode Go, OpenCode Zen, and local AirLLM, which is Chat-mode only). Current measured state: **Python 1685 passed / 24 skipped** (`-m "not docker"`), **TypeScript 996 passed** (160 suites), version **0.4.1**. The next UI pass is planned, not started: see [`design/AGENT_WORKSPACE_REFINE.md`](design/AGENT_WORKSPACE_REFINE.md).
 
 **Verification note:** Historical test totals and build observations below refer to the dated snapshots in their entries; they are not a current test report. See the latest handoff section at the end before using any historical counts.
 
@@ -40,7 +40,7 @@ JSONL로 통신합니다. 현재 Tauri 또는 Tkinter 프론트엔드는 없습�
 
 | 기능 / Feature | 상태 | 설명 |
 |---|---|---|
-| Multi-provider | ✅ | OpenRouter and OpenCode Go are registered provider adapters |
+| Multi-provider | ✅ | OpenRouter, OpenCode Go, OpenCode Zen, and local AirLLM (Chat mode only) are registered provider adapters |
 | 스트리밍 채팅 / Streaming Chat | ✅ | 토큰 단위 스트리밍, 도구 실행 표시 |
 | thinking 패널 / Thinking panel | ✅ | 모델의 사고를 답변과 **별도 채널**(`reasoning.delta`/`reasoning.completed`)로 받아 별도 표시. 스트리밍 중 열림 → 완료 시 접힘. 읽는 사람이 직접 펼친 패널은 접히지 않음 |
 | effort 선택 / Reasoning effort | ✅ | 모델별로 effort를 고르는 다이얼. **effort 목록이 있는 모델에만** 표시 — 조작할 수 없는 컨트롤은 장식이다 |
@@ -1351,3 +1351,14 @@ New chat, 탭의 이름 필드와 닫기 글리프, 레일의 44px 버튼, 어�
 공개 버튼, 코드 뷰어의 닫기 버튼. 이 스텁 코어가 그 메서드들을 답하지 않습니다.
 이 셋은 렌더된 박스가 아니라 테스트로 고정되어 있으며, 이번 패스에서 "보고
 확인한" 것이 아니라 "읽고 확인한" 부분입니다.
+
+---
+
+## Design plan (2026-10-22)
+
+The next visual pass is **planned, not started**. `design/AGENT_WORKSPACE_REFINE.md`
+audits the current shell and proposes a three-pane agent workspace (persistent
+navigation, centre conversation, live context panel), a single signal hue for
+live agent state, a launchpad, a run spine in the transcript, and a window-wide
+telemetry strip. It is phased over ~10–12 days and lists the decisions that need
+to be made before any pixel changes. The current tree is clean and green.

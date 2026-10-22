@@ -21,15 +21,23 @@
 ## Features
 
 ### Multi-Provider LLM Support
-Connect to **two aggregator providers** with one OpenAI-compatible wire format:
-- **OpenRouter** (one key, most hosted models)
-- **OpenCode Go** (a second aggregator)
+One OpenAI-compatible wire format, four provider adapters:
+- **OpenRouter** — one key, most hosted models
+- **OpenCode Go** — OpenCode's subscription gateway
+- **OpenCode Zen** — OpenCode's pay-as-you-go gateway, with its own balance and
+  catalogue (a Go key does not carry Zen credit)
+- **AirLLM** — a model running on this machine's CPU behind an
+  OpenAI-compatible server on loopback (`http://127.0.0.1:8765/v1`). It needs
+  no key and is **Chat mode only**: it is offered from the Chat track, refused in
+  the working modes, and sent no tool schemas, because a small local model
+  cannot reliably choose and call tools.
 
-Both publish real metadata alongside their model list — reasoning support, effort
-levels, pricing — which is where the model picker and the thinking dial get their
-values. The single-vendor dialects that used to be listed here are gone: they
-answered the model list with an id and nothing else, so keeping them would have
-meant a second catalogue implementation returning "unknown" for most fields.
+OpenRouter, Go and Zen publish real metadata alongside their model lists —
+reasoning support, effort levels, pricing — which is where the model picker and
+the thinking dial get their values. The single-vendor dialects that used to be
+listed here are gone: they answered the model list with an id and nothing else,
+so keeping them would have meant a second catalogue implementation returning
+"unknown" for most fields.
 
 ### Modern Desktop UI
 - Built with **React** in a native window: the interface is HTML and CSS, rendered by the system webview with no browser around it (`pywebview`, in `src/tonyagent/window/`)
@@ -39,7 +47,9 @@ meant a second catalogue implementation returning "unknown" for most fields.
 - Responsive layout with collapsible sidebar
 - **Code viewer**: browse the project tree and open any file — source with syntax highlighting, images, Markdown rendered or as source, CSV/TSV as a grid. Three colour palettes (VSCode's Dark+, Light+ and Monokai). Read-only by default with a per-file toggle; **locked while a turn is running**, so a file cannot be typed into while the agent is writing it. When you do edit and save, the change is written atomically and the next message tells the agent which file and which lines changed, so its picture of your code is never stale
 - **Agent / Code switch** in the top bar. Code mode is the whole window rather than a pane: the chat rail and tab strip are replaced by a persistent **project explorer** on the left and the editor filling the rest. The same conversation and composer move into a collapsible **Assistant panel** on the right, so leaving the transcript for the project does not mean losing either
+- **Two tracks:** a conversation is either a **Chat** (plain conversation) or a **Build** (the working modes). The composer draws only the open track's modes, and crossing tracks mints a new conversation in the other track rather than converting the one you are in, so nothing is cleared and no chat changes what it was written as.
 - **Composer modes:** the composer offers the core's Chat mode first for plain conversation. Chat has no project, browser, shell, or mutation tools: nothing is read, run, or changed. Build, Plan, Mission, and Skills remain available from the same pills.
+- **Trajectory and Usage views:** the title bar opens a full **Trajectory** view of the turn's events (the debugging view behind the transcript) and a **Usage** dashboard for requests, tokens, reasoning and spend over a chosen window. Settings is a full-window page with its own section nav, not a dialog.
 - **Desktop pet**: a small always-on-top **circle** that says what the turn is doing right now — "Thinking", "Running read_file", "Needs your approval" — so a long turn can run while you are in another window. It is cut to a circle with a window region *and* has its system shadow turned off: the region takes the corners away, and DWM would otherwise paint the drop shadow to the window's rectangle and fill those corners back in with a dark halo. The corners are really gone — the desktop shows through, and a click there goes to whatever is behind instead of to the pet. The character is the app's own mark, and it *behaves*: it blinks, it works at a keyboard while the agent works, it hops when it wants you, and it falls asleep if nothing has happened for a while. Drag it anywhere by its artwork — the OS's own move loop, so it snaps like a normal window — and it comes back where you left it. It never takes focus (asking for attention must not steal the keyboard) and clicking it brings the app back. It is off until you turn it on from the rail
 - **Account view**: the usage panel counts what *this app* sent, which is not your provider's real total. One button opens your provider's own dashboard — activity, credits, API keys — in a browser window the app owns, with a persistent sign-in profile. It is a closed set of views, and the agent has no tool that can reach it
 
@@ -201,9 +211,13 @@ pip install -e ".[packaging]"
 |------------|---------|
 | `pydantic>=2.5` | Data validation & settings |
 | `keyring>=24.0` | Secure credential storage |
-| `openai` (OpenAI-compatible provider transport) | OpenAI-compatible provider transport |
+| `openai>=1.10` | OpenAI-compatible provider transport |
+| `httpx>=0.25` | Network tools and redirect-safe requests |
+| `pywebview>=6.0` | Native desktop window host |
 | `playwright>=1.40` | Browser automation |
 | `docker>=7.0` | Sandbox container management |
+| `Pillow>=10.0` | `take_screenshot` |
+| `send2trash>=1.8` | Recoverable `delete_file` |
 | `loguru>=0.7` | Structured logging |
 
 ### Platform-Specific Notes
@@ -375,18 +389,18 @@ The native Python window host serves the React/Vite bundle, exposes a narrow `py
 | **Interface** | `app/src/` | React UI and shared CSS design system; Vite builds into `app/dist/` |
 | **Headless core** | `src/tonyagent/headless/` | JSONL request/event server for the agent session |
 | **Core** | `src/tonyagent/core/` | Conversations, events, permissions, tools, usage and session orchestration |
-| **Providers** | `src/tonyagent/providers/` | OpenRouter and OpenCode Go adapters |
+| **Providers** | `src/tonyagent/providers/` | OpenRouter, OpenCode Go, OpenCode Zen and local AirLLM adapters |
 | **Tools** | `src/tonyagent/tools/` | Registry-derived schemas and 41 registered tool implementations |
 | **Sandbox** | `src/tonyagent/sandbox/` | Docker and WSL backends; local mode refuses sandbox-required execution; Windows Sandbox is a stub |
 | **Config** | `src/tonyagent/config/` | Settings, OS keyring integration and migration |
 
 ### Data Flow
 
-1. **User input** ??the window ??ToolOrchestrator
-2. **Orchestrator** ??Builds tool schemas ??Sends to LLM Provider
-3. **Provider** ??Streams response ??Parses tool calls
-4. **Orchestrator** ??Executes tools (with confirmations)
-5. **Results** ??Fed back to LLM ??Final response to UI
+1. **User input** → the window → `ToolOrchestrator`
+2. **Orchestrator** → builds tool schemas → sends to the LLM provider
+3. **Provider** → streams response → parses tool calls
+4. **Orchestrator** → executes tools (with confirmations)
+5. **Results** → fed back to the LLM → final response to the UI
 
 ---
 
@@ -426,22 +440,27 @@ pytest tests/ --cov=src/tonyagent --cov-report=html
 
 ```
 tonyagent/
-├── .github/workflows/      # CI/CD pipelines
+├── app/                    # React/Vite desktop interface + styles
+├── design/                 # Design notes and reviewable plans
 ├── docker/sandbox/         # Docker sandbox image
-├── scripts/                # Build & utility scripts
-├── src/tonyagent/          # Main package
+├── packaging/              # Installer assets
+├── scripts/                # Build, capture & verification scripts
+├── src/tonyagent/
+│   ├── api/                # Provider transport and wire dialects
+│   ├── cli/                # Terminal interface (`tony`)
 │   ├── config/             # Configuration & keyring
-│   ├── core/               # Core session & events
+│   ├── core/               # Session, events, modes, skills
 │   ├── folder/             # Project folder management
-│   ├── providers/          # LLM provider adapters
-│   ├── sandbox/            # Sandbox backends
-│   ├── tools/              # Tool implementations
+│   ├── headless/           # JSONL server for the window
+│   ├── providers/          # OpenRouter, OpenCode Go/Zen, AirLLM
+│   ├── sandbox/            # Docker, WSL and local backends
+│   ├── tools/              # 41 registered tools
+│   ├── window/             # pywebview host & desktop integration
 │   └── utils/              # Shared utilities
-├── tests/                  # Test suite
+├── tests/
 │   ├── unit/
-│   ├── integration/
-│   └── ui/
-└── windows/                # Windows Sandbox config
+│   └── integration/
+└── windows/                # Windows Sandbox configuration (stub)
 ```
 
 ### Adding a New Provider
@@ -499,9 +518,9 @@ rm ~/.config/tonyagent/config.toml
 | Document | Description |
 |----------|-------------|
 | [Project Summary](PROJECT_SUMMARY.md) | Detailed project status & roadmap |
-| [Phase 2 Plan](PHASE2_PLAN.md) | Provider & tool system implementation |
-| [Phase 3 Plan](PHASE3_PLAN.md) | UI/UX & sandbox integration |
-| [Phase 4 Plan](PHASE4_PLAN.md) | Polish, testing, packaging |
+| [Session Handoff](NEXT_SESSION.md) | Current state, invariants and next work |
+| [CLI](CLI.md) | Terminal interface and its commands |
+| [Agent Workspace Refine](design/AGENT_WORKSPACE_REFINE.md) | Reviewable plan for the next UI pass |
 
 ---
 
