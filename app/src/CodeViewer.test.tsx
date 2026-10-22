@@ -239,6 +239,51 @@ describe("images and files with no preview", () => {
   });
 });
 
+describe("a PDF draws in the native frame", () => {
+  const PDF = {
+    kind: "pdf",
+    path: "spec.pdf",
+    mime: "application/pdf",
+    data: "JVBERi0xLjQK",
+    size: 8192,
+  } as const;
+
+  test("the frame carries the bytes, and the chips name it", async () => {
+    const container = await render(
+      <CodeViewer {...props({ path: "spec.pdf", file: { ...PDF } })} />,
+    );
+    const frame = one(container, ".code-pdf-frame")! as HTMLIFrameElement;
+    assert.equal(
+      frame.getAttribute("src"),
+      "data:application/pdf;base64,JVBERi0xLjQK",
+    );
+    assert.equal(frame.getAttribute("title"), "spec.pdf");
+    assert.deepEqual(texts(container, ".code-chip"), ["pdf", "🔒 read-only"]);
+    assert.equal(field(container), null);
+  });
+
+  test("the fallback names the file it would open", async () => {
+    // Where the frame cannot draw, the OS default app can. Asserts the
+    // path, for the reason the binary test gives.
+    const opened: string[] = [];
+    const container = await render(
+      <CodeViewer
+        {...props({
+          path: "spec.pdf",
+          file: { ...PDF },
+          onOpenExternal: (path) => opened.push(path),
+        })}
+      />,
+    );
+    const button = all(container, ".code-pdf-bar button").find(
+      (b) => (b.textContent ?? "").trim() === "Open externally",
+    );
+    assert.ok(button, "the PDF bar has no Open externally button");
+    await click(button);
+    assert.deepEqual(opened, ["spec.pdf"]);
+  });
+});
+
 describe("documents with a rendered view", () => {
   test("markdown can be previewed, and the source is still there", async () => {
     const container = await render(<CodeViewer {...props({ path: "README.md", file: MARKDOWN })} />);

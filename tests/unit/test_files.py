@@ -296,6 +296,39 @@ def test_a_binary_file_is_a_view_rather_than_a_failure(project):
     assert "binary" in reply["reason"]
 
 
+def test_a_pdf_reads_as_a_pdf_the_native_frame_can_draw(project):
+    (project / "spec.pdf").write_bytes(b"%PDF-1.4 fake body\n")
+    reply = read_for_viewer("spec.pdf").to_dict()
+
+    assert reply["kind"] == "pdf"
+    assert reply["mime"] == "application/pdf"
+    assert reply["size"] == 19
+    # The frame's data URL, decoded back to the file's own bytes.
+    import base64
+
+    assert base64.b64decode(reply["data"]) == b"%PDF-1.4 fake body\n"
+
+
+def test_a_mislabelled_pdf_is_a_view_rather_than_a_blank_frame(project):
+    # A text file renamed to `.pdf`: the frame would choke on it, so the
+    # core answers `binary` and the viewer offers it externally instead.
+    (project / "notes.pdf").write_text("just notes\n", encoding="utf-8")
+    reply = read_for_viewer("notes.pdf").to_dict()
+
+    assert reply["kind"] == "binary"
+    assert "not a PDF" in reply["reason"]
+
+
+def test_a_pdf_over_the_cap_is_named_with_its_size(project):
+    from tonyagent.files import MAX_PDF_BYTES
+
+    (project / "big.pdf").write_bytes(b"%PDF" + b"x" * MAX_PDF_BYTES)
+    reply = read_for_viewer("big.pdf").to_dict()
+
+    assert reply["kind"] == "binary"
+    assert "over the" in reply["reason"]
+
+
 def test_a_file_over_the_cap_is_named_with_its_size(project):
     (project / "huge.txt").write_bytes(b"x" * (MAX_SOURCE_BYTES + 32))
     reply = read_for_viewer("huge.txt").to_dict()

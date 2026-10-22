@@ -1,8 +1,8 @@
 /**
- * The file viewer: code, pictures, and the things a window cannot draw.
+ * The file viewer: code, pictures, documents, and the things a window cannot draw.
  *
- * **Three kinds, and the core decides which.** `files.read` answers with
- * `text`, `image` or `binary`, because the core has the bytes -- an image is
+ * **Four kinds, and the core decides which.** `files.read` answers with
+ * `text`, `image`, `pdf` or `binary`, because the core has the bytes -- an image is
  * an image because it decodes, a `.zip` is a file this window can name but
  * not draw, and only "that is not there" is an error. A pane that rendered
  * all three as text would show a megabyte of replacement characters for a
@@ -70,7 +70,15 @@ export interface BinaryFile {
   reason: string;
 }
 
-export type ViewerFile = TextFile | ImageFile | BinaryFile;
+export interface PdfFile {
+  kind: "pdf";
+  path: string;
+  mime: string;
+  data: string;
+  size: number;
+}
+
+export type ViewerFile = TextFile | ImageFile | PdfFile | BinaryFile;
 
 interface Props {
   path: string;
@@ -347,6 +355,37 @@ export function CodeViewer({
       );
     }
 
+    if (file.kind === "pdf") {
+      /*
+       * The native frame draws the PDF itself -- paging, zoom, find -- so
+       * this is a frame and a fallback, not a renderer. The spike confirmed
+       * the webview draws a `data:application/pdf` URL; where it cannot,
+       * the button below opens the OS default app instead of a blank frame.
+       */
+      return (
+        <div className="code-pdf">
+          <iframe
+            className="code-pdf-frame"
+            src={`data:${file.mime};base64,${file.data}`}
+            title={file.path}
+          />
+          <div className="code-pdf-bar">
+            <span className="code-hint">
+              {readableSize(file.size)} · drawn by the native viewer
+            </span>
+            <button
+              type="button"
+              className="btn btn-quiet"
+              onClick={() => onOpenExternal(file.path)}
+              title="Open this PDF in the OS default app"
+            >
+              Open externally
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     if (file.kind === "binary") {
       return (
         <div className="code-notice">
@@ -423,6 +462,9 @@ export function CodeViewer({
         (file.downscaled ? ` (shown at ${file.display_width}×${file.display_height})` : "");
       bits.push(size);
     }
+    if (file.kind === "pdf") {
+      bits.push("pdf");
+    }
     if (dirty) bits.push("unsaved changes");
     return bits.join(" · ");
   };
@@ -454,6 +496,7 @@ export function CodeViewer({
           <span className="code-chip code-chip-lang">{file.language}</span>
         )}
         {file?.kind === "image" && <span className="code-chip code-chip-lang">image</span>}
+        {file?.kind === "pdf" && <span className="code-chip code-chip-lang">pdf</span>}
         {file?.kind === "binary" && (
           <span className="code-chip code-chip-lang">no preview</span>
         )}

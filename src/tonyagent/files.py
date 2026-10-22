@@ -60,6 +60,14 @@ MAX_IMAGE_BYTES = 32 * 1024 * 1024
 #: 2048 fits a 4K pane at roughly a quarter of the pixels.
 VIEWER_MAX_EDGE = 2048
 
+#: Largest PDF the viewer will preview, in bytes.
+#:
+#: Half the image cap: a PDF's bytes cross the pipe whole (unlike an image,
+#: which is downscaled first), and a PDF embeds fonts and images the frame
+#: decodes itself. Over the cap the file is still nameable -- it answers as
+#: `binary` with the reason, and the viewer offers it externally.
+MAX_PDF_BYTES = 16 * 1024 * 1024
+
 #: Entries one tree walk will report.
 #:
 #: Bounded because a monorepo has no interesting upper limit, and an
@@ -286,6 +294,32 @@ class SourceError(Exception):
 
 
 @dataclass
+class PdfFile:
+    """A PDF, as a data URL the window's native frame can draw.
+
+    The bytes go *in the reply*, like `ImageFile`: the webview can load
+    `data:` and nothing else off-disk, and a spike confirmed its Chromium
+    frame draws a `data:application/pdf` URL with the native toolbar
+    (paging, zoom) for free. No rasterising here: that would need a PDF
+    engine the core does not have, to redo what the frame already does.
+    """
+
+    path: str
+    mime: str
+    data: str
+    size: int
+
+    def to_dict(self) -> dict:
+        return {
+            "kind": "pdf",
+            "path": self.path,
+            "mime": self.mime,
+            "data": self.data,
+            "size": self.size,
+        }
+
+
+@dataclass
 class BinaryFile:
     """Something the window can name but not draw.
 
@@ -400,10 +434,49 @@ def read_image_file(path: str) -> ImageFile:
     )
 
 
-def read_for_viewer(path: str) -> SourceFile | ImageFile | BinaryFile:
+def read_pdf_file(path: str) -> PdfFile:
+    """Read a PDF for the viewer's native frame, or raise `SourceError`.
+
+    Validated by magic, not by suffix alone: a text file renamed to `.pdf`
+    is a `SourceError` here, which `read_for_viewer` answers as `binary` --
+    the honest report of a mislabelled file, rather than a frame choking on
+    bytes it cannot draw.
+    """
+    import base64
+
+    target = confine(path)
+    if not target.is_file():
+        raise SourceError(f"Not a file: {path}")
+
+    try:
+        size = target.stat().st_size
+    except OSError as exc:
+        raise SourceError(f"Could not read {path}: {exc}") from exc
+    if size > MAX_PDF_BYTES:
+        raise SourceError(
+            f"{path} is {size / (1024 * 1024):.1f} MB, over the "
+            f"{MAX_PDF_BYTES // (1024 * 1024)} MB limit for a PDF preview."
+        )
+
+    try:
+        raw = target.read_bytes()
+    except OSError as exc:
+        raise SourceError(f"Could not read {path}: {exc}") from exc
+    if not raw.startswith(b"%PDF"):
+        raise SourceError(f"{path} is not a PDF file.")
+
+    return PdfFile(
+        path=str(target.relative_to(project_root()).as_posix()),
+        mime="application/pdf",
+        data=base64.b64encode(raw).decode("ascii"),
+        size=size,
+    )
+
+
+def read_for_viewer(path: str) -> SourceFile | ImageFile | PdfFile | BinaryFile:
     """Whatever the viewer should show for `path`.
 
-    One entry point, three answers, and the choice is made *here* rather
+    One entry point, four answers, and the choice is made *here* rather
     than by the window: the core knows the file's own bytes (an image is an
     image because it decodes, not because of its name) and owns the caps.
 
@@ -411,7 +484,8 @@ def read_for_viewer(path: str) -> SourceFile | ImageFile | BinaryFile:
     every file, because decoding everything to find out would mean opening
     a 900 MB video to learn it is not a picture. A file whose suffix says
     image but whose bytes do not decode is then a `SourceError`, which is
-    the honest report of a mislabelled file.
+    the honest report of a mislabelled file. A PDF is dispatched the same
+    way, on its suffix, and validated by magic.
     """
     target = confine(path)
     if not target.exists():
@@ -421,6 +495,20 @@ def read_for_viewer(path: str) -> SourceFile | ImageFile | BinaryFile:
 
     if _mime_for(target) is not None:
         return read_image_file(path)
+
+    if target.suffix.lower() == ".pdf":
+        try:
+            return read_pdf_file(path)
+        except SourceError as exc:
+            try:
+                size = target.stat().st_size
+            except OSError:
+                size = 0
+            return BinaryFile(
+                path=str(target.relative_to(project_root()).as_posix()),
+                size=size,
+                reason=str(exc),
+            )
 
     try:
         source = read_source(path)

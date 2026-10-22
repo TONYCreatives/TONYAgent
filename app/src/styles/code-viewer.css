@@ -391,6 +391,37 @@
   padding: 12px;
 }
 
+/*
+ * A PDF fills the pane the way the image does, with its own bar beneath:
+ * the frame is the native viewer (paging, zoom, find for free), and the bar
+ * is the fallback -- the OS default app where the frame cannot draw.
+ */
+.code-pdf {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.code-pdf-frame {
+  flex: 1;
+  min-height: 0;
+  border: 0;
+  /* The frame draws its own canvas; this is only the letterbox behind it. */
+  background: var(--chrome);
+}
+
+.code-pdf-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 12px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--chrome);
+}
+
 .code-preview {
   flex: 1;
   min-height: 0;
