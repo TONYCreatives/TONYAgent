@@ -1403,6 +1403,53 @@ describe("the keys pane over the real protocol", () => {
 });
 
 
+// --- sending with nothing configured ------------------------------------------
+describe("sending with no provider bound", () => {
+  test("send opens Settings on the Keys tab instead of banner error", async () => {
+    // Switching tracks needs no key, so the toggle stays silent; sending is
+    // the act that needs one. The message is never attempted -- no `send`
+    // goes out and no red banner appears -- and the window lands where the
+    // key goes.
+    const { container, transport } = await mount({
+      state: { ...BOOT.state, provider: "", model: "", bound: false },
+    });
+    // `mount` waits on the bound provider's name in the status bar, which a
+    // keyless boot never paints; the wait above exhausted itself instead.
+    await setValue(composerField(container)!, "hello?");
+    await click(one(container, '[aria-label="Send"]')!);
+    await wait(80);
+
+    assert.ok(
+      !transport.methods().includes("send"),
+      "a message went out with no provider to send it",
+    );
+    assert.ok(one(container, ".settings-page"), "send did not open Settings");
+    const keysTab = all(container, ".settings-tab").find(
+      (b) => (b.textContent ?? "").trim() === "Keys",
+    );
+    assert.equal(
+      keysTab?.getAttribute("aria-selected"),
+      "true",
+      "Settings did not land on the Keys tab",
+    );
+  });
+
+  test("send with a provider bound still sends", async () => {
+    // The guard is the missing provider, not the sending: a bound window
+    // must not detour through Settings on every message.
+    const { container, transport } = await mount({
+      send: { turn_id: "t1" },
+    });
+    await setValue(composerField(container)!, "hello?");
+    await click(one(container, '[aria-label="Send"]')!);
+    await wait(80);
+
+    assert.ok(transport.methods().includes("send"), "a bound send never went out");
+    assert.equal(one(container, ".settings-page"), null, "a bound send opened Settings");
+  });
+});
+
+
 /**
  * A local model on this machine's CPU is a plain chat model.
  *

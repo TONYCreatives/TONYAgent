@@ -40,7 +40,7 @@ import { QuestionDialog } from "./QuestionDialog.js";
 import { SearchPanel, type SearchMatch } from "./SearchPanel.js";
 import type { PermissionList, ReasoningInfo } from "./SettingsMenus.js";
 import type { SkillInfo } from "./SkillPicker.js";
-import { SettingsPanel, type CoreSettings, type DiagnosticsInfo, type KeyEntry, type ProviderInfo, type UpdateAnswer, type UpdateDownload } from "./SettingsPanel.js";
+import { SettingsPanel, type CoreSettings, type DiagnosticsInfo, type KeyEntry, type ProviderInfo, type SettingsTab, type UpdateAnswer, type UpdateDownload } from "./SettingsPanel.js";
 import { StatusBar } from "./StatusBar.js";
 import { TopBar, type Tab } from "./TopBar.js";
 import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount.js";
@@ -133,10 +133,20 @@ export function App({
    * True when the core came up with no provider bound.
    *
    * Kept distinct from an empty `provider` string so the settings panel does
-   * not open over the user's first message every launch: the hint is in the
-   * status bar, which is where a user looks for "why can't I send?".
+   * not open over the user's first message every launch. Sending while this
+   * holds opens Settings on the Keys tab instead of answering the message
+   * with a banner: switching tracks needs no key, so the toggle stays
+   * silent, and sending is the act that asks where the key goes.
    */
   const [needsProvider, setNeedsProvider] = useState(false);
+  /**
+   * The settings tab a programmatic open lands on, or null for the default.
+   *
+   * Null except while opening: the panel remounts on every open, so this is
+   * read once as the initial tab and every plain open resets it. A stale
+   * value would land the gear button on Keys because send went there once.
+   */
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
   const [sandbox, setSandbox] = useState("stopped");
   const [project, setProject] = useState("");
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
@@ -468,10 +478,20 @@ export function App({
    * changing rather than the sidebar. The stale error and notice go with it:
    * they belong to the last visit's actions, and a warning about a sandbox that
    * failed to start three days ago is not news for a page being opened now.
+   *
+   * `tab` lands the page on one tab for callers that know where the user
+   * needs to be -- sending with no provider opens Keys. Null is the default,
+   * and every call without one resets it, so one directed open does not
+   * redirect every later one.
+   *
+   * Always wrapped at `onClick` call sites (`() => openSettings()`): passed
+   * bare, React hands the click event in as `tab` and the page opens on no
+   * tab at all.
    */
-  const openSettings = useCallback(() => {
+  const openSettings = useCallback((tab?: SettingsTab) => {
     setSettingsError(null);
     setSettingsNotice(null);
+    setSettingsTab(tab ?? null);
     setMainMode("settings");
   }, []);
 
@@ -711,6 +731,14 @@ export function App({
 
   const send = useCallback(async (text: string, attachments: PendingAttachment[] = []) => {
     const backend = backendRef.current!;
+    if (needsProvider) {
+      // Nowhere to send to. The Keys tab rather than a banner: the message
+      // was never attempted, so there is no failure to report -- only the
+      // missing key, and the place that fixes it. Checked before the
+      // optimistic append below, so refusing keeps no bubble behind.
+      openSettings("keys");
+      return;
+    }
     // What the user changed by hand since the last message, on its way to the
     // agent. Cleared only after the send is accepted, so a refused message
     // does not lose the report it was going to carry.
@@ -736,7 +764,7 @@ export function App({
         error: error instanceof Error ? error.message : String(error),
       }));
     }
-  }, [pendingEdits]);
+  }, [pendingEdits, needsProvider, openSettings]);
 
   const cancel = useCallback(() => {
     void backendRef.current!.call("cancel").catch(() => {
@@ -2622,7 +2650,7 @@ export function App({
           petOpen={petOpen}
           onPet={() => void togglePet()}
           updateAvailable={Boolean(update?.available)}
-          onSettings={openSettings}
+          onSettings={() => openSettings()}
           onSearch={() => openSidebarPane("search")}
         />
       )}
@@ -2679,7 +2707,7 @@ export function App({
           // states of the one sidebar cannot disagree about what a button does
           // -- and the same mark on the gear, for the same reason.
           onSearch={() => openSidebarPane("search")}
-          onSettings={openSettings}
+          onSettings={() => openSettings()}
           updateAvailable={Boolean(update?.available)}
         />
       )}
@@ -2799,6 +2827,7 @@ export function App({
           <SettingsPanel
             connected={connected}
             busy={state.busy}
+            initialTab={settingsTab ?? undefined}
             providers={providers}
             provider={provider}
             baseUrl={baseUrl}

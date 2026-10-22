@@ -643,3 +643,49 @@ def test_a_copy_keeps_its_name_through_a_later_turn(store):
 
     server._persist()
     assert store.load(clone.id).title == "New chat (copy)"
+
+# --- keyless switches stay silent ------------------------------------------------
+def test_creating_a_conversation_without_a_provider_is_silent(store):
+    """A track toggle with no key must not banner.
+
+    v0.4.1 shipped the `disconnected_provider` reads without the session half
+    that answers them, so every create/switch raised AttributeError -- seen as
+    `'AgentSession' object has no attribute 'last_disconnected_provider'`
+    when toggling chat/build with nothing configured.
+    """
+    session = AgentSession(bus=EventBus())
+    assert session.provider is None
+    _, frames = _drive(
+        [{"id": 1, "method": "conversations.create"}],
+        session=session,
+        store=store,
+    )
+    reply = _by_id(frames)[1]
+    assert "error" not in reply, reply
+    assert reply["result"]["disconnected_provider"] == ""
+
+
+def test_switching_without_a_provider_is_silent(store):
+    first = store.create(title="Earlier chat")
+    store.save(first)
+
+    session = AgentSession(bus=EventBus())
+    _, frames = _drive(
+        [{"id": 1, "method": "conversations.switch", "params": {"id": first.id}}],
+        session=session,
+        store=store,
+    )
+    reply = _by_id(frames)[1]
+    assert "error" not in reply, reply
+    assert reply["result"]["disconnected_provider"] == ""
+
+
+def test_mode_set_without_a_provider_answers_cleanly():
+    session = AgentSession(bus=EventBus())
+    _, frames = _drive(
+        [{"id": 1, "method": "mode.set", "params": {"mode": "build"}}],
+        session=session,
+    )
+    reply = _by_id(frames)[1]
+    assert "error" not in reply, reply
+    assert reply["result"]["disconnected_provider"] == ""

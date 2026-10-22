@@ -311,6 +311,22 @@ def _current_setting(key: str) -> Any:
     return getattr(load_section(section), name)
 
 
+def _provider_allowed_in_mode(provider: Any, mode: str) -> bool:
+    """Whether `provider` may serve a turn in `mode`.
+
+    True when the mode rules are not installed in this build: the chat-only
+    half of tracks has not landed, and before it every provider served every
+    mode. Answered here rather than at the call site so a missing rule set
+    degrades to the old behavior instead of failing the switch -- the
+    provider-bound twin of the `last_disconnected_provider` crash below.
+    """
+    try:
+        from tonyagent.providers.factory import provider_allowed_in_mode
+    except ImportError:
+        return True
+    return provider_allowed_in_mode(type(provider), mode)
+
+
 class StdioServer:
     """Reads requests from stdin, writes replies and events to stdout.
 
@@ -446,6 +462,15 @@ class StdioServer:
 
         subagent_registry.restart()
         self.session = session
+        if not hasattr(session, "last_disconnected_provider"):
+            # Sessions built before the chat-only half of tracks landed have
+            # nowhere to record a dropped provider. Defaulted here rather
+            # than in `AgentSession.__init__`, so every path that replaces
+            # the session -- switch, new chat, startup restore -- funnels
+            # through this one guard, and a reply reader below never crashes
+            # on a session that predates the feature. That crash is the red
+            # banner a keyless track toggle showed in v0.4.1.
+            session.last_disconnected_provider = ""
         session.install_confirmation_bridge()
         session.install_question_bridge()
         self._unsubscribe = session.bus.subscribe(self._on_event)
@@ -474,11 +499,7 @@ class StdioServer:
             # window as a `mode.set` after the switch.
             session.set_mode(mode)
         if self.session.provider is not None:
-            from tonyagent.providers.factory import provider_allowed_in_mode
-
-            if provider_allowed_in_mode(
-                type(self.session.provider), session.mode_name
-            ):
+            if _provider_allowed_in_mode(self.session.provider, session.mode_name):
                 session.bind_provider(
                     self.session.provider_name, self.session.model, self.session.base_url
                 )

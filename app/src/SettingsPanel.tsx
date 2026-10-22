@@ -305,6 +305,8 @@ const SETTINGS_TABS = [
 
 type SettingsTab = (typeof SETTINGS_TABS)[number]["id"];
 
+export type { SettingsTab };
+
 interface Props {
   connected: boolean;
   busy: boolean;
@@ -445,6 +447,13 @@ interface Props {
   onCopyDiagnostics: (text: string) => Promise<boolean>;
   /** Open the folder the core's log files live in, in the file explorer. */
   onOpenLogFolder: () => void;
+  /**
+   * The tab a directed open lands on, or undefined for the default.
+   *
+   * Sending with no provider opens Keys. Read once as the initial tab: the
+   * page remounts on every open, so this is fresh each time by construction.
+   */
+  initialTab?: SettingsTab;
 }
 
 /** How long a revealed key stays on screen before it hides itself. */
@@ -592,8 +601,13 @@ export function SettingsPanel({
   onReadDiagnostics,
   onCopyDiagnostics,
   onOpenLogFolder,
+  initialTab,
 }: Props) {
-  const [tab, setTab] = useState<SettingsTab>("permission");
+  // The tab a directed open lands on -- sending with no provider opens Keys.
+  // An initializer, not a sync: the page remounts on every open, so the prop
+  // is fresh each time, and a later prop change must not yank the tab out
+  // from under a user already reading another one.
+  const [tab, setTab] = useState<SettingsTab>(initialTab ?? "permission");
 
   // Local mirror of the endpoint, so typing does not re-bind on every keystroke.
   const [draftBaseUrl, setDraftBaseUrl] = useState(baseUrl);

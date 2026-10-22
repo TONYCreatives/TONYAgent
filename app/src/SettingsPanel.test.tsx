@@ -32,6 +32,7 @@ import {
   type KeyEntry,
   type ProviderInfo,
   type SandboxSettings,
+  type SettingsTab,
   type UpdateAnswer,
   type UpdateDownload,
 } from "./SettingsPanel.js";
@@ -194,6 +195,7 @@ interface Overrides {
   onReadDiagnostics?: () => Promise<DiagnosticsInfo | null>;
   onCopyDiagnostics?: (text: string) => Promise<boolean>;
   onOpenLogFolder?: () => void;
+  initialTab?: SettingsTab;
 }
 
 function panel(overrides: Overrides = {}) {
@@ -243,6 +245,7 @@ function panel(overrides: Overrides = {}) {
       }
       onCopyDiagnostics={overrides.onCopyDiagnostics ?? (async () => true)}
       onOpenLogFolder={overrides.onOpenLogFolder ?? noop}
+      initialTab={overrides.initialTab}
     />
   );
 }
@@ -340,6 +343,21 @@ describe("the settings tabs", () => {
     assert.deepEqual(selected(), ["Behavior"]);
     await click(tab(container, "Keys"));
     assert.deepEqual(selected(), ["Keys"]);
+  });
+
+  test("a directed open lands on the tab it names", async () => {
+    // Sending with no provider opens Keys: the tab is read once as the
+    // initial one, so the panel still opens on Behavior for everyone else.
+    const container = await render(panel({ initialTab: "keys" }));
+    await wait(0);
+
+    assert.deepEqual(
+      all(container, ".settings-tab")
+        .filter((b) => b.getAttribute("aria-selected") === "true")
+        .map((b) => (b.textContent ?? "").trim()),
+      ["Keys"],
+    );
+    assert.deepEqual(headings(container), ["OpenRouter", "OpenCode Go", "Base URL"]);
   });
 });
 
