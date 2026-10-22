@@ -29,6 +29,7 @@ import { describe, test } from "node:test";
 import { dom } from "./test-dom.js";
 
 import {
+  PermissionDetail,
   PermissionMenu,
   ThinkingMenu,
   permissionGain,
@@ -553,5 +554,65 @@ describe("the thinking menu is placed where it opens", () => {
       `unexpected direction: ${menu.getAttribute("data-dir")}`,
     );
     assert.match(menu.getAttribute("style") ?? "", /max-height/);
+  });
+});
+// --- the detail column spells out every rung ---------------------------------
+describe("the detail column spells out every rung", () => {
+  async function renderDetail(value = "medium") {
+    return render(<PermissionDetail list={LADDER} value={value} />);
+  }
+
+  test("all four levels are shown with their descriptions", async () => {
+    // Static, not following hover: a pane that rewrote itself under the
+    // cursor would hide the rung being compared against.
+    const container = await renderDetail();
+    assert.deepEqual(texts(container, ".perm-detail-card .permchoice-name"), [
+      "Low",
+      "Medium",
+      "High",
+      "Full",
+    ]);
+    assert.match(container.textContent ?? "", /Shell commands are refused/);
+  });
+
+  test("the level in force is marked, and only it", async () => {
+    const container = await renderDetail("high");
+    const marked = all(container, ".perm-detail-card.is-current");
+    assert.equal(marked.length, 1);
+    assert.match(marked[0]!.textContent ?? "", /High/);
+    assert.match(marked[0]!.textContent ?? "", /in force/);
+  });
+
+  test("each card states the facts the wire reports, not the prose", async () => {
+    // The booleans, in words: shell scope, confirmation, and where commands
+    // run. A card that echoed only the description would be a second copy
+    // of the ladder row rather than its terms.
+    const container = await renderDetail();
+    const cards = all(container, ".perm-detail-card");
+    const facts = (card: Element) =>
+      all(card as HTMLElement, ".perm-detail-facts dd").map((e) => e.textContent ?? "");
+    assert.deepEqual(facts(cards[0]!), [
+      "Refused entirely",
+      "Asks first",
+      "Nowhere — no command runs at this level",
+    ]);
+    assert.deepEqual(facts(cards[3]!), [
+      "Any program, no list",
+      "Runs without asking",
+      "On this computer, outside the sandbox",
+    ]);
+  });
+
+  test("every rung but the top names what stepping up buys", async () => {
+    const container = await renderDetail();
+    const gains = all(container, ".perm-detail-card .permchoice-gain");
+    assert.equal(gains.length, 3);
+    assert.match(gains[0]!.textContent ?? "", /Steps up to Medium/);
+    assert.match(gains[2]!.textContent ?? "", /Steps up to Full/);
+  });
+
+  test("nothing renders before the core has answered", async () => {
+    const container = await render(<PermissionDetail list={null} value="medium" />);
+    assert.equal(container.textContent, "");
   });
 });

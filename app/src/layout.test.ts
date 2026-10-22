@@ -1004,15 +1004,22 @@ describe("the file header gives way instead of dropping the file name", () => {
     // header has to be measured by the box it is drawn in.
     assert.match(body(".code-viewer"), /container-type:\s*inline-size/);
 
-    const query = /@container \(max-width:\s*\d+px\)\s*\{([\s\S]*?)\n\}/.exec(SOURCE);
+    // Every container query in the cascade, because the first one is not
+    // necessarily this one: the settings page stacks its own split section
+    // in a query of its own, and a first-match here would answer a question
+    // about the viewer with the settings' rules.
+    const queries = [
+      ...SOURCE.matchAll(/@container \(max-width:\s*\d+px\)\s*\{([\s\S]*?)\n\}/g),
+    ].map((m) => m[1]);
+    const query = queries.find((block) => block.includes(".code-chip-lang"));
     assert.ok(query, "nothing in the stylesheet responds to the pane's own width");
     // The language first -- the extension already says it, and the footer
     // repeats it -- then the lock's *word*. Never the padlock itself, which is
     // what says the file is read-only when the word has gone.
-    assert.match(query[1], /\.code-chip-lang\s*\{\s*display:\s*none/);
-    assert.match(query[1], /\.code-lock-word\s*\{\s*display:\s*none/);
+    assert.match(query, /\.code-chip-lang\s*\{\s*display:\s*none/);
+    assert.match(query, /\.code-lock-word\s*\{\s*display:\s*none/);
     assert.doesNotMatch(
-      query[1],
+      query,
       /\.code-lock-icon\s*\{\s*display:\s*none/,
       "the padlock is the half of that chip that has to survive",
     );

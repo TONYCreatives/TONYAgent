@@ -158,6 +158,14 @@
   overflow-y: auto;
   scrollbar-gutter: stable;
   padding: var(--pad-panel);
+  /*
+   * A query container, so the split section below can stack when *this pane*
+   * is narrow. A media query cannot answer that: the pane is the window
+   * minus the nav, and the breakpoint ladder (720/560/420 in tokens.css)
+   * has no step for "a settings page that ran out of room for two columns".
+   * Same technique as the code viewer's header.
+   */
+  container-type: inline-size;
 }
 
 /*
@@ -243,6 +251,109 @@
   padding-bottom: 0;
   margin-bottom: 16px;
   border-bottom: 0;
+}
+
+/*
+ * The ladder and its terms, side by side.
+ *
+ * `.settings-body > *` caps every row at the reading measure, which is what
+ * left this page's right half blank. The split section opts out of that cap
+ * -- and only the cap: it keeps the group's own padding, margin and rule --
+ * so the ladder keeps its measure in the left column while the detail column
+ * takes what is left. One breakpoint stacks them, because a 300px detail
+ * card beside a squeezed ladder is two unreadable columns instead of one.
+ */
+.settings-group.settings-split {
+  max-width: none;
+}
+
+.settings-split-main {
+  min-width: 0;
+}
+
+.settings-split {
+  display: grid;
+  grid-template-columns: minmax(0, var(--measure)) minmax(300px, 1fr);
+  gap: 8px 24px;
+  align-items: start;
+}
+
+/* Two 300px columns stop fitting well before the window's own steps do, so
+ * the pane asks about itself. See the container on `.settings-body`. */
+@container (max-width: 900px) {
+  .settings-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/*
+ * One rung's full terms.
+ *
+ * Four cards, all shown: the ladder's rows compare in one clause each, and
+ * these are what they are comparing. The current rung takes the wash, the
+ * same wash a selected settings-tab row takes -- one selected state, one
+ * colour, anywhere on this page.
+ */
+.perm-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.perm-detail-card {
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--chrome);
+}
+
+.perm-detail-card.is-current {
+  background: var(--wash);
+}
+
+.perm-detail-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 2px;
+}
+
+.perm-detail-markers {
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.perm-detail-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 0;
+}
+
+.perm-detail-facts > div {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.perm-detail-facts dt {
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+}
+
+.perm-detail-facts dd {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+.perm-detail-card .permchoice-gain {
+  margin-top: 6px;
 }
 
 .settings-group h3 {

@@ -230,6 +230,103 @@ export function PermissionMenu({
   );
 }
 
+/**
+ * Every rung, spelled out: the detail column beside the ladder.
+ *
+ * The ladder's rows carry one clause each, which is what makes them
+ * comparable -- and what leaves the page's right half blank. This is the
+ * other half of that bargain: the full terms per level, drawn from the same
+ * `permission.list` facts the rows' markers come from, so the two can never
+ * disagree. Static rather than following hover or focus: a pane that rewrote
+ * itself under the cursor would hide the rung being compared against, and
+ * these four are short enough to show all at once.
+ *
+ * Rendered nothing when the core has not answered, for the same reason the
+ * menu renders nothing: four cards naming terms nobody has been told are
+ * decoration, not detail.
+ */
+export function PermissionDetail({
+  list,
+  value,
+}: {
+  list: PermissionList | null;
+  value: string;
+}) {
+  const levels = list?.permissions ?? [];
+  if (!list || levels.length === 0) return null;
+
+  const facts = (level: PermissionInfo): [string, string][] => [
+    [
+      "Shell commands",
+      !level.runs_commands
+        ? "Refused entirely"
+        : level.runs_any_command
+          ? "Any program, no list"
+          : "Only the Commands allow-list below",
+    ],
+    [
+      "Before a destructive change",
+      level.skips_confirmation ? "Runs without asking" : "Asks first",
+    ],
+    [
+      "Where commands run",
+      level.runs_on_host
+        ? "On this computer, outside the sandbox"
+        : level.runs_commands
+          ? "Inside the sandbox, which must be running"
+          : "Nowhere — no command runs at this level",
+    ],
+  ];
+
+  return (
+    <div className="perm-detail" role="complementary" aria-label="Permission levels in detail">
+      <h3>Levels in detail</h3>
+      {levels.map((level, i) => {
+        const next = levels[i + 1];
+        return (
+          <article
+            key={level.name}
+            className={`perm-detail-card${level.name === value ? " is-current" : ""}`}
+          >
+            <div className="perm-detail-head">
+              <span className="permchoice-name">{level.label}</span>
+              {level.name === value && (
+                <span className="permchoice-warn" title="The level currently in force">
+                  in force
+                </span>
+              )}
+              {(level.runs_on_host || level.runs_any_command || level.skips_confirmation) && (
+                <span className="perm-detail-markers">
+                  {[level.runs_on_host ? "on this computer" : null,
+                    level.runs_any_command ? "any command" : null,
+                    level.skips_confirmation ? "no prompts" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
+              )}
+            </div>
+            <p className="permchoice-desc">{level.description}</p>
+            <dl className="perm-detail-facts">
+              {facts(level).map(([term, detail]) => (
+                <div key={term}>
+                  <dt>{term}</dt>
+                  <dd>{detail}</dd>
+                </div>
+              ))}
+            </dl>
+            {next && (
+              <p className="permchoice-gain">
+                Steps up to {next.label}: {permissionGain(level, next) ?? next.description}
+              </p>
+            )}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 interface ThinkingProps {
   /**
    * The bound model's own answer, or null while it is being read.

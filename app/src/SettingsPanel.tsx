@@ -30,6 +30,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
+  PermissionDetail,
   PermissionMenu,
   ThinkingMenu,
   type PermissionList,
@@ -969,19 +970,31 @@ export function SettingsPanel({
         {notice && <p className="notice">{notice}</p>}
         {tab === "permission" && (
           <>
-            <section className="settings-group">
-              <h3>Permission</h3>
-              <p className="settings-note">
-                What the agent may do without asking. This is the ceiling the core
-                enforces on every tool call in this window, not a preference.
-              </p>
-              <PermissionMenu
-                list={permissionList}
-                value={permission}
-                busy={busy}
-                disabled={!connected}
-                onChange={onPermissionChange}
-              />
+            {/*
+              The ladder and its terms, side by side.
+
+              The body caps every row at the reading measure, which left this
+              page's right half blank. The ladder stays at the measure -- it
+              is the control, and a control wider than a line of prose stops
+              being one -- while the detail column takes the rest: the full
+              terms of each rung, drawn from the same facts as the rows.
+            */}
+            <section className="settings-group settings-split">
+              <div className="settings-split-main">
+                <h3>Permission</h3>
+                <p className="settings-note">
+                  What the agent may do without asking. This is the ceiling the core
+                  enforces on every tool call in this window, not a preference.
+                </p>
+                <PermissionMenu
+                  list={permissionList}
+                  value={permission}
+                  busy={busy}
+                  disabled={!connected}
+                  onChange={onPermissionChange}
+                />
+              </div>
+              <PermissionDetail list={permissionList} value={permission} />
             </section>
 
             {reasoning && reasoning.efforts.length > 0 && (
