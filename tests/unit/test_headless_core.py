@@ -307,16 +307,64 @@ def test_providers_list_comes_from_the_registry():
 
     A hardcoded list would drift the moment a provider is added or renamed,
     and the UI would offer a provider the core cannot build.
+
+    The comparison is against the *unfiltered* registry, because the list the
+    frontend draws is the mode-filtered one: a chat-only provider is not
+    offered outside Chat mode, so comparing it to the whole registry would
+    fail for a provider that is working exactly as intended.
     """
     from tonyagent.providers import ProviderFactory
 
     frames = _drive([{"id": 1, "method": "providers.list"}])
     providers = frames[0]["result"]["providers"]
     expected = {p["name"] for p in ProviderFactory.get_available_providers()}
-    assert {p["name"] for p in providers} == expected
     assert expected, "the registry must not be empty"
+    # The list is a subset of the registry: never a name the registry does
+    # not have.
+    assert {p["name"] for p in providers} <= expected
+    # And it is not empty either, or the picker would have nothing to draw.
+    assert {p["name"] for p in providers}
     assert "models" in providers[0]
     assert "has_credentials" in providers[0]
+
+
+def test_providers_list_is_filtered_by_the_mode_in_force():
+    """A chat-only provider is offered in Chat mode and nowhere else."""
+    from tonyagent.providers.base import provider_registry
+
+    chat_only = {
+        name for name in provider_registry.list_providers()
+        if getattr(provider_registry.get(name), "chat_only", False)
+    }
+    if not chat_only:
+        pytest.skip("this build registers no chat-only provider")
+
+    # One session for both halves: the mode lives on the session, so a second
+    # `_drive` with a fresh one would answer with the default mode and the
+    # test would pass for the wrong reason.
+    session = _session()
+    for mode in ("build", "plan", "mission", "skills"):
+        _drive([{"id": 1, "method": "mode.set", "params": {"mode": mode}}], session)
+        frames = _drive([{"id": 1, "method": "providers.list"}], session)
+        listed = {p["name"] for p in frames[0]["result"]["providers"]}
+        assert not (listed & chat_only), mode
+
+    _drive([{"id": 1, "method": "mode.set", "params": {"mode": "chat"}}], session)
+    frames = _drive([{"id": 1, "method": "providers.list"}], session)
+    listed = {p["name"] for p in frames[0]["result"]["providers"]}
+    assert listed & chat_only
+
+
+def test_providers_list_can_ask_for_the_whole_registry():
+    """`all` is for reconciling keys against providers, not for the picker."""
+    from tonyagent.providers import ProviderFactory
+
+    frames = _drive([
+        {"id": 1, "method": "providers.list", "params": {"all": True}}
+    ])
+    listed = {p["name"] for p in frames[0]["result"]["providers"]}
+    expected = {p["name"] for p in ProviderFactory.get_available_providers()}
+    assert listed == expected
 
 
 def test_providers_list_never_returns_key_material():
@@ -326,8 +374,10 @@ def test_providers_list_never_returns_key_material():
         assert set(provider) == {
             "name", "models", "has_credentials",
             "supports_streaming", "supports_function_calling",
+            "chat_only",
         }
         assert isinstance(provider["has_credentials"], bool)
+        assert isinstance(provider["chat_only"], bool)
 
 
 # --- custom model / endpoint (bind_provider) -------------------------------

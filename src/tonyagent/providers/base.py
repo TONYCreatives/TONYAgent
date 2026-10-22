@@ -221,6 +221,7 @@ class LLMProvider(Protocol):
     models: list[str]
     supports_streaming: bool
     supports_function_calling: bool
+    chat_only: bool
 
     @abstractmethod
     async def chat_completion(
@@ -252,6 +253,23 @@ class BaseLLMProvider(ABC):
     models: list[str] = []
     supports_streaming: bool = True
     supports_function_calling: bool = True
+
+    #: **True when this provider is a plain chat model: usable in Chat mode and
+    #: nowhere else.**
+    #:
+    #: A provider that sets this is not a lesser provider, it is a different
+    #: kind of thing. Chat mode is the one mode whose job is to answer a
+    #: person; every other mode exists to have the model *act*, which means
+    #: choosing a tool and being read back a schema it has to call correctly.
+    #: A small local model cannot do that reliably, and a turn that waits a
+    #: minute for a prefill and then picks the wrong tool is worse than no
+    #: turn at all.
+    #:
+    #: So the gate is not a quality judgement but a statement about what the
+    #: provider can do. `ProviderFactory.get_available_providers` hides such a
+    #: provider outside Chat mode, `AgentSession.bind_provider` refuses one,
+    #: and `AgentSession.set_mode` unbinds one when the session leaves Chat.
+    chat_only: bool = False
 
     #: **The gateway's own name for "which conversation is this", if it has one.**
     #: OpenCode Go asks for a stable session id per conversation so it can route and

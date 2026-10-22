@@ -197,6 +197,11 @@ class AgentSession:
         #: The per-turn tool budget, read once at construction so a mid-turn
         #: settings change cannot make the counter and the label disagree.
         self.max_tool_calls: int = _default_max_tool_calls()
+        #: The provider that the last mode change disconnected, or an empty
+        #: string. Read by the RPC layer so it can tell the frontend *why*
+        #: the session is suddenly unbound. Cleared by `set_mode` on every
+        #: call, so it describes the last change and not an old one.
+        self.last_disconnected_provider: str = ""
         #: The plan and the goal for this conversation, rendered into the system
         #: prompt and written by the planning tools. Adopted through `set_state`
         #: so the tools and this session hold the *same* object -- see there.
@@ -226,7 +231,24 @@ class AgentSession:
         carries hundreds of namespaced ids (``anthropic/claude-sonnet-4.5``,
         ``deepseek/deepseek-chat:free``) and self-hosted gateways use ids the
         registry has never heard of, so the UI must be able to type one in.
+
+        Raises ``ValueError`` for a provider that cannot be used in the mode
+        in force -- a chat-only provider outside Chat mode. The refusal is a
+        ``ValueError`` rather than a silent ``None`` because the caller can
+        act on a message ("switch to Chat mode") and cannot act on a ``None``
+        that looks the same as "no such provider".
         """
+        from tonyagent.providers.base import provider_registry
+        from tonyagent.providers.factory import provider_allowed_in_mode
+
+        provider_class = provider_registry.get(provider_name)
+        if provider_class is not None and not provider_allowed_in_mode(
+            provider_class, self._mode.name
+        ):
+            raise ValueError(
+                f"{provider_name} is a chat-only model and works in Chat mode "
+                f"only. Switch to Chat mode to use it."
+            )
         self.provider_name = provider_name
         self.base_url = base_url
         self.provider = ProviderFactory.create_provider(
@@ -855,7 +877,18 @@ class AgentSession:
         Filtering the schema is advisory: it stops the model asking for a tool
         it was never shown. The guarantee lives in the orchestrator, which
         refuses the call even if the model hallucinates it anyway.
+
+        A chat-only provider is sent no tools at all. Chat mode's own dozen
+        read-only tools are a legitimate thing for a hosted model to be shown,
+        but a local model that cannot use them would spend its prefill
+        reading schemas -- thousands of tokens, and prefill is the slow part
+        on a CPU -- to answer a question it could have read in a second. The
+        provider is chat-only precisely because it cannot act, so showing it
+        tools would be showing it a menu it must not order from.
         """
+        provider = self.provider
+        if provider is not None and getattr(provider, "chat_only", False):
+            return []
         # ALL_SCHEMAS entries carry extra UI-only keys, so use the dedicated
         # converter rather than **schema.
         allowed = self._mode.allowed_tools & self._permission.allowed_tools
@@ -915,7 +948,48 @@ class AgentSession:
         # "you cannot write files" in turn 3 and is still trying to obey it
         # after the user switched to Build.
         self.clear()
+        # A chat-only provider cannot follow the session out of Chat mode, so
+        # it is unbound rather than left in place to fail on the next turn.
+        # Unbinding is the honest answer: the model is still there, but it is
+        # not one this mode may use, and a turn that says "no provider" beats
+        # one that waits a minute for a prefill and then answers as a chatbot
+        # inside an agent mode.
+        self.last_disconnected_provider = self._drop_chat_only_provider()
         return self._mode
+
+    def _drop_chat_only_provider(self) -> str:
+        """Unbind the provider if it cannot be used in the mode in force.
+
+        Returns the name that was dropped, or an empty string if nothing was.
+        The caller turns it into a message, because a provider that vanishes
+        without saying so reads as the app having forgotten it.
+        """
+        from tonyagent.providers.factory import provider_allowed_in_mode
+
+        provider = self.provider
+        if provider is None:
+            return ""
+        if provider_allowed_in_mode(type(provider), self._mode.name):
+            return ""
+        name = self.provider_name or getattr(provider, "name", "")
+        self.provider = None
+        self.provider_name = ""
+        self.model = ""
+        # The reasoning effort is a property of the model that was bound, so
+        # the next one starts from its own default rather than inheriting an
+        # effort this model never offered.
+        self._reasoning_spec = _UNRESOLVED
+        self.emit(
+            EventType.LOG,
+            {
+                "message": (
+                    f"{name} is a chat-only model, so it was disconnected when "
+                    f"the mode changed to {self._mode.label}."
+                ),
+                "level": "warn",
+            },
+        )
+        return name
 
     def _messages_with_system(self) -> list[ChatMessage]:
         """The conversation with the active mode's system prompt in front.

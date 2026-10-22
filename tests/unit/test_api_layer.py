@@ -269,13 +269,23 @@ def test_the_registry_is_exactly_these_providers():
     from tonyagent.providers.base import provider_registry
 
     assert provider_registry.list_providers() == [
+        "airllm",
         "opencode-go",
         "opencode-zen",
         "openrouter",
     ]
     for name in provider_registry.list_providers():
         cls = provider_registry.get(name)
-        assert cls.base_url.startswith("https://"), f"{name} declares no endpoint"
+        # Every provider declares an endpoint, and every one of them but the
+        # local one is reached over TLS. AirLLM runs on this machine and
+        # answers on loopback, so plain http is the correct scheme for it and
+        # insisting on https would assert a lie about where the traffic goes.
+        if name == "airllm":
+            assert cls.base_url.startswith("http://127.0.0.1"), (
+                f"{name} must stay on loopback, got {cls.base_url}"
+            )
+        else:
+            assert cls.base_url.startswith("https://"), f"{name} declares no endpoint"
 
 
 def test_zen_and_go_are_separate_services_not_one_provider_twice():

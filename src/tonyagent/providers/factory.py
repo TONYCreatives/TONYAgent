@@ -11,6 +11,12 @@ from tonyagent.providers.base import provider_registry, BaseLLMProvider
 from tonyagent.config.settings import settings
 from tonyagent.config.keyring import load_api_key
 
+#: The one mode a chat-only provider may be used in. Spelled here rather than
+#: imported from `tonyagent.core.modes` so the providers layer does not depend
+#: on the core: the core depends on the providers, and a cycle would make
+#: "which module owns the rule" unanswerable.
+CHAT_MODE = "chat"
+
 
 #: Real model ids are lowercase tokens like "gpt-4o", "claude-3-5-sonnet" or
 #: "anthropic/claude-sonnet-4.6" - optionally namespaced with a "/" and allowing
@@ -45,6 +51,24 @@ def normalize_base_url(url: str) -> str:
             f"(got {candidate!r})"
         )
     return candidate.rstrip("/")
+
+
+def provider_allowed_in_mode(provider_class: type, mode: str) -> bool:
+    """Whether a provider may be used in ``mode``.
+
+    An empty ``mode`` means "there is no mode to check against", which is the
+    case for callers that want the whole registry -- listing what exists is
+    different from offering what works here.
+
+    A ``chat_only`` provider is allowed in exactly one mode. That is not a
+    preference, it is what the provider is: a model that answers a person
+    rather than a model that acts. See ``BaseLLMProvider.chat_only``.
+    """
+    if not mode:
+        return True
+    if not getattr(provider_class, "chat_only", False):
+        return True
+    return mode == CHAT_MODE
 
 
 class ProviderFactory:
@@ -108,15 +132,29 @@ class ProviderFactory:
         )
 
     @staticmethod
-    def get_available_providers() -> list[dict]:
+    def get_available_providers(mode: str = "") -> list[dict]:
+        """The providers that can be used right now.
+
+        ``mode`` is the composer mode in force. A provider that cannot be used
+        in it is left out of the list entirely rather than listed and then
+        refused: a picker that offers something the core will reject is a
+        picker that lies, and the user has no way to tell which row is which
+        until they press it.
+
+        An empty ``mode`` returns everything, which is what a caller that is
+        asking what exists -- rather than what works here -- wants.
+        """
         result = []
         for name in provider_registry.list_providers():
             provider_class = provider_registry.get(name)
+            if not provider_allowed_in_mode(provider_class, mode):
+                continue
             has_key = bool(load_api_key(name))
             result.append({
                 "name": name, "models": provider_class.models, "has_credentials": has_key,
                 "supports_streaming": provider_class.supports_streaming,
                 "supports_function_calling": provider_class.supports_function_calling,
+                "chat_only": getattr(provider_class, "chat_only", False),
             })
         return result
 

@@ -62,3 +62,27 @@ def _drop_the_user_hooks():
     user_io.reset()
     yield
     user_io.reset()
+
+
+@pytest.fixture(autouse=True)
+def _restore_the_global_orchestrator():
+    """Put the process-global tool orchestrator's mode and permission back.
+
+    ``AgentSession.set_mode`` and ``set_permission`` push the restriction down
+    to a module-level orchestrator, because that is the layer which actually
+    runs the tools. So a test that switches modes changes the world for every
+    test after it: a file that leaves the orchestrator in Chat mode makes the
+    next file's mutating tools unpermitted, and its failures read like a
+    problem with the code under test rather than with the test that ran
+    before it.
+
+    The same guard as the two above, for the same reason -- a side effect that
+    outlives the test that caused it is the thing worth containing.
+    """
+    from tonyagent.tools.orchestrator import tool_orchestrator
+
+    mode = tool_orchestrator._mode
+    permission = tool_orchestrator._permission
+    yield
+    tool_orchestrator.set_mode(mode)
+    tool_orchestrator.set_permission(permission)
