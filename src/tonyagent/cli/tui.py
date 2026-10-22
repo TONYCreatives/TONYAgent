@@ -2038,8 +2038,34 @@ class TonyApp(App[None]):
         # A key can outlive the provider it was saved for. Those rows are added
         # too, because a secret in the keyring that no screen admits to is a
         # secret nobody can revoke.
+        #
+        # A chat-only provider is the exception: it is not offered outside
+        # Chat mode, and a key left behind for one must not put it back on the
+        # list. The whole registry is asked for, rather than the mode-filtered
+        # list, because "not in the list" has two causes -- a provider this
+        # build does not have, and a provider this mode may not use -- and
+        # only the first one deserves a row.
         known = {name for name, _ in providers}
-        providers.extend((name, True) for name in keys if name not in known)
+        everything: dict[str, dict] = {}
+        try:
+            listed = self.client.call("providers.list", {"all": True}) or {}
+            for entry in listed.get("providers") or []:
+                if isinstance(entry, dict) and entry.get("name"):
+                    everything[str(entry["name"])] = entry
+        except CoreError:
+            everything = {}
+        for name in keys:
+            if name in known:
+                continue
+            entry = everything.get(name)
+            if entry is None:
+                # Not in the registry, so the mode cannot say anything about
+                # it. Offered, as above: a key for a provider this build does
+                # not have is still a key somebody needs to be able to revoke.
+                providers.append((name, True))
+                continue
+            if not entry.get("chat_only"):
+                providers.append((name, True))
         if not providers:
             self._notice("this build registers no providers", "warn")
             return
