@@ -65,8 +65,10 @@ async function bar(options: {
   mode?: "agent" | "code" | "trajectory";
   canCode?: boolean;
   onModeChange?: (mode: "agent" | "code" | "trajectory") => void;
-} = {}): Promise<{ container: HTMLElement; calls: Calls }> {
-  const calls: Calls = {
+  track?: string;
+  onTrackChange?: (track: string) => void;
+} = {}): Promise<{ container: HTMLElement; calls: Calls & { tracks: string[] } }> {
+  const calls: Calls & { tracks: string[] } = {
     minimized: 0,
     toggled: 0,
     closed: 0,
@@ -75,6 +77,7 @@ async function bar(options: {
     closedTabs: [],
     newTabs: 0,
     renamed: [],
+    tracks: [],
   };
   const withCaption = options.caption ?? true;
   const container = await render(
@@ -89,6 +92,10 @@ async function bar(options: {
       mode={options.mode ?? "agent"}
       canCode={options.canCode ?? true}
       onModeChange={options.onModeChange}
+      track={options.track}
+      onTrackChange={
+        options.onTrackChange ?? (options.track !== undefined ? (t) => calls.tracks.push(t) : undefined)
+      }
       controls={
         withCaption
           ? {
@@ -172,6 +179,42 @@ describe("the Agent / Code switch", () => {
     // would move the window instead of changing the view.
     const { container } = await bar();
     assert.equal(one(container, ".topbar-modes")!.classList.contains("app-drag-region"), false);
+  });
+});
+
+// --- the track toggle ------------------------------------------------------
+describe("the Chat / Build toggle", () => {
+  const tracks = (container: HTMLElement) =>
+    all(container, '.topbar-modes[aria-label="Track"] .topbar-mode');
+
+  test("it is absent where there is no conversation to mint from", async () => {
+    // Trajectory and settings have no conversation in front: a toggle there
+    // would mint a chat behind the page. The bar draws it only when the
+    // window hands it a press to make.
+    const { container } = await bar();
+    assert.equal(tracks(container).length, 0, "the toggle drew with no handler");
+  });
+
+  test("both tracks are named, and the current one is pressed", async () => {
+    const { container } = await bar({ track: "chat" });
+    assert.deepEqual(
+      tracks(container).map((b) => (b.textContent ?? "").trim()),
+      ["Chat", "Build"],
+    );
+    assert.equal(
+      tracks(container).find((b) => b.classList.contains("is-active"))?.textContent,
+      "Chat",
+    );
+  });
+
+  test("pressing a track reports it; the parent owns the state", async () => {
+    const { container, calls } = await bar({ track: "build" });
+    const chat = tracks(container).find((b) => (b.textContent ?? "").trim() === "Chat")!;
+
+    await click(chat);
+
+    assert.deepEqual(calls.tracks, ["chat"]);
+    assert.equal(chat.getAttribute("aria-pressed"), "false", "the parent owns the state");
   });
 });
 

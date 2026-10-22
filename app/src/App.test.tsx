@@ -1450,14 +1450,14 @@ describe("a chat-only provider is offered in Chat mode only", () => {
   };
 
   /**
-   * Press the track toggle.
+   * Press the track toggle in the top bar.
    *
    * Crossing tracks mints a fresh conversation in the other one, so this
    * needs a `conversations.create` answer the way a mode press needs a
    * `mode.set` one.
    */
   const pressTrack = async (c: HTMLElement, label: string) => {
-    const toggle = all(c, '.mode-group[aria-label="Track"] .mode').find(
+    const toggle = all(c, '.topbar-modes[aria-label="Track"] .topbar-mode').find(
       (b) => (b.textContent ?? "").trim() === label,
     );
     assert.ok(toggle, `there is no "${label}" track toggle`);
@@ -1729,7 +1729,7 @@ describe("Code mode takes over the window", () => {
     await wait(40);
 
     assert.deepEqual(
-      all(container, '.helper .mode-group[aria-label="Track"] .mode').map(
+      all(container, '.topbar-modes[aria-label="Track"] .topbar-mode').map(
         (pill) => (pill.textContent ?? "").trim(),
       ),
       ["Chat", "Build"],
@@ -1759,7 +1759,7 @@ describe("Code mode takes over the window", () => {
     await click(modeButton(container, "Code"));
     await wait(40);
 
-    const toggle = all(container, '.helper .mode-group[aria-label="Track"] .mode').find(
+    const toggle = all(container, '.topbar-modes[aria-label="Track"] .topbar-mode').find(
       (b) => (b.textContent ?? "").trim() === "Chat",
     )!;
     await click(toggle);

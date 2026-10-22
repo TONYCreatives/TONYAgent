@@ -2399,6 +2399,30 @@ export function App({
    */
   const codeMode = mainMode === "code";
   const trajectoryMode = mainMode === "trajectory";
+  const settingsMode = mainMode === "settings";
+
+  /*
+   * The pills the composer may draw: the track's share of the core's list.
+   *
+   * Chat is not one pill among five -- it is the other kind of conversation,
+   * so a chat-track conversation draws Chat alone and a build-track one draws
+   * the four working modes. Filtered here rather than in the composer, which
+   * stays dumb about tracks the way the TopBar stays dumb about models. A
+   * filter that matched nothing draws everything: a composer with no pills is
+   * a composer that cannot switch.
+   */
+  const trackModes = modes.filter((m) =>
+    track === "chat" ? m.name === "chat" : m.name !== "chat",
+  );
+  const composerModes = trackModes.length > 0 ? trackModes : modes;
+  // Labels for the top-bar toggle, from the core's own list -- never written
+  // out here, for the reason `modes` gives at boot.
+  const chatLabel = modes.find((m) => m.name === "chat")?.label ?? "Chat";
+  const buildLabel = modes.find((m) => m.name === "build")?.label ?? "Build";
+  // The toggle lives where conversations are opened -- agent and code, which
+  // share the one conversation -- and not in trajectory or settings, where
+  // minting a chat would happen behind the page.
+  const trackChange = trajectoryMode || settingsMode ? undefined : switchTrack;
 
   /**
    * Settings, which is a *page* rather than a pane.
@@ -2412,9 +2436,8 @@ export function App({
    * A mode and not a flag, for the reason Code mode is one: this decides what
    * the *shell* renders. The rail, the conversation overlay and the tab strip
    * are all absent from it, and `--rail-w` of column 1 goes with them -- see
-   * `.app[data-mode="settings"]`.
+   * `.app[data-mode="settings"]`. Declared with the other view flags above.
    */
-  const settingsMode = mainMode === "settings";
 
   /**
    * The conversation: the transcript, anything the window has to say about it,
@@ -2455,10 +2478,8 @@ export function App({
         inputRef={composerRef}
         busy={state.busy}
         disabled={!connected}
-        modes={modes}
+        modes={composerModes}
         mode={mode}
-        track={track}
-        onTrackChange={switchTrack}
         skills={skills}
         onSkillsNeeded={loadSkills}
         onModeChange={changeMode}
@@ -2503,6 +2524,10 @@ export function App({
         }
         mode={mainMode}
         canCode={project !== ""}
+        track={track}
+        onTrackChange={trackChange}
+        chatLabel={chatLabel}
+        buildLabel={buildLabel}
         onModeChange={(next) => {
           setMainMode(next);
         }}

@@ -149,6 +149,24 @@ interface Props {
   onModeChange?: (mode: "agent" | "code" | "trajectory") => void;
   /** True when a project is open, so the code half has something to show. */
   canCode?: boolean;
+  /**
+   * Which track the open conversation belongs to: "chat" or "build".
+   *
+   * Beside the view switch because it is the same kind of choice -- "which
+   * conversation is this" asked before "what am I looking at". Absent (no
+   * `onTrackChange`) in views with no conversation in front -- trajectory,
+   * settings -- where minting a chat would happen behind the page.
+   */
+  track?: string;
+  /**
+   * Start a fresh conversation in the other track. A mint, not a switch, so
+   * nothing is cleared and nothing needs confirming -- see the composer's
+   * pills for why the two are different acts.
+   */
+  onTrackChange?: (track: string) => void;
+  /** Labels for the toggle, from the core's mode list rather than written out. */
+  chatLabel?: string;
+  buildLabel?: string;
 }
 
 export function TopBar({
@@ -164,6 +182,10 @@ export function TopBar({
   mode = "agent",
   onModeChange,
   canCode = true,
+  track = "build",
+  onTrackChange,
+  chatLabel = "Chat",
+  buildLabel = "Build",
 }: Props) {
   /** The tab whose name is being typed, and what has been typed so far. */
   const [editing, setEditing] = useState<string | null>(null);
@@ -413,6 +435,37 @@ export function TopBar({
         </div>
       )}
       <div className={`topbar-spacer ${DRAG_REGION_CLASS}`} />
+      {/*
+        The track toggle: which kind of conversation this is.
+
+        The same segmented-pill language as the view switch beside it, because
+        it is the same kind of choice -- one of two things in front -- and the
+        bar's own 8px gap is what keeps the two groups from reading as one.
+        ChatGPT puts this toggle at the top from the start, and so does this:
+        the kind of conversation is decided where conversations are opened,
+        not buried in the composer's row of per-turn controls.
+      */}
+      {onTrackChange && (
+        <div className="topbar-modes" role="group" aria-label="Track">
+          {(
+            [
+              { name: "chat", label: chatLabel, hint: "A conversation and nothing else. Starts a fresh chat." },
+              { name: "build", label: buildLabel, hint: "Act on the project. Starts a fresh build chat." },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.name}
+              type="button"
+              className={`topbar-mode${t.name === track ? " is-active" : ""}`}
+              aria-pressed={t.name === track}
+              title={t.hint}
+              onClick={() => onTrackChange(t.name)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      )}
       {/*
         The mode switch. A segmented set rather than one toggle, because every
         state is nameable and a button labelled with the state you are *not* in

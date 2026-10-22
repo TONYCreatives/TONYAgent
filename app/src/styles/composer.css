@@ -133,22 +133,6 @@
   background: var(--input);
 }
 
-/*
- * Between the track group and the mode group: one rule, not a gap.
- *
- * Two pill groups side by side with only 6px of row gap between them read as
- * one group of seven pills, and the track -- the kind of conversation -- would
- * scan as just another mode. The divider is what says these are two choices:
- * which conversation, then what the turn may do. `align-self: stretch` so it
- * spans the groups' height rather than floating between them.
- */
-.mode-divider {
-  align-self: stretch;
-  width: 1px;
-  margin: 2px 0;
-  background: var(--border-soft);
-}
-
 .mode {
   height: 26px;
   padding: 0 12px;

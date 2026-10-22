@@ -234,37 +234,26 @@ describe("the field the window can put the caret in", () => {
   });
 });
 
-// --- the track toggle ---------------------------------------------------------
+// --- the track toggle lives in the top bar ------------------------------------
 /*
- * Chat is not one pill among five: it is the other kind of conversation, so
- * the composer draws a Track group (which conversation) beside the Mode group
- * (what a turn may do). The pills shown follow the track -- Chat alone, or
- * the working modes -- and pressing the other track mints rather than
- * switching, so these assert the callback fires rather than a request.
+ * Chat is not one pill among five, so the toggle sits in the top bar beside
+ * the view switch rather than in this row -- and the pills here are simply
+ * the track's share, filtered by the window before they arrive. These used
+ * to mount the toggle here; now they pin that this row draws exactly what it
+ * is given, because a composer that filtered on its own would be a second
+ * place the track is decided.
  */
-describe("the track toggle", () => {
-  const TRACK_MODES: ModeInfo[] = [
-    { name: "chat", label: "Chat", description: "Talk.", writes: false },
-    { name: "build", label: "Build", description: "Act.", writes: true },
-    { name: "plan", label: "Plan", description: "Read only.", writes: false },
-  ];
-
-  async function tracked(props: {
-    track?: string;
-    onTrackChange?: (track: string) => void;
-  }) {
-    const changes: string[] = [];
+describe("the mode pills it is given", () => {
+  test("it draws every pill it receives, and only those", async () => {
     const container = await render(
       <Composer
         busy={false}
         disabled={false}
-        modes={TRACK_MODES}
+        modes={[
+          { name: "build", label: "Build", description: "Act.", writes: true },
+          { name: "plan", label: "Plan", description: "Read only.", writes: false },
+        ]}
         mode="build"
-        track={props.track}
-        onTrackChange={(t) => {
-          changes.push(t);
-          props.onTrackChange?.(t);
-        }}
         onModeChange={() => {}}
         onSend={() => {}}
         onCancel={() => {}}
@@ -275,58 +264,16 @@ describe("the track toggle", () => {
         onBudgetChange={() => {}}
       />,
     );
-    return { container, changes };
-  }
-
-  const group = (container: HTMLElement, label: string) =>
-    all(container, `.mode-group[aria-label="${label}"] .mode`);
-
-  test("both tracks are offered, with the current one pressed", async () => {
-    const { container } = await tracked({ track: "build" });
     assert.deepEqual(
-      group(container, "Track").map((b) => (b.textContent ?? "").trim()),
-      ["Chat", "Build"],
+      all(container, '.mode-group[aria-label="Mode"] .mode').map((b) =>
+        (b.textContent ?? "").trim(),
+      ),
+      ["Build", "Plan"],
     );
     assert.equal(
-      group(container, "Track").find((b) => b.classList.contains("is-active"))?.textContent,
-      "Build",
-    );
-  });
-
-  test("a chat-track conversation shows only the Chat pill", async () => {
-    const { container } = await tracked({ track: "chat" });
-    assert.deepEqual(
-      group(container, "Mode").map((b) => (b.textContent ?? "").trim()),
-      ["Chat"],
-    );
-  });
-
-  test("a build-track conversation hides the Chat pill", async () => {
-    const { container } = await tracked({ track: "build" });
-    assert.deepEqual(
-      group(container, "Mode").map((b) => (b.textContent ?? "").trim()),
-      ["Build", "Plan"],
-    );
-  });
-
-  test("pressing the other track reports it rather than requesting it", async () => {
-    // A mint, not a switch: the window starts a fresh conversation, so the
-    // composer fires the callback and the request is the window's to make.
-    const { container, changes } = await tracked({ track: "build" });
-    await click(
-      group(container, "Track").find((b) => (b.textContent ?? "").trim() === "Chat")!,
-    );
-    assert.deepEqual(changes, ["chat"]);
-  });
-
-  test("without a track the working pills still draw", async () => {
-    // The default is "build", so a harness that mounts the composer to drive
-    // its send button -- and the window before it ever hears of tracks --
-    // draws the modes it always drew rather than nothing.
-    const { container } = await tracked({});
-    assert.deepEqual(
-      group(container, "Mode").map((b) => (b.textContent ?? "").trim()),
-      ["Build", "Plan"],
+      all(container, '.mode-group[aria-label="Track"] .mode').length,
+      0,
+      "the composer grew its own track toggle",
     );
   });
 });
