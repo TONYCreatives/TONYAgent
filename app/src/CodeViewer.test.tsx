@@ -371,6 +371,30 @@ describe("documents with a rendered view", () => {
     assert.match(body(container).textContent ?? "", /# Title/);
   });
 
+  test("a markdown table renders as a grid, honouring alignment", async () => {
+    // Parser and renderer together, through the same preview the markdown
+    // test above opens on: a table as a paragraph of pipes is the failure.
+    const container = await render(
+      <CodeViewer
+        {...props({
+          path: "README.md",
+          file: {
+            kind: "text",
+            path: "README.md",
+            content: "| name | count |\n| ---- | ----: |\n| widget | 3 |",
+            total_lines: 3,
+            language: "markdown",
+            size: 48,
+          },
+        })}
+      />,
+    );
+    assert.deepEqual(texts(container, ".md-table th"), ["name", "count"]);
+    assert.deepEqual(texts(container, ".md-table tbody td"), ["widget", "3"]);
+    const cells = all(container, ".md-table th");
+    assert.equal((cells[1] as HTMLElement).style.textAlign, "right");
+  });
+
   test("a csv can be shown as a table", async () => {
     const container = await render(<CodeViewer {...props({ path: "data.csv", file: CSV })} />);
     assert.deepEqual(texts(container, ".code-viewswitch button"), ["Source", "Table"]);

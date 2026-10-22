@@ -104,6 +104,39 @@ function BlockView({ block }: { block: Block }) {
           ))}
         </blockquote>
       );
+    case "table": {
+      // Alignment rides `style` rather than a class per side: three classes
+      // for three values is machinery around one CSS property, and the value
+      // comes from the document rather than the palette.
+      const alignFor = (side: string): "left" | "center" | "right" =>
+        side === "center" ? "center" : side === "right" ? "right" : "left";
+      return (
+        <div className="md-table-wrap">
+          <table className="md-table">
+            <thead>
+              <tr>
+                {block.head.map((cell, index) => (
+                  <th key={index} style={{ textAlign: alignFor(block.align[index]) }}>
+                    <Inlines nodes={cell} />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {block.rows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {row.map((cell, cellIndex) => (
+                    <td key={cellIndex} style={{ textAlign: alignFor(block.align[cellIndex]) }}>
+                      <Inlines nodes={cell} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
     case "hr":
       return <hr className="md-hr" />;
   }

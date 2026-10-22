@@ -16,6 +16,12 @@
  * here; a "complete" one is a project of its own and the failure mode of a
  * missing feature is plain text, which is what rendered before this existed.
  *
+ * GFM tables are the one extension beyond that subset, because model output
+ * is full of them (option matrices, API shapes, plan steps) and a table as
+ * a paragraph of pipes is the unreadable case. Nothing else from GFM is
+ * here: no task lists, no autolinks, no strikethrough beyond the `~~` the
+ * inline parser already knew.
+ *
  * The parser is pure. It never throws on malformed input and treats a partial
  * stream (an unterminated code fence while tokens are still arriving) as valid
  * input whose fence simply runs to the end.
@@ -37,7 +43,11 @@ export type Block =
   | { kind: "code"; lang: string; text: string }
   | { kind: "list"; ordered: boolean; items: Inline[][] }
   | { kind: "quote"; blocks: Block[] }
+  | { kind: "table"; align: TableAlign[]; head: Inline[][]; rows: Inline[][][] }
   | { kind: "hr" };
+
+/** One column's alignment, from its delimiter cell's colons. */
+export type TableAlign = "left" | "center" | "right";
 
 // --- block-level patterns --------------------------------------------------
 
@@ -58,6 +68,107 @@ function startsBlock(line: string): boolean {
     UL_RE.test(line) ||
     OL_RE.test(line)
   );
+}
+
+/**
+ * Split a table row on its pipes.
+ *
+ * A backslash-escaped pipe is literal cell text, not a boundary -- without
+ * this, a cell holding `a\\|b` would split the row in two. The empty fringes
+ * a leading or trailing pipe leaves are dropped, so `| a | b |` is two cells
+ * and so is `a | b`; each cell is trimmed, because the spaces around pipes
+ * are padding rather than content.
+ */
+function splitCells(line: string): string[] {
+  const cells: string[] = [];
+  let current = "";
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === "\\" && line[i + 1] === "|") {
+      current += "|";
+      i++;
+      continue;
+    }
+    if (ch === "|") {
+      cells.push(current);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  cells.push(current);
+  if (cells.length > 0 && cells[0].trim() === "") cells.shift();
+  if (cells.length > 0 && cells[cells.length - 1].trim() === "") cells.pop();
+  return cells.map((cell) => cell.trim());
+}
+
+/**
+ * A delimiter row's per-column alignment, or null when it is not one.
+ *
+ * A delimiter cell is dashes with optional alignment colons (`---`, `:--`,
+ * `--:`, `:-:`). Anything else -- prose, a second header -- is not a table,
+ * which is what keeps `a | b` lines as paragraphs: without a delimiter row
+ * directly beneath, pipes are just text.
+ */
+function parseDelimiter(line: string): TableAlign[] | null {
+  const cells = splitCells(line);
+  if (cells.length === 0) return null;
+  const aligns: TableAlign[] = [];
+  for (const cell of cells) {
+    const m = /^(:?)-+(:?)$/.exec(cell);
+    if (!m) return null;
+    aligns.push(m[1] && m[2] ? "center" : m[2] ? "right" : "left");
+  }
+  return aligns;
+}
+
+interface TableMatch {
+  align: TableAlign[];
+  head: Inline[][];
+  rows: Inline[][][];
+  /** The first line after the table. */
+  next: number;
+}
+
+/**
+ * A GFM table starting at `lines[i]`, or null when there is none.
+ *
+ * Three conditions, each doing a job: the next line parses as a delimiter
+ * row (so `a | b` prose never becomes a table), the header holds the same
+ * number of cells (a ragged pair is two paragraphs, not a table with a
+ * hole), and at least one of the two lines carries a pipe (so `foo` over
+ * `---` stays the paragraph-and-rule it always was, rather than a
+ * one-column table nobody wrote).
+ */
+function matchTable(lines: string[], i: number): TableMatch | null {
+  const delimiter = lines[i + 1];
+  if (delimiter === undefined) return null;
+  const aligns = parseDelimiter(delimiter);
+  if (!aligns) return null;
+  const head = splitCells(lines[i]);
+  if (head.length !== aligns.length) return null;
+  if (!lines[i].includes("|") && !delimiter.includes("|")) return null;
+
+  const rows: Inline[][][] = [];
+  let next = i + 2;
+  while (next < lines.length) {
+    const line = lines[next];
+    // A blank line ends the table; so does anything another block owns. A
+    // body row without a pipe ends it too -- it is prose under the table,
+    // and swallowing it would merge two blocks into one grid.
+    if (line.trim() === "" || startsBlock(line) || !line.includes("|")) break;
+    const cells = splitCells(line);
+    while (cells.length < aligns.length) cells.push("");
+    rows.push(cells.slice(0, aligns.length).map((cell) => parseInline(cell)));
+    next++;
+  }
+
+  return {
+    align: aligns,
+    head: head.map((cell) => parseInline(cell)),
+    rows,
+    next,
+  };
 }
 
 // --- inline-level parsing --------------------------------------------------
@@ -280,9 +391,24 @@ function parseBlocks(lines: string[]): Block[] {
       continue;
     }
 
+    const table = matchTable(lines, i);
+    if (table) {
+      blocks.push({ kind: "table", align: table.align, head: table.head, rows: table.rows });
+      i = table.next;
+      continue;
+    }
+
     // Paragraph: consecutive plain lines until a blank or another block start.
+    // A table header is not in `startsBlock` (it needs its delimiter to say
+    // what it is), so the loop also stops where a table starts -- otherwise
+    // the header line would be swallowed as prose before the table is seen.
     const paragraph: string[] = [];
-    while (i < lines.length && lines[i].trim() !== "" && !startsBlock(lines[i])) {
+    while (
+      i < lines.length &&
+      lines[i].trim() !== "" &&
+      !startsBlock(lines[i]) &&
+      !matchTable(lines, i)
+    ) {
       paragraph.push(lines[i]);
       i += 1;
     }

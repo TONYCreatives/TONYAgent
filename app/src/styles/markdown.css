@@ -75,6 +75,41 @@
   border-top: 1px solid var(--border-soft);
 }
 
+/*
+ * GFM tables. The same quiet grid as the viewer's CSV table: header row in
+ * chrome, body in dim, one soft border -- a table is a table whichever
+ * parser built it, and two grids that disagree would be two designs for one
+ * thing. The wrap scrolls sideways rather than squeezing: a five-column
+ * option matrix that wrapped its cells would be unreadable either way, and
+ * a scroll keeps the columns as columns.
+ */
+.md-table-wrap {
+  margin: 0 0 10px;
+  overflow-x: auto;
+}
+
+.md-table {
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.md-table th,
+.md-table td {
+  padding: 4px 10px;
+  border: 1px solid var(--border-soft);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.md-table th {
+  background: var(--chrome);
+  color: var(--fg);
+}
+
+.md-table td {
+  color: var(--fg-dim);
+}
+
 /* Inline code: a quiet well, not a syntax-highlighted block. */
 .md-code {
   padding: 1px 5px;

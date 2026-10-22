@@ -174,3 +174,87 @@ test("parsing is pure: the same input yields the same tree twice", () => {
   const source = "# Title\n\n- a\n- b\n\n> quote";
   assert.deepEqual(parseMarkdown(source), parseMarkdown(source));
 });
+
+// --- GFM tables ---------------------------------------------------------------
+/*
+ * The one GFM extension the parser knows, because model output is full of
+ * tables and a table as a paragraph of pipes is the unreadable case. Each
+ * test below pins one half of the contract: real tables parse, and
+ * almost-tables -- prose with pipes, a setext-shaped pair, a ragged header --
+ * stay exactly what they were before tables existed.
+ */
+function tableAt(blocks: Block[], index = 0) {
+  const block = blocks[index];
+  assert.equal(block.kind, "table");
+  return block;
+}
+
+test("a header, a delimiter and rows parse as a table", () => {
+  const blocks = parseMarkdown("| name | count |\n| ---- | ----- |\n| widget | 3 |\n| gadget | **5** |");
+  assert.equal(blocks.length, 1);
+  const table = tableAt(blocks);
+  assert.deepEqual(table.align, ["left", "left"]);
+  assert.equal(textOf(table.head[0]), "name");
+  assert.equal(table.rows.length, 2);
+  assert.equal(textOf(table.rows[1][1]), "5");
+});
+
+test("leading and trailing pipes are optional padding", () => {
+  const blocks = parseMarkdown("name | count\n--- | ---\nwidget | 3");
+  assert.equal(blocks.length, 1);
+  const table = tableAt(blocks);
+  assert.equal(textOf(table.head[1]), "count");
+  assert.equal(textOf(table.rows[0][0]), "widget");
+});
+
+test("delimiter colons align the column", () => {
+  const blocks = parseMarkdown("| a | b | c |\n| :-- | :-: | --: |\n| 1 | 2 | 3 |");
+  assert.deepEqual(tableAt(blocks).align, ["left", "center", "right"]);
+});
+
+test("pipes without a delimiter row stay a paragraph", () => {
+  // The common case: prose mentioning `a | b` must not become a table.
+  const blocks = parseMarkdown("use a | b for this\n\nnext");
+  assert.equal(blocks[0].kind, "paragraph");
+  assert.match(paragraphText(blocks), /a \| b/);
+});
+
+test("a word over dashes stays a paragraph and a rule, not a table", () => {
+  // Setext-shaped, and single-column tables need a pipe somewhere: without
+  // that rule this pair would turn into a one-column table nobody wrote.
+  const blocks = parseMarkdown("foo\n---");
+  assert.equal(blocks[0].kind, "paragraph");
+  assert.equal(blocks[1].kind, "hr");
+});
+
+test("a header wider than its delimiter is not a table", () => {
+  const blocks = parseMarkdown("| a | b |\n| --- |\n| 1 | 2 |");
+  assert.equal(blocks[0].kind, "paragraph");
+});
+
+test("an escaped pipe is cell text, not a boundary", () => {
+  const blocks = parseMarkdown("| a |\n| --- |\n| x \\| y |");
+  assert.equal(textOf(tableAt(blocks).rows[0][0]), "x | y");
+});
+
+test("short rows pad and long rows truncate to the header", () => {
+  const blocks = parseMarkdown("| a | b |\n| --- | --- |\n| 1 |\n| 2 | 3 | 4 |");
+  const table = tableAt(blocks);
+  assert.equal(table.rows[0].length, 2);
+  assert.equal(textOf(table.rows[0][1]), "");
+  assert.equal(table.rows[1].length, 2);
+  assert.equal(textOf(table.rows[1][1]), "3");
+});
+
+test("a table ends at a blank line and prose follows it", () => {
+  const blocks = parseMarkdown("| a |\n| --- |\n| 1 |\n\nafter");
+  assert.equal(blocks.length, 2);
+  assert.equal(blocks[0].kind, "table");
+  assert.equal(blocks[1].kind, "paragraph");
+});
+
+test("a table never throws on ragged input", () => {
+  for (const input of ["|\n| ---", "| a |\n|", "| a |\n| --- |\n|", "|||"]) {
+    assert.doesNotThrow(() => parseMarkdown(input));
+  }
+});
