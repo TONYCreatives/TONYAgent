@@ -556,26 +556,26 @@ describe("the thinking menu is placed where it opens", () => {
     assert.match(menu.getAttribute("style") ?? "", /max-height/);
   });
 });
-// --- the detail column spells out every rung ---------------------------------
-describe("the detail column spells out every rung", () => {
+// --- the detail column spells out the clicked rung -----------------------------
+describe("the detail column spells out the clicked rung", () => {
   async function renderDetail(value = "medium") {
     return render(<PermissionDetail list={LADDER} value={value} />);
   }
+  const factsOf = (container: HTMLElement) =>
+    all(container, ".perm-detail-facts dd").map((e) => e.textContent ?? "");
 
-  test("all four levels are shown with their descriptions", async () => {
-    // Static, not following hover: a pane that rewrote itself under the
-    // cursor would hide the rung being compared against.
-    const container = await renderDetail();
+  test("only the selected level is shown, with its description", async () => {
+    // Clicking a rung switches to it, so the value *is* the clicked rung --
+    // and the pane names only it rather than all four.
+    const container = await renderDetail("medium");
     assert.deepEqual(texts(container, ".perm-detail-card .permchoice-name"), [
-      "Low",
       "Medium",
-      "High",
-      "Full",
     ]);
     assert.match(container.textContent ?? "", /Shell commands are refused/);
+    assert.doesNotMatch(container.textContent ?? "", /Read, search and browse/);
   });
 
-  test("the level in force is marked, and only it", async () => {
+  test("the card shown is marked as the level in force", async () => {
     const container = await renderDetail("high");
     const marked = all(container, ".perm-detail-card.is-current");
     assert.equal(marked.length, 1);
@@ -583,32 +583,37 @@ describe("the detail column spells out every rung", () => {
     assert.match(marked[0]!.textContent ?? "", /in force/);
   });
 
-  test("each card states the facts the wire reports, not the prose", async () => {
+  test("the card states the facts the wire reports, not the prose", async () => {
     // The booleans, in words: shell scope, confirmation, and where commands
     // run. A card that echoed only the description would be a second copy
     // of the ladder row rather than its terms.
-    const container = await renderDetail();
-    const cards = all(container, ".perm-detail-card");
-    const facts = (card: Element) =>
-      all(card as HTMLElement, ".perm-detail-facts dd").map((e) => e.textContent ?? "");
-    assert.deepEqual(facts(cards[0]!), [
+    assert.deepEqual(factsOf(await renderDetail("low")), [
       "Refused entirely",
       "Asks first",
       "Nowhere — no command runs at this level",
     ]);
-    assert.deepEqual(facts(cards[3]!), [
+    assert.deepEqual(factsOf(await renderDetail("full")), [
       "Any program, no list",
       "Runs without asking",
       "On this computer, outside the sandbox",
     ]);
   });
 
-  test("every rung but the top names what stepping up buys", async () => {
-    const container = await renderDetail();
+  test("a middle rung names both neighbours' steps", async () => {
+    const container = await renderDetail("medium");
     const gains = all(container, ".perm-detail-card .permchoice-gain");
-    assert.equal(gains.length, 3);
-    assert.match(gains[0]!.textContent ?? "", /Steps up to Medium/);
-    assert.match(gains[2]!.textContent ?? "", /Steps up to Full/);
+    assert.equal(gains.length, 2);
+    assert.match(gains[0]!.textContent ?? "", /Steps up from Low/);
+    assert.match(gains[1]!.textContent ?? "", /Steps up to High/);
+  });
+
+  test("the ends name only the step they have", async () => {
+    const low = all(await renderDetail("low"), ".perm-detail-card .permchoice-gain");
+    assert.equal(low.length, 1);
+    assert.match(low[0]!.textContent ?? "", /Steps up to Medium/);
+    const full = all(await renderDetail("full"), ".perm-detail-card .permchoice-gain");
+    assert.equal(full.length, 1);
+    assert.match(full[0]!.textContent ?? "", /Steps up from High/);
   });
 
   test("nothing renders before the core has answered", async () => {

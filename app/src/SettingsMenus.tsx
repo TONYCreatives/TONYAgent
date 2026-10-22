@@ -231,18 +231,19 @@ export function PermissionMenu({
 }
 
 /**
- * Every rung, spelled out: the detail column beside the ladder.
+ * The selected rung, spelled out: the detail column beside the ladder.
  *
  * The ladder's rows carry one clause each, which is what makes them
  * comparable -- and what leaves the page's right half blank. This is the
- * other half of that bargain: the full terms per level, drawn from the same
- * `permission.list` facts the rows' markers come from, so the two can never
- * disagree. Static rather than following hover or focus: a pane that rewrote
- * itself under the cursor would hide the rung being compared against, and
- * these four are short enough to show all at once.
+ * other half of that bargain: the full terms of the rung that was clicked,
+ * drawn from the same `permission.list` facts the rows' markers come from,
+ * so the two can never disagree. It follows the confirmed value rather than
+ * hover or focus: clicking a rung *switches* to it, so the value is the
+ * clicked rung, and a pane previewing anything else would name terms that
+ * are not in force.
  *
  * Rendered nothing when the core has not answered, for the same reason the
- * menu renders nothing: four cards naming terms nobody has been told are
+ * menu renders nothing: a card naming terms nobody has been told are
  * decoration, not detail.
  */
 export function PermissionDetail({
@@ -254,6 +255,11 @@ export function PermissionDetail({
 }) {
   const levels = list?.permissions ?? [];
   if (!list || levels.length === 0) return null;
+  const index = levels.findIndex((level) => level.name === value);
+  const at = index >= 0 ? index : 0;
+  const level = levels[at];
+  const prev = at > 0 ? levels[at - 1] : undefined;
+  const next = levels[at + 1];
 
   const facts = (level: PermissionInfo): [string, string][] => [
     [
@@ -279,50 +285,49 @@ export function PermissionDetail({
   ];
 
   return (
-    <div className="perm-detail" role="complementary" aria-label="Permission levels in detail">
-      <h3>Levels in detail</h3>
-      {levels.map((level, i) => {
-        const next = levels[i + 1];
-        return (
-          <article
-            key={level.name}
-            className={`perm-detail-card${level.name === value ? " is-current" : ""}`}
-          >
-            <div className="perm-detail-head">
-              <span className="permchoice-name">{level.label}</span>
-              {level.name === value && (
-                <span className="permchoice-warn" title="The level currently in force">
-                  in force
-                </span>
-              )}
-              {(level.runs_on_host || level.runs_any_command || level.skips_confirmation) && (
-                <span className="perm-detail-markers">
-                  {[level.runs_on_host ? "on this computer" : null,
-                    level.runs_any_command ? "any command" : null,
-                    level.skips_confirmation ? "no prompts" : null,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </span>
-              )}
+    <div className="perm-detail" role="complementary" aria-label="Permission level in detail">
+      <h3>Level in detail</h3>
+      <article
+        className={`perm-detail-card${index >= 0 ? " is-current" : ""}`}
+      >
+        <div className="perm-detail-head">
+          <span className="permchoice-name">{level.label}</span>
+          {index >= 0 && (
+            <span className="permchoice-warn" title="The level currently in force">
+              in force
+            </span>
+          )}
+          {(level.runs_on_host || level.runs_any_command || level.skips_confirmation) && (
+            <span className="perm-detail-markers">
+              {[level.runs_on_host ? "on this computer" : null,
+                level.runs_any_command ? "any command" : null,
+                level.skips_confirmation ? "no prompts" : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
+          )}
+        </div>
+        <p className="permchoice-desc">{level.description}</p>
+        <dl className="perm-detail-facts">
+          {facts(level).map(([term, detail]) => (
+            <div key={term}>
+              <dt>{term}</dt>
+              <dd>{detail}</dd>
             </div>
-            <p className="permchoice-desc">{level.description}</p>
-            <dl className="perm-detail-facts">
-              {facts(level).map(([term, detail]) => (
-                <div key={term}>
-                  <dt>{term}</dt>
-                  <dd>{detail}</dd>
-                </div>
-              ))}
-            </dl>
-            {next && (
-              <p className="permchoice-gain">
-                Steps up to {next.label}: {permissionGain(level, next) ?? next.description}
-              </p>
-            )}
-          </article>
-        );
-      })}
+          ))}
+        </dl>
+        {prev && (
+          <p className="permchoice-gain">
+            Steps up from {prev.label}: {permissionGain(prev, level) ?? level.description}
+          </p>
+        )}
+        {next && (
+          <p className="permchoice-gain">
+            Steps up to {next.label}: {permissionGain(level, next) ?? next.description}
+          </p>
+        )}
+      </article>
     </div>
   );
 }
