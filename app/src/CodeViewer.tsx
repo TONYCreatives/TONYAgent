@@ -125,6 +125,25 @@ function splitPath(path: string): [string, string] {
   return cut === -1 ? ["", path] : [path.slice(0, cut + 1), path.slice(cut + 1)];
 }
 
+/** A PDF through a blob URL, because the webview blocks the plugin on data URLs. */
+function PdfFrame({ data, mime, path }: { data: string; mime: string; path: string }) {
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    // Decoded here rather than handed over as base64: the frame's `src` is
+    // an object URL over the bytes, which the native viewer draws, where a
+    // `data:` URL draws the block page. Revoked when the file changes, so
+    // opening ten PDFs does not keep ten documents in memory.
+    const bin = atob(data);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const objectUrl = URL.createObjectURL(new Blob([bytes.buffer], { type: mime }));
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [data, mime]);
+  if (!url) return <div className="code-notice">Reading {path}…</div>;
+  return <iframe className="code-pdf-frame" src={url} title={path} />;
+}
+
 /** A byte count a person can read. */
 function readableSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -374,21 +393,16 @@ export function CodeViewer({
     if (file.kind === "pdf") {
       /*
        * The native frame draws the PDF itself -- paging, zoom, find -- so
-       * this is a frame and a fallback, not a renderer. The spike confirmed
-       * the webview draws a `data:application/pdf` URL; where it cannot,
-       * the button below opens the OS default app instead of a blank frame.
+       * this is a frame and a fallback, not a renderer. The bytes ride a
+       * blob URL: a `data:` URL draws the webview's block page instead
+       * (probed), while a blob draws the document (probed). Where the frame
+       * still cannot draw, the button below opens the OS default app.
        */
       return (
         <div className="code-pdf">
-          <iframe
-            className="code-pdf-frame"
-            src={`data:${file.mime};base64,${file.data}`}
-            title={file.path}
-          />
+          <PdfFrame data={file.data} mime={file.mime} path={file.path} />
           <div className="code-pdf-bar">
-            <span className="code-hint">
-              {readableSize(file.size)} · drawn by the native viewer
-            </span>
+            <span className="code-hint">drawn by the native viewer</span>
             <button
               type="button"
               className="btn btn-quiet"

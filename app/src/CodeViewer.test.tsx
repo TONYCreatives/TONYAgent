@@ -276,39 +276,93 @@ describe("a PDF draws in the native frame", () => {
     size: 8192,
   } as const;
 
-  test("the frame carries the bytes, and the chips name it", async () => {
-    const container = await render(
-      <CodeViewer {...props({ path: "spec.pdf", file: { ...PDF } })} />,
-    );
-    const frame = one(container, ".code-pdf-frame")! as HTMLIFrameElement;
-    assert.equal(
-      frame.getAttribute("src"),
-      "data:application/pdf;base64,JVBERi0xLjQK",
-    );
-    assert.equal(frame.getAttribute("title"), "spec.pdf");
-    assert.deepEqual(texts(container, ".code-chip"), ["pdf", "🔒 read-only"]);
-    assert.equal(field(container), null);
+  /*
+   * jsdom has no object-URL store, so the frame's blob URL is stubbed: what
+   * matters here is that the bytes the core sent are what the URL is built
+   * from, and that the frame carries it. The decoding is asserted by
+   * matching the blob's bytes, not its opaque URL.
+   */
+  async function pdfFrameURL(data = PDF.data, mime = PDF.mime): Promise<{ bytes: Uint8Array; type: string }> {
+    let captured: Blob | null = null;
+    const realCreate = URL.createObjectURL;
+    const realRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = ((blob: Blob) => {
+      captured = blob;
+      return "blob:pdf";
+    }) as unknown as typeof URL.createObjectURL;
+    URL.revokeObjectURL = (() => {}) as typeof URL.revokeObjectURL;
+    try {
+      const container = await render(
+        <CodeViewer {...props({ path: "spec.pdf", file: { ...PDF, data, mime } })} />,
+      );
+      const frame = one(container, ".code-pdf-frame")! as HTMLIFrameElement;
+      // The URL is set from an effect, so wait for it rather than assuming
+      // the first paint already ran one.
+      for (let i = 0; i < 50 && frame.getAttribute("src") !== "blob:pdf"; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(frame.getAttribute("src"), "blob:pdf");
+      assert.equal(frame.getAttribute("title"), "spec.pdf");
+      assert.ok(captured, "no blob was built from the reply's bytes");
+      const buffer = await (captured as Blob).arrayBuffer();
+      return { bytes: new Uint8Array(buffer), type: (captured as Blob).type };
+    } finally {
+      URL.createObjectURL = realCreate;
+      URL.revokeObjectURL = realRevoke;
+    }
+  }
+
+  test("the frame carries a blob built from the reply's bytes", async () => {
+    const { bytes, type } = await pdfFrameURL();
+    assert.equal(type, "application/pdf");
+    assert.equal(Buffer.from(bytes).toString("ascii"), "%PDF-1.4\n");
+  });
+
+  test("the chips name it, and there is no editable element", async () => {
+    const realCreate = URL.createObjectURL;
+    const realRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = (() => "blob:pdf") as typeof URL.createObjectURL;
+    URL.revokeObjectURL = (() => {}) as typeof URL.revokeObjectURL;
+    try {
+      const container = await render(
+        <CodeViewer {...props({ path: "spec.pdf", file: { ...PDF } })} />,
+      );
+      assert.deepEqual(texts(container, ".code-chip"), ["pdf", "🔒 read-only"]);
+      assert.equal(field(container), null);
+    } finally {
+      URL.createObjectURL = realCreate;
+      URL.revokeObjectURL = realRevoke;
+    }
   });
 
   test("the fallback names the file it would open", async () => {
     // Where the frame cannot draw, the OS default app can. Asserts the
     // path, for the reason the binary test gives.
     const opened: string[] = [];
-    const container = await render(
-      <CodeViewer
-        {...props({
-          path: "spec.pdf",
-          file: { ...PDF },
-          onOpenExternal: (path) => opened.push(path),
-        })}
-      />,
-    );
-    const button = all(container, ".code-pdf-bar button").find(
-      (b) => (b.textContent ?? "").trim() === "Open externally",
-    );
-    assert.ok(button, "the PDF bar has no Open externally button");
-    await click(button);
-    assert.deepEqual(opened, ["spec.pdf"]);
+    const realCreate = URL.createObjectURL;
+    const realRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = (() => "blob:pdf") as typeof URL.createObjectURL;
+    URL.revokeObjectURL = (() => {}) as typeof URL.revokeObjectURL;
+    try {
+      const container = await render(
+        <CodeViewer
+          {...props({
+            path: "spec.pdf",
+            file: { ...PDF },
+            onOpenExternal: (path) => opened.push(path),
+          })}
+        />,
+      );
+      const button = all(container, ".code-pdf-bar button").find(
+        (b) => (b.textContent ?? "").trim() === "Open externally",
+      );
+      assert.ok(button, "the PDF bar has no Open externally button");
+      await click(button);
+      assert.deepEqual(opened, ["spec.pdf"]);
+    } finally {
+      URL.createObjectURL = realCreate;
+      URL.revokeObjectURL = realRevoke;
+    }
   });
 });
 
