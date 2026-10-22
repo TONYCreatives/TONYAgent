@@ -312,6 +312,52 @@ describe("a PDF draws in the native frame", () => {
   });
 });
 
+describe("audio and video play in the native tags", () => {
+  test("an mp3 draws a player carrying the bytes", async () => {
+    const container = await render(
+      <CodeViewer
+        {...props({
+          path: "take.mp3",
+          file: {
+            kind: "media",
+            media: "audio",
+            path: "take.mp3",
+            mime: "audio/mpeg",
+            data: "SUQz",
+            size: 2048,
+          },
+        })}
+      />,
+    );
+    const player = one(container, ".code-media audio")! as HTMLAudioElement;
+    assert.equal(player.getAttribute("src"), "data:audio/mpeg;base64,SUQz");
+    assert.ok(player.hasAttribute("controls"), "a player with no controls plays nothing");
+    assert.deepEqual(texts(container, ".code-chip"), ["audio", "🔒 read-only"]);
+    assert.equal(field(container), null);
+  });
+
+  test("an mp4 draws a player, not an audio tag", async () => {
+    const container = await render(
+      <CodeViewer
+        {...props({
+          path: "clip.mp4",
+          file: {
+            kind: "media",
+            media: "video",
+            path: "clip.mp4",
+            mime: "video/mp4",
+            data: "AAAA",
+            size: 4096,
+          },
+        })}
+      />,
+    );
+    const player = one(container, ".code-media video")! as HTMLVideoElement;
+    assert.equal(player.getAttribute("src"), "data:video/mp4;base64,AAAA");
+    assert.deepEqual(texts(container, ".code-chip"), ["video", "🔒 read-only"]);
+  });
+});
+
 describe("documents with a rendered view", () => {
   test("markdown opens on its preview, with the source one press away", async () => {
     const container = await render(<CodeViewer {...props({ path: "README.md", file: MARKDOWN })} />);

@@ -1,8 +1,8 @@
 /**
  * The file viewer: code, pictures, documents, and the things a window cannot draw.
  *
- * **Four kinds, and the core decides which.** `files.read` answers with
- * `text`, `image`, `pdf` or `binary`, because the core has the bytes -- an image is
+ * **Five kinds, and the core decides which.** `files.read` answers with
+ * `text`, `image`, `pdf`, `media` or `binary`, because the core has the bytes -- an image is
  * an image because it decodes, a `.zip` is a file this window can name but
  * not draw, and only "that is not there" is an error. A pane that rendered
  * all three as text would show a megabyte of replacement characters for a
@@ -78,7 +78,17 @@ export interface PdfFile {
   size: number;
 }
 
-export type ViewerFile = TextFile | ImageFile | PdfFile | BinaryFile;
+export interface MediaFile {
+  kind: "media";
+  /** Which native tag plays it: "audio" or "video". */
+  media: string;
+  path: string;
+  mime: string;
+  data: string;
+  size: number;
+}
+
+export type ViewerFile = TextFile | ImageFile | PdfFile | MediaFile | BinaryFile;
 
 interface Props {
   path: string;
@@ -392,6 +402,33 @@ export function CodeViewer({
       );
     }
 
+    if (file.kind === "media") {
+      /*
+       * The native tags play it themselves, so this is a player, not a
+       * decoder: controls for free, and the bytes the core validated ride a
+       * data URL the webview is allowed to load.
+       */
+      return (
+        <div className="code-media">
+          {file.media === "video" ? (
+            <video
+              className="code-media-player"
+              controls
+              src={`data:${file.mime};base64,${file.data}`}
+              aria-label={file.path}
+            />
+          ) : (
+            <audio
+              className="code-media-player"
+              controls
+              src={`data:${file.mime};base64,${file.data}`}
+              aria-label={file.path}
+            />
+          )}
+        </div>
+      );
+    }
+
     if (file.kind === "binary") {
       return (
         <div className="code-notice">
@@ -475,6 +512,9 @@ export function CodeViewer({
     if (file.kind === "pdf") {
       bits.push("pdf");
     }
+    if (file.kind === "media") {
+      bits.push(file.media);
+    }
     if (dirty) bits.push("unsaved changes");
     return bits.join(" · ");
   };
@@ -507,6 +547,9 @@ export function CodeViewer({
         )}
         {file?.kind === "image" && <span className="code-chip code-chip-lang">image</span>}
         {file?.kind === "pdf" && <span className="code-chip code-chip-lang">pdf</span>}
+        {file?.kind === "media" && (
+          <span className="code-chip code-chip-lang">{file.media}</span>
+        )}
         {file?.kind === "binary" && (
           <span className="code-chip code-chip-lang">no preview</span>
         )}

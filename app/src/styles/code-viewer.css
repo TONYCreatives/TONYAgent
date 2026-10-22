@@ -422,6 +422,25 @@
   background: var(--chrome);
 }
 
+/*
+ * A player, centred like a picture: the native tags size themselves, and
+ * the pane is whatever width the mode gives it, so centring is what keeps
+ * a narrow audio bar from hugging the left edge.
+ */
+.code-media {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.code-media-player {
+  max-width: 100%;
+  max-height: 100%;
+}
+
 .code-preview {
   flex: 1;
   min-height: 0;

@@ -68,6 +68,26 @@ VIEWER_MAX_EDGE = 2048
 #: `binary` with the reason, and the viewer offers it externally.
 MAX_PDF_BYTES = 16 * 1024 * 1024
 
+#: Suffix -> (MIME type, media kind), for the audio and video the viewer plays.
+#:
+#: Natively, through `<audio>` and `<video>` on a data URL -- the same
+#: pattern as images, and the same cap, because the bytes cross the pipe
+#: whole. Validated by magic (see `_media_matches`), so a renamed text file
+#: errors upfront instead of playing a visibly broken player.
+MEDIA_TYPES: dict[str, tuple[str, str]] = {
+    "mp3": ("audio/mpeg", "audio"),
+    "wav": ("audio/wav", "audio"),
+    "ogg": ("audio/ogg", "audio"),
+    "oga": ("audio/ogg", "audio"),
+    "opus": ("audio/ogg", "audio"),
+    "flac": ("audio/flac", "audio"),
+    "m4a": ("audio/mp4", "audio"),
+    "mp4": ("video/mp4", "video"),
+    "m4v": ("video/mp4", "video"),
+    "mov": ("video/quicktime", "video"),
+    "webm": ("video/webm", "video"),
+}
+
 #: Entries one tree walk will report.
 #:
 #: Bounded because a monorepo has no interesting upper limit, and an
@@ -299,6 +319,33 @@ class SourceError(Exception):
 
 
 @dataclass
+class MediaFile:
+    """Audio or video, as a data URL the window's native tags can play.
+
+    The bytes go *in the reply*, like `ImageFile`, under the same cap: the
+    webview loads `data:` and nothing else off-disk. Validated by magic
+    rather than suffix alone, so a renamed text file errors instead of
+    playing a visibly broken player.
+    """
+
+    path: str
+    mime: str
+    media: str  # "audio" | "video"
+    data: str
+    size: int
+
+    def to_dict(self) -> dict:
+        return {
+            "kind": "media",
+            "path": self.path,
+            "mime": self.mime,
+            "media": self.media,
+            "data": self.data,
+            "size": self.size,
+        }
+
+
+@dataclass
 class PdfFile:
     """A PDF, as a data URL the window's native frame can draw.
 
@@ -486,6 +533,64 @@ def read_image_file(path: str) -> ImageFile:
     )
 
 
+def _media_matches(suffix: str, raw: bytes) -> bool:
+    """Whether `raw`'s first bytes look like `suffix`'s format."""
+    head = raw[:16]
+    if suffix == "mp3":
+        return head.startswith(b"ID3") or (
+            len(head) >= 2 and head[0] == 0xFF and head[1] & 0xE0 == 0xE0
+        )
+    if suffix == "wav":
+        return head.startswith(b"RIFF") and head[8:12] == b"WAVE"
+    if suffix in ("ogg", "oga", "opus"):
+        return head.startswith(b"OggS")
+    if suffix == "flac":
+        return head.startswith(b"fLaC")
+    if suffix in ("mp4", "m4v", "m4a"):
+        return b"ftyp" in head[4:12]
+    if suffix == "mov":
+        return b"ftyp" in head[:16] or head[4:8] in (b"free", b"mdat", b"moov", b"wide")
+    if suffix == "webm":
+        return head.startswith(b"\x1a\x45\xdf\xa3")
+    return False
+
+
+def read_media_file(path: str) -> MediaFile:
+    """Read audio or video for the window's native tags, or raise `SourceError`."""
+    import base64
+
+    target = confine(path)
+    if not target.is_file():
+        raise SourceError(f"Not a file: {path}")
+
+    try:
+        size = target.stat().st_size
+    except OSError as exc:
+        raise SourceError(f"Could not read {path}: {exc}") from exc
+    if size > MAX_IMAGE_BYTES:
+        raise SourceError(
+            f"{path} is {size / (1024 * 1024):.1f} MB, over the "
+            f"{MAX_IMAGE_BYTES // (1024 * 1024)} MB limit for a media preview."
+        )
+
+    try:
+        raw = target.read_bytes()
+    except OSError as exc:
+        raise SourceError(f"Could not read {path}: {exc}") from exc
+    suffix = target.suffix.lower().lstrip(".")
+    if not raw or not _media_matches(suffix, raw):
+        raise SourceError(f"{path} is not {suffix.upper()} audio or video.")
+
+    mime, media = MEDIA_TYPES[suffix]
+    return MediaFile(
+        path=str(target.relative_to(project_root()).as_posix()),
+        mime=mime,
+        media=media,
+        data=base64.b64encode(raw).decode("ascii"),
+        size=size,
+    )
+
+
 def read_pdf_file(path: str) -> PdfFile:
     """Read a PDF for the viewer's native frame, or raise `SourceError`.
 
@@ -525,10 +630,10 @@ def read_pdf_file(path: str) -> PdfFile:
     )
 
 
-def read_for_viewer(path: str) -> SourceFile | ImageFile | PdfFile | BinaryFile:
+def read_for_viewer(path: str) -> SourceFile | ImageFile | PdfFile | MediaFile | BinaryFile:
     """Whatever the viewer should show for `path`.
 
-    One entry point, four answers, and the choice is made *here* rather
+    One entry point, five answers, and the choice is made *here* rather
     than by the window: the core knows the file's own bytes (an image is an
     image because it decodes, not because of its name) and owns the caps.
 
@@ -537,7 +642,8 @@ def read_for_viewer(path: str) -> SourceFile | ImageFile | PdfFile | BinaryFile:
     a 900 MB video to learn it is not a picture. A file whose suffix says
     image but whose bytes do not decode is then a `SourceError`, which is
     the honest report of a mislabelled file. A PDF is dispatched the same
-    way, on its suffix, and validated by magic.
+    way, on its suffix, and validated by magic. Audio and video are
+    dispatched on theirs and checked the same way.
     """
     target = confine(path)
     if not target.exists():
@@ -547,6 +653,9 @@ def read_for_viewer(path: str) -> SourceFile | ImageFile | PdfFile | BinaryFile:
 
     if _mime_for(target) is not None:
         return read_image_file(path)
+
+    if target.suffix.lower().lstrip(".") in MEDIA_TYPES:
+        return read_media_file(path)
 
     # SVG is text, so without this it would read as `xml` source. It draws
     # natively as an image, which is the more useful view -- with the source

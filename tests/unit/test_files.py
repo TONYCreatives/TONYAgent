@@ -350,6 +350,36 @@ def test_a_pdf_over_the_cap_is_named_with_its_size(project):
     assert "over the" in reply["reason"]
 
 
+def test_audio_reads_as_media_the_native_tag_can_play(project):
+    (project / "take.mp3").write_bytes(b"ID3\x04\x00\x00\x00" + b"\x00" * 32)
+    reply = read_for_viewer("take.mp3").to_dict()
+
+    assert reply["kind"] == "media"
+    assert reply["media"] == "audio"
+    assert reply["mime"] == "audio/mpeg"
+    # The tag's data URL, decoded back to the file's own bytes.
+    import base64
+
+    assert base64.b64decode(reply["data"]).startswith(b"ID3")
+
+
+def test_video_reads_as_media_the_native_tag_can_play(project):
+    (project / "clip.mp4").write_bytes(
+        b"\x00\x00\x00\x20ftypisom\x00\x00\x00\x00" + b"\x00" * 32
+    )
+    reply = read_for_viewer("clip.mp4").to_dict()
+
+    assert reply["kind"] == "media"
+    assert reply["media"] == "video"
+    assert reply["mime"] == "video/mp4"
+
+
+def test_a_mislabelled_media_file_is_an_error_not_a_broken_player(project):
+    (project / "fake.mp3").write_text("just words\n", encoding="utf-8")
+    with pytest.raises(SourceError, match="not MP3"):
+        read_for_viewer("fake.mp3")
+
+
 def test_a_file_over_the_cap_is_named_with_its_size(project):
     (project / "huge.txt").write_bytes(b"x" * (MAX_SOURCE_BYTES + 32))
     reply = read_for_viewer("huge.txt").to_dict()

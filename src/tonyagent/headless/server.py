@@ -1582,8 +1582,8 @@ class StdioServer:
     async def _h_files_read(self, params: dict) -> Any:
         """One project file, as whatever the viewer should show for it.
 
-        The reply is one of four shapes -- `text`, `image`, `pdf`, `binary` --
-        and the *core* decides which, because it has the bytes: an image is an
+        The reply is one of five shapes -- `text`, `image`, `pdf`, `media`,
+        `binary` -- and the *core* decides which, because it has the bytes: an image is an
         image because it decodes, a `.zip` is a file the window can name but
         not draw, and "that file is not there" is the only failure. See
         `tonyagent.files.read_for_viewer`.
