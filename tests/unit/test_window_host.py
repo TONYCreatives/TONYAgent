@@ -45,6 +45,7 @@ PAGE_API = [
     "core_alive",
     "open_account_view",
     "open_logs",
+    "open_path",
     "open_releases",
     "pet",
     "pick_files",
