@@ -76,6 +76,17 @@ def animation_name(body: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
+def unscope(selector: str) -> str:
+    """Remove the settings-override scope, if the selector carries one.
+
+    The reduced-motion block scopes the OS preference with
+    ``:root:not([data-motion="full"])`` so the Motion menu's "always animate"
+    survives it. The audit compares what the block cancels against what the
+    stylesheet animates, and the scope is not part of either answer.
+    """
+    return re.sub(r'^:root:not\(\[data-motion="full"\]\)\s*', "", selector)
+
+
 def attribute_value(selector: str) -> str | None:
     """The value in a selector's only attribute selector, if it has one.
 
@@ -83,7 +94,7 @@ def attribute_value(selector: str) -> str | None:
     The distinction is the whole reason the block is written the way it is: a
     selector with no value matches both states at once.
     """
-    values = re.findall(r"\[[\w-]+=(\"[^\"]*\"|'[^']*')\]", selector)
+    values = re.findall(r"\[[\w-]+=(\"[^\"]*\"|'[^']*')\]", unscope(selector))
     return values[0].strip("\"'") if len(values) == 1 else None
 
 
@@ -92,7 +103,7 @@ def base_selector(selector: str) -> str:
 
     `.modal-backdrop[data-state="open"] > .modal` -> `.modal-backdrop > .modal`.
     """
-    return re.sub(r"\[[^\]]*\]", "", selector)
+    return re.sub(r"\[[^\]]*\]", "", unscope(selector))
 
 
 def specificity(selector: str) -> int:
@@ -102,7 +113,7 @@ def specificity(selector: str) -> int:
     the specificity of the rule each one overrides, so specificity is the whole
     point of the comparison and it cannot be skipped.
     """
-    return len(re.findall(r"\.[\w-]+", selector)) + len(re.findall(r"\[[^\]]*\]", selector))
+    return len(re.findall(r"\.[\w-]+", unscope(selector))) + len(re.findall(r"\[[^\]]*\]", unscope(selector)))
 
 
 def covers(outer: str, inner: str) -> bool:

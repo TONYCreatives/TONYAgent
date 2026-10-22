@@ -1,14 +1,76 @@
 
 /* --- reduced motion -------------------------------------------------------- */
 /*
- * One block, listing every animation in this file by name. Motion here is
+ * Two blocks, listing every animation in this file by name. Motion here is
  * decoration over a state change that is already complete and already
  * announced in the DOM, so removing it costs nothing -- there is no
  * information carried by the movement that the `data-state` and `aria-*`
  * attributes do not already carry. Someone who has asked their operating
  * system to stop moving things gets a still app, not a slightly less animated
  * one.
+ *
+ * The first block is the settings override: `data-motion="reduced"` on the
+ * root, put there by the Motion menu on the App tab. The second is the
+ * operating system's answer, which every selector scopes with
+ * `:root:not([data-motion="full"])` so the menu's "always animate" keeps the
+ * animations even when the OS asks for stillness. The two blocks must name
+ * the same selectors -- `reducedMotion.test.ts` fails the run when they
+ * drift apart -- because "reduced" working in fewer places than the OS
+ * preference would be the menu lying about what it does.
  */
+:root[data-motion="reduced"] .thinking-live,
+:root[data-motion="reduced"] .tab-spinner,
+:root[data-motion="reduced"] .pet-eye,
+:root[data-motion="reduced"] .pet-z,
+:root[data-motion="reduced"] .pet[data-mood="working"] .pet-dot,
+:root[data-motion="reduced"] .pet[data-mood="waiting"] .pet-dot,
+:root[data-motion="reduced"] .pet[data-pose="idle"] .pet-body,
+:root[data-motion="reduced"] .pet[data-pose="working"] .pet-body,
+:root[data-motion="reduced"] .pet[data-pose="working"] .pet-hand,
+:root[data-motion="reduced"] .pet[data-pose="working"] .pet-key,
+:root[data-motion="reduced"] .pet[data-pose="waiting"] .pet-body,
+:root[data-motion="reduced"] .pet[data-pose="asleep"] .pet-body,
+:root[data-motion="reduced"] .pet[data-pose="failed"] .pet-body,
+:root[data-motion="reduced"] .empty-mark,
+:root[data-motion="reduced"] .budget-popover[data-state="open"],
+:root[data-motion="reduced"] .budget-popover[data-state="closed"],
+:root[data-motion="reduced"] .modelpicker[data-state="open"],
+:root[data-motion="reduced"] .modelpicker[data-state="closed"],
+:root[data-motion="reduced"] .rowmenu,
+:root[data-motion="reduced"] .rowmenu[data-state],
+:root[data-motion="reduced"] .permchoice-menu,
+:root[data-motion="reduced"] .modal-backdrop,
+:root[data-motion="reduced"] .modal-backdrop[data-state],
+:root[data-motion="reduced"] .modal-backdrop > .modal,
+:root[data-motion="reduced"] .modal-backdrop[data-state] > .modal,
+:root[data-motion="reduced"] .chatlist,
+:root[data-motion="reduced"] .chatlist[data-state],
+:root[data-motion="reduced"] .chatlist-scrim,
+:root[data-motion="reduced"] .chatlist-scrim[data-state],
+:root[data-motion="reduced"] .files-pane,
+:root[data-motion="reduced"] .logstrip,
+:root[data-motion="reduced"] .logstrip[data-state],
+:root[data-motion="reduced"] .row:nth-last-child(-n + 4),
+:root[data-motion="reduced"] .chatrow {
+  animation: none;
+}
+
+:root[data-motion="reduced"] .chatlist-tabs::before {
+  transition: none;
+}
+
+:root[data-motion="reduced"] .rail-btn:hover:not(:disabled),
+:root[data-motion="reduced"] .icon-btn:hover:not(:disabled),
+:root[data-motion="reduced"] .icon-btn:active:not(:disabled),
+:root[data-motion="reduced"] .btn:active:not(:disabled),
+:root[data-motion="reduced"] .chatlist-act:active:not(:disabled),
+:root[data-motion="reduced"] .chatlist-toggle:active,
+:root[data-motion="reduced"] .chatlist-tab:active,
+:root[data-motion="reduced"] .chip:active:not(:disabled),
+:root[data-motion="reduced"] .mode:active {
+  transform: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /*
    * The two that are not `[data-state]` rules, and both are a *progress*
@@ -26,8 +88,10 @@
    * remembers to add it below too. The spinner's own rule carries no
    * `[data-state]`, so it was never in the group below.
    */
-  .thinking-live { animation: none; }
-  .tab-spinner { animation: none; }
+  :root:not([data-motion="full"]) .thinking-live,
+  :root:not([data-motion="full"]) .tab-spinner {
+    animation: none;
+  }
   /*
    * The desktop pet's, and they are the *progress* kind above rather than the
    * decorative kind: the breathing, the typing and the pulse are how the card
@@ -47,17 +111,17 @@
    * two-class rule it is cancelling, so the movement would keep playing for
    * precisely the people who asked it not to.
    */
-  .pet-eye,
-  .pet-z,
-  .pet[data-mood="working"] .pet-dot,
-  .pet[data-mood="waiting"] .pet-dot,
-  .pet[data-pose="idle"] .pet-body,
-  .pet[data-pose="working"] .pet-body,
-  .pet[data-pose="working"] .pet-hand,
-  .pet[data-pose="working"] .pet-key,
-  .pet[data-pose="waiting"] .pet-body,
-  .pet[data-pose="asleep"] .pet-body,
-  .pet[data-pose="failed"] .pet-body {
+  :root:not([data-motion="full"]) .pet-eye,
+  :root:not([data-motion="full"]) .pet-z,
+  :root:not([data-motion="full"]) .pet[data-mood="working"] .pet-dot,
+  :root:not([data-motion="full"]) .pet[data-mood="waiting"] .pet-dot,
+  :root:not([data-motion="full"]) .pet[data-pose="idle"] .pet-body,
+  :root:not([data-motion="full"]) .pet[data-pose="working"] .pet-body,
+  :root:not([data-motion="full"]) .pet[data-pose="working"] .pet-hand,
+  :root:not([data-motion="full"]) .pet[data-pose="working"] .pet-key,
+  :root:not([data-motion="full"]) .pet[data-pose="waiting"] .pet-body,
+  :root:not([data-motion="full"]) .pet[data-pose="asleep"] .pet-body,
+  :root:not([data-motion="full"]) .pet[data-pose="failed"] .pet-body {
     animation: none;
   }
 
@@ -69,17 +133,17 @@
    * remembers, and `reducedMotion.test.ts` checks the list against the file on
    * every run so that "remembers" is not the whole mechanism.
    */
-  .empty-mark { animation: none; }
+  :root:not([data-motion="full"]) .empty-mark { animation: none; }
   /*
    * Spelled out with the `[data-state]` half so it matches the specificity of
    * the rule it cancels. `.budget-popover` alone is one class and loses to the
    * two-class rule above, which is the mistake `audit_reduced_motion.py`
    * exists to catch -- and did.
    */
-  .budget-popover[data-state="open"],
-  .budget-popover[data-state="closed"],
-  .modelpicker[data-state="open"],
-  .modelpicker[data-state="closed"] {
+  :root:not([data-motion="full"]) .budget-popover[data-state="open"],
+  :root:not([data-motion="full"]) .budget-popover[data-state="closed"],
+  :root:not([data-motion="full"]) .modelpicker[data-state="open"],
+  :root:not([data-motion="full"]) .modelpicker[data-state="closed"] {
     animation: none;
   }
 
@@ -94,22 +158,22 @@
    * was never offered. Each selector below therefore matches the specificity of
    * the rule it overrides, and later source order does the rest.
    */
-  .rowmenu,
-  .rowmenu[data-state],
-  .permchoice-menu,
-  .modal-backdrop,
-  .modal-backdrop[data-state],
-  .modal-backdrop > .modal,
-  .modal-backdrop[data-state] > .modal,
-  .chatlist,
-  .chatlist[data-state],
-  .chatlist-scrim,
-  .chatlist-scrim[data-state],
-  .files-pane,
-  .logstrip,
-  .logstrip[data-state],
-  .row:nth-last-child(-n + 4),
-  .chatrow {
+  :root:not([data-motion="full"]) .rowmenu,
+  :root:not([data-motion="full"]) .rowmenu[data-state],
+  :root:not([data-motion="full"]) .permchoice-menu,
+  :root:not([data-motion="full"]) .modal-backdrop,
+  :root:not([data-motion="full"]) .modal-backdrop[data-state],
+  :root:not([data-motion="full"]) .modal-backdrop > .modal,
+  :root:not([data-motion="full"]) .modal-backdrop[data-state] > .modal,
+  :root:not([data-motion="full"]) .chatlist,
+  :root:not([data-motion="full"]) .chatlist[data-state],
+  :root:not([data-motion="full"]) .chatlist-scrim,
+  :root:not([data-motion="full"]) .chatlist-scrim[data-state],
+  :root:not([data-motion="full"]) .files-pane,
+  :root:not([data-motion="full"]) .logstrip,
+  :root:not([data-motion="full"]) .logstrip[data-state],
+  :root:not([data-motion="full"]) .row:nth-last-child(-n + 4),
+  :root:not([data-motion="full"]) .chatrow {
     animation: none;
   }
 
@@ -126,19 +190,19 @@
    * control still lights and lifts its colour (it just stays put), and a
    * pressed one still darkens (it just does not shrink).
    */
-  .chatlist-tabs::before {
+  :root:not([data-motion="full"]) .chatlist-tabs::before {
     transition: none;
   }
 
-  .rail-btn:hover:not(:disabled),
-  .icon-btn:hover:not(:disabled),
-  .icon-btn:active:not(:disabled),
-  .btn:active:not(:disabled),
-  .chatlist-act:active:not(:disabled),
-  .chatlist-toggle:active,
-  .chatlist-tab:active,
-  .chip:active:not(:disabled),
-  .mode:active {
+  :root:not([data-motion="full"]) .rail-btn:hover:not(:disabled),
+  :root:not([data-motion="full"]) .icon-btn:hover:not(:disabled),
+  :root:not([data-motion="full"]) .icon-btn:active:not(:disabled),
+  :root:not([data-motion="full"]) .btn:active:not(:disabled),
+  :root:not([data-motion="full"]) .chatlist-act:active:not(:disabled),
+  :root:not([data-motion="full"]) .chatlist-toggle:active,
+  :root:not([data-motion="full"]) .chatlist-tab:active,
+  :root:not([data-motion="full"]) .chip:active:not(:disabled),
+  :root:not([data-motion="full"]) .mode:active {
     transform: none;
   }
 }

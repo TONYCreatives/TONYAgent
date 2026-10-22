@@ -37,6 +37,7 @@ import {
   type UpdateDownload,
 } from "./SettingsPanel.js";
 import { all, blur, click, one, render, setValue, wait } from "./test-render.js";
+import type { MotionPreference } from "./motion.js";
 
 const noop = () => {};
 
@@ -174,6 +175,8 @@ interface Overrides {
   connected?: boolean;
   petOpen?: boolean;
   onPet?: () => void;
+  motion?: MotionPreference;
+  onMotionChange?: (preference: MotionPreference) => void;
   update?: UpdateAnswer | null;
   updateChecking?: boolean;
   updateFetching?: boolean;
@@ -216,6 +219,8 @@ function panel(overrides: Overrides = {}) {
       notice={null}
       petOpen={overrides.petOpen ?? false}
       onPet={overrides.onPet ?? noop}
+      motion={overrides.motion ?? "system"}
+      onMotionChange={overrides.onMotionChange ?? noop}
       update={overrides.update ?? null}
       updateChecking={overrides.updateChecking ?? false}
       updateFetching={overrides.updateFetching ?? false}
@@ -435,7 +440,7 @@ describe("the desktop pet, from the settings pane", () => {
     // Window: the version, the update check and the diagnostics are about the
     // program, the same kind of setting as the card, and none is a property of
     // the agent.
-    assert.deepEqual(headings(container), ["Desktop pet", "Version", "Diagnostics"]);
+    assert.deepEqual(headings(container), ["Desktop pet", "Motion", "Version", "Diagnostics"]);
   });
 
   test("it draws the card's real state, and a press asks for the other one", async () => {
@@ -464,6 +469,38 @@ describe("the desktop pet, from the settings pane", () => {
     await click(tab(container, "App"));
 
     assert.equal(petBox(container).disabled, false, "a window control was refused without a core");
+  });
+});
+
+describe("the Motion menu, from the settings pane", () => {
+  const menu = (container: HTMLElement) =>
+    one(section(container, "Motion"), '[aria-label="Motion"]') as HTMLSelectElement;
+
+  test("it shows the window's current choice", async () => {
+    const container = await render(panel({ motion: "full" }));
+    await click(tab(container, "App"));
+
+    assert.equal(menu(container).value, "full");
+  });
+
+  test("choosing asks the window, which applies it", async () => {
+    const asked: MotionPreference[] = [];
+    const container = await render(panel({ onMotionChange: (next) => asked.push(next) }));
+    await click(tab(container, "App"));
+
+    await setValue(menu(container), "reduced");
+
+    assert.deepEqual(asked, ["reduced"]);
+  });
+
+  test("it names all three answers, because two would hide the default", async () => {
+    // System, Full, Reduced: the menu's job is the override, and an override
+    // with no named default is a control that cannot be put back.
+    const container = await render(panel());
+    await click(tab(container, "App"));
+
+    const options = Array.from(menu(container).querySelectorAll("option")).map((o) => o.value);
+    assert.deepEqual(options, ["system", "full", "reduced"]);
   });
 });
 
@@ -967,9 +1004,9 @@ describe("what the update check says", () => {
     );
     await click(tab(container, "App"));
 
-    // Still three headings, and no Install among them -- with an update waiting,
-    // which is the state that used to add a fourth.
-    assert.deepEqual(headings(container), ["Desktop pet", "Version", "Diagnostics"]);
+    // Still four headings, and no Install among them -- with an update waiting,
+    // which is the state that used to add a fifth.
+    assert.deepEqual(headings(container), ["Desktop pet", "Motion", "Version", "Diagnostics"]);
 
     // And the press that runs it is inside that card, under the version it
     // belongs to rather than beside a heading of its own.
@@ -1610,7 +1647,7 @@ describe("the diagnostics card", () => {
     await click(tab(container, "App"));
     assert.deepEqual(
       all(container, ".settings-group h3").map((h) => (h.textContent ?? "").trim()),
-      ["Desktop pet", "Version", "Diagnostics"],
+      ["Desktop pet", "Motion", "Version", "Diagnostics"],
     );
   });
 

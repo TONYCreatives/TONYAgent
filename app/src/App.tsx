@@ -29,6 +29,11 @@ import { petDraw, petSet, petState } from "./pet.js";
 import { petStatus } from "./pet-status.js";
 import { MessageList } from "./MessageList.js";
 import {
+  applyMotionPreference,
+  readMotionPreference,
+  type MotionPreference,
+} from "./motion.js";
+import {
   summaryLine,
   textFromContent,
   toWire,
@@ -457,6 +462,19 @@ export function App({
       // Private mode or storage disabled: the preference just does not stick.
     }
   }, [palette]);
+
+  /**
+   * The motion override, from the App tab's Motion menu.
+   *
+   * `system` follows the OS; `full` keeps the animations even under an OS
+   * reduce preference, `reduced` drops them even without one. Applied to the
+   * root as `data-motion` (removed for `system`), which is what both override
+   * blocks in `reduced-motion.css` key off -- see `motion.ts`.
+   */
+  const [motion, setMotion] = useState<MotionPreference>(() => readMotionPreference());
+  useEffect(() => {
+    applyMotionPreference(motion);
+  }, [motion]);
 
   /**
    * Bring one of the sidebar's panes forward.
@@ -2844,6 +2862,8 @@ export function App({
             // own idea of whether the card is up -- see `togglePet`.
             petOpen={petOpen}
             onPet={() => void togglePet()}
+            motion={motion}
+            onMotionChange={setMotion}
             // Back to the conversation. The page is a mode, so leaving it is
             // `agent` -- the same thing the title bar's own switch sets.
             onClose={() => setMainMode("agent")}

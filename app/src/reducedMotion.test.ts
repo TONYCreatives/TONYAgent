@@ -70,21 +70,29 @@ function splitOnReducedMotion(css: string) {
   return { inside, outside };
 }
 
+/** The selector with the settings-override scope removed, if it has one. */
+function unscope(selector: string): string {
+  return selector
+    .replace(/^:root:not\(\[data-motion="full"\]\)\s*/, "")
+    .replace(/^:root\[data-motion="reduced"\]\s*/, "");
+}
+
 /** The value in a selector's only attribute selector, or null if it has none. */
 function attributeValue(selector: string): string | null {
-  const found = /\[[\w-]+=(?:"([^"]*)"|'([^']*)')\]/.exec(selector);
+  const found = /\[[\w-]+=(?:"([^"]*)"|'([^']*)')\]/.exec(unscope(selector));
   if (!found) return null;
   return found[1] ?? found[2] ?? null;
 }
 
 /** The selector with its attribute conditions removed. */
 function base(selector: string): string {
-  return selector.replace(/\[[^\]]*\]/g, "").replace(/\s+/g, " ").trim();
+  return unscope(selector).replace(/\[[^\]]*\]/g, "").replace(/\s+/g, " ").trim();
 }
 
 /** Classes plus attribute selectors, which is all these selectors use. */
 function specificity(selector: string): number {
-  return (selector.match(/\.[\w-]+/g) ?? []).length + (selector.match(/\[[^\]]*\]/g) ?? []).length;
+  const scoped = unscope(selector);
+  return (scoped.match(/\.[\w-]+/g) ?? []).length + (scoped.match(/\[[^\]]*\]/g) ?? []).length;
 }
 
 /** Whether one selector from the block reaches an animated rule. */
@@ -141,7 +149,8 @@ test("a cancelled indicator keeps its information, not just its motion", () => {
   const { inside } = splitOnReducedMotion(STYLESHEET);
   const cancelled = inside
     .filter((rule) => /animation\s*:/.test(rule.body) && /\bnone\b/.test(rule.body))
-    .flatMap((rule) => splitSelectors(rule.block));
+    .flatMap((rule) => splitSelectors(rule.block))
+    .map(unscope);
 
   assert.ok(
     cancelled.includes(".tab-spinner"),
@@ -186,5 +195,27 @@ test("the block matches the specificity it claims to match", () => {
   assert.ok(
     !STYLESHEET.includes("animation: none !important"),
     "the block says it avoids !important to keep winning on specificity, but now uses it",
+  );
+});
+
+test("the settings override cancels exactly what the OS preference cancels", () => {
+  // Two blocks, one list: `:root[data-motion="reduced"]` outside any media
+  // query, and `:root:not([data-motion="full"])` inside
+  // `prefers-reduced-motion: reduce`. A selector in one but not the other is
+  // the Motion menu lying -- "reduced" would move where the OS preference
+  // stands still, or the other way round -- so the unscoped sets must agree.
+  const { inside, outside } = splitOnReducedMotion(STYLESHEET);
+  const forced = outside
+    .filter((rule) => splitSelectors(rule.block).every((s) => s.startsWith(":root[data-motion=\"reduced\"]")))
+    .flatMap((rule) => splitSelectors(rule.block))
+    .map(unscope)
+    .sort();
+  const system = inside.flatMap((rule) => splitSelectors(rule.block)).map(unscope).sort();
+
+  assert.ok(forced.length > 0, "the settings override block is gone from the stylesheet");
+  assert.deepEqual(
+    forced,
+    system,
+    `the override and the OS block name different selectors:\n  only in the override: ${forced.filter((s) => !system.includes(s)).join("\n  only in the override: ")}\n  only in the OS block: ${system.filter((s) => !forced.includes(s)).join("\n  only in the OS block: ")}`,
   );
 });

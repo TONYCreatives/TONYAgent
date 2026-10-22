@@ -37,6 +37,7 @@ import {
   type ReasoningInfo,
 } from "./SettingsMenus.js";
 import { prettifyModelName } from "./displayNames.js";
+import type { MotionPreference } from "./motion.js";
 
 /**
  * One `update.check` reply.
@@ -339,6 +340,15 @@ interface Props {
   /** Whether the desktop pet's card is on screen right now. */
   petOpen: boolean;
   /**
+   * The motion override, from this tab's Motion menu.
+   *
+   * Held by the window rather than the core: it is a chrome preference, like
+   * the rail and the palette, and it is applied to the document root as
+   * `data-motion` -- see `motion.ts` -- rather than sent anywhere.
+   */
+  motion: MotionPreference;
+  /** Choose how much of the interface moves. Applies immediately. */
+  onMotionChange: (preference: MotionPreference) => void;  /**
    * Show or hide the card.
    *
    * Deliberately not gated on `connected`. The pet is a *window* -- the shell can
@@ -575,6 +585,8 @@ export function SettingsPanel({
   notice,
   petOpen,
   onPet,
+  motion,
+  onMotionChange,
   update,
   updateChecking,
   updateFetching,
@@ -1780,6 +1792,38 @@ export function SettingsPanel({
                   </em>
                 </span>
               </label>
+            </section>
+
+            <section className="settings-group">
+              <h3>Motion</h3>
+              <p className="settings-note">
+                How much of the interface moves. Follow the system follows
+                your operating system's reduce-motion setting; Always animate
+                keeps the movement even when that is on; Reduce motion drops
+                it even when that is off.
+              </p>
+              {/*
+                A native select, like the sandbox backend picker: the motion
+                audit in `reducedMotion.test.ts` pins every animation's
+                cancellation, and a custom menu would be a second animated
+                surface the block has to account for. Applies the moment it
+                is chosen -- there is nothing to confirm, and a preview of
+                stillness needs no Apply press.
+              */}
+              <div className="settings-row">
+                <span className="settings-select-wrap">
+                  <select
+                    className="settings-select"
+                    value={motion}
+                    onChange={(e) => onMotionChange(e.target.value as MotionPreference)}
+                    aria-label="Motion"
+                  >
+                    <option value="system">Follow the system</option>
+                    <option value="full">Always animate</option>
+                    <option value="reduced">Reduce motion</option>
+                  </select>
+                </span>
+              </div>
             </section>
 
             <section className="settings-group">

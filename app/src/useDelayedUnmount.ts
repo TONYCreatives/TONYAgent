@@ -13,6 +13,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { isMotionReduced } from "./motion.js";
+
 /**
  * How long a dismissed surface stays in the DOM on its way out.
  *
@@ -108,11 +110,7 @@ export function useDelayedUnmount(open: boolean, delay?: number): boolean {
 
 /** How long to linger: nothing under reduced motion, else the exit animation. */
 function defaultDelay(): number {
-  if (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  ) {
+  if (isMotionReduced()) {
     return 0;
   }
   return exitDurationMs();
