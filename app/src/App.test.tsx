@@ -140,6 +140,9 @@ const BOOT = {
     providers: [{ id: "openrouter", name: "OpenRouter", has_key: true }],
   },
   "conversations.list": { conversations: [] },
+  // The nav's skills count. Answered here so the block draws a number rather
+  // than staying in its "not read yet" state for every other test in this file.
+  "skills.list": { skills: [] },
   "mode.list": {
     modes: [
       { name: "build", label: "Build", writes: true },
@@ -794,6 +797,33 @@ describe("New chat files the conversation under a project", () => {
     await click(one(container, ".rail-toggle")!);
     assert.deepEqual(texts(container, ".chatrow-title"), ["Endpoint notes"]);
     assert.deepEqual(texts(container, ".chatlist-folder-name"), ["api"]);
+  });
+
+  test("the skills block counts the core's skills and Manage lands on the page", async () => {
+    // The count is the core's, read at boot: the nav is the front door, and a
+    // number that arrived a second after the panel did would be absent in the
+    // frame the user looked at.
+    const { container } = await mount({
+      "skills.list": {
+        skills: [
+          { name: "review", description: "", source: "project", path: "p/review.md" },
+          { name: "notes", description: "", source: "user", path: "u/notes.md" },
+        ],
+      },
+    });
+    await click(one(container, ".rail-toggle")!);
+    await wait(40);
+    assert.equal(one(container, ".chatlist-count")?.textContent, "2");
+
+    // Settings has no Skills tab, so `Manage` opens the App tab, where the
+    // section lists them. A control with no destination was the alternative.
+    await click(one(container, ".chatlist-manage")!);
+    await wait(40);
+    assert.ok(one(container, ".settings-page"), "Manage did not open the settings page");
+    assert.ok(
+      all(container, ".settings-group h3").some((h) => h.textContent === "Skills"),
+      "Manage did not land on the tab that lists the skills",
+    );
   });
 
   test("changing the folder takes the open chat with it", async () => {

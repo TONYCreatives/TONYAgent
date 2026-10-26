@@ -73,6 +73,22 @@ function projectName(path: string): string {
   return cut >= 0 ? trimmed.slice(cut + 1) : trimmed;
 }
 
+/** The file's own name, for the leading half of a recent-file row. */
+function fileName(path: string): string {
+  return projectName(path);
+}
+
+/**
+ * The directory a recent file lives in, for the quiet half of its row.
+ *
+ * Empty for a path with no directory at all, which is what a bare filename is:
+ * the row then draws one run instead of a name with an empty span beside it.
+ */
+function fileDir(path: string): string {
+  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return cut > 0 ? path.slice(0, cut + 1) : "";
+}
+
 /**
  * The rows the sidebar shows: the current folder's chats, and nothing else.
  *
@@ -235,6 +251,23 @@ interface Props {
   onNewChat?: () => void;
   /** Write `/` into the composer, which opens the skill menu. */
   onSkills?: () => void;
+  /**
+   * How many skills the core offers, or null before it has said.
+   *
+   * Null rather than 0: a count that has not been read yet and a core with no
+   * skills are different facts, and `0` for both would make a working install
+   * look empty for as long as the read takes.
+   */
+  skillCount?: number | null;
+  /** Open Settings at the App tab, where the skills are listed. */
+  onManageSkills?: () => void;
+  /**
+   * The files this window has opened in Code, newest first.
+   *
+   * At most three, and the block draws whatever it is given: the cap is the
+   * App's, because that is where the history is kept.
+   */
+  recentFiles?: string[];
   /** The usage dashboard, as the rail's chart button toggles it. */
   onUsage?: () => void;
   usageOpen?: boolean;
@@ -306,6 +339,9 @@ export function ConversationList({
   viewSwitch,
   onNewChat,
   onSkills,
+  skillCount = null,
+  onManageSkills,
+  recentFiles = [],
   onUsage,
   usageOpen = false,
   onPet,
@@ -611,12 +647,16 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
         quiet ones: a row is a row, not a stadium, and the panel's one loud
         object is still the conversation you are in.
 
-        Skills writes `/` into the composer instead of opening anything of its
-        own. That is the whole feature: the field's own menu already lists the
-        skills, already filters as you type and already knows what the core
-        offers, and a second list in a 288px column would be a second place for
-        them to disagree. It also means no count is drawn here -- the list is
-        fetched when the menu needs it, and a number at boot would be a guess.
+        **New chat is back on purpose.** It left when the tab strip's "+" was
+        the one way to mint a conversation, and that reasoning held while this
+        panel was an overlay beside a visible strip. As a dock, and in
+        Trajectory where there is no strip at all, the list is the front door --
+        and a front door with no way in is the failure this fixes. It is a quiet
+        row: the panel's one loud object is still the conversation you are in.
+
+        **Skills is not here any more.** It has a block of its own under the
+        list, with the count and the way into Settings; a second row for it up
+        here would have been two doors into one room, six pixels apart.
       */}
       <div className="chatlist-start">
         {onNewChat && (
@@ -646,66 +686,7 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
             <span>New chat</span>
           </button>
         )}
-        {onSkills && (
-          <button
-            type="button"
-            className="chatlist-action"
-            onClick={onSkills}
-            disabled={!connected}
-            title="Put / in the composer to pick a skill"
-          >
-            {/* A slash in a box of its own: the command character, not a
-                glyph for "tools". It is the same mark the field's menu opens
-                on, so the button and the menu it leads to read as one idea. */}
-            <span className="chatlist-slash" aria-hidden="true">
-              /
-            </span>
-            <span>Skills</span>
-          </button>
-        )}
       </div>
-
-      {/*
-        The folder this list is, named -- and the way to change it.
-
-        It is a button because it has to be. The list is scoped to one folder, so
-        the folder is the thing a user needs to be able to move, and the picker
-        used to hang off the project group's header, which is gone. Same control,
-        same handler, one rung up.
-
-        **Always drawn, empty list or not.** It is the scope of the list rather
-        than a property of the rows, and a folder with no chats yet is exactly
-        when someone is most likely to want a different one. Hung off the rows,
-        that state drew no heading and no way to change folders from this pane at
-        all -- measured in the window, as `MISSING`.
-
-        Its `title` is the full path: two folders called `api` in different trees
-        are the same label otherwise, and which one is open is not something a
-        user can work out from a name they chose themselves.
-      */}
-      <button
-        type="button"
-        className="chatlist-label chatlist-folder"
-        onClick={onChooseProject}
-        title={project || "Choose a project folder"}
-      >
-        <svg
-          width="13"
-          height="13"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-        </svg>
-        <span className="chatlist-folder-name">
-          {projectLabel || "All chats"}
-        </span>
-      </button>
 
       {rows.length === 0 ? (
         // Silent rather than a placeholder: an empty list with one button in it
@@ -902,6 +883,132 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
       )}
 
       {pane === "search" && searchPane}
+
+      {/*
+        The project block, and the reason it is *under* the list rather than
+        above it.
+
+        It is the scope of the list and the three files this window was last
+        reading in it. Both are facts about where you are, and neither changes
+        as you scroll: put above the rows they pushed the list down by ~110px
+        before the first conversation, which in a 700px-tall window is most of
+        what was left. Below the rows they are fixed, and the list keeps the
+        space between them and the foot -- which is the rule §6.2 writes down
+        as "the conversation list is the flexible region".
+
+        The folder row is one control, not two: it names the folder and it is
+        the way to change it, with `Change…` as the affordance rather than a
+        second button. Two targets 4px apart in a 288px panel is a coin toss
+        for the pointer, and the picker is not destructive enough to deserve a
+        confirmation step.
+
+        **No branch.** The core's `state` does not carry one -- there is no
+        `git` probe anywhere in it -- and a branch label invented from a folder
+        name would be a guess drawn in the same type as the path. It is left out
+        rather than faked; see PHASE_2's handoff.
+      */}
+      {pane === "chats" && (
+        <div className="chatlist-block chatlist-project">
+          <span className="chatlist-block-label">Project</span>
+          <button
+            type="button"
+            className="chatlist-folder"
+            onClick={onChooseProject}
+            title={project || "Choose a project folder"}
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            </svg>
+            <span className="chatlist-folder-name">
+              {projectLabel || "All chats"}
+            </span>
+            <span className="chatlist-change">Change&hellip;</span>
+          </button>
+
+          {recentFiles.length > 0 && (
+            <ul className="chatlist-recent" aria-label="Recent files">
+              {recentFiles.map((path) => (
+                <li key={path}>
+                  <button
+                    type="button"
+                    className="chatlist-recent-row"
+                    onClick={() => onOpenFile(path)}
+                    title={path}
+                  >
+                    {/* The name leads and the directory is context beside it,
+                        in one run -- the same rule the Files pane follows, so a
+                        long path truncates as a path rather than as two
+                        halves. */}
+                    <span className="chatlist-recent-name">{fileName(path)}</span>
+                    <span className="chatlist-recent-dir">{fileDir(path)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/*
+        The skills block: how many there are, the `/` that opens the composer's
+        menu, and the way to the page that lists them.
+
+        **The row is still the useful half.** Pressing `Skills` writes `/` into
+        the field, whose own menu already lists, filters and knows the skills --
+        a second list in 288px would be a second place for them to disagree.
+        `Manage` is the other half: it opens Settings on the App tab, where the
+        list is drawn in full with the folder each file was found under.
+      */}
+      {pane === "chats" && (onSkills || onManageSkills) && (
+        <div className="chatlist-block chatlist-skills">
+          <span className="chatlist-block-label">Skills</span>
+          <div className="chatlist-skills-row">
+            {onSkills && (
+              <button
+                type="button"
+                className="chatlist-action"
+                onClick={onSkills}
+                disabled={!connected}
+                title="Put / in the composer to pick a skill"
+              >
+                {/* A slash in a box of its own: the command character, not a
+                    glyph for "tools". It is the same mark the field's menu
+                    opens on, so the button and the menu read as one idea. */}
+                <span className="chatlist-slash" aria-hidden="true">
+                  /
+                </span>
+                <span>Skills</span>
+              </button>
+            )}
+            {skillCount !== null && (
+              <span className="chatlist-count" title={`${skillCount} skills installed`}>
+                {skillCount}
+              </span>
+            )}
+            {onManageSkills && (
+              <button
+                type="button"
+                className="chatlist-manage linkish"
+                onClick={onManageSkills}
+                disabled={!connected}
+                title="See every skill, and where it lives"
+              >
+                Manage
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/*
         The sidebar's foot: the rail's remaining actions, so closing the rail to

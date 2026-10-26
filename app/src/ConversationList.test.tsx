@@ -87,6 +87,8 @@ interface Handlers {
   // that joined Search and Settings so the foot is the whole rail.
   onNewChat: () => void;
   onSkills: () => void;
+  /** The skills block's `Manage`, which leaves for Settings' App tab. */
+  onManageSkills: () => void;
   onUsage: () => void;
   onPet: () => void;
 }
@@ -100,6 +102,7 @@ let calls: Handlers & {
   dismissals: number;
   newChats: number;
   skills: number;
+  managed: number;
   usage: number;
   pet: number;
 };
@@ -141,6 +144,9 @@ async function renderList(
     onSkills: () => {
       calls.skills += 1;
     },
+    onManageSkills: () => {
+      calls.managed += 1;
+    },
     onUsage: () => {
       calls.usage += 1;
     },
@@ -155,6 +161,7 @@ async function renderList(
     dismissals: 0,
     newChats: 0,
     skills: 0,
+    managed: 0,
     usage: 0,
     pet: 0,
   };
@@ -237,27 +244,58 @@ describe("the sidebar's head", () => {
 
 // --- the chats pane's actions -----------------------------------------------
 describe("the chats pane's start", () => {
-  test("New chat and Skills are rows above the list, not another tab", async () => {
+  test("New chat is a row above the list, and Skills is a block under it", async () => {
+    // The split is the point. New chat belongs with the list it adds to; Skills
+    // belongs with the project block, where the panel says what the workspace
+    // *has* rather than what you can do to the conversation list. Both are rows
+    // rather than tabs: the panel's loudest object stays the conversation you
+    // are in.
     const container = await renderList([conversation()]);
     const start = one(container, ".chatlist-start")!;
     assert.ok(start, "the chats pane has no start block");
     // The slash is the mark that says "this one writes a command", not part of
     // the row's name -- it is `aria-hidden`, so it is stripped here the way the
-    // accessibility tree strips it. Without that the second label reads
-    // "/Skills", which is a different word.
+    // accessibility tree strips it. Without that the label reads "/Skills",
+    // which is a different word.
     const name = (button: HTMLButtonElement) =>
       [...button.children]
         .filter((child) => child.getAttribute("aria-hidden") !== "true")
         .map((child) => (child.textContent ?? "").trim())
         .join("");
-    assert.deepEqual([...start.querySelectorAll("button")].map(name), [
-      "New chat",
-      "Skills",
-    ]);
-    // Rows rather than a stadium: the panel's loudest object stays the
-    // conversation you are in.
+    assert.deepEqual([...start.querySelectorAll("button")].map(name), ["New chat"]);
     assert.match(start.querySelector(".chatlist-new")!.className, /chatlist-new/);
-    assert.ok(one(start, ".chatlist-slash"), "Skills is not marked with the slash");
+
+    const skills = one(container, ".chatlist-skills")!;
+    assert.ok(skills, "the skills block is missing");
+    assert.ok(one(skills, ".chatlist-slash"), "Skills is not marked with the slash");
+    // The block sits *after* the rows: the list is the flexible region, and
+    // blocks above it would push the first conversation off a short window.
+    const rows = one(container, ".chatlist-rows")!;
+    assert.equal(
+      rows.compareDocumentPosition(skills) & Node.DOCUMENT_POSITION_FOLLOWING,
+      Node.DOCUMENT_POSITION_FOLLOWING,
+      "the skills block is above the conversation list",
+    );
+  });
+
+  test("the skills block counts what the core found, and says nothing before it has", async () => {
+    const counted = await renderList([conversation()], "", true, "", false, false, {
+      skillCount: 4,
+    });
+    assert.equal(one(counted, ".chatlist-count")?.textContent, "4");
+
+    // Null is "not read yet", not "none": a 0 here would make a working install
+    // look empty for as long as the read takes.
+    const unread = await renderList([conversation()], "", true, "", false, false, {
+      skillCount: null,
+    });
+    assert.equal(one(unread, ".chatlist-count"), null);
+  });
+
+  test("Manage opens the page that lists the skills", async () => {
+    const container = await renderList([conversation()]);
+    await click(one(container, ".chatlist-manage")!);
+    assert.equal(calls.managed, 1);
   });
 
   test("pressing them starts a chat and writes the slash", async () => {
@@ -903,5 +941,39 @@ describe("the list is the current folder's chats", () => {
     await click(one(container, ".chatlist-folder")!);
 
     assert.equal(calls.picks, 1);
+  });
+
+  test("Change… is the affordance on that row, not a second control", async () => {
+    // Two targets four pixels apart in a 288px panel is a coin toss for the
+    // pointer, and the folder picker is not destructive enough to need its own
+    // button. One row, one press, and the word says what the press does.
+    const container = await renderList([conversation()], "", true, TONY);
+    const block = one(container, ".chatlist-project")!;
+    assert.equal(texts(block, ".chatlist-change")[0], "Change…");
+    assert.equal(all(block, "button").length, 1, "the row grew a second target");
+  });
+
+  test("the project block offers back the files this window opened", async () => {
+    const opened: string[] = [];
+    const container = await renderList([conversation()], "", true, TONY, false, false, {
+      recentFiles: ["C:/work/api/src/app.py", "C:/work/api/README.md"],
+      onOpenFile: (path) => {
+        opened.push(path);
+      },
+    });
+
+    assert.deepEqual(texts(container, ".chatlist-recent-name"), ["app.py", "README.md"]);
+    assert.deepEqual(texts(container, ".chatlist-recent-dir"), ["C:/work/api/src/", "C:/work/api/"]);
+
+    await click(all(container, ".chatlist-recent-row")[1]);
+    assert.deepEqual(opened, ["C:/work/api/README.md"]);
+  });
+
+  test("no branch is drawn, because the core does not report one", async () => {
+    // A branch label invented from a folder name would be a guess in the same
+    // type as the path. Omitted rather than faked -- see PHASE_2's handoff.
+    const container = await renderList([conversation()], "", true, TONY);
+    const block = one(container, ".chatlist-project")!;
+    assert.doesNotMatch(block.textContent ?? "", /branch|main|master/i);
   });
 });

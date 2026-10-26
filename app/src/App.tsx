@@ -273,7 +273,16 @@ export function App({
    * someone is looking at it. It is also the reason there is no refresh button
    * anywhere for this: the refresh is the act of opening the menu.
    */
-  const [skills, setSkills] = useState<SkillInfo[]>([]);  /**
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  /**
+   * Whether the core has actually answered `skills.list`.
+   *
+   * Separate from `skills.length`, because an empty list and an unread list are
+   * different facts and the nav draws them differently: a count of `0` for a
+   * core that has not been asked yet would make a working install look empty.
+   */
+  const [skillsKnown, setSkillsKnown] = useState(false);
+  /**
    * How much the agent may do, and the ladder it sits on.
    *
    * `permissionList` is null until the core has read it, which is why the bar
@@ -462,7 +471,18 @@ export function App({
    * text, an image, or a file with no preview -- so the pane's own shape is
    * the core's answer rather than a decision taken here from the extension.
    */
-  const [viewerPath, setViewerPath] = useState("");  const [viewerFile, setViewerFile] = useState<ViewerFile | null>(null);
+  const [viewerPath, setViewerPath] = useState("");
+  /**
+   * The last three files this window opened in Code, newest first.
+   *
+   * The nav's project block offers them back, which is the shortest path from
+   * "I was reading that" to reading it again. Window state rather than
+   * persisted: it is a reading history, not a project setting, and a list that
+   * survived a restart would be a list of files from last week that no longer
+   * exist. Three, because the block has room for three -- see `RecentFiles`.
+   */
+  const [recentFiles, setRecentFiles] = useState<string[]>([]);
+  const [viewerFile, setViewerFile] = useState<ViewerFile | null>(null);
   const [viewerError, setViewerError] = useState<string | null>(null);
   const [viewerLoading, setViewerLoading] = useState(false);
   const [viewerSaving, setViewerSaving] = useState(false);
@@ -808,7 +828,27 @@ export function App({
         // used to be a workaround for a core that claimed a provider it did
         // not have, and rebinding it again only risked overwriting the
         // selection with the default it was supposed to be reporting.
-        if (!snapshot.bound) setNeedsProvider(true);      } catch (error) {
+        if (!snapshot.bound) setNeedsProvider(true);
+        // The skills, for the nav's count. Read once at boot rather than when
+        // the block is first drawn: the count is part of the front door, and a
+        // number that arrived a second after the panel did would be a number
+        // that was absent in the frame the user looked at. Failure is silent --
+        // the list is a convenience, and the composer's `/` menu is where a
+        // skill is actually chosen.
+        if (!cancelled) {
+          try {
+            const listedSkills = (await backend.call("skills.list")) as {
+              skills?: SkillInfo[];
+            };
+            if (!cancelled) {
+              setSkills(listedSkills.skills ?? []);
+              setSkillsKnown(true);
+            }
+          } catch {
+            /* a core that cannot list skills still has a working composer */
+          }
+        }
+      } catch (error) {
         if (!cancelled) {
           setConnected(false);
           // The error banner is the user-facing surface; the console keeps the
@@ -1108,7 +1148,12 @@ export function App({
       setMainMode("code");
       // Read-only again for every newly opened file: the switch is about the
       // file in front of you, not a global preference.
-      setReadOnly(true);      await loadFile(path);
+      setReadOnly(true);
+      // Most recent first, deduplicated, and only what this window opened.
+      // Three because the nav block has room for three and a "recent files"
+      // list long enough to scroll is a file tree with worse ordering.
+      setRecentFiles((seen) => [path, ...seen.filter((p) => p !== path)].slice(0, 3));
+      await loadFile(path);
     },
     [loadFile],
   );
@@ -2002,6 +2047,7 @@ export function App({
       .then((reply) => {
         const listed = reply as { skills?: SkillInfo[] };
         setSkills(listed.skills ?? []);
+        setSkillsKnown(true);
       })
       .catch((error: unknown) => {
         setState((prev) => ({
@@ -3085,7 +3131,14 @@ export function App({
             />
           }
           onNewChat={() => void startNewChat()}
-          onSkills={useSkills}          onUsage={openUsage}
+          onSkills={useSkills}
+          skillCount={skillsKnown ? skills.length : null}
+          // The App tab, because that is the page that lists them: Settings has
+          // no Skills tab, and inventing a fifth one would have made the row
+          // that already names the skills a lie.
+          onManageSkills={() => openSettings("app")}
+          recentFiles={recentFiles}
+          onUsage={openUsage}
           usageOpen={usageTab === "active"}
           onPet={() => void togglePet()}
           petOpen={petOpen}
@@ -3302,7 +3355,12 @@ export function App({
             onSetSetting={setSetting}
             onReadDiagnostics={readDiagnostics}
             onCopyDiagnostics={copyDiagnostics}
-            onOpenLogFolder={() => void openLogFolder()}            update={update}
+            onOpenLogFolder={() => void openLogFolder()}
+            // `null` until the core answers, so the page can say "not read yet"
+            // rather than "no skills" -- see `SettingsPanel`'s prop.
+            skills={skillsKnown ? skills : null}
+            onLoadSkills={loadSkills}
+            update={update}
             updateChecking={updateChecking}
             updateFetching={updateFetching}
             updateReady={updateReady}

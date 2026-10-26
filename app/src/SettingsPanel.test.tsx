@@ -36,8 +36,9 @@ import {
   type UpdateAnswer,
   type UpdateDownload,
 } from "./SettingsPanel.js";
-import { all, blur, click, one, render, setValue, wait } from "./test-render.js";
+import { all, blur, click, one, render, setValue, texts, wait } from "./test-render.js";
 import type { MotionPreference } from "./motion.js";
+import type { SkillInfo } from "./SkillPicker.js";
 
 const noop = () => {};
 
@@ -198,6 +199,9 @@ interface Overrides {
   onReadDiagnostics?: () => Promise<DiagnosticsInfo | null>;
   onCopyDiagnostics?: (text: string) => Promise<boolean>;
   onOpenLogFolder?: () => void;
+  /** Null means the core has not answered; a list means it has. */
+  skills?: SkillInfo[] | null;
+  onLoadSkills?: () => void;
   initialTab?: SettingsTab;
 }
 
@@ -250,6 +254,8 @@ function panel(overrides: Overrides = {}) {
       }
       onCopyDiagnostics={overrides.onCopyDiagnostics ?? (async () => true)}
       onOpenLogFolder={overrides.onOpenLogFolder ?? noop}
+      skills={overrides.skills === undefined ? [] : overrides.skills}
+      onLoadSkills={overrides.onLoadSkills ?? noop}
       initialTab={overrides.initialTab}
     />
   );
@@ -436,11 +442,49 @@ describe("the desktop pet, from the settings pane", () => {
     );
 
     await click(tab(container, "App"));
-    // Three sections, and the third is why the tab is called App rather than
-    // Window: the version, the update check and the diagnostics are about the
-    // program, the same kind of setting as the card, and none is a property of
-    // the agent.
-    assert.deepEqual(headings(container), ["Desktop pet", "Motion", "Version", "Diagnostics"]);
+    // Four sections now. Skills leads because it is the only one that is
+    // content rather than a preference -- a skill is a file the user writes,
+    // and this page is where the nav's `Manage` lands. The other three are why
+    // the tab is called App rather than Window: the pet, the motion and the
+    // version are about the program, and none is a property of the agent.
+    assert.deepEqual(headings(container), [
+      "Skills",
+      "Desktop pet",
+      "Motion",
+      "Version",
+      "Diagnostics",
+    ]);
+  });
+
+  test("the skills section lists what the core found, and where each lives", async () => {
+    // The nav's `Manage` lands here, so this page has to be worth the trip: the
+    // name, the root it was found under, and one line saying what it does.
+    const container = await render(
+      panel({
+        initialTab: "app",
+        skills: [
+          { name: "review", description: "Read a diff like a reviewer.", source: "project", path: "C:/w/.tonyagent/skills/review.md" },
+          { name: "notes", description: "", source: "user", path: "C:/u/.tonyagent/skills/notes.md" },
+        ],
+      }),
+    );
+    const section = all(container, ".settings-group").find(
+      (g) => (one(g, "h3")?.textContent ?? "") === "Skills",
+    )!;
+    assert.ok(section, "the App tab has no skills section");
+    assert.deepEqual(texts(section, ".settings-skill-name"), ["review", "notes"]);
+    assert.deepEqual(texts(section, ".settings-skill-source"), ["project", "user"]);
+    assert.deepEqual(texts(section, ".settings-skill-desc"), ["Read a diff like a reviewer."]);
+  });
+
+  test("an unread skills list is not the same as an empty one", async () => {
+    // `0 skills` for a core that has not answered would make a working install
+    // look empty, which is the one thing a count must never do.
+    const unread = await render(panel({ initialTab: "app", skills: null }));
+    assert.match(texts(unread, ".settings-value").join(" "), /Not read yet/);
+
+    const empty = await render(panel({ initialTab: "app", skills: [] }));
+    assert.match(texts(empty, ".settings-value").join(" "), /No skills found/);
   });
 
   test("it draws the card's real state, and a press asks for the other one", async () => {
@@ -1004,9 +1048,15 @@ describe("what the update check says", () => {
     );
     await click(tab(container, "App"));
 
-    // Still four headings, and no Install among them -- with an update waiting,
-    // which is the state that used to add a fifth.
-    assert.deepEqual(headings(container), ["Desktop pet", "Motion", "Version", "Diagnostics"]);
+    // Still five headings, and no Install among them -- with an update waiting,
+    // which is the state that used to add a sixth.
+    assert.deepEqual(headings(container), [
+      "Skills",
+      "Desktop pet",
+      "Motion",
+      "Version",
+      "Diagnostics",
+    ]);
 
     // And the press that runs it is inside that card, under the version it
     // belongs to rather than beside a heading of its own.
@@ -1647,7 +1697,7 @@ describe("the diagnostics card", () => {
     await click(tab(container, "App"));
     assert.deepEqual(
       all(container, ".settings-group h3").map((h) => (h.textContent ?? "").trim()),
-      ["Desktop pet", "Motion", "Version", "Diagnostics"],
+      ["Skills", "Desktop pet", "Motion", "Version", "Diagnostics"],
     );
   });
 

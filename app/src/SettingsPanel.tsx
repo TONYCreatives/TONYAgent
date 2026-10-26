@@ -38,6 +38,7 @@ import {
 } from "./SettingsMenus.js";
 import { prettifyModelName } from "./displayNames.js";
 import type { MotionPreference } from "./motion.js";
+import type { SkillInfo } from "./SkillPicker.js";
 
 /**
  * One `update.check` reply.
@@ -458,6 +459,20 @@ interface Props {
   /** Open the folder the core's log files live in, in the file explorer. */
   onOpenLogFolder: () => void;
   /**
+   * Every skill the core offers, and a way to re-read them.
+   *
+   * The nav's skills block has a `Manage` control and nowhere to go: Settings
+   * has four sections and none of them is Skills, so this is that page -- the
+   * list, the folder each file was found under, and nothing to configure,
+   * because a skill is a file the user writes rather than a setting the app
+   * owns.
+   *
+   * `null` means the core has not answered; the section says so rather than
+   * drawing an empty list, which would claim the install has no skills.
+   */
+  skills: SkillInfo[] | null;
+  onLoadSkills: () => void;
+  /**
    * The tab a directed open lands on, or undefined for the default.
    *
    * Sending with no provider opens Keys. Read once as the initial tab: the
@@ -613,6 +628,8 @@ export function SettingsPanel({
   onReadDiagnostics,
   onCopyDiagnostics,
   onOpenLogFolder,
+  skills,
+  onLoadSkills,
   initialTab,
 }: Props) {
   // The tab a directed open lands on -- sending with no provider opens Keys.
@@ -770,6 +787,10 @@ export function SettingsPanel({
     // facts nobody is looking at.
     if (tab !== "app") return;
     void refreshDiagnostics();
+    // The skills are read here rather than held from boot: the page is where
+    // they are *managed*, and a list read once at launch would be a list of the
+    // skills that existed before the user added one.
+    onLoadSkills();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, tab]);
 
@@ -1761,6 +1782,52 @@ export function SettingsPanel({
 
         {tab === "app" && (
           <>
+            {/*
+              Skills, first on this tab because it is the only thing here that
+              is *content* rather than a preference: a skill is a file the user
+              writes, and this page's job is to say which ones the core found
+              and where. It is also where the nav's `Manage` goes -- Settings
+              has four sections and none of them is Skills, so the alternative
+              was a control with no destination.
+
+              Nothing here is editable. A skill is a markdown file in
+              `.tonyagent/skills`; the page's job is to make it findable, not to
+              become a second editor for it.
+            */}
+            <section className="settings-group">
+              <h3>Skills</h3>
+              <p className="settings-note">
+                Procedures the agent can be asked to follow by name, one file
+                each. Type <code>/</code> in the composer to pick one, or open a
+                file below to read it.
+              </p>
+              {skills === null ? (
+                <p className="settings-value">Not read yet.</p>
+              ) : skills.length === 0 ? (
+                <p className="settings-value">
+                  No skills found. A skill is a <code>.md</code> file in
+                  <code> .tonyagent/skills</code> under this project, or in the
+                  same folder under your home directory.
+                </p>
+              ) : (
+                <ul className="settings-skills">
+                  {skills.map((skill) => (
+                    <li key={skill.path}>
+                      {/* The name leads, the description follows, and the
+                          source is the quiet fact on the right -- the same
+                          order the composer's own menu uses, so the two lists
+                          read as one feature. */}
+                      <span className="settings-skill-name">{skill.name}</span>
+                      <span className="settings-skill-source">{skill.source}</span>
+                      {skill.description && (
+                        <span className="settings-skill-desc">{skill.description}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
             <section className="settings-group">
               <h3>Desktop pet</h3>
               <p className="settings-note">

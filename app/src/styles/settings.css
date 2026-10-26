@@ -1408,3 +1408,57 @@
 .settings-notes > .settings-field {
   margin-top: 10px;
 }
+
+/*
+ * The skills list on the App tab.
+ *
+ * A plain list rather than a table: a skill is a name, a description and the
+ * root it was found under, and a grid would put the description in a column
+ * narrow enough to wrap every line. The name leads, the source is the quiet
+ * fact beside it, and the description sits under both -- which is the order the
+ * composer's own `/` menu uses.
+ */
+.settings-skills {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-skills > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.settings-skills > li:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.settings-skill-name {
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-skill-source {
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-skill-desc {
+  grid-column: 1 / -1;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}

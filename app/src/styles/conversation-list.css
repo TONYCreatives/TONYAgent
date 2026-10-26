@@ -578,21 +578,35 @@
 }
 
 /*
- * The chats pane's one control above the list: the folder it is showing, and the
- * way to change it.
+ * The folder this list is, named -- and the way to change it.
  *
- * It carries `.chatlist-label` for the type and the dimming -- it is still a
- * heading, and it is still hidden when the pane is not Chats -- and this is what
- * makes it pressable. A heading is not a button, so the border, the background
- * and the pointer have to be undone here and then given back on hover.
+ * It is a button because it has to be. The list is scoped to one folder, so the
+ * folder is the thing a user needs to be able to move, and the picker used to
+ * hang off the project group's header, which is gone. Same control, same
+ * handler, one rung up.
+ *
+ * **It is a row in the project block now, not a heading above the list.** The
+ * block sits under the rows -- see the note in `ConversationList` -- so the
+ * heading weight it borrowed from `.chatlist-label` is gone and it carries its
+ * own row height instead.
+ *
+ * Its `title` is the full path: two folders called `api` in different trees
+ * are the same label otherwise, and which one is open is not something a
+ * user can work out from a name they chose themselves.
  */
 .chatlist-folder {
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
+  height: 24px;
+  padding: 0 var(--pad-row) 0 0;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-xs);
   cursor: pointer;
   text-align: left;
   transition: color var(--motion-fast) ease;
@@ -609,6 +623,186 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/*
+ * `Change…` as an affordance rather than as a second control.
+ *
+ * Two targets four pixels apart in a 288px panel is a coin toss for the
+ * pointer, and the folder picker is not destructive enough to need its own
+ * button. The word is what makes the row read as pressable without a hover.
+ */
+.chatlist-change {
+  flex: none;
+  margin-left: auto;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.02em;
+}
+
+/* --- the project and skills blocks --------------------------------------- */
+
+/*
+ * Both blocks are fixed-height and sit *under* the conversation list.
+ *
+ * That is what keeps the list the flexible region: above the rows they would
+ * have pushed the first conversation down by ~110px before anything was read,
+ * which in a 700px-tall window is most of what was left. Below, the list takes
+ * the space between the head and these two, and the blocks never move.
+ *
+ * A rule rather than a card, for the reason §5.4 gives: cards belong to the
+ * context panel's facts, and the nav is a list of places.
+ */
+.chatlist-block {
+  flex: none;
+  min-width: 0;
+  padding: 6px var(--pad-panel) 8px;
+  border-top: 1px solid var(--glass-edge);
+}
+
+/* The section label: 11px, 700, uppercase, tracked -- the panel-head style
+   every other section head in the window already uses. */
+.chatlist-block-label {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.chatlist-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+/*
+ * One file, one line: the name leads and the directory is context beside it.
+ *
+ * In one text run rather than two flex halves, so a long path truncates as a
+ * path -- the same rule `FilesTouched` follows, and for the same reason: two
+ * independently-ellipsised halves read as two facts that happen to be adjacent.
+ */
+.chatlist-recent-row {
+  display: block;
+  width: 100%;
+  height: 20px;
+  padding: 0 var(--pad-row) 0 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 20px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.chatlist-recent-row:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.chatlist-recent-name {
+  color: inherit;
+}
+
+.chatlist-recent-dir {
+  margin-left: 6px;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+}
+
+/* The skills row: the `/` action takes the width, the count and `Manage` take
+   what is left. `min-width: 0` on the action so a long label truncates rather
+   than pushing the other two out of the panel. */
+.chatlist-skills-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.chatlist-skills-row .chatlist-action {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 var(--pad-row) 0 0;
+  font-size: var(--text-xs);
+}
+
+.chatlist-count {
+  flex: none;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--raised);
+  color: var(--fg-dim);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/*
+ * `Manage` is a link, not a button: it leaves this panel for another page, and
+ * a filled control here would compete with the conversation rows for the one
+ * loud object the panel is allowed.
+ */
+.chatlist-manage {
+  flex: none;
+  height: 20px;
+  padding: 0 2px;
+  border: 0;
+  background: none;
+  color: var(--fg-mute);
+  font: inherit;
+  font-size: var(--text-2xs);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color var(--motion-fast) ease;
+}
+
+.chatlist-manage:hover:not(:disabled) {
+  color: var(--fg);
+}
+
+.chatlist-manage:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/*
+ * A short window gives the blocks one line each.
+ *
+ * 720 is the ladder's own compact step, asked of the height rather than of the
+ * width: this is not a narrower window, it is a shorter one, and what it needs
+ * is for the list to keep the room. What goes is the recent files and the
+ * section labels -- both are additions to a row that still says the same thing
+ * without them, and the list is the reason the panel exists.
+ */
+@media (max-height: 720px) {
+  .chatlist-recent,
+  .chatlist-block-label {
+    display: none;
+  }
+
+  .chatlist-block {
+    padding-block: 4px;
+  }
 }
 
 .chatrow {
