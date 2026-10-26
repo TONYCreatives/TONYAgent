@@ -23,7 +23,17 @@ app/dist/
 
 # Screenshots of the running app, written by the CDP probes. Scratch: the
 # Preview tab can serve them, and nothing in the product reads them.
-design-preview/
+#
+# **The baseline captures are the exception, and they have to be.** Phase 0 of
+# the workspace refine asked for five captures in `design-preview/` and none
+# were ever taken; when the next pass went looking for the "before" state there
+# was none, because this rule had kept the 4 October ones out of the repo too.
+# A baseline that is not committed is not a baseline. The folder is ignored
+# except for the captures the plan names and the two files that describe them.
+design-preview/*
+!design-preview/baseline/
+!design-preview/index.html
+!design-preview/README.md
 
 # The Rust shell, its build products and the frozen core all lived here. None of
 # them exist any more: the window is `python -m tonyagent.window`, which reads

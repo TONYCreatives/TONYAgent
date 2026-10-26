@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>TONYAgent — the window, at five widths</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 32px; background: #1a1a1a; color: #ececec;
+    font: 14px/1.6 "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    max-width: 1180px;
+  }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  h2 { font-size: 13px; font-weight: 600; letter-spacing: 0.09em;
+       text-transform: uppercase; color: #a8a8a8; margin: 36px 0 12px; }
+  p.lede { color: #a8a8a8; margin: 0 0 20px; max-width: 76ch; }
+  figure { margin: 0 0 32px; }
+  img {
+    display: block; width: 100%; height: auto; border-radius: 16px;
+    border: 1px solid #2e2e2e;
+  }
+  figcaption { margin-top: 10px; color: #a8a8a8; font-size: 13px; }
+  figcaption strong { color: #ececec; font-weight: 600; }
+  code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px;
+         background: #262626; padding: 1px 5px; border-radius: 6px; }
+  table { border-collapse: collapse; font-size: 13px; margin: 0 0 8px; }
+  th, td { text-align: left; padding: 4px 16px 4px 0; color: #a8a8a8; }
+  td { color: #ececec; font-variant-numeric: tabular-nums; }
+</style>
+
+<h1>TONYAgent — the window, at five widths</h1>
+<p class="lede">
+  Captures of the built window (<code>app/dist</code>) in Chromium, driven over
+  CDP by <code>scripts/capture_window.py</code>. These are the
+  <strong>baseline</strong> for phases 4–7 of the workspace refine: what the
+  transcript, the run panel and the docks looked like before the spine, the tool
+  rows and the Code-mode unification. Nothing here is a mock — it is the same
+  bundle the packaged window serves.
+</p>
+<p class="lede">
+  No core is attached: <code>scripts/preview_host.js</code> answers the boot
+  requests and replays one turn, which is what puts a transcript, a plan and a
+  token count on screen. The captures are committed — a baseline that lives only
+  on the machine that took it is not a baseline, which is exactly how the
+  previous pass lost its “before”.
+</p>
+
+<h2>What was measured</h2>
+<table>
+  <tr><th>Width × height</th><th>Grid</th><th>Centre</th><th>Composer</th><th>Nav</th><th>Run panel</th></tr>
+  <tr><td>1600 × 1000</td><td>288 / 1264 / 48</td><td>1264</td><td>760</td><td>dock 288</td><td>strip 48</td></tr>
+  <tr><td>1400 × 900</td><td>288 / 1064 / 48</td><td>1064</td><td>760</td><td>dock 288</td><td>strip 48</td></tr>
+  <tr><td>1100 × 800</td><td>64 / 988 / 48</td><td>988</td><td>760</td><td>rail 64</td><td>strip 48</td></tr>
+  <tr><td>900 × 700</td><td>900</td><td>900</td><td>760</td><td>overlay</td><td>overlay</td></tr>
+  <tr><td>560 × 700</td><td>560</td><td>560</td><td>448</td><td>overlay</td><td>overlay</td></tr>
+</table>
+
+<figure>
+  <img src="baseline/1600x1000.png" alt="The window at 1600 by 1000">
+  <figcaption><strong>1600 × 1000</strong> — both docks have room; the run panel is collapsed to its 48px strip, which is the default. The centre is 1264 and the reading column is still 760.</figcaption>
+</figure>
+
+<figure>
+  <img src="baseline/1400x900.png" alt="The window at 1400 by 900">
+  <figcaption><strong>1400 × 900</strong> — the width the plan calls the dock point: 288 + 1064 + 48. Opening the run panel here takes the centre to 824, the reading column plus its air.</figcaption>
+</figure>
+
+<figure>
+  <img src="baseline/1100x800.png" alt="The window at 1100 by 800">
+  <figcaption><strong>1100 × 800</strong> — the Agent nav has collapsed to the 64px rail and the centre is 988. The nav's expanded form is an overlay at this width.</figcaption>
+</figure>
+
+<figure>
+  <img src="baseline/900x700.png" alt="The window at 900 by 700">
+  <figcaption><strong>900 × 700</strong> — both panes are overlays and the centre is the window. The nav's overlay is the default form here, so it is what opens.</figcaption>
+</figure>
+
+<figure>
+  <img src="baseline/560x700.png" alt="The window at 560 by 700">
+  <figcaption><strong>560 × 700</strong> — the narrowest step that keeps the composer usable at 448px. The strip drops the connection word and the sandbox, and keeps the provider, the turn's tokens and Logs.</figcaption>
+</figure>
+
+<h2>Retired</h2>
+<p class="lede">
+  <code>archive/</code> holds the five 4 October captures of the blue-accent
+  design, kept only so the next pass can see what changed. They are not the
+  window any more: the accent is white, the nav is a dock and the run panel
+  exists.
+</p>
+</html>
