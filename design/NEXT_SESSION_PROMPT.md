@@ -108,7 +108,22 @@ explorer is primary and stays docked to 901. Tabs stay out of Code. Gate: editor
 ≥560px whenever the assistant is docked; no file or tree state is lost when the
 pane collapses; open-external and read-only behaviour unchanged.
 
-**6. Phase 7 — docs, screenshots, handoff — before Phase 6, deliberately.**
+**6. Phase 8 — the icon system** (§5.6, and the phase body in §9). This is new
+as of 26 October and it must land **before** the screenshots. The window has 31
+inline `<svg>` elements across 13 components, eight sizes (10/12/13/14/15/16/17/
+20), four frame stroke widths that draw 0.97–1.67px on screen, three drawing
+conventions (stroked 24-frame, filled silhouette, 10-frame caption), five glyphs
+defined more than once (close ×3, plus ×3, folder ×3, search ×2, back ×2), no
+shared module and no test over the set. Read §5.6 for the rules: one registry in
+`app/src/icons.tsx`, a 24-unit grid with 1.5 units of padding, **one drawn
+weight** (`strokeWidth × size / 24`) chosen from a sheet at 12/14/16/20 and
+recorded in a table, stroked for actions and solid only for the app's own marks,
+and 12/14/16/20 as the only sizes. Gate: `<svg` in exactly four files under
+`app/src` (the registry, `AppMark`, `petcard`, `WindowControls`), no path data
+defined twice, every icon within ±0.1px of its declared weight measured from the
+DOM, `design-preview/icons-sheet.png` committed, `layout.test.ts` untouched.
+
+**7. Phase 7 — docs, screenshots, handoff — after the icons, before Phase 6.**
 README feature notes and screenshots, `NEXT_SESSION.md`, the plan's status
 header, and the shortcut table: it currently documents `Ctrl+N`, `Ctrl+O`,
 `Ctrl+,`, `Ctrl+Shift+P` and `Ctrl+Enter`, of which **none** exist (the only
@@ -116,7 +131,7 @@ modifier binding in the frontend is `Ctrl+S` in the editor, and there is no
 command palette). Either implement them or delete the table — a table of keys
 that do nothing is worse than no table.
 
-**7. Phase 6 — polish, last** (§5). The `--signal` family with its contrast
+**8. Phase 6 — polish, last** (§5). The `--signal` family with its contrast
 table, opaque docks' final material, the launchpad dot grid, the two display
 type steps, the motion set, and the pet as the same presence as the status orb.
 Gate: `audit_reduced_motion.py` clean, the contrast assertions in
@@ -203,8 +218,14 @@ When the work comes back, check these before accepting it:
    reserve its height instead of covering the transcript?
 6. Phase 5: with the assistant docked, is the editor still ≥560px? Does
    collapsing the assistant lose the open file or the tree's expansion state?
-7. Phase 7: does the README's shortcut table now describe real bindings? Do the
+7. Phase 8: `grep -l '<svg' app/src/*.tsx` — four files, no more. Does
+   `icons-sheet.png` exist, and does it show every icon at 12/14/16/20 on
+   `--bg`/`--raised`/`--chip`? Is the drawn weight on the sheet uniform, or does
+   one row look heavier than its neighbours? Is the gear still solid while
+   sitting in a row of stroked glyphs? Did the rail's 20px icon move, and if it
+   did, were the earlier measurements re-run?
+8. Phase 7: does the README's shortcut table now describe real bindings? Do the
    README screenshots show the window as it is today? Is `NEXT_SESSION.md` newer
    than the last phase commit?
-8. Read `design/PHASE_STATUS.md` against the new handoffs: every "not started"
+9. Read `design/PHASE_STATUS.md` against the new handoffs: every "not started"
    should now be either done with a gate number or explicitly deferred.

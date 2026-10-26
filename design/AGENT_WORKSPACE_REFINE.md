@@ -3,7 +3,9 @@
 **Status:** Phases 0–3 landed (2026-10-23 to 2026-10-25) — see
 [PHASE_0_1_HANDOFF.md](PHASE_0_1_HANDOFF.md), [PHASE_2_HANDOFF.md](PHASE_2_HANDOFF.md)
 and [PHASE_3_HANDOFF.md](PHASE_3_HANDOFF.md) for what shipped, the measured gates
-and the deliberate deviations. Phases 4–7 are still a proposal.
+and the deliberate deviations. Phases 4–7 are still a proposal. **Phase 8 (the
+icon system, §5.6) was added 2026-10-26** and runs after Phase 5 and before
+Phase 7, because screenshots of glyphs that are about to be redrawn are wasted.
 **Date:** 2026-10-22
 **Scope:** the desktop window (`app/` + `src/tonyagent/window/`), not the core protocol.
 **Goal:** make the window read as a modern *agent workspace* rather than a chat
@@ -376,7 +378,9 @@ recommended for live state because it collides with warning.
 
 - Keep the existing radius ladder. Controls stay stadiums; rows stay boxes.
 - New icons are 1.6–1.8px strokes, 16/18/20px, same family as the rail. No filled
-  icons except status dots and the send glyph.
+  icons except status dots and the send glyph. **This sentence was never
+  enforced and the code already contradicts it** — see §5.6, which replaces it
+  with a real spec and Phase 8, which applies it.
 - The navigation pane's sections use a 1px rule + label, not cards. Cards are
   reserved for the context panel's facts (Run, Plan, Activity, Files).
 
@@ -393,6 +397,74 @@ recommended for live state because it collides with warning.
 
 No animation on a grid track. No parallax. No animation on the launchpad after
 its first arrival.
+
+### 5.6 Icon system
+
+The mark has a spec; the glyphs do not. `app/icons/icon.svg` and
+`logo/tonyagent-logo.svg` carry their geometry as a written contract — same
+letter, different ground, and the comment says why the tile goes away for the
+logo — while the thirty-odd interface glyphs are drawn ad hoc in whichever
+component needed one. This section is the missing spec, and Phase 8 applies it.
+
+**What is there today, measured from `app/src/*.tsx`:**
+
+| | Today |
+|---|---|
+| `<svg>` elements | 31, across 13 components |
+| Sizes | 10, 12, 13, 14, 15, 16, 17, 20 |
+| Frame stroke (24-unit box) | 1, 1.7, 1.8, 2 — i.e. **drawn 0.97–1.67px** |
+| Conventions | stroked 24-frame · filled silhouette (Gear, mark, folder) · 10-frame caption |
+| Shared module | none |
+| Duplicated paths | close ×3, plus ×3, folder ×3, search ×2, back chevron ×2 |
+| Tests over the set | none; `IconRail.test` pins the gear's *filled* form |
+
+So a 13px glyph beside a 20px one draws 0.97px against 1.67px — a 72% weight
+difference between two icons in the same window — and the same shape is defined
+three times with no mechanism that keeps the copies equal.
+
+**The rules.**
+
+1. **One module.** `app/src/icons.tsx` exports `<Icon name size />`. Every glyph
+   lives in one registry. The only files allowed to draw `<svg>` besides it are
+   `AppMark.tsx`, `petcard.tsx` and `WindowControls.tsx`, and each of those is a
+   different kind of object: the app's mark, the pet, and the OS caption glyphs.
+2. **One grid.** A 24-unit frame with 1.5 units of padding, so 21 units of live
+   area. Strokes centred on whole or half units, a 2-unit minimum between
+   parallel strokes, 1-unit corner radius, and angles at 0°, 45° or 90° — no
+   30° lines, which read as neither vertical nor diagonal at 12px.
+3. **One drawn weight.** The number that matters is the one on screen:
+   `drawn = strokeWidth × size / 24`. The spread today is 0.97–1.67px and the
+   phase collapses it to a single value ±0.1px across all four sizes, expressed
+   as a per-size table in the registry and **chosen from evidence**: a sheet at
+   12 / 14 / 16 / 20, at 100% and 200%, on `--bg` and `--raised`. Two policies
+   are legitimate and the phase picks one and records why — constant absolute
+   weight (every icon draws the same 1.4–1.6px, so small glyphs get relatively
+   heavier) or constant relative weight (the weight scales with the box, so a
+   12px icon draws ~1px). What is not legitimate is four values arriving by
+   accident, which is what exists now.
+4. **Two families, declared.** **Stroked** means action, control or object in a
+   row. **Solid** is reserved for the app's own marks: `AppMark`, the pet, the
+   tile. Under that rule the gear — an action, drawn solid today — and the
+   launchpad's filled folder both become stroked, or the phase reclassifies them
+   in writing. A solid glyph sitting in a row of stroked ones is the specific
+   inconsistency this section exists to end.
+5. **Four sizes.** 12, 14, 16 and 20 in the 24-unit frame; the 10-unit caption
+   set is the OS's own and stays as it is. 13, 15 and 17 disappear.
+6. **One colour.** `currentColor` and nothing else. No icon carries a fill
+   colour of its own; disabled is inherited opacity, not a second grey.
+7. **Names are concepts, not pictures.** `search`, not `magnifier`; `close`, not
+   `x`. One name per concept, no aliases, so the registry cannot grow two
+   entries for one meaning.
+8. **One geometry, two grounds.** The mark's two SVGs are correct and are the
+   model: the logo differs from the icon only in tile and ground, and says so.
+   The risk is that they drift by comment alone — either derive the raster
+   source from the logo at build time, or state which one is the original and
+   make the other a generated artefact.
+9. **Enforcement, not intention.** `icons.test.ts` renders every registry entry
+   and asserts the frame, the declared stroke for its size, `currentColor` and
+   `aria-hidden`; a second check scans `app/src/*.tsx` for `<svg` and for
+   `width`/`height` outside the ladder, the way `layout.test.ts` scans the
+   cascade. A spec nobody can fail is a comment.
 
 ---
 
@@ -747,6 +819,7 @@ semantics. The gate after each phase is a measurement, not an opinion.
 | **5** | 2–3 | Code mode unification | editor ≥560 with assistant docked |
 | **6** | 1–2 | signal, material, display type, motion | reduced-motion + contrast + no jank |
 | **7** | 1 | docs, screenshots, handoff | green tree, measured at five widths |
+| **8** | 1–2 | icon system: one module, one grid, one drawn weight, four sizes | no `<svg>` outside four files; drawn weight within ±0.1px at every size |
 
 ### Phase 0 — Contract, data and baselines (1–1.5 days)
 
@@ -905,7 +978,53 @@ semantics. The gate after each phase is a measurement, not an opinion.
 - **Exit gate:** green tree, screenshots committed, handoff current, no
   uncommitted design work.
 
-**Total:** ~13–17 working days. Phase 2 is a natural stopping point: the new
+### Phase 8 — Icon system (1–2 days)
+
+**Runs after Phase 5 and before Phase 7.** Phase 7 captures the screenshots, and
+screenshots of glyphs that are about to be redrawn are wasted work. Phase 6's
+polish comes after, and takes the weight table as given.
+
+The spec is §5.6; this phase is applying it.
+
+- **Registry.** `app/src/icons.tsx` with `<Icon name size />`, the size-to-stroke
+  table, and every glyph in one place. Delete the duplicates: close ×3, plus ×3,
+  folder ×3, search ×2, back chevron ×2. Convert `Gear` and the launchpad's
+  folder to stroked, or reclassify them in writing; `IconRail.test`'s assertions
+  about the gear's filled form change with it.
+- **Sizes.** Collapse 10/12/13/14/15/16/17/20 to 12/14/16/20 plus the untouched
+  10-unit caption set. The 20px rail icon is the reference the earlier phases
+  were measured against: if the chosen weight moves it, re-run and quote every
+  measurement that depended on it rather than assuming nothing did.
+- **Weight.** Choose the target from the sheet described in §5.6 rule 3, write it
+  in the table, and put the reason in the module comment — the rail's own
+  comment already argues its 2/20 for the same kind of reason, and that argument
+  is the standard to meet.
+- **The sheet.** `design-preview/icons-sheet.png`: every icon at every size on
+  `--bg`, `--raised` and `--chip`, with the grid and the weight table drawn
+  beside it. This is both the review artefact and the thing the next person
+  draws against.
+- **Assets.** Decide which of `app/icons/icon.svg` and
+  `logo/tonyagent-logo.svg` is the original and make the other derived, or state
+  in both files that the difference is only the ground. Check whether the
+  Tauri-era files in `app/icons/` (`icon.icns`, `128x128@2x.png`) are still
+  needed by `packaging/TONYAgent.spec`; if not, remove them rather than shipping
+  two rasters of one mark.
+- **Docs.** §5.4's icon sentence is replaced by a pointer to §5.6, and
+  `design/ICONS.md` is the drawing manual: the grid, the weight table, the two
+  families, the naming rule, and the steps to add an icon.
+- **Files:** new `icons.tsx`, `icons.test.ts`, `design/ICONS.md`,
+  `design-preview/icons-sheet.png`; `IconRail.tsx`, `Gear.tsx`, `Composer.tsx`,
+  `TopBar.tsx`, `ConversationList.tsx`, `FileSidebar.tsx`, `Launchpad.tsx`,
+  `SettingsPanel.tsx`, `ContextPanel.tsx`, `App.tsx` (glyph call sites only);
+  `IconRail.test.tsx`; `styles/*.css` only where an icon's own rule assumed a
+  size.
+- **Exit gate:** `<svg` appears in exactly four files under `app/src`; no path
+  data is defined twice; every icon draws its declared weight within ±0.1px at
+  12/14/16/20, measured from the rendered DOM (`stroke-width × size / 24`) and
+  confirmed on the sheet; no size outside the ladder; `npm test` green,
+  `layout.test.ts` untouched.
+
+**Total:** ~15–19 working days. Phase 2 is a natural stopping point: the new
 shell, nav and launchpad are visible and useful, and the context panel can be a
 later pass. Direction A would be ~4–5 days; Direction C is not estimated because
 it is a different product.

@@ -24,6 +24,7 @@ baselines — are still open, and closing them is the first job of the next pass
 | 5 — Code mode unification | **not started** | still `--code-side-w: 268`, `--code-helper-w: 400`, no `AssistantPanel.tsx` |
 | 6 — signal, material, display type, motion | **not started** | no `--signal` token; palette still achromatic |
 | 7 — docs, screenshots, handoff | **not started** | `NEXT_SESSION.md` last written 22 Oct; `design-preview/` still 4 Oct |
+| 8 — icon system (added 26 Oct) | **not started** | 31 inline `<svg>` across 13 files, 8 sizes, 4 stroke weights, 5 duplicated paths, no registry |
 
 ## Phase 0 — contract, data, baselines
 
@@ -126,6 +127,9 @@ Missing against §6.6 and the phase's own exit gate:
   describes and shows the old design; no screenshots were captured at any point
   in the pass. The plan's own handoff rule — "screenshots committed, handoff
   current" — is unmet.
+- **Phase 8:** added 26 October and not started. The spec is §5.6 of the plan;
+  the numbers behind it were read from `app/src/*.tsx` and are in that section's
+  table.
 
 ## Test state today
 
@@ -148,9 +152,10 @@ Missing against §6.6 and the phase's own exit gate:
    Phases 0–3.
 3. **Phase 4.** The transcript is now the least finished surface in the window,
    and the run panel beside it reports on work the transcript draws flat.
-4. **Phase 5**, then **Phase 7** (screenshots, README, `NEXT_SESSION.md`, and
-   removing the 4 October captures from `design-preview/`), and **Phase 6**
-   last — polish is the cheapest thing to redo and the most expensive to redo
-   twice.
+4. **Phase 5**, then **Phase 8** (the icon system — it must land before the
+   screenshots, so that Phase 7 photographs glyphs that are finished), then
+   **Phase 7** (screenshots, README, `NEXT_SESSION.md`, and removing the 4
+   October captures from `design-preview/`), and **Phase 6** last — polish is
+   the cheapest thing to redo and the most expensive to redo twice.
 5. Optional, small: the project block needs a branch source before it can be
    built; the skills block needs a count from `list_skills`.
