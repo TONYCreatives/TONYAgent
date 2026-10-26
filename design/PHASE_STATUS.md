@@ -7,10 +7,12 @@ re-establishing from evidence.
 
 ## Headline
 
-**Phases 0–3 are in the working tree. Phases 4–7 are not started. Nothing is
-committed.** `git log` still ends at `f27125d`, the commit that added the plan
-itself; all 2,344 inserted lines across 30 files and 25 new files are
-uncommitted.
+**Phases 0–3 are in the tree and committed. Phases 4–7 are not started.**
+They were landed by a previous pass that stopped without committing; they are now
+in `0e58172`, with this audit and the GUI review in `d14df30`. The three holes
+below — per-turn tokens, the nav's project and skills blocks, and Phase 0's
+baselines — are still open, and closing them is the first job of the next pass
+(see `design/NEXT_SESSION_PROMPT.md`).
 
 | Phase | Status | Evidence |
 |---|---|---|
@@ -138,8 +140,8 @@ Missing against §6.6 and the phase's own exit gate:
 
 ## What has to happen next, in order
 
-1. **Commit Phases 0–3.** 2,344 lines and 25 new files are one `git clean`
-   away from gone, and the last three handoffs are untracked too.
+1. ~~Commit Phases 0–3.~~ Done: `0e58172` carries the phase work, `d14df30`
+   the review documents. The tree is clean.
 2. **Decide per-turn usage.** Either a `turn.usage` event from the core or a
    `usage.turn` RPC; until one exists the Run card's token row and the strip's
    token count cannot be finished. This is the only unfinished item inside
