@@ -952,3 +952,69 @@ test("interleaved children each keep their own card", () => {
   );
   assert.deepEqual(tools.map((t) => t.child?.name), ["c1", "c2", "c3", "c4"]);
 });
+
+// --- what a turn spent ----------------------------------------------------
+
+test("turn.usage fills the state, and a new turn clears it", () => {
+  // The one number in this window that is a measurement rather than a
+  // derivation: the core sums it from the requests the turn made.
+  let state = applyEvent(initialState, event("turn.started"));
+  assert.equal(state.turnUsage, null, "a turn that has just started has spent nothing");
+
+  state = applyEvent(
+    state,
+    event("turn.usage", {
+      input_tokens: 1200,
+      output_tokens: 340,
+      reasoning_tokens: 90,
+      cost: 0.0042,
+    }),
+  );
+  assert.deepEqual(state.turnUsage, {
+    input: 1200,
+    output: 340,
+    reasoning: 90,
+    cost: 0.0042,
+  });
+
+  // The turn ends, and the total stays: the strip reports it after the run,
+  // which is when a reader finally has time to look at it.
+  state = applyEvent(state, event("turn.finished"));
+  assert.equal(state.turnUsage?.input, 1200);
+
+  // A second turn starts with nothing spent, so the strip cannot report the
+  // previous run's tokens while this one is on its first request.
+  state = applyEvent(state, event("turn.started", {}, "t2"));
+  assert.equal(state.turnUsage, null);
+});
+
+test("a missing cost stays null rather than becoming zero", () => {
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(
+    state,
+    event("turn.usage", { input_tokens: 5, output_tokens: 1, reasoning_tokens: 0, cost: null }),
+  );
+  assert.equal(state.turnUsage?.cost, null);
+});
+
+test("a child's turn.usage does not land on the parent's card", () => {
+  // A subagent runs its own turn and spends its own tokens. Those frames carry
+  // the parent call id, so they route to the card and stop there -- the
+  // parent's own total is what the Run card is about.
+  let state = applyEvent(initialState, event("turn.started"));
+  state = applyEvent(state, event("tool.started", { id: "c1", name: "subagent" }));
+  state = applyEvent(state, {
+    ...event("turn.usage", { input_tokens: 900, output_tokens: 90, reasoning_tokens: 0 }, "child"),
+    subagent: "probe",
+    parent_call_id: "c1",
+  });
+  assert.equal(state.turnUsage, null);
+});
+
+test("a foreign turn's usage is ignored", () => {
+  // Two sessions on one bus: only the turn this window is rendering may move
+  // its numbers.
+  let state = applyEvent(initialState, event("turn.started", {}, "t1"));
+  state = applyEvent(state, event("turn.usage", { input_tokens: 10, output_tokens: 1 }, "other"));
+  assert.equal(state.turnUsage, null);
+});

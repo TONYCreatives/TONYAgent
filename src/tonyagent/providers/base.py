@@ -254,6 +254,16 @@ class BaseLLMProvider(ABC):
     supports_streaming: bool = True
     supports_function_calling: bool = True
 
+    def take_usage(self):
+        """What the last request spent, or None.
+
+        None is the honest answer for a provider whose transport has no usage
+        block -- a local model, a CLI delegate that reports cost some other
+        way. The session reads it as "nothing was measured" and emits no
+        `turn.usage`, so the window says `unknown` rather than zero.
+        """
+        return None
+
     #: **True when this provider is a plain chat model: usable in Chat mode and
     #: nowhere else.**
     #:
@@ -397,6 +407,18 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         if client is not None:
             client.set_session(self.session_id)
 
+    def take_usage(self):
+        """What the last request spent, from the transport that measured it.
+
+        The client is the only layer that sees the usage block, so it is the
+        only layer that can answer this. Taken rather than read: see
+        `LLMClient.take_usage`.
+        """
+        client = getattr(self, "_http", None)
+        if client is None:
+            return None
+        return client.take_usage()
+
     async def chat_completion(
         self,
         messages: list[ChatMessage],
@@ -427,6 +449,11 @@ class OpenAICompatibleProvider(BaseLLMProvider):
         )
 
     async def _stream_as_chunks(self, client, messages, tools, tool_choice, **kwargs):
+        # No early exit on `finish_reason`. The client stops yielding there but
+        # keeps reading for the usage frame the request asked for, and that
+        # read only happens if this loop runs the transport to its end. Breaking
+        # here abandoned the generator, so the usage block was never parsed and
+        # the ledger recorded every streamed request as zero tokens.
         async for chunk in client.stream(messages, tools, tool_choice, **kwargs):
             yield ChatCompletionChunk(
                 content=chunk.content,
@@ -436,8 +463,6 @@ class OpenAICompatibleProvider(BaseLLMProvider):
                 reasoning=chunk.reasoning,
                 reasoning_details=chunk.reasoning_details,
             )
-            if chunk.finish_reason:
-                break
 
     async def check_connection(self):
         """Real round-trip health check (was: a startswith() string test)."""

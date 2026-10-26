@@ -34,6 +34,7 @@ import { PlanCard } from "./PlanCard.js";
 import { RunCard } from "./RunCard.js";
 import type { ActivityStep, RunState, TouchedFile } from "./activity.js";
 import type { ContextReply, Plan } from "./backend.js";
+import type { TurnUsage } from "./events.js";
 
 type SectionKey = "plan" | "activity" | "files";
 
@@ -47,6 +48,8 @@ interface Props {
   startedAt: number | null;
   /** What the agent is doing, for the one line under the state. */
   detail: string;
+  /** What the last turn spent, or null when nothing was measured. */
+  usage: TurnUsage | null;
   /** The core's plan for this conversation. */
   plan: Plan;
   /** The call that wrote the plan, when it is in the transcript. */
@@ -119,6 +122,7 @@ export function ContextPanel({
   run,
   startedAt,
   detail,
+  usage,
   plan,
   planCallId,
   steps,
@@ -211,6 +215,7 @@ export function ContextPanel({
               run={run}
               startedAt={startedAt}
               detail={detail}
+              usage={usage}
               context={context}
               onStop={onStop}
               onOpenTrajectory={onOpenTrajectory}

@@ -138,6 +138,13 @@ def _is_protocol_mismatch(exc: LLMError) -> bool:
 #: spends one failed chat request before the fallback catches it.
 RESPONSES_DIRECT_PREFIXES = ("muse-spark-", "grok-4.7", "grok-4.6", "gpt-6-luna", "gpt-5.6-luna")
 
+#: How many frames past `finish_reason` a stream is still read for.
+#:
+#: Exactly one is needed -- the usage frame -- and the rest is slack for a
+#: gateway that sends a keep-alive or a `[DONE]` in between. Small on purpose:
+#: this is a bound on how long a finished answer can keep its connection open.
+_TRAILING_FRAMES = 4
+
 
 @dataclass
 class Health:
@@ -200,6 +207,13 @@ class LLMClient:
         # click to learn the same thing. Cached per client rather than
         # globally so a rebind, or a second base_url, reads its own list.
         self._model_entries_cache: dict[str, dict] | None = None
+        #: What the most recent request reported, until someone takes it.
+        #:
+        #: The ledger is a file about the *account*; this is about one request,
+        #: and it is what the session sums into a turn. Taken rather than read,
+        #: so a pass that reports nothing cannot inherit the previous pass's
+        #: numbers and count them twice.
+        self._last_usage: Usage | None = None
 
     # -- helpers -------------------------------------------------------------
     def set_session(self, session_id: str) -> None:
@@ -284,6 +298,11 @@ class LLMClient:
         # went in at the top. The cost is one dict lookup per request.
         from tonyagent.core.usage import fingerprint, record_request
 
+        # Before the ledger write, so a full disk cannot lose the turn's
+        # numbers: the dashboard is a convenience, and the Run card is the
+        # thing the user is looking at while the turn runs.
+        self._last_usage = usage
+
         record_request(
             provider=self.provider,
             key_id=fingerprint(self.provider, self.api_key),
@@ -296,6 +315,17 @@ class LLMClient:
         )
 
     # -- requests ------------------------------------------------------------
+    def take_usage(self) -> Usage | None:
+        """The last request's usage, once, or None if it reported none.
+
+        The session calls this after every assistant pass and sums what comes
+        back into the turn. Cleared on read for the same reason a mailbox is
+        emptied: a pass that reports nothing must leave the turn's total where
+        it was, not add the previous pass's tokens again.
+        """
+        usage, self._last_usage = self._last_usage, None
+        return usage
+
     async def complete(self, messages, tools=None, tool_choice=None, **extra) -> Completion:
         self.check_key()
         last_mismatch: LLMError | None = None
@@ -339,6 +369,10 @@ class LLMClient:
                         body = (await resp.aread()).decode("utf-8", "replace")
                         raise LLMError.from_response(resp.status_code, body, self.provider)
                     event = ""
+                    #: Whether the answer's last frame has been seen. Past that
+                    #: point this reads a few more frames and yields none.
+                    finished = False
+                    trailing = 0
                     async for line in resp.aiter_lines():
                         if line.startswith("event:"):
                             event = line[6:].strip()
@@ -349,11 +383,27 @@ class LLMClient:
                         if data == "[DONE]":
                             break
                         chunk = dialect.parse_stream_event(event, data, acc)
-                        if chunk is not None:
-                            yield chunk
-                            if chunk.finish_reason:
-                                break
                         event = ""
+                        if not finished:
+                            if chunk is not None:
+                                yield chunk
+                                finished = bool(chunk.finish_reason)
+                            continue
+                        # Still reading after the answer ended, and yielding
+                        # nothing. The usage block that
+                        # `stream_options.include_usage` asked for arrives as
+                        # one more frame *after* the one carrying
+                        # `finish_reason`, and leaving the loop on that frame --
+                        # which is what this did -- meant a streamed request
+                        # recorded no tokens at all. Since every request the
+                        # window makes is streamed, that was the whole ledger.
+                        #
+                        # Bounded rather than "read to [DONE]": a gateway that
+                        # keeps the connection open after its last frame would
+                        # otherwise hold the turn open until the timeout.
+                        trailing += 1
+                        if trailing >= _TRAILING_FRAMES:
+                            break
             ok = True
         except httpx.HTTPError as exc:
             raise LLMError.network(exc, self.provider) from exc

@@ -1455,138 +1455,6 @@ describe("the composer and the transcript share one measure", () => {
     // invalidate a test that only ever claimed the two are the same.
 
 
-// --- motion coverage ---------------------------------------------------------
-/**
- * Every state change that can animate has something to animate it.
- *
- * This began as an audit of the whole stylesheet, and it found 38 state rules
- * changing a visible property with nothing to interpolate it: the conversation
- * list, the model picker's rows, the file tree, the permission menu and every
- * form field snapped where the rest of the window faded over 110ms.
- *
- * The defect is invisible to a rule-by-rule read, which is why it survived: the
- * missing transition is not in the rule that is wrong -- it is absent from the
- * rule that should have carried it. So it is asserted over the cascade at once,
- * the way the colour-and-scale tests above are.
- *
- * A transition counts for a state when two things hold: its *subject* (the last
- * compound of its selector, states removed) is the same element or a subset of
- * the one changing, and the properties it lists cover everything that changes.
- * So a transition on `.icon-btn` covers `.icon-btn.send-btn`, and one on
- * `.composer-inner` deliberately does *not* cover the textarea inside it -- an
- * inherited transition does not animate a descendant.
- */
-describe("every state change has a transition to animate it", () => {
-  /** What is worth interpolating. `font-weight` and `text-decoration` are
-   *  absent on purpose: neither animates reliably, so requiring a transition
-   *  for them would be requiring a lie. */
-  const ANIMATABLE = ["background", "background-color", "color", "border-color", "transform", "opacity", "filter", "height"];
-  /** What each shorthand covers, so `background` counts for `background-color`. */
-  const COVERS: Record<string, string[]> = { background: ["background-color"], border: ["border-color"] };
-
-  const STATES = /:(hover|active|focus|focus-visible)\b|\.is-active|\[data-/;
-
-  /**
-   * The element a selector's last compound names: its tag and its classes, with
-   * states and attributes removed.
-   *
-   * The tag is in here because `.rowmenu button` and `.rowmenu button:hover` are
-   * the same element and carry no class at all -- a classes-only reading gives
-   * both an empty set and matches nothing.
-   */
-  function subject(selector: string): Set<string> {
-    const last = selector.split(/[\s>+~]+/).filter(Boolean).pop() ?? "";
-    const out = new Set<string>();
-    const tag = last.match(/^([a-z][\w-]*)/);
-    if (tag) out.add(tag[1]);
-    for (const m of last.matchAll(/\.([A-Za-z][\w-]*)/g)) out.add(m[1]);
-    return out;
-  }
-
-  /** The properties every `transition` in a body lists, shorthands expanded. */
-  function transitioned(body: string): Set<string> {
-    const out = new Set<string>();
-    for (const match of body.matchAll(/transition\s*:\s*([^;]+);/g)) {
-      for (const part of match[1].split(",")) {
-        const first = part.trim().split(/\s+/)[0];
-        if (!first) continue;
-        out.add(first);
-        for (const also of COVERS[first] ?? []) out.add(also);
-      }
-    }
-    return out;
-  }
-
-  function changed(body: string): Set<string> {
-    const out = new Set<string>();
-    for (const prop of ANIMATABLE) {
-      if (new RegExp(`(^|[\\s;])${prop}\\s*:`).test(body)) out.add(prop);
-    }
-    return out;
-  }
-
-  const isSubset = (a: Set<string>, b: Set<string>) =>
-    a.size > 0 && [...a].every((x) => b.has(x));
-
-  test("no interactive state repaints itself in a single frame", () => {
-    // A state listed here is deliberately instant, and adding one is a claim
-    // that has to be argued beside it.
-    const INSTANT_ON_PURPOSE = [
-      // The stylesheet cannot see this one: the element is rendered as
-      // `class="btn btn-accent"`, so the transition that animates it is on
-      // `.btn` -- which lists both `background` and `filter` now. A CSS-only
-      // reading sees `.btn-accent` and no transition anywhere.
-      ".btn-accent:hover:not(:disabled)",
-      // A native scrollbar part. Chromium paints it, and it takes no
-      // transition from a stylesheet, so requiring one would be requiring a
-      // rule that does nothing.
-      "::-webkit-scrollbar-thumb:hover",
-      // A dock becoming an overlay is a structural state, not a property fade:
-      // the panel stops being a grid track and starts being a sheet, and a
-      // transition on `height`/`background` would animate a reflow. The rule
-      // is written for the state, and the plan's rule is that a dock toggle
-      // reflows once, instantly.
-      '.app > .chatlist[data-docked="true"]',
-      // The rail leaving the grid at 900 is a breakpoint, not a hover. Height
-      // 100% -> auto is how it stops stretching a column that is no longer
-      // there; there is no in-between layout to interpolate. Trajectory is the
-      // same rule for the same reason now that it carries the same dock.
-      '.app[data-mode="agent"] .rail',
-      '.app[data-mode="trajectory"] .rail',
-      // The overlay form is displayed, not restyled: `display: none` to `flex`
-      // has no frame in between, so the background arrives with the panel.
-      // Phase 6 owns the reveal itself.
-      '.contextdock[data-docked="false"][data-state="open"] .context-panel',
-    ];
-
-    const gaps: string[] = [];
-    for (const rule of RULES) {
-      for (const selector of rule.selectors) {
-        if (!STATES.test(selector)) continue;
-        // A disabled control has no state to ease into; it is inert.
-        // A control that is switched off has no state to ease into: both a
-        // plain `:disabled` rule and a `:disabled:hover` one say "do not
-        // respond", and both are inert by design.
-        if (selector.includes(":disabled")) continue;
-        const wanted = changed(rule.body);
-        if (wanted.size === 0) continue;
-        if (INSTANT_ON_PURPOSE.includes(selector)) continue;
-        const mine = subject(selector);
-        const covered = RULES.some(
-          (other) =>
-            other.selectors.some((s) => isSubset(subject(s), mine)) &&
-            [...wanted].every((prop) => transitioned(other.body).has(prop)),
-        );
-        if (!covered) gaps.push(`${selector} -> ${[...wanted].sort().join(", ")}`);
-      }
-    }
-    assert.deepEqual(
-      [...new Set(gaps)].sort(),
-      [],
-      "a state changes a visible property with nothing to animate it",
-    );
-  });
-});
     for (const selector of [".composer-inner", ".transcript-inner", ".hint", ".banner"]) {
       assert.match(
         body(selector),
@@ -1772,6 +1640,139 @@ describe("every state change has a transition to animate it", () => {
 });
 
 // --- keyboard focus ---------------------------------------------------------
+// --- motion coverage ---------------------------------------------------------
+/**
+ * Every state change that can animate has something to animate it.
+ *
+ * This began as an audit of the whole stylesheet, and it found 38 state rules
+ * changing a visible property with nothing to interpolate it: the conversation
+ * list, the model picker's rows, the file tree, the permission menu and every
+ * form field snapped where the rest of the window faded over 110ms.
+ *
+ * The defect is invisible to a rule-by-rule read, which is why it survived: the
+ * missing transition is not in the rule that is wrong -- it is absent from the
+ * rule that should have carried it. So it is asserted over the cascade at once,
+ * the way the colour-and-scale tests above are.
+ *
+ * A transition counts for a state when two things hold: its *subject* (the last
+ * compound of its selector, states removed) is the same element or a subset of
+ * the one changing, and the properties it lists cover everything that changes.
+ * So a transition on `.icon-btn` covers `.icon-btn.send-btn`, and one on
+ * `.composer-inner` deliberately does *not* cover the textarea inside it -- an
+ * inherited transition does not animate a descendant.
+ */
+describe("every state change has a transition to animate it", () => {
+  /** What is worth interpolating. `font-weight` and `text-decoration` are
+   *  absent on purpose: neither animates reliably, so requiring a transition
+   *  for them would be requiring a lie. */
+  const ANIMATABLE = ["background", "background-color", "color", "border-color", "transform", "opacity", "filter", "height"];
+  /** What each shorthand covers, so `background` counts for `background-color`. */
+  const COVERS: Record<string, string[]> = { background: ["background-color"], border: ["border-color"] };
+
+  const STATES = /:(hover|active|focus|focus-visible)\b|\.is-active|\[data-/;
+
+  /**
+   * The element a selector's last compound names: its tag and its classes, with
+   * states and attributes removed.
+   *
+   * The tag is in here because `.rowmenu button` and `.rowmenu button:hover` are
+   * the same element and carry no class at all -- a classes-only reading gives
+   * both an empty set and matches nothing.
+   */
+  function subject(selector: string): Set<string> {
+    const last = selector.split(/[\s>+~]+/).filter(Boolean).pop() ?? "";
+    const out = new Set<string>();
+    const tag = last.match(/^([a-z][\w-]*)/);
+    if (tag) out.add(tag[1]);
+    for (const m of last.matchAll(/\.([A-Za-z][\w-]*)/g)) out.add(m[1]);
+    return out;
+  }
+
+  /** The properties every `transition` in a body lists, shorthands expanded. */
+  function transitioned(body: string): Set<string> {
+    const out = new Set<string>();
+    for (const match of body.matchAll(/transition\s*:\s*([^;]+);/g)) {
+      for (const part of match[1].split(",")) {
+        const first = part.trim().split(/\s+/)[0];
+        if (!first) continue;
+        out.add(first);
+        for (const also of COVERS[first] ?? []) out.add(also);
+      }
+    }
+    return out;
+  }
+
+  function changed(body: string): Set<string> {
+    const out = new Set<string>();
+    for (const prop of ANIMATABLE) {
+      if (new RegExp(`(^|[\\s;])${prop}\\s*:`).test(body)) out.add(prop);
+    }
+    return out;
+  }
+
+  const isSubset = (a: Set<string>, b: Set<string>) =>
+    a.size > 0 && [...a].every((x) => b.has(x));
+
+  test("no interactive state repaints itself in a single frame", () => {
+    // A state listed here is deliberately instant, and adding one is a claim
+    // that has to be argued beside it.
+    const INSTANT_ON_PURPOSE = [
+      // The stylesheet cannot see this one: the element is rendered as
+      // `class="btn btn-accent"`, so the transition that animates it is on
+      // `.btn` -- which lists both `background` and `filter` now. A CSS-only
+      // reading sees `.btn-accent` and no transition anywhere.
+      ".btn-accent:hover:not(:disabled)",
+      // A native scrollbar part. Chromium paints it, and it takes no
+      // transition from a stylesheet, so requiring one would be requiring a
+      // rule that does nothing.
+      "::-webkit-scrollbar-thumb:hover",
+      // A dock becoming an overlay is a structural state, not a property fade:
+      // the panel stops being a grid track and starts being a sheet, and a
+      // transition on `height`/`background` would animate a reflow. The rule
+      // is written for the state, and the plan's rule is that a dock toggle
+      // reflows once, instantly.
+      '.app > .chatlist[data-docked="true"]',
+      // The rail leaving the grid at 900 is a breakpoint, not a hover. Height
+      // 100% -> auto is how it stops stretching a column that is no longer
+      // there; there is no in-between layout to interpolate. Trajectory is the
+      // same rule for the same reason now that it carries the same dock.
+      '.app[data-mode="agent"] .rail',
+      '.app[data-mode="trajectory"] .rail',
+      // The overlay form is displayed, not restyled: `display: none` to `flex`
+      // has no frame in between, so the background arrives with the panel.
+      // Phase 6 owns the reveal itself.
+      '.contextdock[data-docked="false"][data-state="open"] .context-panel',
+    ];
+
+    const gaps: string[] = [];
+    for (const rule of RULES) {
+      for (const selector of rule.selectors) {
+        if (!STATES.test(selector)) continue;
+        // A disabled control has no state to ease into; it is inert.
+        // A control that is switched off has no state to ease into: both a
+        // plain `:disabled` rule and a `:disabled:hover` one say "do not
+        // respond", and both are inert by design.
+        if (selector.includes(":disabled")) continue;
+        const wanted = changed(rule.body);
+        if (wanted.size === 0) continue;
+        if (INSTANT_ON_PURPOSE.includes(selector)) continue;
+        const mine = subject(selector);
+        const covered = RULES.some(
+          (other) =>
+            other.selectors.some((s) => isSubset(subject(s), mine)) &&
+            [...wanted].every((prop) => transitioned(other.body).has(prop)),
+        );
+        if (!covered) gaps.push(`${selector} -> ${[...wanted].sort().join(", ")}`);
+      }
+    }
+    assert.deepEqual(
+      [...new Set(gaps)].sort(),
+      [],
+      "a state changes a visible property with nothing to animate it",
+    );
+  });
+});
+
 describe("a keyboard user can see where they are", () => {
   test("the ring is drawn on every focusable thing, once", () => {
     // Until this there was no rule anywhere in the file that set an `outline`,

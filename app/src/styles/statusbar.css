@@ -39,8 +39,8 @@
 
 /* The status line is useful context, not a reason to widen the window. Let its
    text groups truncate before the always-reachable Logs control can be pushed
-   outside the bar. */
-.statusbar > span:not(.dot):not(.sep),
+   outside the bar. The tail is exempt: it is the group that must not shrink. */
+.statusbar > span:not(.dot):not(.sep):not(.statusbar-tail),
 .statusbar > button.linkish {
   min-width: 0;
   overflow: hidden;
@@ -75,6 +75,32 @@
 }
 
 /*
+ * The bar's right-hand end. It owns the push to the far edge so the token count
+ * and the Logs control stay one group -- see the note in `StatusBar.tsx`.
+ */
+.statusbar-tail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex: none;
+}
+
+/*
+ * What the last turn spent, as a count rather than a state.
+ *
+ * Mono figures and a dim weight, because it is a measurement that changes once
+ * per turn: it should be findable and should not compete with the provider and
+ * the sandbox, which are the facts that explain a failed send.
+ */
+.statusbar-tokens {
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/*
  * The log toggle, moved here from the log bar so the main chat column stays
  * clean. It sits at the far end of the status bar and opens the drawer above it.
  */
@@ -82,7 +108,6 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
   height: 22px;
   padding: 0 8px;
   border: 0;

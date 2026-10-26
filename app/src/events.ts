@@ -189,6 +189,29 @@ export interface ChatMessage {
 /** Events that mean the turn is over, successfully or not. */
 const TERMINAL = new Set(["turn.finished", "turn.failed"]);
 
+/**
+ * What a turn spent, summed by the core from the requests it made.
+ *
+ * The core sends this once, before the turn's terminal frame, and only when at
+ * least one request reported a usage block. `null` in the state therefore means
+ * *nobody measured this* -- not zero -- and the panel says `unknown` rather than
+ * drawing a number the provider never gave.
+ */
+export interface TurnUsage {
+  input: number;
+  output: number;
+  /**
+   * Thinking tokens, which providers bill as output.
+   *
+   * Kept apart because a turn that spent everything thinking is a different
+   * turn from one that wrote prose, and because adding them to `output` would
+   * count the same tokens twice -- see `UsageRecord.total_tokens` in the core.
+   */
+  reasoning: number;
+  /** The gateway's own price, when it published one. */
+  cost: number | null;
+}
+
 let counter = 0;
 /** Monotonic id for messages the frontend creates, not the core. */
 function nextId(prefix: string): string {
@@ -222,6 +245,18 @@ export interface ChatState {
   turnStartedAt: number | null;
   /** Set when the core reports turn.failed or an error event arrives. */
   error: string | null;
+  /**
+   * What the last turn spent, or null when nothing was measured.
+   *
+   * Cleared when a new turn starts and kept when one ends, so the strip can
+   * still report the number after the run has finished -- the alternative is a
+   * count that vanishes exactly when the reader has time to look at it.
+   *
+   * Null on a restored conversation: the number is not saved with the
+   * transcript, and inventing one from the message text would be a guess
+   * dressed as a measurement.
+   */
+  turnUsage: TurnUsage | null;
   /** Non-null while a confirmation.requested is awaiting a response. */
   pendingConfirm: {
     id: string;
@@ -257,6 +292,7 @@ export const initialState: ChatState = {
   activeTurnId: null,
   turnStartedAt: null,
   error: null,
+  turnUsage: null,
   pendingConfirm: null,
   pendingAsk: null,
 };
@@ -570,6 +606,10 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
       if (next.activeTurnId !== null) return state;
       next.busy = true;
       next.error = null;
+      // A new turn has spent nothing yet. Leaving the last turn's total here
+      // would make the strip report the previous run's tokens while this one
+      // is still on its first request.
+      next.turnUsage = null;
       next.activeTurnId = turnId ?? nextId("a");
       next.turnStartedAt = Date.now();
       // Create the assistant placeholder eagerly, keyed by the turn id, so the
@@ -789,6 +829,25 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
 
     case "user.resolved": {
       next.pendingAsk = null;
+      return next;
+    }
+
+    case "turn.usage": {
+      // The one number in this window that is a measurement rather than a
+      // derivation. Absent entirely when the provider reported nothing -- which
+      // is why the state starts null and stays null until a frame arrives.
+      if (isForeignTurn(next, turnId)) return state;
+      const count = (key: string) => {
+        const value = payload[key];
+        return typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : 0;
+      };
+      const cost = payload.cost;
+      next.turnUsage = {
+        input: count("input_tokens"),
+        output: count("output_tokens"),
+        reasoning: count("reasoning_tokens"),
+        cost: typeof cost === "number" && Number.isFinite(cost) ? cost : null,
+      };
       return next;
     }
 

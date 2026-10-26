@@ -28,6 +28,7 @@ import { useEffect, useState } from "react";
 
 import { formatElapsed, formatTokens, type RunState } from "./activity.js";
 import type { ContextReply } from "./backend.js";
+import type { TurnUsage } from "./events.js";
 
 const LABELS: Record<RunState, string> = {
   idle: "Idle",
@@ -49,10 +50,43 @@ interface Props {
   startedAt: number | null;
   /** What the agent is doing, for the one line under the state. */
   detail: string;
+  /** What the last turn spent, or null when the provider reported nothing. */
+  usage: TurnUsage | null;
   /** The core's context measurement. `known: false` draws no bar. */
   context: ContextReply;
   onStop: () => void;
   onOpenTrajectory: () => void;
+}
+
+/**
+ * The turn's token row, or the honest absence of it.
+ *
+ * `unknown` rather than `0 in / 0 out` when no frame arrived: a provider that
+ * reports no usage is not a turn that cost nothing, and a zero here would be
+ * the one number on this card that was invented rather than measured. The same
+ * rule the context meter already follows -- see `meterText`.
+ */
+function usageText(usage: TurnUsage | null): string {
+  if (usage === null) return "unknown";
+  return `${formatTokens(usage.input)} in · ${formatTokens(usage.output)} out`;
+}
+
+/** The row's tooltip: the exact counts, and the price when one was published. */
+function usageTitle(usage: TurnUsage | null): string {
+  if (usage === null) {
+    return "The provider did not report usage for this turn";
+  }
+  const parts = [
+    `In: ${usage.input.toLocaleString()} tokens`,
+    `Out: ${usage.output.toLocaleString()} tokens`,
+  ];
+  if (usage.reasoning > 0) {
+    parts.push(`of which ${usage.reasoning.toLocaleString()} were thinking`);
+  }
+  if (usage.cost !== null) {
+    parts.push(`Cost: $${usage.cost.toFixed(4)}`);
+  }
+  return parts.join(" · ");
 }
 
 /**
@@ -77,6 +111,7 @@ export function RunCard({
   run,
   startedAt,
   detail,
+  usage,
   context,
   onStop,
   onOpenTrajectory,
@@ -119,6 +154,21 @@ export function RunCard({
       <p className="run-detail" aria-live="polite">
         {run === "working" && detail ? detail : HINTS[run]}
       </p>
+
+      {/*
+        What the turn spent, beside how full the conversation is. The two are
+        different questions -- one is this turn's bill, the other is how much
+        room is left -- and putting the bill first is the order a reader asks
+        them in.
+      */}
+      <div
+        className="run-tokens"
+        data-known={usage !== null ? "true" : "false"}
+        title={usageTitle(usage)}
+      >
+        <span className="run-context-label">Tokens</span>
+        <span className="run-tokens-value">{usageText(usage)}</span>
+      </div>
 
       <div
         className="run-context"

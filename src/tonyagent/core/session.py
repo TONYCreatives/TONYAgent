@@ -181,6 +181,13 @@ class AgentSession:
         #: this is the one place a turn's counters are reset -- a child has its
         #: own counter, on its own turn, for free.
         self._children_started: int = 0
+        #: What this turn has spent so far, summed across its requests, or None
+        #: while no request has reported a usage block.
+        #:
+        #: None rather than zeros, because the two mean different things to the
+        #: window: "nothing was measured" is `unknown`, and `0` is a
+        #: measurement that says the turn was free. See `_emit_turn_usage`.
+        self._turn_usage: dict[str, Any] | None = None
         #: The tool calls this session has in flight, one task each.
         #:
         #: Held so that `cancel()` can stop a call that is already running -- a
@@ -748,6 +755,63 @@ class AgentSession:
             "tools; ask it to summarise what it has, or raise the limit."
         )
 
+    def _note_request_usage(self) -> None:
+        """Fold the last request's usage into this turn's total.
+
+        Pulled from the provider after every assistant pass rather than counted
+        here, because the usage block is the provider's own measurement and the
+        only layer that sees it is the transport. A provider that reports
+        nothing returns None, which leaves the total alone -- and leaves it
+        None if no request has ever reported, which is what makes the window
+        say `unknown` instead of `0`.
+        """
+        taker = getattr(self.provider, "take_usage", None)
+        if taker is None:
+            return
+        try:
+            usage = taker()
+        except Exception as exc:  # noqa: BLE001 - a meter must not fail a turn
+            logger.warning(f"Could not read the request's usage: {exc}")
+            return
+        if usage is None:
+            return
+
+        total = self._turn_usage
+        if total is None:
+            total = self._turn_usage = {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "reasoning_tokens": 0,
+                "cost": None,
+            }
+        total["input_tokens"] += int(getattr(usage, "input_tokens", 0) or 0)
+        total["output_tokens"] += int(getattr(usage, "output_tokens", 0) or 0)
+        total["reasoning_tokens"] += int(getattr(usage, "reasoning_tokens", 0) or 0)
+        cost = getattr(usage, "cost", None)
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            # Summed only over the requests that published one. A gateway that
+            # prices some calls and not others gives a floor, not a total, and
+            # the window draws it as "at least this much" rather than as fact.
+            total["cost"] = float(cost) + (total["cost"] or 0.0)
+
+    def _emit_turn_usage(self, turn_id: str) -> None:
+        """Say what the turn spent, before its terminal frame.
+
+        Before, because the terminal frame is what tells the window the turn is
+        over -- a number that arrived after it would land on a card already
+        reset to Idle. Emitted at all only when something was measured: a
+        provider that reports nothing gets no event, and the window keeps
+        saying `unknown`.
+
+        Every exit path calls this, including the cancelled and failed ones: a
+        stopped turn still spent what it spent, and a turn that failed on its
+        second request still paid for the first.
+        """
+        self._note_request_usage()
+        if self._turn_usage is None:
+            return
+        self.emit(EventType.TURN_USAGE, dict(self._turn_usage), turn_id=turn_id)
+
     async def _run_turn(self, turn_id: str) -> None:
         # This session is *the* session for the duration of its turn: published
         # into the tool context, which is how a tool learns whose turn reached
@@ -772,6 +836,7 @@ class AgentSession:
             self._round_orders = []
             self._tool_calls_used = 0
             self._children_started = 0
+            self._turn_usage = None
             for _round in range(self.MAX_TOOL_ROUNDS):
                 tool_calls = await self._stream_assistant(turn_id)
                 if not tool_calls:
@@ -803,13 +868,16 @@ class AgentSession:
             # ending on a bare tool result; one that produced a real answer is
             # left alone. The condition lives in the helper.
             self._append_results_digest()
+            self._emit_turn_usage(turn_id)
             self.emit(EventType.TURN_FINISHED, {}, turn_id=turn_id)
         except SessionCancelled:
             # A user-initiated stop is not a failure.
+            self._emit_turn_usage(turn_id)
             self.emit(
                 EventType.TURN_FINISHED, {"cancelled": True}, turn_id=turn_id
             )
         except LLMError as exc:
+            self._emit_turn_usage(turn_id)
             self.emit(
                 EventType.TURN_FAILED,
                 {"message": exc.user_message(), "kind": exc.kind.value},
@@ -817,6 +885,7 @@ class AgentSession:
             )
         except Exception as exc:  # noqa: BLE001 - a turn must never kill the loop
             logger.exception("Turn failed")
+            self._emit_turn_usage(turn_id)
             self.emit(
                 EventType.TURN_FAILED, {"message": str(exc)}, turn_id=turn_id
             )
@@ -1149,8 +1218,17 @@ class AgentSession:
             if chunk.tool_calls:
                 tool_calls = chunk.tool_calls
             if chunk.finish_reason:
+                # Recorded and *not* broken out of. The transport reads a few
+                # frames past the answer's end for the usage block it asked
+                # for, and leaving this loop here would abandon that read --
+                # and with it the record of what the turn spent. Nothing more
+                # is yielded after `finish_reason`, so the loop runs out.
                 finish_reason = chunk.finish_reason
-                break
+        # One pass is over, and one request was spent on it. Taken here rather
+        # than at the end of the turn because the transport keeps only the
+        # *last* request's numbers: a turn with four rounds would otherwise
+        # report the fourth and forget the first three.
+        self._note_request_usage()
         # The budget trap: reasoning tokens are drawn from the same allowance as
         # output, so a model that thinks at length can spend everything and stop
         # at ``length`` with nothing written. Silent, it looks exactly like a

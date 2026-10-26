@@ -29,6 +29,7 @@ export type EventType =
   | "turn.started"
   | "turn.finished"
   | "turn.failed"
+  | "turn.usage"
   | "message.started"
   | "message.delta"
   | "message.completed"

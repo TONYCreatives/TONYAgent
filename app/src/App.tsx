@@ -273,8 +273,7 @@ export function App({
    * someone is looking at it. It is also the reason there is no refresh button
    * anywhere for this: the refresh is the act of opening the menu.
    */
-  const [skills, setSkills] = useState<SkillInfo[]>([]);
-  /**
+  const [skills, setSkills] = useState<SkillInfo[]>([]);  /**
    * How much the agent may do, and the ladder it sits on.
    *
    * `permissionList` is null until the core has read it, which is why the bar
@@ -463,8 +462,7 @@ export function App({
    * text, an image, or a file with no preview -- so the pane's own shape is
    * the core's answer rather than a decision taken here from the extension.
    */
-  const [viewerPath, setViewerPath] = useState("");
-  const [viewerFile, setViewerFile] = useState<ViewerFile | null>(null);
+  const [viewerPath, setViewerPath] = useState("");  const [viewerFile, setViewerFile] = useState<ViewerFile | null>(null);
   const [viewerError, setViewerError] = useState<string | null>(null);
   const [viewerLoading, setViewerLoading] = useState(false);
   const [viewerSaving, setViewerSaving] = useState(false);
@@ -810,8 +808,7 @@ export function App({
         // used to be a workaround for a core that claimed a provider it did
         // not have, and rebinding it again only risked overwriting the
         // selection with the default it was supposed to be reporting.
-        if (!snapshot.bound) setNeedsProvider(true);
-      } catch (error) {
+        if (!snapshot.bound) setNeedsProvider(true);      } catch (error) {
         if (!cancelled) {
           setConnected(false);
           // The error banner is the user-facing surface; the console keeps the
@@ -1111,8 +1108,7 @@ export function App({
       setMainMode("code");
       // Read-only again for every newly opened file: the switch is about the
       // file in front of you, not a global preference.
-      setReadOnly(true);
-      await loadFile(path);
+      setReadOnly(true);      await loadFile(path);
     },
     [loadFile],
   );
@@ -2765,6 +2761,18 @@ export function App({
   const runningStep = [...activity.steps].reverse().find((step) => step.status === "running");
   const runDetail = runningStep ? `Running ${runningStep.name}` : "";
 
+  /**
+   * The last turn's spend, in the one number the strip has room for.
+   *
+   * Input plus output, which is what a provider bills and what the Usage page
+   * totals. Reasoning is *inside* output -- adding it here would count the
+   * thinking twice -- so it is left to the Run card's tooltip, where there is
+   * room to say what it is.
+   */
+  const turnTokens = state.turnUsage
+    ? state.turnUsage.input + state.turnUsage.output
+    : null;
+
   /** The call that wrote the plan, when it is still in the transcript. */
   const planCallId = useMemo(
     () => lastPlanCall(state.messages)?.id ?? null,
@@ -3077,8 +3085,7 @@ export function App({
             />
           }
           onNewChat={() => void startNewChat()}
-          onSkills={useSkills}
-          onUsage={openUsage}
+          onSkills={useSkills}          onUsage={openUsage}
           usageOpen={usageTab === "active"}
           onPet={() => void togglePet()}
           petOpen={petOpen}
@@ -3295,8 +3302,7 @@ export function App({
             onSetSetting={setSetting}
             onReadDiagnostics={readDiagnostics}
             onCopyDiagnostics={copyDiagnostics}
-            onOpenLogFolder={() => void openLogFolder()}
-            update={update}
+            onOpenLogFolder={() => void openLogFolder()}            update={update}
             updateChecking={updateChecking}
             updateFetching={updateFetching}
             updateReady={updateReady}
@@ -3502,6 +3508,7 @@ export function App({
           run={activity.run}
           startedAt={state.turnStartedAt}
           detail={runDetail}
+          usage={state.turnUsage}
           plan={plan}
           planCallId={planCallId}
           steps={activity.steps}
@@ -3528,6 +3535,7 @@ export function App({
         sandbox={sandbox}
         connected={connected}
         needsProvider={needsProvider}
+        turnTokens={turnTokens}
         onConfigure={() => {
           openSettings();
         }}

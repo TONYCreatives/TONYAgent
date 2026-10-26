@@ -1,4 +1,5 @@
 import { capitalizeFirst, prettifyModelName } from "./displayNames.js";
+import { formatTokens } from "./activity.js";
 
 interface Props {
   provider: string;
@@ -15,6 +16,15 @@ interface Props {
    */
   needsProvider?: boolean;
   onConfigure?: () => void;
+  /**
+   * Tokens the last turn spent, or null before any turn has run.
+   *
+   * A count, not a state: the strip reports the environment, and the turn's
+   * live state belongs to the top bar's pill alone. So this appears once a
+   * turn has reported a measurement and stays put afterwards, rather than
+   * blinking on and off with the run.
+   */
+  turnTokens?: number | null;
   logLines?: string[];
   logsOpen?: boolean;
   onToggleLogs?: () => void;
@@ -27,6 +37,7 @@ export function StatusBar({
   connected,
   needsProvider,
   onConfigure,
+  turnTokens = null,
   logLines = [],
   logsOpen = false,
   onToggleLogs,
@@ -54,25 +65,48 @@ export function StatusBar({
       <span className="sep" />
       <span className="statusbar-sandbox">Sandbox: {capitalizeFirst(sandbox)}</span>
       {/*
-        No busy word. It was the third place a turn announced itself -- beside
-        the tab spinner and the run card -- and the strip's job is the
-        environment: whether the core is up, what it is talking to, where it
-        runs. The top bar's pill is the turn's only home now.
+        The bar's right-hand end, as one group.
+
+        The token count and the Logs control both want the far edge, and two
+        `margin-left: auto` siblings would share the free space and leave the
+        count floating in the middle of the bar. One wrapper owns the push, so
+        the pair stays together whether or not a turn has reported a count.
       */}
-      {onToggleLogs && (
-        <button
-          type="button"
-          className="statusbar-logs"
-          onClick={onToggleLogs}
-          aria-expanded={logsOpen}
-          title={logsOpen ? "Hide logs" : "Show logs"}
-        >
-          <span>Logs</span>
-          {logLines.length > 0 && (
-            <span className="statusbar-logs-count">{logLines.length}</span>
-          )}
-        </button>
-      )}
+      <span className="statusbar-tail">
+        {/*
+          The last turn's spend. Absent rather than `0 tok` before anything has
+          run: a window that has not sent a message has not spent anything, and
+          a zero would be a measurement of a turn that never happened.
+        */}
+        {turnTokens !== null && (
+          <span
+            className="statusbar-tokens"
+            title={`${turnTokens.toLocaleString()} tokens in the last turn`}
+          >
+            {formatTokens(turnTokens)} tok
+          </span>
+        )}
+        {/*
+          No busy word. It was the third place a turn announced itself -- beside
+          the tab spinner and the run card -- and the strip's job is the
+          environment: whether the core is up, what it is talking to, where it
+          runs. The top bar's pill is the turn's only home now.
+        */}
+        {onToggleLogs && (
+          <button
+            type="button"
+            className="statusbar-logs"
+            onClick={onToggleLogs}
+            aria-expanded={logsOpen}
+            title={logsOpen ? "Hide logs" : "Show logs"}
+          >
+            <span>Logs</span>
+            {logLines.length > 0 && (
+              <span className="statusbar-logs-count">{logLines.length}</span>
+            )}
+          </button>
+        )}
+      </span>
     </footer>
   );
 }

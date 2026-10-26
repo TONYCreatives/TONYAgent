@@ -277,6 +277,36 @@
   min-width: 0;
 }
 
+/*
+ * The turn's bill, above the conversation's fill.
+ *
+ * Two rows rather than one line with a separator: at 255px inside the docked
+ * panel, `Tokens 12.4k in · 1.2k out` and `Context 62.4k / 124k · 50%` in one
+ * row would each be a truncation. It shares the context row's label weight so
+ * the two read as the card's measurements rather than as prose.
+ */
+.run-tokens {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.run-tokens-value {
+  margin-left: auto;
+  color: var(--fg-dim);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition: color var(--motion-fast) ease;
+}
+
+/* `unknown` dims, the same as the meter's. A number the provider did not report
+   must not look like a number it did. */
+.run-tokens[data-known="false"] .run-tokens-value {
+  color: var(--fg-mute);
+}
+
 .run-context-label {
   flex: none;
   color: var(--fg-mute);

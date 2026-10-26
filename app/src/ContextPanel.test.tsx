@@ -77,6 +77,7 @@ function make(over: Partial<PanelProps> = {}) {
     run: "idle",
     startedAt: null,
     detail: "",
+    usage: null,
     plan: emptyPlan(),
     planCallId: null,
     steps: [],
@@ -579,6 +580,31 @@ describe("the run card", () => {
 
     assert.equal(one(container, ".run-context-value")?.textContent, "unknown");
     assert.equal(one(container, ".run-context")?.getAttribute("data-known"), "false");
+  });
+
+  test("the turn's tokens read as in and out when the core measured them", async () => {
+    const { draw } = make({
+      usage: { input: 12_400, output: 1_240, reasoning: 400, cost: 0.0042 },
+    });
+    const container = await draw();
+
+    assert.equal(
+      one(container, ".run-tokens-value")?.textContent,
+      "12.4k in · 1.2k out",
+    );
+    assert.equal(one(container, ".run-tokens")?.getAttribute("data-known"), "true");
+    // The exact counts and the price are in the tooltip, where there is room.
+    assert.match(one(container, ".run-tokens")?.getAttribute("title") ?? "", /Cost: \$0\.0042/);
+  });
+
+  test("a provider that reported no usage leaves the token row unknown", async () => {
+    // Not `0 in · 0 out`: nothing was measured, and a zero would be a number
+    // the provider never gave.
+    const { draw } = make({ usage: null });
+    const container = await draw();
+
+    assert.equal(one(container, ".run-tokens-value")?.textContent, "unknown");
+    assert.equal(one(container, ".run-tokens")?.getAttribute("data-known"), "false");
   });
 
   test("the meter cannot draw more than full even if the core says so", async () => {

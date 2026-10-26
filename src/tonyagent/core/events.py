@@ -27,6 +27,18 @@ class EventType(str, Enum):
     TURN_STARTED = "turn.started"
     TURN_FINISHED = "turn.finished"
     TURN_FAILED = "turn.failed"
+    #: What the turn spent, summed from the requests it made.
+    #:
+    #: Emitted at the end of a turn, *before* its terminal frame, and only when
+    #: at least one request reported a usage block. A provider that reports
+    #: nothing gets no event at all -- the window then says `unknown`, which is
+    #: the truth, where a zero would be a measurement nobody made.
+    #:
+    #: An event rather than a `usage.turn` RPC, per §8: the number belongs to
+    #: the turn, the turn has a moment when it is over, and a request that had
+    #: to be asked for at that moment could arrive after the reader had already
+    #: looked away.
+    TURN_USAGE = "turn.usage"
 
     # Assistant output
     MESSAGE_STARTED = "message.started"

@@ -364,6 +364,28 @@ describe("the window boots against a core", () => {
     assert.equal(one(container, ".banner"), null, "the window opened with an error on it");
   });
 
+  test("the strip carries the last turn's spend, and nothing before it", async () => {
+    // Before a turn there is no number to report, and `0 tok` would be a
+    // measurement of a turn that never happened.
+    const { container, transport } = await mount();
+    assert.equal(one(container, ".statusbar-tokens"), null);
+
+    await push(() => transport.emit(pushed("turn.started", { model: "m" }, "t1")));
+    await push(() =>
+      transport.emit(
+        pushed(
+          "turn.usage",
+          { input_tokens: 12_400, output_tokens: 1_200, reasoning_tokens: 0, cost: null },
+          "t1",
+        ),
+      ),
+    );
+    await push(() => transport.emit(pushed("turn.finished", {}, "t1")));
+    await wait(40);
+
+    assert.equal(one(container, ".statusbar-tokens")?.textContent, "13.6k tok");
+  });
+
   test("the shell owns the run pane and the strip, not the centre column", async () => {
     const { container } = await mount();
     const app = one(container, ".app")!;

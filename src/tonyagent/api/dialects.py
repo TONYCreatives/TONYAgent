@@ -51,6 +51,11 @@ class Usage:
     #: Billed as output tokens but reported separately, so a turn that spent
     #: everything on thinking is distinguishable from one that wrote prose.
     reasoning_tokens: int = 0
+    #: What the gateway says the request cost, in its own currency (OpenRouter
+    #: bills in USD). ``None`` when it said nothing: the price of a model is a
+    #: fact only the gateway has, and a local estimate would be a different
+    #: number from the one on the invoice.
+    cost: float | None = None
 
     @property
     def total(self) -> int:
@@ -105,7 +110,23 @@ def read_usage(obj: dict) -> Usage:
         usage.get("prompt_tokens", 0),
         usage.get("completion_tokens", 0),
         details.get("reasoning_tokens", 0) or 0,
+        _as_cost(usage),
     )
+
+
+def _as_cost(usage: dict) -> float | None:
+    """The gateway's own cost for the request, if it published one.
+
+    Two names, because two shapes carry it: OpenRouter's own replies put it at
+    ``usage.cost``, and some OpenAI-compatible gateways repeat it as
+    ``total_cost``. Neither is invented when both are absent -- a zero would
+    read as "this turn was free", which is a claim the provider did not make.
+    """
+    for key in ("cost", "total_cost"):
+        value = usage.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    return None
 
 
 def tool_to_openai(tools: list[dict] | None) -> list[dict] | None:
