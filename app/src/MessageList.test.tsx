@@ -572,3 +572,182 @@ describe("a subagent's nested work", () => {
     assert.equal(all(container, ".subagent").length, 0);
   });
 });
+
+// --- the row, the spine, and what opens ----------------------------------
+/**
+ * A tool call used to be a card with its arguments and its output already in it,
+ * so a turn that read four files and edited one was a page of logs with an
+ * answer somewhere at the end. The rules here are the ones that make it a
+ * transcript line again: one line while collapsed, a body only when asked for,
+ * and a node in the gutter that says what the call is doing without the row
+ * having to spend its first pixel on it.
+ */
+describe("a tool row", () => {
+  const started = (over: Partial<ChatMessage["tools"][number]> = {}) =>
+    toolCard({ status: "running", detail: undefined, startedAt: 1000, ...over });
+
+  test("collapsed, it is one line: the name, the summary and how long it took", async () => {
+    const container = await transcript(
+      toolCard({ status: "ok", detail: "Read 42 lines", startedAt: 1000, endedAt: 1340 }),
+    );
+    assert.equal(one(container, ".tool-name")?.textContent, "read_file");
+    assert.equal(one(container, ".tool-summary")?.textContent, "Read 42 lines");
+    // 340ms, which is the number the call actually took rather than a count of
+    // frames or an estimate of one.
+    assert.equal(one(container, ".tool-duration")?.textContent, "340ms");
+    assert.equal(all(container, ".tool-body").length, 0, "the body opened unasked");
+  });
+
+  test("a running call says so, and reports no duration it does not have yet", async () => {
+    const container = await transcript(started());
+    assert.equal(one(container, ".tool-summary")?.textContent, "running\u2026");
+    assert.equal(one(container, ".tool-duration"), null);
+  });
+
+  test("a row with something to show opens, and closes again", async () => {
+    const container = await transcript(toolCard({ args: '{"path": "a.ts"}', output: "42 lines" }));
+
+    const toggle = one(container, ".tool-toggle") as HTMLButtonElement;
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    await click(toggle);
+
+    const labels = all(container, ".tool-block-label").map((node) => node.textContent);
+    assert.deepEqual(labels, ["Arguments", "Result"]);
+    assert.equal((one(container, ".tool-toggle") as HTMLButtonElement).getAttribute("aria-expanded"), "true");
+
+    await click(one(container, ".tool-toggle") as HTMLButtonElement);
+    assert.equal(all(container, ".tool-body").length, 0);
+  });
+
+  test("a row with nothing behind it is not a button", async () => {
+    // A tool that reported no arguments and no output has no body, and a control
+    // that does nothing on press is worse than a line that never offered.
+    const container = await transcript(toolCard());
+    const toggle = one(container, ".tool-toggle") as HTMLButtonElement;
+    assert.equal(toggle.disabled, true);
+  });
+
+  test("an error is in the body, in its own block, and the node goes red", async () => {
+    const container = await transcript(
+      toolCard({ status: "failed", error: "ENOENT: no such file", detail: "Failed" }),
+    );
+    assert.equal(one(container, ".tool-node")?.getAttribute("data-status"), "failed");
+    await click(one(container, ".tool-toggle") as HTMLButtonElement);
+    assert.equal(one(container, ".tool-block[data-tone='bad'] .tool-block-label")?.textContent, "Error");
+  });
+
+  test("a diff is drawn a line at a time, with the added and removed ones marked", async () => {
+    const container = await transcript(
+      toolCard({ path: "src/a.ts", added: 1, removed: 1, diff: "@@ -1 +1 @@\n-old\n+new" }),
+    );
+    await click(one(container, ".tool-toggle") as HTMLButtonElement);
+    assert.equal(all(container, ".tool-diff .is-add").length, 1);
+    assert.equal(all(container, ".tool-diff .is-del").length, 1);
+    // The result block is replaced by the diff rather than repeating what the
+    // diff already says.
+    assert.equal(all(container, ".tool-block").length, 1);
+  });
+
+  test("the path chip opens the file and does not fold the row", async () => {
+    const opened: string[] = [];
+    const container = await render(
+      <MessageList
+        messages={[toolCard({ path: "src/App.tsx", added: 2, removed: 0, args: "{}" })]}
+        busy={false}
+        onOpenFile={(path) => opened.push(path)}
+      />,
+    );
+    // One press on the chip: the file opens, and the row it sits in stays shut.
+    // Two acts four pixels apart, and one hit area around both would make a
+    // press meant for the file fold the row instead.
+    await click(one(container, ".tool-path") as HTMLButtonElement);
+    assert.deepEqual(opened, ["src/App.tsx"]);
+    assert.equal(all(container, ".tool-body").length, 0);
+  });
+});
+
+describe("the run spine", () => {
+  test("each run of calls is its own segment", async () => {
+    // Two blocks of work with prose between them is what happened, and it is
+    // what the reader is being told: a single line through both would claim the
+    // turn never spoke in the middle of its own work.
+    const container = await transcript(
+      message({
+        text: "Look. Then. Done.",
+        tools: [call("c1", "read_file", 5), call("c2", "edit_file", 11)],
+      }),
+    );
+    assert.equal(all(container, ".tools[data-spine='true']").length, 2);
+  });
+
+  test("a node carries the call's own status", async () => {
+    const container = await transcript(
+      message({
+        text: "Working.",
+        tools: [
+          { id: "c1", name: "read_file", status: "ok", after: 8 },
+          { id: "c2", name: "edit_file", status: "running", after: 8 },
+        ],
+      }),
+    );
+    const nodes = all(container, ".tool-node");
+    assert.deepEqual(
+      nodes.map((node) => node.getAttribute("data-status")),
+      ["ok", "running"],
+    );
+  });
+
+  test("a turn blocked on permission goes amber rather than live", async () => {
+    // The core does not say which call is waiting, so the running row is the one
+    // waiting: the turn is blocked, and a spine still claiming to be busy would
+    // be the window ignoring the one thing it is being asked to answer.
+    const container = await render(
+      <MessageList
+        messages={[
+          message({ text: "Working.", tools: [{ id: "c1", name: "write_file", status: "running" }] }),
+        ]}
+        busy
+        awaitingApproval
+      />,
+    );
+    assert.equal(one(container, ".tool-node")?.getAttribute("data-status"), "approval");
+  });
+
+  test("a pure prose answer has no spine at all", async () => {
+    const container = await transcript(message({ text: "Nothing to run." }));
+    assert.equal(all(container, ".tools").length, 0);
+    assert.equal(all(container, ".tool-node").length, 0);
+  });
+});
+
+describe("the streaming caret", () => {
+  test("it sits at the end of the last line while the turn is writing", async () => {
+    const container = await render(
+      <MessageList messages={[message({ text: "First.\n\nSecond" })]} busy />,
+    );
+    const carets = all(container, ".stream-caret");
+    assert.equal(carets.length, 1, "a turn being written has one caret, not one per paragraph");
+    // In the last paragraph, not after it: a caret on its own line reads as a
+    // cursor waiting to start something rather than one finishing this.
+    assert.equal(carets[0].parentElement?.className, "md-p");
+    assert.match(carets[0].parentElement?.textContent ?? "", /Second/);
+  });
+
+  test("a finished turn keeps none", async () => {
+    const container = await transcript(message({ text: "Done." }));
+    assert.equal(all(container, ".stream-caret").length, 0);
+  });
+
+  test("a running turn that is between passes has none either", async () => {
+    // A turn mid-tool-call is not writing. A caret parked under the paragraph it
+    // already finished says the opposite, and it would blink there for the
+    // length of a four-second command.
+    const container = await render(
+      <MessageList
+        messages={[message({ text: "Let me check.", tools: [call("c1", "run_command", 13)] })]}
+        busy
+      />,
+    );
+    assert.equal(all(container, ".stream-caret").length, 0);
+  });
+});

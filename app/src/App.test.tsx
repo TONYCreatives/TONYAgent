@@ -2911,3 +2911,128 @@ describe("the settings page, wired to the core", () => {
     );
   });
 });
+
+// --- where a permission prompt lands -----------------------------------------
+/**
+ * The prompt used to be a dialog in every case, which meant a confirmable read
+ * took the screen away from the sentence that asked for it.
+ *
+ * The split asserted here is the one the plan asks for: the ordinary prompt is a
+ * card where the composer is, and the modal is kept for a call that says it is
+ * destructive. Both halves matter -- a card for a delete would put the safe
+ * answer behind a small button, and a modal for a write would interrupt for the
+ * routine case.
+ */
+describe("a permission prompt, in the column or over it", () => {
+  const asked = (over: Record<string, unknown> = {}) =>
+    pushed(
+      "confirmation.requested",
+      {
+        id: "c1",
+        name: "write_file",
+        arguments: { path: "src/app.py" },
+        description: "Write src/app.py",
+        destructive: false,
+        ...over,
+      },
+      "t1",
+      3,
+    );
+
+  /** Mount the window, start a turn, and push one confirmation into it. */
+  async function prompt(over: Record<string, unknown> = {}) {
+    const mounted = await mount();
+    await push(() => mounted.transport.emit(pushed("turn.started", { model: "m" }, "t1")));
+    await push(() => mounted.transport.emit(asked(over)));
+    await wait(40);
+    return mounted;
+  }
+
+  test("a routine call is a card in the column, and the field stays", async () => {
+    const { container } = await prompt();
+
+    assert.ok(one(container, ".approval"), "the prompt was not drawn as a card");
+    assert.equal(all(container, ".modal").length, 0, "a routine prompt took the screen");
+    // The composer is still on screen behind it, which is the whole reason the
+    // card exists: the question and the place to answer it are one glance.
+    assert.ok(one(container, ".composer"), "the field went away under the card");
+  });
+
+  test("a destructive call still takes the screen", async () => {
+    const { container } = await prompt({ destructive: true });
+
+    assert.ok(one(container, ".modal"), "a destructive call was drawn as a card");
+    assert.equal(
+      all(container, ".approval").length,
+      0,
+      "both surfaces were drawn for one prompt",
+    );
+  });
+
+  test("Allow answers the core once, about the call it asked about", async () => {
+    const { container, transport } = await prompt();
+
+    await click(one(container, ".approval-allow") as HTMLButtonElement);
+    await wait(40);
+
+    const answered = transport.sent.filter((request) => request.method === "confirm.respond");
+    assert.equal(answered.length, 1, "the answer was sent more than once");
+    assert.deepEqual(answered[0].params, { id: "c1", confirmed: true });
+    // And the card is gone: the reducer clears the request locally rather than
+    // waiting for `confirmation.resolved`, which would leave the card up for the
+    // length of a round trip while the turn sat blocked behind it.
+    assert.equal(all(container, ".approval").length, 0);
+  });
+
+  test("Deny answers false, and it is the answer Escape gives", async () => {
+    const { container, transport } = await prompt();
+
+    await click(one(container, ".approval-deny") as HTMLButtonElement);
+    await wait(40);
+
+    const answered = transport.sent.filter((request) => request.method === "confirm.respond");
+    assert.deepEqual(answered[0].params, { id: "c1", confirmed: false });
+  });
+});
+
+
+// --- the banner's way out ----------------------------------------------------
+describe("the error banner", () => {
+  test("it names the failure and offers the page that explains it", async () => {
+    const { container, transport } = await mount();
+    // A failed turn rather than a failed boot call: both put the same banner on
+    // screen, and a boot failure takes the whole start path down with it --
+    // which is a property of the harness rather than of the banner.
+    await push(() => transport.emit(pushed("turn.started", { model: "m" }, "t1")));
+    await push(() =>
+      transport.emit(
+        pushed("turn.failed", { message: "the provider refused the key", kind: "auth" }, "t1", 2),
+      ),
+    );
+    await wait(40);
+
+    const banner = one(container, ".banner");
+    assert.ok(banner, "the failure was swallowed");
+    assert.match(banner.textContent ?? "", /refused the key/);
+
+    // The link the phase adds: "Diagnostics", landing on the App tab, which is
+    // where the providers, keys, sandbox and log folder are listed. The banner
+    // used to name a failure and leave the reader to find that page themselves.
+    await click(one(banner, ".banner-link") as HTMLButtonElement);
+    // Polled rather than slept on: the settings page is a mode of the window,
+    // behind an overlay that only mounts while it is animating in.
+    for (let i = 0; i < 50 && !one(container, ".settings-page"); i++) await wait(20);
+
+    const settings = one(container, ".settings-page");
+    assert.ok(settings, "Diagnostics did not open Settings");
+    // The App tab, not the first tab: the diagnostics live there, and a link
+    // called Diagnostics that landed on Behavior would be a link to a page the
+    // reader still has to search.
+    assert.match(
+      [...settings.querySelectorAll(".settings-group h3")]
+        .map((head) => head.textContent)
+        .join(","),
+      /Diagnostics/,
+    );
+  });
+});

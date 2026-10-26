@@ -27,6 +27,53 @@
   color: var(--danger);
   font-size: var(--text-sm);
   overflow-wrap: anywhere;
+  /*
+   * A row now, because the message has a control beside it. The text takes the
+   * space and wraps; the link does not shrink. `align-items: baseline` so the
+   * word "Diagnostics" sits on the same line as the sentence it belongs to
+   * rather than floating in the middle of a two-line message.
+   */
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/*
+ * The way out of the banner.
+ *
+ * Not a filled button: the message is the important thing and a second accent
+ * surface inside a red box would compete with it. Underlined on hover only, in
+ * the banner's own colour, so it reads as a link rather than as an action that
+ * dismisses the problem.
+ */
+.banner-link {
+  flex: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--text-xs);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity var(--motion-fast) ease;
+}
+
+.banner-link:hover {
+  opacity: 1;
+}
+
+.banner-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 /*

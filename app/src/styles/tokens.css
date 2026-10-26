@@ -308,6 +308,33 @@
   --warn: #c9a45f;
 
   /*
+   * `--signal`: the colour of "the agent is doing something right now".
+   *
+   * A second hue, and the only one this window adds. The neutral scale can say
+   * what a thing is; it cannot say that a line is *alive* without borrowing
+   * `--accent`, which is white and is the fill of the primary button -- so a
+   * white pulse would read as a control that happens to be breathing. Signal is
+   * a state colour that is never a button fill, which is what keeps the two
+   * apart: `--accent` means "press this", `--signal` means "this is happening".
+   *
+   * The one place it also carries text is the streaming caret, which is a 2px
+   * mark rather than a letter. Contrast on `--bg` is 11.79:1, which is why it
+   * is safe to use at 8px in the spine's gutter.
+   */
+  --signal: #78e3ff;
+  /*
+   * The same hue, one step back: complete nodes and secondary live text.
+   * 6.36:1 on `--bg`, 4.62:1 on `--raised` and 3.97:1 on `--chip` -- so it is
+   * for graphics and for text on the two darker surfaces only, never small text
+   * on a chip.
+   */
+  --signal-dim: #4aa8c2;
+  /* The wash behind a selected activity row, and behind the focused context card. */
+  --signal-wash: rgb(120 227 255 / 0.12);
+  /* The pulse behind a live node, and the bloom on the running composer. */
+  --signal-glow: rgb(120 227 255 / 0.22);
+
+  /*
    * Density, re-derived from what the sizes have to do rather than from a
    * capture of another window.
    *

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useEffect } from "react";
 
 import type { ChatState } from "./events.js";
+import { useAnswerOnce } from "./useAnswerOnce.js";
 
 interface Props {
   /**
@@ -20,24 +21,15 @@ interface Props {
  *
  * The core holds the tool open until `confirm.respond` arrives, so the turn
  * stays busy while this is up. It is rendered as a modal rather than inline
- * because denying is the safe default and should not be a misclick.
+ * because denying is the safe default and should not be a misclick -- the
+ * ordinary prompt is `ApprovalCard` above the composer, and this is the one that
+ * takes the screen because the call said it cannot be undone.
  *
  * Not dismissible by clicking away: this one is a decision, not a peek, and a
  * stray click must not be readable as an answer. Escape *does* dismiss it, but
  * only ever by denying -- see the key handler below.
  */
 export function ConfirmDialog({ request, onRespond }: Props) {
-  /**
-   * The call already answered, if any.
-   *
-   * One ref rather than a boolean because a second confirmation can arrive
-   * while this one is still fading out -- the dialog outlives the flag that
-   * opened it by an animation's worth of time. Keying on the id means the guard
-   * releases by itself for the next call instead of needing a reset that has to
-   * be remembered.
-   */
-  const answered = useRef<string | null>(null);
-
   /**
    * Answer once, whichever way the answer arrived.
    *
@@ -47,14 +39,7 @@ export function ConfirmDialog({ request, onRespond }: Props) {
    * the dialog is still mounted and still listening for the length of its own
    * exit animation after the answer that dismissed it.
    */
-  const answer = useCallback(
-    (confirmed: boolean) => {
-      if (answered.current === request.id) return;
-      answered.current = request.id;
-      onRespond(request.id, confirmed);
-    },
-    [request.id, onRespond],
-  );
+  const answer = useAnswerOnce(request.id, onRespond);
 
   /**
    * Escape denies, and nothing behind this dialog hears the key.

@@ -61,7 +61,7 @@ function InlineView({ node }: { node: Inline }) {
   }
 }
 
-function BlockView({ block }: { block: Block }) {
+function BlockView({ block, caret = false }: { block: Block; caret?: boolean }) {
   switch (block.kind) {
     case "heading":
       // A real heading element would fight the app's own h1/h2 styling and
@@ -76,6 +76,13 @@ function BlockView({ block }: { block: Block }) {
       return (
         <p className="md-p">
           <Inlines nodes={block.children} />
+          {/*
+            The streaming caret, at the end of the last line rather than under
+            it. It is inside the paragraph on purpose: a block-level caret
+            after `.md` would sit on its own line, which reads as a cursor
+            waiting for a new paragraph rather than one finishing this one.
+          */}
+          {caret && <span className="stream-caret" aria-hidden="true" />}
         </p>
       );
     case "code":
@@ -142,7 +149,7 @@ function BlockView({ block }: { block: Block }) {
   }
 }
 
-export function MarkdownText({ text }: { text: string }) {
+export function MarkdownText({ text, caret = false }: { text: string; caret?: boolean }) {
   // Re-parse only when the text changes. During streaming this runs per delta,
   // which is fine: the parser is linear and allocation-light for the sizes a
   // chat message reaches.
@@ -150,7 +157,9 @@ export function MarkdownText({ text }: { text: string }) {
   return (
     <div className="md">
       {blocks.map((block, index) => (
-        <BlockView key={index} block={block} />
+        // The caret belongs to the *last* block, which is the line the model is
+        // still writing into.
+        <BlockView key={index} block={block} caret={caret && index === blocks.length - 1} />
       ))}
     </div>
   );

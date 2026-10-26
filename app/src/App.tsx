@@ -17,6 +17,7 @@ import {
 import type { ChatMessage, Role } from "./events.js";
 import { Composer, type ModeInfo } from "./Composer.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
+import { ApprovalCard } from "./ApprovalCard.js";
 import { ContextPanel } from "./ContextPanel.js";
 import { isPlanWriter, lastPlanCall, turnActivity } from "./activity.js";
 import {
@@ -2928,10 +2929,44 @@ export function App({
           onSetup={() => openSettings("keys")}
         />
       ) : (
-        <MessageList messages={state.messages} busy={state.busy} />
+        <MessageList
+          messages={state.messages}
+          busy={state.busy}
+          // The path chip on a tool row opens the file in Code -- the same
+          // handler the nav's recent files use, so a file opened from the
+          // transcript and one opened from the dock land the same way.
+          onOpenFile={(path) => void openFile(path)}
+          awaitingApproval={state.pendingConfirm !== null}
+        />
       )}
 
-      {state.error && <div className="banner">{state.error}</div>}
+      {/*
+        One banner row, and a way to the page that explains it.
+
+        The message says what failed; "Diagnostics" says where to look, which is
+        the difference between a wall and a door. It lands on the App tab because
+        that is where the diagnostics live -- providers, keys, sandbox and the
+        log folder -- and the banner used to leave a user to find that by
+        themselves.
+      */}
+      {state.error && (
+        <div className="banner" role="alert">
+          <span className="banner-text">{state.error}</span>
+          <button type="button" className="banner-link" onClick={() => openSettings("app")}>
+            Diagnostics
+          </button>
+        </div>
+      )}
+
+      {/*
+        The permission prompt, in the column rather than over it -- unless the
+        call says it is destructive, which keeps the modal and its deny-by-default
+        keyboard. See `ApprovalCard` for why the third button the plan asks for
+        ("Always") is not here: the core takes a boolean and nothing else.
+      */}
+      {state.pendingConfirm && !state.pendingConfirm.destructive && (
+        <ApprovalCard request={state.pendingConfirm} onRespond={respond} />
+      )}
 
       {/*
         The composer, and nothing else. The permission ladder used to sit above
@@ -3511,7 +3546,15 @@ export function App({
           conversationView
         )}
 
-        {shownConfirm && (
+        {/*
+          The modal, for one case only: a call that says it cannot be undone.
+          Everything else is the inline card above the composer, so a routine
+          confirmation no longer takes the screen away from the sentence that
+          asked for it. Mounted per request rather than held at the last one --
+          an inline answer unmounts the card, and there is nothing to animate
+          out on the other side of the branch.
+        */}
+        {shownConfirm?.destructive && (
           <Overlay open={state.pendingConfirm !== null}>
             <ConfirmDialog request={shownConfirm} onRespond={respond} />
           </Overlay>

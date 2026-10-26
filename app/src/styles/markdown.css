@@ -150,3 +150,25 @@
 .md-link:hover {
   text-decoration: underline;
 }
+
+/*
+ * The streaming caret, at the end of the last line the model has written.
+ *
+ * 2px of signal and a hair of air. It is inside the last paragraph rather than
+ * after the block, so it sits on the baseline of the line being written instead
+ * of starting a line of its own -- and it blinks rather than moving, which is
+ * the difference between "still arriving" and "still loading".
+ *
+ * The colour is `--signal` and not `--accent`: the accent is white here, which
+ * is the colour of the text beside it, and a white caret would be invisible
+ * against the prose it is following.
+ */
+.stream-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 3px;
+  vertical-align: text-bottom;
+  background: var(--signal);
+  animation: caret-blink 1s steps(1) infinite;
+}

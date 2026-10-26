@@ -1,0 +1,131 @@
+
+/* --- the inline approval card --------------------------------------------- */
+/*
+ * A permission request, where the composer is.
+ *
+ * Sits directly above the field rather than over the transcript: the question
+ * the tool is about to act on is the prose above it, and a dialog that dimmed
+ * the window would hide the sentence the answer depends on. The card is the
+ * column's own width, so it reads as part of the conversation rather than as
+ * something floating over it.
+ *
+ * `--warn` on the rail and nothing else. This is the one moment in the window
+ * allowed to pull the eye away from signal, and the whole of the claim is one
+ * 2px edge -- a filled amber card would make a routine confirmation the loudest
+ * thing on screen, which is how people learn to dismiss these without reading.
+ */
+.approval {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  /*
+   * The composer's box, stated the same way the banner states it: this card and
+   * the field below it are one column, and a card that was merely
+   * `max-width: --measure` would be the full width of the middle column whenever
+   * that column was narrower than 760 -- hanging out past both edges of the
+   * thing it belongs to.
+   */
+  width: calc(100% - 2 * var(--column-edge));
+  max-width: var(--measure);
+  margin: 0 auto 8px;
+  /*
+   * 2px of rail plus 17 of padding is the column's 19, so "NEEDS PERMISSION"
+   * starts on the same pixel as the prose above it and the field below it. The
+   * right padding is the one that does not have to match anything: it separates
+   * the buttons from the edge.
+   */
+  padding: 10px 12px 10px calc(var(--column-inset) - 2px);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--warn);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+/*
+ * The destructive variant, in case a caller draws the inline card for one.
+ *
+ * It should not: `App` sends those to the modal, and this is the reason -- the
+ * rail goes red and the card stops being a routine question. Kept for the shape
+ * rather than because a path uses it today.
+ */
+.approval[data-destructive="true"] {
+  border-left-color: var(--danger);
+}
+
+.approval-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.approval-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.approval-kicker {
+  flex: none;
+  color: var(--warn);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* The tool's identifier, in the face identifiers are set in -- the same choice
+   the tool row makes, so the name here and the name in the transcript are
+   visibly the same string. */
+.approval-tool {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: var(--text-sm);
+}
+
+/*
+ * The call's arguments, one line, quoted.
+ *
+ * A `<code>` rather than a sentence: the risk of a tool call is the arguments
+ * themselves, and a paraphrase ("this will write a file") is a claim about them
+ * that the window is in no position to make. Truncated with the full string on
+ * the `title`, because a long argument list is common and a card that grows to
+ * four lines pushes the field it belongs to off the bottom of the window.
+ */
+.approval-risk {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+}
+
+.approval-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+/*
+ * Allow is the primary fill and Deny is not.
+ *
+ * The accent is white, which is what every primary control in this window uses,
+ * and the safe answer here is the one the user asked for by typing the message.
+ * Deny is a plain button on purpose: it is the escape, not the recommended act,
+ * and it is reached by Escape as well as by a press.
+ */
+.approval-allow {
+  min-width: 68px;
+}
+
+.approval-deny {
+  min-width: 60px;
+}

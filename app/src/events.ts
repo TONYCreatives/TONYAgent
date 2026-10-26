@@ -32,6 +32,28 @@ export interface ToolCall {
   added?: number;
   removed?: number;
   /**
+   * The call's arguments, as one line of JSON, when the core sent them.
+   *
+   * Kept because the expanded row shows what the agent actually asked for. It
+   * is a *string* rather than the object: the row renders it, nothing else
+   * reads it, and holding the parsed shape would invite a second place that
+   * decides what a tool's arguments mean.
+   */
+  args?: string;
+  /**
+   * What the tool printed, truncated.
+   *
+   * The full result can be a whole file -- `read_file` on a 4000-line source --
+   * and a transcript that keeps every one of those in memory to show them in a
+   * panel nobody opened is a leak with a UI. The cut is `TOOL_OUTPUT_MAX`, and
+   * the row says how much it is not showing.
+   */
+  output?: string;
+  /** The core's own error text, when the call failed. */
+  error?: string;
+  /** The unified diff a mutating call carried, when the core computed one. */
+  diff?: string;
+  /**
    * Where the turn's tool-call budget stands, e.g. "Tool call 3/10".
    *
    * Read from the core rather than counted here. This file is a renderer, and
@@ -457,7 +479,7 @@ function formatArguments(value: unknown): string {
  * The core emits this only from tools that actually changed something, so a
  * `read_file` returns nothing here and the tree gains no phantom row.
  */
-function readFileChange(result: unknown): { path: string; added: number; removed: number } | null {
+function readFileChange(result: unknown): { path: string; added: number; removed: number; diff: string } | null {
   if (!result || typeof result !== "object") return null;
   const artifacts = (result as Record<string, unknown>).artifacts;
   if (!Array.isArray(artifacts)) return null;
@@ -471,9 +493,42 @@ function readFileChange(result: unknown): { path: string; added: number; removed
       path: data.path,
       added: typeof data.added === "number" ? data.added : 0,
       removed: typeof data.removed === "number" ? data.removed : 0,
+      // The core computes a real unified diff for the tools that read both
+      // sides, capped at 120 lines. Empty for a delete, which removes a file
+      // rather than changing it.
+      diff: typeof data.diff === "string" ? data.diff : "",
     };
   }
   return null;
+}
+
+/**
+ * How much of a tool's output the transcript keeps.
+ *
+ * Enough for a stack trace or a diff, not enough for a file. The expanded row
+ * says how much it is not showing, so the cut is visible rather than a lie
+ * about where the output ended.
+ */
+const TOOL_OUTPUT_MAX = 4000;
+
+function readOutput(result: unknown): string | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const record = result as Record<string, unknown>;
+  for (const key of ["output", "stdout", "message"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.length > TOOL_OUTPUT_MAX
+        ? `${value.slice(0, TOOL_OUTPUT_MAX)}\n… ${value.length - TOOL_OUTPUT_MAX} more characters`
+        : value;
+    }
+  }
+  return undefined;
+}
+
+function readError(result: unknown): string | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const value = (result as Record<string, unknown>).error;
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 /**
@@ -745,6 +800,10 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
             name: payloadString(payload, "name") ?? "tool",
             status: "running",
             startedAt: Date.now(),
+            // What the model asked for. Rendered by the expanded row, and the
+            // one thing that tells two calls of the same tool apart when both
+            // are still running and neither has a summary yet.
+            args: formatArguments(payload.arguments),
             // Where this call falls in the prose so far. The model writes, then
             // asks for the tool, so this is the end of the words that asked for
             // it -- and the prose of the *next* pass lands after this mark, so
@@ -773,6 +832,12 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
         call.endedAt ??= Date.now();
         const detail = describeResult(payload.result);
         if (detail) call.detail = detail;
+        // The expanded row's own material: what the tool printed, why it
+        // failed, and the diff a write carried.
+        const output = readOutput(payload.result);
+        if (output) call.output = output;
+        const failure = readError(payload.result);
+        if (failure) call.error = failure;
         // The same field the model reads in its own tool result, so the card
         // and the model cannot disagree about how far the turn got.
         const budget = readBudget(payload.tool_call_budget);
@@ -785,6 +850,7 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
             call.path = change.path;
             call.added = change.added;
             call.removed = change.removed;
+            if (change.diff) call.diff = change.diff;
           }
         }
         upsert(next, target);

@@ -77,51 +77,6 @@
   overflow-wrap: anywhere;
 }
 
-.bubble-user .tools {
-  margin-top: 6px;
-}
-
-.tool {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 3px 0;
-  font-family: var(--sans);
-  font-size: var(--text-sm);
-  color: var(--fg-mute);
-}
-
-.tool-mark {
-  width: 10px;
-  text-align: center;
-  flex: none;
-}
-
-.tool-running .tool-mark {
-  color: var(--accent);
-}
-
-.tool-ok .tool-mark {
-  color: var(--ok);
-}
-
-.tool-failed .tool-mark {
-  color: var(--danger);
-}
-
-.tool-name {
-  color: var(--fg-dim);
-  flex: none;
-}
-
-.tool-detail {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  opacity: 0.8;
-}
-
 /*
  * The tool budget popover, anchored to the composer row rather than a dialog.
  *

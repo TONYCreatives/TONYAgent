@@ -217,6 +217,19 @@ def main() -> int:
         help="inject scripts/preview_host.js: a fake core that answers boot and replays a turn",
     )
     parser.add_argument("--send", action="store_true", help="with --preview, press Send first")
+    parser.add_argument(
+        "--ask",
+        action="store_true",
+        help="with --preview, stop the replayed turn on a permission prompt",
+    )
+    parser.add_argument(
+        "--press",
+        action="append",
+        default=[],
+        metavar="SELECTOR",
+        help="click a selector before capturing (repeatable); for the states a "
+        "capture cannot otherwise reach, like an expanded tool row",
+    )
     parser.add_argument("-e", "--eval", default="", help="evaluate one expression and print it")
     args = parser.parse_args()
 
@@ -249,6 +262,8 @@ def main() -> int:
             # Press Send with the composer already holding text, which is the
             # same path a person takes: the fake core replays its turn on
             # `send`, so this is what fills the transcript and the run panel.
+            if args.ask:
+                session.eval("window.__tonyAskPermission = true;")
             session.eval(
                 """
                 (() => {
@@ -278,6 +293,19 @@ def main() -> int:
         if args.eval:
             print(json.dumps(session.eval(args.eval), indent=2))
             return 0
+
+        for selector in args.press:
+            pressed = session.eval(
+                f"""(() => {{
+                  const node = document.querySelector({json.dumps(selector)});
+                  if (!node) return 'missing';
+                  node.click();
+                  return 'pressed';
+                }})()"""
+            )
+            if pressed != "pressed":
+                print(f"{selector}: {pressed}", file=sys.stderr)
+            time.sleep(0.25)
 
         shots = [(args.width, args.height, f"{args.width}x{args.height}")] if args.width else SHOTS
         rows = []

@@ -27,6 +27,7 @@
 @import "./styles/statusbar.css";
 @import "./styles/context.css";
 @import "./styles/confirm-modal.css";
+@import "./styles/approval.css";
 @import "./styles/question-modal.css";
 @import "./styles/settings.css";
 @import "./styles/search.css";

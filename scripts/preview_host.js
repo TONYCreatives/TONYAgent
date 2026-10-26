@@ -214,7 +214,20 @@
         id: "c6",
         name: "edit_file",
         result: result("success", "…", "Edited registry.py", {
-          artifacts: [{ type: "file_change", data: { path: "src/providers/registry.py", added: 12, removed: 3 } }],
+          artifacts: [
+            {
+              type: "file_change",
+              data: {
+                path: "src/providers/registry.py",
+                added: 12,
+                removed: 3,
+                // The core computes a real unified diff for an edit; the tape
+                // carries a short one so the expanded row's Diff block is
+                // exercised rather than only its Arguments block.
+                diff: "@@ -18,7 +18,9 @@ def available_providers(\n-    return [p for p in _ALL if not p.chat_only]\n+    return [p for p in _ALL if p.kind != \"chat-only\"]\n",
+              },
+            },
+          ],
         }),
         tool_call_budget: budget(6),
       }, TURN));
@@ -223,6 +236,31 @@
     at(920, () => {
       say(frame("message.started", {}, TURN));
       say(frame("message.completed", { text: "The registry now owns the gate. `chat_only` is a property of the provider kind, so `available_providers` no longer needs its own filter." }, TURN));
+      /*
+       * `window.__tonyAskPermission` stops the tape on a pending confirmation
+       * instead of finishing the turn.
+       *
+       * The blocked state is the one a capture cannot otherwise reach: it needs
+       * the core to stop mid-turn and wait, which nothing in a page can fake.
+       * Set by `capture_window.py --ask` before Send.
+       */
+      if (window.__tonyAskPermission) {
+        say(frame("tool.started", { id: "c7", name: "write_file", arguments: { path: "src/providers/registry.py" } }, TURN));
+        say(
+          frame(
+            "confirmation.requested",
+            {
+              id: "c7",
+              name: "write_file",
+              arguments: { path: "src/providers/registry.py", content: "…" },
+              description: "Write src/providers/registry.py",
+              destructive: false,
+            },
+            TURN,
+          ),
+        );
+        return;
+      }
       say(frame("turn.usage", { input_tokens: 12400, output_tokens: 1240, reasoning_tokens: 400, cost: 0.0042 }, TURN));
       say(frame("turn.finished", {}, TURN));
     });

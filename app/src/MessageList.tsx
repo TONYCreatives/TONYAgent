@@ -1,10 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChatMessage, SubagentChild, ReasonRun, ToolCall } from "./events.js";
 import { MarkdownText } from "./MarkdownText.js";
+import { formatDuration } from "./activity.js";
 
 interface Props {
   messages: ChatMessage[];
   busy: boolean;
+  /** Open a touched file in Code. The tool row's path chip calls it. */
+  onOpenFile?: (path: string) => void;
+  /**
+   * The turn is stopped on a permission prompt.
+   *
+   * The core does not send a `running` call's id with the confirmation, so the
+   * one running row in the spine is the row that is waiting: it takes the amber
+   * node instead of the live one. Two parallel calls both turning amber is the
+   * honest reading -- the turn *is* blocked, whatever either call is doing.
+   */
+  awaitingApproval?: boolean;
 }
 
 const STATUS_MARK: Record<"running" | "ok" | "failed", string> = {
@@ -156,34 +168,162 @@ function runsOf(message: ChatMessage): Run[] {
   return runs;
 }
 
-/** One tool invocation inside an assistant message. */
-function ToolRow({ tool }: { tool: ChatMessage["tools"][number] }) {
+/**
+ * One tool invocation: a status node in the gutter, a row, and what it did
+ * underneath when the reader asks.
+ *
+ * **The row is one line and the body is opt-in.** A turn that reads four files,
+ * greps twice and edits one produces seven rows, and a card per row with its
+ * output in it is a page of logs rather than a transcript -- which is exactly
+ * what this replaces. Collapsed, a row says what ran, what came back and how
+ * long it took; pressing it opens the arguments, the result and the diff.
+ *
+ * **The node is in the gutter, not in the row.** It is positioned against the
+ * column's left edge and lives in the 22px of air outside `--measure`, which is
+ * what keeps the first character of every row on the same pixel as the first
+ * character of the composer below it. A node inside the row would have indented
+ * the row and broken the one alignment this window has protected throughout.
+ *
+ * **A running row says so and nothing else.** There is no live duration here:
+ * the turn's clock is the Run card's, one timer for one number, and a per-row
+ * ticker would be seven timers to draw seven numbers nobody is reading.
+ */
+function ToolRow({
+  tool,
+  onOpenFile,
+  awaitingApproval = false,
+}: {
+  tool: ToolCall;
+  onOpenFile?: (path: string) => void;
+  awaitingApproval?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const running = tool.status === "running";
+  const node = running && awaitingApproval ? "approval" : tool.status;
+  const duration =
+    tool.startedAt !== undefined && tool.endedAt !== undefined
+      ? formatDuration(Math.max(0, tool.endedAt - tool.startedAt))
+      : null;
+  const summary = tool.detail ?? (running ? "running\u2026" : "");
+  const hasBody = Boolean(tool.args || tool.output || tool.error || tool.diff);
+
   return (
     // `data-call-id` is the pane's anchor: a plan row scrolls here, so the
     // reader lands on the call that wrote the list rather than at the top of a
     // transcript that may be hundreds of rows long. It is an attribute rather
     // than an `id` because it is a lookup key, not a fragment target.
     <div className="tool-unit" data-call-id={tool.id}>
-      <div className={`tool tool-${tool.status}`}>
-        <span className="tool-mark" aria-hidden="true">
-          {STATUS_MARK[tool.status]}
-        </span>
-        <span className="tool-name">{tool.name}</span>
-        {tool.budget && (
-          // The number the model also read, so the reader can see the turn
-          // approaching its limit rather than discovering it from an error.
-          <span
-            className={`tool-budget${isNearLimit(tool.budget) ? " is-near-limit" : ""}`}
-            title="Tool calls used in this turn"
+      <div className={`tool tool-${tool.status}`} data-open={open ? "true" : "false"}>
+        {/* The spine's node. Decoration on the row's own state, which the row
+            also says in words -- so it is hidden from the accessibility tree
+            rather than being the only carrier of "this failed". */}
+        <span className="tool-node" data-status={node} aria-hidden="true" />
+        <button
+          type="button"
+          className="tool-toggle"
+          onClick={() => setOpen((was) => !was)}
+          aria-expanded={open}
+          disabled={!hasBody}
+          title={hasBody ? (open ? "Hide the details" : "Show the arguments and result") : undefined}
+        >
+          <span className="tool-name">{tool.name}</span>
+          {summary && <span className="tool-summary">{summary}</span>}
+          {tool.budget && (
+            // The number the model also read, so the reader can see the turn
+            // approaching its limit rather than discovering it from an error.
+            <span
+              className={`tool-budget${isNearLimit(tool.budget) ? " is-near-limit" : ""}`}
+              title="Tool calls used in this turn"
+            >
+              {tool.budget}
+            </span>
+          )}
+          {duration && <span className="tool-duration">{duration}</span>}
+          {hasBody && (
+            <span className="tool-caret" aria-hidden="true">
+              {open ? "\u25be" : "\u25b8"}
+            </span>
+          )}
+        </button>
+        {tool.path && (
+          // A chip rather than a link: it opens Code at the file, which is a
+          // different act from expanding the row it sits in. Kept out of the
+          // toggle so the two presses cannot be confused, and out of the row's
+          // own hit area so a press meant for the file does not fold the row.
+          <button
+            type="button"
+            className="tool-path"
+            onClick={() => onOpenFile?.(tool.path!)}
+            disabled={!onOpenFile}
+            title={onOpenFile ? `Open ${tool.path} in Code` : tool.path}
           >
-            {tool.budget}
-          </span>
+            {fileName(tool.path)}
+            {tool.added !== undefined && (
+              <span className="tool-path-delta">
+                <span className="add">+{tool.added}</span>
+                <span className="del">{"\u2212"}{tool.removed ?? 0}</span>
+              </span>
+            )}
+          </button>
         )}
-        {tool.detail && <span className="tool-detail">{tool.detail}</span>}
       </div>
+
+      {open && (
+        <div className="tool-body">
+          {tool.args && (
+            <ToolBlock label="Arguments" text={tool.args} />
+          )}
+          {tool.error && <ToolBlock label="Error" text={tool.error} tone="bad" />}
+          {tool.diff && <ToolBlock label="Diff" text={tool.diff} diff />}
+          {!tool.diff && tool.output && <ToolBlock label="Result" text={tool.output} />}
+        </div>
+      )}
+
       {tool.child && <SubagentWork child={tool.child} />}
     </div>
   );
+}
+
+/** One labelled block of a tool row's body. */
+function ToolBlock({
+  label,
+  text,
+  tone,
+  diff = false,
+}: {
+  label: string;
+  text: string;
+  tone?: "bad";
+  diff?: boolean;
+}) {
+  return (
+    <div className="tool-block" data-tone={tone}>
+      <span className="tool-block-label">{label}</span>
+      {diff ? (
+        <pre className="tool-pre tool-diff">
+          {text.split("\n").map((line, index) => (
+            <span
+              key={index}
+              className={
+                line.startsWith("+") ? "is-add" : line.startsWith("-") ? "is-del" : undefined
+              }
+            >
+              {line}
+              {"\n"}
+            </span>
+          ))}
+        </pre>
+      ) : (
+        <pre className="tool-pre">{text}</pre>
+      )}
+    </div>
+  );
+}
+
+/** The file's own name, for the path chip. The full path is on its title. */
+function fileName(path: string): string {
+  const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
+  return cut >= 0 ? path.slice(cut + 1) : path;
 }
 
 /**
@@ -253,7 +393,18 @@ function ThinkingPanel({ pass }: { pass: ReasonRun }) {
   );
 }
 
-function Bubble({ message }: { message: ChatMessage }) {
+function Bubble({
+  message,
+  streaming,
+  onOpenFile,
+  awaitingApproval,
+}: {
+  message: ChatMessage;
+  /** The model is still writing into this message. */
+  streaming: boolean;
+  onOpenFile?: (path: string) => void;
+  awaitingApproval?: boolean;
+}) {
   const isUser = message.role === "user";
   // A message that carries thinking as placed runs draws each pass inline, in
   // order, between the prose and calls it belongs with. One that only has the
@@ -285,25 +436,41 @@ function Bubble({ message }: { message: ChatMessage }) {
         */}
         {isUser
           ? message.text && <div className="bubble-text">{message.text}</div>
-          : runsOf(message).map((run, index) =>
-              run.kind === "text" ? (
-                <MarkdownText key={index} text={run.text} />
-              ) : run.kind === "thinking" ? (
-                <ThinkingPanel key={index} pass={run.run} />
-              ) : (
-                <div className="tools" key={index}>
-                  {run.tools.map((tool) => (
-                    <ToolRow key={tool.id} tool={tool} />
-                  ))}
-                </div>
-              ),
-            )}
+          : (() => {
+              const runs = runsOf(message);
+              return runs.map((run, index) =>
+                run.kind === "text" ? (
+                  <MarkdownText
+                    key={index}
+                    text={run.text}
+                    // The caret follows the *last* run, and only while that run
+                    // is prose: a turn that is mid-tool-call is not writing,
+                    // and a caret parked under a paragraph while a tool runs
+                    // says the opposite.
+                    caret={streaming && index === runs.length - 1}
+                  />
+                ) : run.kind === "thinking" ? (
+                  <ThinkingPanel key={index} pass={run.run} />
+                ) : (
+                  <div className="tools" data-spine="true" key={index}>
+                    {run.tools.map((tool) => (
+                      <ToolRow
+                        key={tool.id}
+                        tool={tool}
+                        onOpenFile={onOpenFile}
+                        awaitingApproval={awaitingApproval}
+                      />
+                    ))}
+                  </div>
+                ),
+              );
+            })()}
       </div>
     </div>
   );
 }
 
-export function MessageList({ messages, busy }: Props) {
+export function MessageList({ messages, busy, onOpenFile, awaitingApproval }: Props) {
   // Pin to the bottom as tokens stream in.
   //
   // Keyed on the *tail* of the transcript rather than on the whole list, so a
@@ -333,8 +500,25 @@ export function MessageList({ messages, busy }: Props) {
   return (
     <div className="transcript">
       <div className="transcript-inner">
-        {messages.map((message) => (
-          <Bubble key={message.id} message={message} />
+        {messages.map((message, index) => (
+          <Bubble
+            key={message.id}
+            message={message}
+            // Only the turn's own message streams, and only while the turn is
+            // running: a restored conversation is never "still arriving". A turn
+            // stopped on a permission prompt is not writing either -- the caret
+            // blinks under prose that is already finished, and the status pill is
+            // where "waiting" is said.
+            streaming={
+              busy &&
+              !awaitingApproval &&
+              message.role === "assistant" &&
+              index === messages.length - 1 &&
+              message.text.trim() !== ""
+            }
+            onOpenFile={onOpenFile}
+            awaitingApproval={awaitingApproval}
+          />
         ))}
         <div ref={endRef} />
       </div>

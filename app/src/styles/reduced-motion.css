@@ -51,6 +51,21 @@
 :root[data-motion="reduced"] .logstrip,
 :root[data-motion="reduced"] .logstrip[data-state],
 :root[data-motion="reduced"] .row:nth-last-child(-n + 4),
+/*
+ * The spine's live node and the streaming caret.
+ *
+ * Both are progress indicators of the `.thinking-live` kind rather than
+ * decoration: the pulse says "this call is the one running" and the blink says
+ * "this turn is still writing". Cancelling them removes the movement and keeps
+ * the information -- the node keeps its signal fill and its wash, and the caret
+ * stays drawn at the end of the line. A turn that looked finished because its
+ * caret had stopped blinking would be worse than a still one.
+ *
+ * Written with the `[data-status]` half to match the specificity of the rule
+ * being cancelled, per the note at the foot of this file.
+ */
+:root[data-motion="reduced"] .tool-node[data-status="running"],
+:root[data-motion="reduced"] .stream-caret,
 :root[data-motion="reduced"] .chatrow {
   animation: none;
 }
@@ -173,6 +188,13 @@
   :root:not([data-motion="full"]) .logstrip,
   :root:not([data-motion="full"]) .logstrip[data-state],
   :root:not([data-motion="full"]) .row:nth-last-child(-n + 4),
+  /*
+   * The spine's live node and the streaming caret, for the same reason as the
+   * block above: the signal fill and the drawn bar are the information, and the
+   * pulse and the blink are only how it moves.
+   */
+  :root:not([data-motion="full"]) .tool-node[data-status="running"],
+  :root:not([data-motion="full"]) .stream-caret,
   :root:not([data-motion="full"]) .chatrow {
     animation: none;
   }

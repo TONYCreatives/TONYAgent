@@ -1742,6 +1742,15 @@ describe("every state change has a transition to animate it", () => {
       // has no frame in between, so the background arrives with the panel.
       // Phase 6 owns the reveal itself.
       '.contextdock[data-docked="false"][data-state="open"] .context-panel',
+      // The spine's line, which is *drawn or not drawn* rather than restyled:
+      // `data-spine` is a property of the run the walker produced, set once when
+      // the message is rendered. A run of one call is not a state the line
+      // transitions out of -- it is a run the line was never drawn for.
+      '.tools[data-spine="true"]::before',
+      // The same shape of thing in the expanded row: `data-tone="bad"` marks the
+      // block as an error at the moment it is rendered. There is no frame in
+      // which it is not an error, so there is nothing to ease.
+      '.tool-block[data-tone="bad"] .tool-pre',
     ];
 
     const gaps: string[] = [];

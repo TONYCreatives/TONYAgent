@@ -102,3 +102,352 @@
   margin-top: 2px;
   color: var(--fg-dim);
 }
+
+/* --- the row ------------------------------------------------------------- */
+/*
+ * One call, one line, and the line is the control.
+ *
+ * This replaces a per-call card with the arguments and the result already open
+ * in it. Seven calls in a turn meant seven blocks of output between the reader
+ * and the answer -- a turn's transcript read as a log. Collapsed, a row is what
+ * ran, what came back and how long it took; pressing it opens the rest.
+ *
+ * `position: relative` is here for the node, which is the one part of this row
+ * that is *not* in the row's box: see `.tool-node`.
+ */
+.tool {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  font-family: var(--sans);
+  font-size: var(--text-sm);
+  color: var(--fg-mute);
+}
+
+.bubble-user .tools {
+  margin-top: 6px;
+}
+
+/*
+ * The spine's node, in the gutter rather than in the row.
+ *
+ * It is positioned against the column's left edge, which is the same edge the
+ * composer's first character sits on. A node laid out in the row would have
+ * indented the row by its own width, moving every tool name 12px right of the
+ * prose above it -- and the one alignment this window has protected through
+ * every pass is that the first character of a tool row and the first character
+ * of a paragraph are the same pixel.
+ *
+ * The offsets are `--column-inset`: the node's 8px box starts 6px left of the
+ * text and ends 5.5px left of it, and the 1px line above runs through the box's
+ * centre. The half pixel is the line's, not the node's -- a 1px line at an odd
+ * offset draws a crisp pixel and a 8px circle at a half pixel draws the same
+ * circle, so the half goes where it costs least.
+ */
+.tool-node {
+  position: absolute;
+  left: calc(-1 * var(--column-inset) + 5.5px);
+  top: 50%;
+  margin-top: -4px;
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--border-strong);
+  pointer-events: none;
+  /*
+   * A node does change state in place -- a call that was running finishes while
+   * the reader is looking at it -- so the fill eases across rather than snapping.
+   * `box-shadow` is deliberately not here: the running node's wash is animated
+   * by `spine-pulse`, and a transition on the same property would fight it.
+   */
+  transition: background var(--motion-fast) ease;
+}
+
+/*
+ * Live: filled signal, with a wash behind it and a pulse.
+ *
+ * The glow is a `box-shadow` rather than a second element so the node stays one
+ * 8px box in the gutter -- and so cancelling the animation under a motion
+ * preference leaves the wash, which still says "this one is the live one"
+ * without moving.
+ */
+.tool-node[data-status="running"] {
+  background: var(--signal);
+  box-shadow: 0 0 0 3px var(--signal-glow);
+  animation: spine-pulse 1.6s ease-in-out infinite;
+}
+
+/*
+ * Done: a neutral dot, not a check and not green.
+ *
+ * A column of green ticks turns success into decoration and competes with the
+ * one live node in the spine, which is the thing the eye should find first.
+ * Muted grey says "finished" without claiming anything about the outcome --
+ * the outcome is the caller's word, next to it.
+ */
+.tool-node[data-status="ok"] {
+  background: var(--fg-mute);
+}
+
+/*
+ * Failed: a ring with a cross in it, drawn rather than typed -- a glyph at 8px is
+ * a smudge, and two diagonal bands are not.
+ *
+ * Gradients rather than two rotated pseudo-element strokes for one reason: this
+ * node is a state the row is *in*, so the base rule's transition has to cover
+ * every property the state rules change, and a cross built from `background` is
+ * one property the base already eases. Two 1-element pseudo-strokes would each
+ * have needed a transition of their own to animate a box that only ever exists
+ * in this one status.
+ */
+.tool-node[data-status="failed"] {
+  border: 1px solid var(--danger);
+  background:
+    linear-gradient(
+        45deg,
+        transparent 42%,
+        var(--danger) 42%,
+        var(--danger) 58%,
+        transparent 58%
+      )
+      center / 100% 100% no-repeat,
+    linear-gradient(
+        -45deg,
+        transparent 42%,
+        var(--danger) 42%,
+        var(--danger) 58%,
+        transparent 58%
+      )
+      center / 100% 100% no-repeat;
+}
+
+/* Blocked on a person: amber, the one colour allowed to pull the eye away from
+   signal. A hollow ring rather than a fill, because nothing is happening. */
+.tool-node[data-status="approval"] {
+  background: transparent;
+  border: 1.5px solid var(--warn);
+}
+
+/*
+ * The row itself: name, summary, budget, duration, caret.
+ *
+ * A `<button>` because it opens something, and reset to a line so the row still
+ * reads as a transcript line. `disabled` when there is nothing to open: a row
+ * whose tool reported no arguments and no output has no body, and a button that
+ * does nothing on press is worse than a line that does not offer to.
+ */
+.tool-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-toggle:disabled {
+  cursor: default;
+}
+
+.tool-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* The name is mono: it is a tool's identifier, not a word in a sentence, and the
+   one place in a transcript where that distinction is load-bearing. */
+.tool-name {
+  flex: none;
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+
+/* The one-line summary: the call's own detail, or "running…" before there is
+   one. Truncated rather than wrapped -- a row is a line. */
+.tool-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+/* Kept for the subagent's own rows, which are not toggles. */
+.tool-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.8;
+}
+
+/*
+ * The duration, at the right end of the line.
+ *
+ * `margin-left: auto` rather than being pushed by a spacer: the summary is the
+ * only flexible thing here, so the number lands against the end of the row and
+ * stays there whether the summary is four characters or forty.
+ */
+.tool-duration {
+  margin-left: auto;
+  flex: none;
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-caret {
+  flex: none;
+  width: 8px;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  line-height: 1;
+  text-align: center;
+}
+
+/*
+ * The file a call touched, as a chip that opens it in Code.
+ *
+ * Outside the toggle on purpose: expanding a row and opening a file are two
+ * different acts, four pixels apart, and one hit area around both would make a
+ * press on the file fold the row instead. The delta is inside the chip because
+ * it belongs to the file rather than to the row.
+ */
+.tool-path {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  max-width: 40%;
+  margin: 0;
+  padding: 1px 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.tool-path:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--fg);
+}
+
+.tool-path:disabled {
+  cursor: default;
+}
+
+.tool-path-delta {
+  display: flex;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-path-delta .add {
+  color: var(--ok);
+}
+
+.tool-path-delta .del {
+  color: var(--danger);
+}
+
+/* --- an expanded row ------------------------------------------------------ */
+.tool-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 6px;
+}
+
+.tool-block {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.tool-block-label {
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/*
+ * Output is text, not prose: mono, a surface of its own, and its own scroller.
+ *
+ * `max-height` rather than an unbounded block: `read_file` on a long source
+ * returns thousands of lines, and a row that pushes the transcript up by a
+ * screenful when it is opened has moved the answer off the screen the reader
+ * was looking at. It scrolls inside the row instead.
+ */
+.tool-pre {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-block[data-tone="bad"] .tool-pre {
+  border-left: 2px solid var(--danger);
+  color: var(--danger);
+}
+
+.tool-diff .is-add {
+  color: var(--ok);
+}
+
+.tool-diff .is-del {
+  color: var(--danger);
+}
+
+/* --- the spine ------------------------------------------------------------ */
+/*
+ * The line, in the air outside `--measure`.
+ *
+ * Drawn on the run of consecutive calls rather than on the message, so a turn
+ * that says something, calls a tool, says something else and calls another gets
+ * two segments -- which is the shape of what happened. The line stops at the
+ * first and last node's centres (`top`/`bottom` 10px against a ~20px row), so it
+ * does not stick out above the first node or below the last, and a run of one
+ * call has no line at all because there is nothing to connect.
+ */
+.tools[data-spine="true"] {
+  position: relative;
+}
+
+.tools[data-spine="true"]::before {
+  content: "";
+  position: absolute;
+  left: calc(-1 * var(--column-inset) + 9px);
+  top: 10px;
+  bottom: 10px;
+  width: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
