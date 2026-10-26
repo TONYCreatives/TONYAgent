@@ -1,6 +1,9 @@
 # TONYAgent — Agent Workspace Refine
 
-**Status:** proposal for review. No product code has been changed for this plan.
+**Status:** Phases 0–3 landed (2026-10-23 to 2026-10-25) — see
+[PHASE_0_1_HANDOFF.md](PHASE_0_1_HANDOFF.md), [PHASE_2_HANDOFF.md](PHASE_2_HANDOFF.md)
+and [PHASE_3_HANDOFF.md](PHASE_3_HANDOFF.md) for what shipped, the measured gates
+and the deliberate deviations. Phases 4–7 are still a proposal.
 **Date:** 2026-10-22
 **Scope:** the desktop window (`app/` + `src/tonyagent/window/`), not the core protocol.
 **Goal:** make the window read as a modern *agent workspace* rather than a chat

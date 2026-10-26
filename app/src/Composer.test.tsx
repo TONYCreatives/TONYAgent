@@ -20,7 +20,7 @@ import { describe, test } from "node:test";
 import { createRef, type RefObject } from "react";
 
 import { Composer, type ModeInfo } from "./Composer.js";
-import { all, click, one, press, render, setValue } from "./test-render.js";
+import { all, click, one, press, render, setValue, texts } from "./test-render.js";
 import { dom } from "./test-dom.js";
 
 const MODES: ModeInfo[] = [
@@ -234,25 +234,31 @@ describe("the field the window can put the caret in", () => {
   });
 });
 
-// --- the track toggle lives in the top bar ------------------------------------
+// --- one mode chip, not a row of pills ---------------------------------------
 /*
- * Chat is not one pill among five, so the toggle sits in the top bar beside
- * the view switch rather than in this row -- and the pills here are simply
- * the track's share, filtered by the window before they arrive. These used
- * to mount the toggle here; now they pin that this row draws exactly what it
- * is given, because a composer that filtered on its own would be a second
- * place the track is decided.
+ * The composer used to draw a pill per mode, and the row was the widest thing
+ * in the field after the field itself: it wrapped in the 400px assistant panel
+ * and ran out of room at the window's narrow end. It draws one chip now, with
+ * the same list behind a menu -- see `ModeChip`.
+ *
+ * The composer's half of that contract is what these pin: the chip is the mode
+ * in force, the menu is the modes it was handed and only those (the window
+ * filters by track before they arrive), and a press reports rather than
+ * applying. A composer that filtered on its own would be a second place the
+ * track is decided.
  */
-describe("the mode pills it is given", () => {
-  test("it draws every pill it receives, and only those", async () => {
-    const container = await render(
+describe("the mode chip", () => {
+  const MODES = [
+    { name: "build", label: "Build", description: "Full access.", writes: true },
+    { name: "plan", label: "Plan", description: "Read only.", writes: false },
+  ];
+
+  const mount = (over: Partial<React.ComponentProps<typeof Composer>> = {}) =>
+    render(
       <Composer
         busy={false}
         disabled={false}
-        modes={[
-          { name: "build", label: "Build", description: "Act.", writes: true },
-          { name: "plan", label: "Plan", description: "Read only.", writes: false },
-        ]}
+        modes={MODES}
         mode="build"
         onModeChange={() => {}}
         onSend={() => {}}
@@ -262,18 +268,78 @@ describe("the mode pills it is given", () => {
         onBudgetOpen={() => {}}
         onBudgetClose={() => {}}
         onBudgetChange={() => {}}
+        {...over}
       />,
     );
-    assert.deepEqual(
-      all(container, '.mode-group[aria-label="Mode"] .mode').map((b) =>
-        (b.textContent ?? "").trim(),
-      ),
-      ["Build", "Plan"],
-    );
+
+  test("it names the mode in force and offers the rest behind it", async () => {
+    const container = await mount();
     assert.equal(
-      all(container, '.mode-group[aria-label="Track"] .mode').length,
-      0,
-      "the composer grew its own track toggle",
+      one(container, ".modechip .modechip-label")?.textContent,
+      "Build",
+    );
+    assert.equal(one(container, ".modechip-menu"), null, "the menu opened by itself");
+
+    await click(one(container, ".modechip")!);
+    assert.deepEqual(texts(container, ".modechip-option-label"), ["Build", "Plan"]);
+    // The description is the whole point of a mode: the permission difference
+    // is not visible from the label.
+    assert.deepEqual(texts(container, ".modechip-option-desc"), [
+      "Full access.",
+      "Read only.",
+    ]);
+    assert.deepEqual(
+      all(container, ".modechip-option").map((row) =>
+        row.getAttribute("aria-checked"),
+      ),
+      ["true", "false"],
+    );
+  });
+
+  test("pressing a mode reports it and closes the menu", async () => {
+    const asked: string[] = [];
+    const container = await mount({ onModeChange: (name) => asked.push(name) });
+    await click(one(container, ".modechip")!);
+    const plan = all(container, ".modechip-option").find(
+      (row) => one(row, ".modechip-option-label")?.textContent === "Plan",
+    )!;
+
+    await click(plan);
+
+    assert.deepEqual(asked, ["plan"]);
+    assert.equal(one(container, ".modechip-menu"), null);
+  });
+
+  test("one mode is a label, not a menu with one row", async () => {
+    const container = await mount({
+      modes: [
+        { name: "chat", label: "Chat", description: "Talk.", writes: false },
+      ],
+      mode: "chat",
+    });
+    assert.equal(one(container, ".modechip.is-static")?.textContent, "Chat");
+    assert.equal(all(container, ".modechip-menu").length, 0);
+    assert.equal(
+      one(container, ".modechip")?.getAttribute("aria-haspopup"),
+      null,
+      "a one-row menu is a control pretending there is a choice",
+    );
+  });
+
+  test("a disconnected window cannot open the list", async () => {
+    const container = await mount({ disabled: true });
+    const chip = one(container, ".modechip") as HTMLButtonElement;
+    assert.equal(chip.disabled, true);
+    await click(chip);
+    assert.equal(one(container, ".modechip-menu"), null);
+  });
+
+  test("the hint under the field still explains a read-only mode", async () => {
+    const container = await mount({ mode: "plan" });
+    assert.match(
+      one(container, ".hint")?.textContent ?? "",
+      /Read only\./,
+      "Plan is read-only and nothing said so",
     );
   });
 });

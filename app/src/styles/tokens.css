@@ -414,27 +414,37 @@
    */
   --menu-gap: 6px;
   /*
-   * The breakpoint ladder: **720, 560, 420**, and nothing else.
+   * The breakpoint ladder: **1400, 1100, 900, 720, 560, 420**, and nothing else.
    *
    * It cannot be a custom property -- a `@media` prelude is evaluated before
    * any variable exists -- so it is a written-down convention with a test behind
    * it, which is the closest a media query can get to a token. `layout.test.ts`
    * walks every `@media (max-width: Npx)` in the cascade and fails on an N that
-   * is not one of the three, so a fourth step has to be argued for here rather
-   * than appearing in one surface and not the others.
+   * is not one of the six, so a step has to be argued for here rather than
+   * appearing in one surface and not the others.
    *
    * That was the failure: the compact-window pass invented 720 and 540 and 390
    * for the title bar, 680 and 430 for the dashboard and 560 for the status bar,
    * so one window changed state six times, at six different sizes, in three
-   * surfaces that all say "narrow". Three widths now, each with one job:
+   * surfaces that all say "narrow". Six widths now, each with one job:
    *
-   *   720  the chrome starts giving up air: the tab strip caps, the model chip
-   *        ellipsises, the caption buttons narrow, the dashboard's header wraps
-   *   560  the status bar drops secondary status, and the chip and tab caps drop
-   *        to their floor
-   *   420  the tab strip stops being a strip -- the controls that must never be
-   *        pushed out are worth more than a tab you cannot read -- and the
-   *        dashboard's period picker becomes locally scrollable
+   *   1400  the full workspace: 288 nav + 288 context + the 824px centre that
+   *         is the 760px column plus its air and scrollbar gutter. The last
+   *         width at which both docks fit without compressing the column, and
+   *         therefore where the context panel docks.
+   *   1100  the nav can no longer hold the reading column beside a 48px context
+   *         strip: at 1101 the centre is 765px; at 1100 the nav becomes the
+   *         64px rail and the centre is 988px. Where the nav dock gives way.
+   *   900   the rail and the strip would start squeezing the column rather than
+   *         sitting in its air: at 901 the centre is 789px, at 900 both become
+   *         floating compact forms over a full-width centre.
+   *   720   the chrome starts giving up air: the tab strip caps, the model chip
+   *         ellipsises, the caption buttons narrow, the dashboard's header wraps
+   *   560   the status bar drops secondary status, and the chip and tab caps drop
+   *         to their floor
+   *   420   the tab strip stops being a strip -- the controls that must never be
+   *         pushed out are worth more than a tab you cannot read -- and the
+   *         dashboard's period picker becomes locally scrollable
    *
    * A `@container (max-width: Npx)` is not on this ladder and must not be: it
    * asks about the pane the rule is in, and the one in `code-viewer.css` is
@@ -458,6 +468,25 @@
    * place here where the text *is* the content.
    */
   --list-w: 288px;
+  /*
+   * The workspace dock's width, and the only place 288 is written down.
+   *
+   * The nav and the context panel are both 288 because the arithmetic at the
+   * dock point is one number: 288 + 288 + 824 = 1400, where 824 is the reading
+   * column plus its air and scrollbar gutter. Two literals that happen to agree
+   * today are two literals that disagree later, so they read this alias.
+   * `--list-w` stays the owner because it was here first and is the width a
+   * conversation title was measured against; `--dock-w` is the workspace's name
+   * for the same surface, not a second measurement.
+   */
+  --dock-w: var(--list-w);
+  /*
+   * The context panel's compact form. Wide enough for a 5px status orb and the
+   * vertical RUN label with air either side -- the mirror of the rail, not a
+   * second rail: the nav's compact form is 64 because it holds 44px targets,
+   * this holds a state and a way back.
+   */
+  --context-w-collapsed: 48px;
   /*
    * The project explorer's width, in Code mode.
    *

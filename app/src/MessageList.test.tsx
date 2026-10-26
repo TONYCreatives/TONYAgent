@@ -21,12 +21,10 @@
 
 import "./test-dom.js";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 
 import { MessageList } from "./MessageList.js";
-import { MARK_RECTS } from "./AppMark.js";
-import { FOCUSABLE, all, click, one, rerender, render, texts } from "./test-render.js";
+import { all, click, one, rerender, render, texts } from "./test-render.js";
 import type { ChatMessage } from "./events.js";
 
 function message(over: Partial<ChatMessage> = {}): ChatMessage {
@@ -44,7 +42,7 @@ function message(over: Partial<ChatMessage> = {}): ChatMessage {
 
 /** Render a one-message transcript, and hand back the container. */
 function transcript(m: ChatMessage) {
-  return render(<MessageList messages={[m]} busy={false} project="" />);
+  return render(<MessageList messages={[m]} busy={false} />);
 }
 
 /** The panel's toggle button, which is also its header. */
@@ -110,7 +108,6 @@ describe("the thinking panel over a turn", () => {
       <MessageList
         messages={[message({ reasoning: "Step one.", reasoningComplete: true })]}
         busy={false}
-        project=""
       />,
     );
 
@@ -135,7 +132,6 @@ describe("the thinking panel over a turn", () => {
       <MessageList
         messages={[message({ reasoning: "Step one.", reasoningComplete: true })]}
         busy={false}
-        project=""
       />,
     );
 
@@ -157,7 +153,6 @@ describe("the thinking panel over a turn", () => {
       <MessageList
         messages={[message({ reasoning: "Step one.", reasoningComplete: true })]}
         busy={false}
-        project=""
       />,
     );
     assert.equal(isOpen(container), false);
@@ -381,378 +376,6 @@ describe("the tool call budget on a card", () => {
     // turned into a near-limit warning nobody measured.
     const container = await transcript(toolCard({ budget: "lots" }));
     assert.equal(budgetLabel(container)?.classList.contains("is-near-limit"), false);
-  });
-});
-
-// --- before the first message ----------------------------------------------
-/*
- * The first-run panel, and the one constraint on it that has to be held rather
- * than intended: it is a picture, and pictures are not controls.
- *
- * Everything else in this file is about what a component does over time. This
- * is about what it must never do, which is the harder kind to keep, because the
- * failure is always an addition -- somebody adds a "load a demo conversation"
- * button, or makes the `/` hint a link to the skills list, or wraps the mark in
- * something clickable -- and every one of those additions reads locally like an
- * improvement. It is also invisible in a snapshot: a button here would be one
- * more line of markup.
- *
- * So the assertions below are negative ones, and they are negative on purpose:
- * a count of focusable things rather than a comparison against a string, a tag
- * allowlist rather than a tag comparison, the panel's own source read for the
- * one thing the DOM cannot show, and the mark's own path data pinned to the
- * shape on the taskbar so "the same glyph" is a fact about the file rather than
- * an intention in a comment.
- */
-
-
-/**
- * The tags the panel is allowed to be built from.
- *
- * `rect` rather than `path`: the mark is two rects, and this allowlist
- * was written when it was two stroked paths. Both are SVG shapes that cannot
- * carry a React handler, which is the property being asserted -- the list is
- * about reachability, not about how the glyph is drawn, so it moves with the
- * artwork rather than with the artwork's construction. The pet's eyes are a
- * `g` of two `circle`s for the same reason: the mark gained a face, and those
- * shapes carry a handler no more than the rects do. The folder icon beside the
- * name is a single `path`, here for the same reason.
- */
-/**
- * The panel is built from these and nothing else.
- *
- * `button` is here for one element -- the folder's own. A tag allowlist cannot
- * say *one*, so it says which tags are allowed and the test below counts the
- * buttons separately; that split is why neither list alone is the test.
- */
-const ALLOWED_TAGS = new Set([
-  "div",
-  "svg",
-  "rect",
-  "g",
-  "circle",
-  "path",
-  "h1",
-  "p",
-  "ul",
-  "li",
-  "kbd",
-  "button",
-]);
-
-/**
- * The empty panel, with the folder arguments a caller would pass.
- *
- * Defaults to "no folder, no picker" because that is the state the rest of
- * these tests are about -- the wordmark, the mark, the hints -- and none of
- * them care which folder is in force.
- */
-const firstRun = (
-  over: Partial<React.ComponentProps<typeof MessageList>> = {},
-) =>
-  render(<MessageList messages={[]} busy={false} project="" {...over} />);
-
-describe("the first run", () => {
-  test("the only thing on it to click is the folder", async () => {
-    const container = await firstRun({
-      project: "C:\\Users\\me\\project",
-      onChooseFolder: () => {},
-    });
-    const panel = one(container, ".empty");
-    assert.ok(panel, "the empty conversation renders no panel at all");
-
-    // The panel itself is in the list, not only its descendants. `querySelector`
-    // does not match the element it is called on, so a `tabIndex={-1}` written
-    // on `.empty` itself passed the first version of this test -- which is the
-    // whole reason this one is written the long way round.
-    const everything = [panel, ...panel.querySelectorAll("*")];
-
-    // One, named, rather than zero. This panel used to promise that nothing on
-    // it was reachable, and it was true; the folder button is the exception the
-    // user asked for, so the promise is now "one, and here is which" -- which
-    // still fails on a second control, and says what the second one is.
-    assert.deepEqual(
-      everything
-        .filter((el) => el.matches(FOCUSABLE))
-        .map((el) => `${el.tagName.toLowerCase()}.${el.getAttribute("class") ?? ""}`),
-      ["button.btn"],
-      "the first-run panel has more on it than the folder button",
-    );
-
-    // The allowlist is the same promise stated differently, and it is the half
-    // that survives a container React gave a handler: `onclick` is not an
-    // attribute in the serialised markup, so nothing above can see it, but a
-    // `<div onClick>` is still a click target. The tags below cannot carry one.
-    const tags = everything.map((el) => el.tagName.toLowerCase());
-    assert.deepEqual(
-      [...new Set(tags)].filter((t) => !ALLOWED_TAGS.has(t)).sort(),
-      [],
-      "the first-run panel is built from a tag that can carry a handler",
-    );
-
-    // ...and `button` is the one allowed tag that can, so it is counted. An
-    // allowlist that grew `button` and nothing else would still pass with five
-    // of them on the panel; this is the half that says there is one.
-    assert.equal(
-      tags.filter((t) => t === "button").length,
-      1,
-      "the first-run panel has more than one button on it",
-    );
-
-    for (const el of everything) {
-      for (const attr of el.getAttributeNames()) {
-        assert.ok(
-          !attr.startsWith("on") &&
-            attr !== "tabindex" &&
-            attr !== "role" &&
-            attr !== "href" &&
-            attr !== "contenteditable",
-          `<${el.tagName.toLowerCase()}> carries ${attr}`,
-        );
-      }
-    }
-  });
-
-  test("the folder button holds the panel's only handler", async () => {
-    // The one hole in the DOM assertions above, found by trying it: React does
-    // not put an event handler in the markup, so a `<div onClick>` or an
-    // `onKeyDown` on the panel itself passes every assertion in the test above
-    // and every one of them would keep passing. Nothing in jsdom can see it --
-    // the handler simply is not there to see -- so this reads the component's
-    // own source instead, which is where the mistake would be made.
-    //
-    // Scoped to `FirstRun` rather than the file, because the transcript below it
-    // has no handlers either but does have perfectly good reasons to grow some,
-    // and a test that failed on those would be a test that got switched off.
-    //
-    // It asserted *none*. It now asserts *one*, and the one is the folder: a
-    // keydown on the panel would be a shortcut nothing can see, and a click on
-    // the wordmark would be a control that is not one. Counting is the promise
-    // that survives the button being there at all.
-    const source = readFileSync(
-      new URL("../src/MessageList.tsx", import.meta.url),
-      "utf8",
-    );
-    const start = source.indexOf("function FirstRun(");
-    assert.ok(start > -1, "FirstRun is gone from MessageList.tsx");
-    const panel = source.slice(start, source.indexOf("\nexport function", start));
-    assert.ok(panel.length > 0, "FirstRun has no body left to inspect");
-
-    const handlers = [...panel.matchAll(/\bon[A-Z]\w*\s*[=:]/g)].map((m) => m[0]);
-    assert.deepEqual(
-      handlers,
-      ["onClick="],
-      `the first-run panel's handlers are ${JSON.stringify(handlers)}: only the `
-        + "folder button's onClick is meant to be here",
-    );
-    for (const attr of ["tabIndex", "role=", "href=", "contentEditable"]) {
-      assert.ok(
-        !panel.includes(attr),
-        `FirstRun writes ${attr}, which makes the panel something to reach`,
-      );
-    }
-  });
-
-  test("it names the folder in force, and says so with a Change button", async () => {
-    // The name is what makes "you did not have to change anything" visible.
-    // Without it the button would be an invitation to do a thing the user may
-    // not need to do, and the panel would be asking rather than telling.
-    const container = await firstRun({
-      project: "C:\\Users\\me\\project",
-      onChooseFolder: () => {},
-    });
-
-    const name = one(container, ".empty-folder-name");
-    assert.equal(name?.textContent, "project");
-    // The whole path, because a folder called `project` under two different
-    // parents is the same label twice and the user cannot tell them apart.
-    assert.equal(name?.getAttribute("title"), "C:\\Users\\me\\project");
-
-    // "Change...", not "Choose...": there is a folder to change. "Choose" on a
-    // panel that already has one reads as though nothing were selected.
-    const button = one(container, ".empty-folder button");
-    assert.equal(button?.textContent, "Change...");
-    assert.equal(button?.getAttribute("type"), "button");
-  });
-
-  test("with no folder it says so, and the button offers to pick one", async () => {
-    const container = await firstRun({ onChooseFolder: () => {} });
-    assert.equal(
-      one(container, ".empty-folder-name")?.textContent,
-      "No project folder",
-    );
-    assert.equal(
-      one(container, ".empty-folder button")?.textContent,
-      "Choose folder...",
-    );
-  });
-
-  test("a forward-slash path names the same folder as a backslash one", async () => {
-    // The paths here come from Windows and from the picker, which on some
-    // machines hands back a forward-slash form. Both name the last segment, so
-    // the label does not change shape with the separator.
-    const container = await firstRun({
-      project: "/home/me/project",
-      onChooseFolder: () => {},
-    });
-    assert.equal(one(container, ".empty-folder-name")?.textContent, "project");
-  });
-
-  test("the button is the panel's only action, and it fires once", async () => {
-    // Not decoration, and not a second one: one handler, called once per click.
-    let calls = 0;
-    const container = await firstRun({
-      project: "C:\\p",
-      onChooseFolder: () => { calls += 1; },
-      // Without this the button renders disabled -- correctly, since a window
-      // that is busy cannot open a picker -- and a click on a disabled button
-      // is nothing, which is how the first version of this test pressed one
-      // and counted zero calls and nearly called the component broken.
-      canChooseFolder: true,
-    });
-    const button = one(container, ".empty-folder button");
-    assert.ok(button, "the panel has no folder button");
-    await click(button);
-    assert.equal(calls, 1, `the button was pressed ${calls} times`);
-
-    // And the mark, the wordmark and the hints do not react to a click on
-    // them -- they are not controls, and the count above would not catch one
-    // that grew a handler of its own.
-    for (const quiet of [".empty-mark", ".empty h1", ".empty-hints"]) {
-      assert.ok(one(container, quiet), `${quiet} is gone from the panel`);
-    }
-    await click(one(container, ".empty h1")!);
-    assert.equal(calls, 1, "clicking the wordmark did something");
-  });
-
-  test("it cannot be pressed while the caller says the window is busy", async () => {
-    const container = await firstRun({
-      project: "C:\\p",
-      onChooseFolder: () => {},
-      canChooseFolder: false,
-    });
-    assert.equal(
-      one(container, ".empty-folder button")?.hasAttribute("disabled"),
-      true,
-    );
-
-    const enabled = await firstRun({
-      project: "C:\\p",
-      onChooseFolder: () => {},
-      canChooseFolder: true,
-    });
-    assert.equal(
-      one(enabled, ".empty-folder button")?.hasAttribute("disabled"),
-      false,
-    );
-  });
-
-  test("with no picker to open it shows the folder and no button", async () => {
-    // `onChooseFolder` is optional, so a caller that has nothing to open must
-    // get a label rather than a dead button sitting next to it.
-    const container = await firstRun({ project: "C:\\p" });
-    assert.equal(one(container, ".empty-folder-name")?.textContent, "p");
-    assert.equal(
-      all(container, ".empty-folder button").length,
-      0,
-      "a folder button with nothing behind it",
-    );
-  });
-
-  test("the mark is the app's own, drawn from the shipped path data", async () => {
-    const container = await firstRun();
-    const mark = one(container, ".empty-mark");
-    assert.ok(mark, "the first-run panel does not draw the mark");
-
-    assert.equal(mark.tagName.toLowerCase(), "svg");
-    // Decorative, and said so: the wordmark right beside it is the name, so an
-    // assistive technology reading the glyph out loud would repeat it.
-    assert.equal(mark.getAttribute("aria-hidden"), "true");
-
-    // The glyph is rects rather than paths, so this compares the five numbers
-    // that describe each stroke. Read off the rendered DOM rather than off the
-    // component, so what is checked is what the browser was handed.
-    const rects = [...mark.querySelectorAll("rect")].map((r) => [
-      r.getAttribute("x"),
-      r.getAttribute("y"),
-      r.getAttribute("width"),
-      r.getAttribute("height"),
-      r.getAttribute("rx"),
-    ]);
-    assert.deepEqual(
-      rects,
-      MARK_RECTS.map((r) => [
-        String(r.x),
-        String(r.y),
-        String(r.width),
-        String(r.height),
-        String(r.rx),
-      ]),
-      "the mark is not the two strokes of the shipped glyph",
-    );
-
-    // Same reasoning as the rail's copy: the colour comes from the surface it
-    // sits on, so a literal here would be the one pixel value in the app that
-    // a change of `--accent` could not reach. `fill` rather than `stroke`,
-    // because the glyph is drawn as filled rects -- a stroked mark would carry
-    // the paint on `stroke` and this assertion would be testing the wrong one.
-    assert.equal(mark.getAttribute("fill"), "currentColor");
-    assert.equal(mark.getAttribute("stroke"), null);
-    for (const attr of ["stroke", "fill", "color", "stop-color"]) {
-      const value = mark.getAttribute(attr);
-      if (value) {
-        assert.ok(
-          !/^#|rgb|hsl/i.test(value),
-          `the mark names the colour ${value} instead of taking the surface's`,
-        );
-      }
-    }
-  });
-
-  test("the hints are the ones the composer was hiding in its placeholder", async () => {
-    const container = await firstRun();
-    const hints = all(container, ".empty-hints > li").map(
-      (li) => li.textContent ?? "",
-    );
-    assert.deepEqual(
-      hints,
-      ["/ for skills", "@ for threads or files"],
-      "the promoted hints are not the placeholder's two keys",
-    );
-
-    // Drawn as keys rather than as buttons. A `<kbd>` says "this is a key you
-    // press"; a `<button>` says "press this", and pressing one here would have
-    // to either do nothing or steal the keystroke from the composer.
-    for (const li of all(container, ".empty-hints > li")) {
-      assert.equal(li.querySelectorAll("kbd").length, 1);
-      assert.equal(li.querySelectorAll("button, a").length, 0);
-    }
-  });
-
-  test("the wordmark and the line of orientation are both still here", async () => {
-    // The two that were already on this panel, unchanged: the pass added to
-    // them and did not rewrite them, so they are asserted rather than assumed.
-    const container = await firstRun();
-    assert.equal(one(container, ".empty h1")?.textContent, "TONYAgent");
-    assert.equal(
-      one(container, ".empty p")?.textContent,
-      "Ask for something. The agent will use its tools to do it.",
-    );
-  });
-
-  test("a first message replaces the panel rather than sitting under it", async () => {
-    const container = await firstRun();
-    await rerender(<MessageList messages={[message()]} busy={false} project="" />);
-    assert.equal(
-      all(container, ".empty").length,
-      0,
-      "the first-run panel is still on screen under the first answer",
-    );
-
-    // ...and clearing the conversation brings it back, rather than leaving a
-    // blank field where the panel was.
-    await rerender(<MessageList messages={[]} busy={false} project="" />);
-    assert.equal(all(container, ".empty").length, 1);
   });
 });
 

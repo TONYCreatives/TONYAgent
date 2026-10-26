@@ -16,13 +16,16 @@
 @import "./styles/shell.css";
 @import "./styles/conversation-list.css";
 @import "./styles/rail.css";
+@import "./styles/viewswitch.css";
 @import "./styles/topbar.css";
 @import "./styles/transcript.css";
+@import "./styles/launchpad.css";
 @import "./styles/tool-calls.css";
 @import "./styles/thinking.css";
 @import "./styles/composer.css";
 @import "./styles/banner-log.css";
 @import "./styles/statusbar.css";
+@import "./styles/context.css";
 @import "./styles/confirm-modal.css";
 @import "./styles/question-modal.css";
 @import "./styles/settings.css";

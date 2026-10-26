@@ -5,7 +5,6 @@ interface Props {
   model: string;
   sandbox: string;
   connected: boolean;
-  busy: boolean;
   /**
    * The core came up with no provider bound.
    *
@@ -26,7 +25,6 @@ export function StatusBar({
   model,
   sandbox,
   connected,
-  busy,
   needsProvider,
   onConfigure,
   logLines = [],
@@ -55,12 +53,12 @@ export function StatusBar({
       )}
       <span className="sep" />
       <span className="statusbar-sandbox">Sandbox: {capitalizeFirst(sandbox)}</span>
-      {busy && (
-        <>
-          <span className="sep" />
-          <span className="busy">Working...</span>
-        </>
-      )}
+      {/*
+        No busy word. It was the third place a turn announced itself -- beside
+        the tab spinner and the run card -- and the strip's job is the
+        environment: whether the core is up, what it is talking to, where it
+        runs. The top bar's pill is the turn's only home now.
+      */}
       {onToggleLogs && (
         <button
           type="button"

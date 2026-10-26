@@ -20,6 +20,7 @@
 import type { ReactNode } from "react";
 
 import { Gear } from "./Gear.js";
+import { RailViewButton, type ViewMode } from "./ViewSwitch.js";
 
 interface Props {
   connected: boolean;
@@ -51,6 +52,19 @@ interface Props {
    * is only discoverable by opening the panel and looking.
    */
   updateAvailable: boolean;
+  /**
+   * Which workspace is in front, for the strip's compact switch.
+   *
+   * The rail is the nav's collapsed state at 1100 and below, in every mode --
+   * including Trajectory, which is a workspace beside Agent rather than a page
+   * with the window to itself. Without this control the only way out of
+   * Trajectory was to open the nav first, and on a window where the nav is an
+   * overlay that is a panel you have to find before you can leave.
+   */
+  view: ViewMode | "settings";
+  /** True when a project is open, so the code half has something to show. */
+  canCode: boolean;
+  onViewChange: (mode: ViewMode) => void;
 }
 
 /**
@@ -145,6 +159,23 @@ interface Item {
   badge?: number;
 }
 
+/**
+ * The three workspaces, drawn in the rail's own frame.
+ *
+ * One current-view button needs all three, because the menu shows the choice
+ * rather than only the state -- the glyph has to change when the menu does.
+ * A bubble, a pair of angle brackets and a trace: three shapes that are told
+ * apart at a glance in a 20px strip, and none of them is the usage chart's
+ * baseline or the search mark beside them.
+ */
+const VIEW_GLYPHS: Record<ViewMode, ReactNode> = {
+  agent: glyph(
+    <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+  ),
+  code: glyph(<path d="M9 8l-5 4 5 4M15 8l5 4-5 4" />),
+  trajectory: glyph(<path d="M3 12h3l2-6 3.5 12L15 10l2 2h4" />),
+};
+
 export function IconRail({
   connected,
   busy,
@@ -159,6 +190,9 @@ export function IconRail({
   petOpen,
   onPet,
   updateAvailable,
+  view,
+  canCode,
+  onViewChange,
 }: Props) {
   // No Sandbox entry. It used to sit directly above Settings and open the same
   // panel, so two labels led to one destination and neither could be the obvious
@@ -289,6 +323,15 @@ export function IconRail({
       >
         {glyph(<path d={expanded ? PATHS.toggleClosed : PATHS.toggleOpen} />)}
       </button>
+
+      {/* The nav's switch, in its collapsed form: which workspace is in front,
+          and the three of them behind it. See `RailViewButton`. */}
+      <RailViewButton
+        mode={view}
+        canCode={canCode}
+        onChoose={onViewChange}
+        glyphs={VIEW_GLYPHS}
+      />
 
       {/*
         No mark here, and its absence is deliberate.

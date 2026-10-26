@@ -67,7 +67,7 @@
 :root[data-motion="reduced"] .chatlist-toggle:active,
 :root[data-motion="reduced"] .chatlist-tab:active,
 :root[data-motion="reduced"] .chip:active:not(:disabled),
-:root[data-motion="reduced"] .mode:active {
+:root[data-motion="reduced"] .modechip:active:not(:disabled) {
   transform: none;
 }
 
@@ -202,7 +202,7 @@
   :root:not([data-motion="full"]) .chatlist-toggle:active,
   :root:not([data-motion="full"]) .chatlist-tab:active,
   :root:not([data-motion="full"]) .chip:active:not(:disabled),
-  :root:not([data-motion="full"]) .mode:active {
+  :root:not([data-motion="full"]) .modechip:active:not(:disabled) {
     transform: none;
   }
 }

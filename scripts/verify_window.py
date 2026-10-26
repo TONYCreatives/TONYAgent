@@ -301,6 +301,7 @@ def probe(window: webview.Window, core: CoreProcess, bridge: Bridge) -> None:
         "})()"
     ))
 
+    probe_workspace(window)
     probe_menus(window)
 
     say("--- the core, the whole way round ---")
@@ -332,6 +333,84 @@ def probe(window: webview.Window, core: CoreProcess, bridge: Bridge) -> None:
         "document.querySelectorAll('.modelpicker, .composer, .statusbar').length"
     ))
     window.destroy()
+
+
+def probe_workspace(window: webview.Window) -> None:
+    """The three-column shell, measured where it is actually painted.
+
+    Phase 1 of the workspace refine is a geometry change, and geometry is the
+    one thing `layout.test.ts` cannot see: it reads the cascade, not a layout
+    engine. The numbers this prints are the plan's exit gate -- a centre of 824
+    at 1400, 765 at 1101, 988 at 1100, 789 at 901 and 900 at 900 -- read from
+    the same window the user gets.
+
+    This runs at whatever size the window opened at, which is 1200x800 on a
+    fresh install and whatever the user last dragged it to otherwise. The
+    docking policy is therefore reported, not asserted against a width: a run
+    at 1200 should show the nav docked at 288 and the context strip at 48, and a
+    run at 1000 should show the rail at 64 with the panel as an overlay.
+    """
+    say("--- the workspace shell ---")
+    check("columns, rows and the three panes", lambda: window.evaluate_js(
+        "(() => {"
+        " const app = document.querySelector('.app');"
+        " if (!app) return 'MISSING';"
+        " const cs = getComputedStyle(app);"
+        " const box = (s) => {"
+        "   const el = document.querySelector(s);"
+        "   if (!el) return null;"
+        "   const b = el.getBoundingClientRect();"
+        "   return `${Math.round(b.left)}+${Math.round(b.width)}`;"
+        " };"
+        " return `view ${innerWidth}x${innerHeight};`"
+        " + ` rows ${cs.gridTemplateRows}; cols ${cs.gridTemplateColumns};`"
+        " + ` nav ${app.dataset.nav} rail ${box('.rail')} list ${box('.chatlist')};`"
+        " + ` centre ${box('.main')}; context ${app.dataset.context} ${box('.contextdock')}`;"
+        "})()"
+    ))
+    check("the strip spans the window, and is not the centre's child", lambda: window.evaluate_js(
+        "(() => {"
+        " const bar = document.querySelector('.statusbar');"
+        " const app = document.querySelector('.app');"
+        " if (!bar || !app) return 'MISSING';"
+        " const b = bar.getBoundingClientRect();"
+        " const a = app.getBoundingClientRect();"
+        " return `${Math.round(b.width)} of ${Math.round(a.width)},`"
+        " + ` parent .${bar.parentElement.className},`"
+        " + ` ${getComputedStyle(bar).gridColumn} / ${getComputedStyle(bar).gridRow}`;"
+        "})()"
+    ))
+    check("the run panel opens", lambda: window.evaluate_js(
+        "(() => {"
+        " const strip = document.querySelector('.context-strip');"
+        " if (!strip) return 'MISSING';"
+        " strip.click();"
+        " return 'clicked';"
+        "})()"
+    ))
+    time.sleep(0.5)
+    check("and below 1400 it floats rather than taking a column", lambda: window.evaluate_js(
+        "(() => {"
+        " const dock = document.querySelector('.contextdock');"
+        " const panel = document.querySelector('.context-panel');"
+        " const centre = document.querySelector('.main');"
+        " if (!dock || !panel || !centre) return 'MISSING';"
+        " const p = panel.getBoundingClientRect();"
+        " const c = centre.getBoundingClientRect();"
+        " return `state ${dock.dataset.state}, docked ${dock.dataset.docked},`"
+        " + ` panel ${Math.round(p.width)}x${Math.round(p.height)} at ${Math.round(p.left)},`"
+        " + ` ${getComputedStyle(panel).position}, centre ${Math.round(c.width)}`;"
+        "})()"
+    ))
+    check("and it closes again", lambda: window.evaluate_js(
+        "(() => {"
+        " const close = document.querySelector('.context-toggle');"
+        " if (!close) return 'MISSING';"
+        " close.click();"
+        " return 'clicked';"
+        "})()"
+    ))
+    time.sleep(0.4)
 
 
 def probe_menus(window: webview.Window) -> None:

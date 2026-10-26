@@ -70,6 +70,6 @@ if (!container) throw new Error("#nested-preview is missing");
 
 createRoot(container).render(
   <StrictMode>
-    <MessageList messages={messages} busy={false} project="D:/work/tonyagent" />
+    <MessageList messages={messages} busy={false} />
   </StrictMode>,
 );

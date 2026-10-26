@@ -1,0 +1,778 @@
+/* --- the context pane: the agent's run ------------------------------------ */
+/*
+ * Column 3, row 2, and a pane with three forms -- see `ContextPanel` and the
+ * shell's `--context-w`. It is opaque, not glass: a 288x800 `backdrop-filter`
+ * is the expensive kind, and the material contrast is what tells a docked pane
+ * from the floating chrome above and below it. Glass stays on the top bar, the
+ * status strip, the composer and the overlays that actually float.
+ *
+ * The border is on the pane's left because it is the right-hand dock: the lit
+ * edge belongs to the surface that arrives, the same rule the conversation
+ * panel follows on the other side.
+ */
+.contextdock {
+  grid-column: 3;
+  grid-row: 2;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: var(--context-w);
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border-soft);
+  background: var(--chrome);
+}
+
+/*
+ * The compact form: a 48px strip holding the status orb and a vertical label.
+ *
+ * The mirror of the rail, not a second rail. The nav's compact form is 64px
+ * because it starts with a 44px click target; this holds one state and one way
+ * back, so it can be narrower and still be a target -- the whole strip is the
+ * button, and 48x(520) is the largest target in the window.
+ */
+.context-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  padding: 14px 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.context-strip:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+/*
+ * Vertical, so the strip says what it is without needing 64px. `vertical-rl`
+ * turns the glyphs on their side; the letters are not rotated individually,
+ * which would make a word read bottom-to-top.
+ */
+.context-strip-label {
+  writing-mode: vertical-rl;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* Open: the strip is behind the panel, and two toggles for one state is one
+   toggle too many. */
+.contextdock[data-state="open"] .context-strip {
+  display: none;
+}
+
+/*
+ * The panel is not in the flow until it is open. `display: none` rather than
+ * `visibility` because the closed form is the strip: the panel must take no
+ * space in the column, and its live sentence must not exist in the
+ * accessibility tree at all. The card's clock is gated on a running turn, not
+ * on being visible, so it is not what keeps the closed pane quiet.
+ */
+.context-panel {
+  display: none;
+}
+
+.contextdock[data-state="open"] .context-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+}
+
+/*
+ * The one scroller, below the head and under the sticky run card.
+ *
+ * The head is outside it because a panel whose title and close button scrolled
+ * away would be a panel with no visible way shut; the run card is inside it
+ * because it has to be able to slide *under* the sections, and a flex sibling
+ * cannot do that.
+ */
+.context-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px var(--pad-panel) 14px;
+}
+
+/*
+ * The Run card, pinned.
+ *
+ * Full-bleed on purpose: the scroller has 16px of horizontal padding, and a
+ * sticky card inset by it would let the rows beneath show through those two
+ * gutters as they passed the card's top edge. Pulling it out by the same amount
+ * and painting --chrome behind it means nothing scrolls past it except into the
+ * 10px gap below the card, which is the wrapper's own background.
+ */
+.run-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: -12px calc(var(--pad-panel) * -1) 0;
+  padding: 12px var(--pad-panel) 10px;
+  background: var(--chrome);
+}
+
+/* The one header style, borrowed from the panel heads beside it. */
+.context-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+  /* The head is outside the scroller, so it carries the panel's own inset. */
+  padding: 12px var(--pad-panel) 0;
+}
+
+.context-title {
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.context-toggle {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-mute);
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.context-toggle:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+/*
+ * The Run card: the one fact this phase can state for certain.
+ *
+ * A container rather than a control, so it is a box with the window's container
+ * radius -- the same rule every card in the app follows. The state is carried by
+ * the orb, the word and the left rule, in that order of strength; a fill would
+ * make a passing state the loudest thing in the pane.
+ */
+.run-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: none;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-left: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.run-card[data-run="working"] {
+  border-left-color: var(--accent);
+}
+
+.run-card[data-run="waiting"] {
+  border-left-color: var(--warn);
+}
+
+.run-card[data-run="error"] {
+  border-left-color: var(--danger);
+}
+
+.run-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.run-orb {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-mute);
+  /* The state is the one thing on the card that changes while it is watched,
+     so it eases rather than snapping -- the same 110ms the rail's icons use. */
+  transition: background var(--motion-fast) ease;
+}
+
+/*
+ * The one live mark in the pane. White while working, because the window's
+ * signal is still the accent until Phase 6 introduces a live hue; amber and red
+ * stay meaning what they mean everywhere else -- waiting and failed.
+ */
+.run-orb[data-run="working"] {
+  background: var(--accent);
+}
+
+.run-orb[data-run="waiting"] {
+  background: var(--warn);
+}
+
+.run-orb[data-run="error"] {
+  background: var(--danger);
+}
+
+.run-state {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Tabular figures for the same reason the status bar has them: a clock that
+   changed width every second would twitch the row it sits in. */
+.run-clock {
+  margin-left: auto;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+.run-detail {
+  margin: 0;
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+/*
+ * The context meter: a label, a bar and the number, on one line.
+ *
+ * The bar is a reading of the two numbers beside it, never the only place the
+ * information lives: `unknown` hides it rather than drawing 0%, and the value
+ * keeps the truth. `data-known` is what hides it, so the decision is the
+ * component's and this rule only follows it.
+ */
+.run-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.run-context-label {
+  flex: none;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.run-context-bar {
+  flex: 1;
+  height: 3px;
+  min-width: 24px;
+  overflow: hidden;
+  /* A full round: at 3px tall the track's ends are a half-disc, which is the
+     shape a meter reads as. Its own token, so it cannot drift from the pills. */
+  border-radius: var(--radius-pill);
+  background: var(--input);
+}
+
+.run-context-fill {
+  display: block;
+  height: 100%;
+  background: var(--fg-mute);
+  transition: width var(--motion-base) var(--ease-out);
+}
+
+.run-context[data-known="false"] .run-context-bar {
+  display: none;
+}
+
+.run-context-value {
+  flex: none;
+  margin-left: auto;
+  color: var(--fg-dim);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  /* The unknown reading dims it. Colours ease rather than snap, the same rule
+     every other state in this window follows. */
+  transition: color var(--motion-fast) ease;
+}
+
+.run-context[data-known="false"] .run-context-value {
+  color: var(--fg-mute);
+}
+
+.run-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  margin-top: 2px;
+}
+
+.run-stop {
+  height: 24px;
+  padding: 0 10px;
+  font-size: var(--text-xs);
+}
+
+.run-link {
+  margin-left: auto;
+  font-size: var(--text-xs);
+}
+
+/*
+ * --- the three collapsible sections --------------------------------------
+ *
+ * One header style, borrowed from the panel heads: a caret, the section's name
+ * in the same caps as the title above, and the count at the far edge. The rule
+ * between sections is what makes them read as a stack rather than as one long
+ * column of rows -- and the first one has no rule, because the sticky card
+ * already ends there.
+ */
+.context-section {
+  border-top: 1px solid var(--border-soft);
+  margin-top: 10px;
+  padding-top: 2px;
+}
+
+.context-section-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  cursor: pointer;
+  transition: color var(--motion-fast) ease;
+}
+
+.context-section-head:hover {
+  color: var(--fg);
+}
+
+.context-caret {
+  flex: none;
+  width: 9px;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  line-height: 1;
+}
+
+.context-section-title {
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.context-section-meta {
+  margin-left: auto;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-section-body {
+  padding: 2px 0 8px;
+}
+
+.context-empty {
+  margin: 2px 0 0;
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+/*
+ * --- the plan ------------------------------------------------------------
+ *
+ * A goal line and five rows. The goal is one line with an ellipsis: it is a
+ * summary of intent, and a goal wrapped over four lines would push the tasks it
+ * summarises out of the pane.
+ */
+.plan-goal {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 0 7px;
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+.plan-goal-label {
+  flex: none;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.plan-goal-text {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-goal-status {
+  flex: none;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  transition: color var(--motion-fast) ease;
+}
+
+.plan-goal-status[data-status="complete"] {
+  color: var(--ok);
+}
+
+.plan-goal-status[data-status="blocked"] {
+  color: var(--warn);
+}
+
+.plan-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-row {
+  min-width: 0;
+}
+
+/*
+ * The row's box either way -- a button when the call it came from is in the
+ * transcript, plain text when it is not. One inset, one leading, so a plan with
+ * no writer does not look like a different component from one with.
+ */
+.plan-row-button,
+.plan-row-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-xs);
+  line-height: 1.35;
+  text-align: left;
+}
+
+.plan-row-button {
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.plan-row-button:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.plan-mark {
+  flex: none;
+  width: 10px;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  line-height: 1.6;
+  transition: color var(--motion-fast) ease;
+}
+
+.plan-mark[data-status="completed"] {
+  color: var(--ok);
+}
+
+.plan-mark[data-status="in_progress"] {
+  color: var(--accent-bright);
+}
+
+.plan-row[data-status="completed"] .plan-text {
+  color: var(--fg-mute);
+}
+
+.plan-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  transition: color var(--motion-fast) ease;
+}
+
+/* `+ N more`, shared by the plan and the files list: both truncate at the
+   panel's height and both say how much is left in the transcript. */
+.plan-more {
+  margin: 6px 0 0;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+}
+
+/*
+ * --- the activity feed ---------------------------------------------------
+ *
+ * One line per call, oldest first. The name is the only mono run in the pane:
+ * it is an identifier, and the transcript draws the same thing in the same
+ * face. The summary gives way first -- the name and the outcome are what a
+ * reader scans, and the sentence between them is the detail.
+ */
+.activity-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 0;
+  font-size: var(--text-xs);
+  line-height: 1.35;
+}
+
+/* The same 10px slot and the same smallest step the plan's mark takes: the two
+   lists sit one above the other in the pane, and two glyph sizes in the same
+   leading role would read as an accident. */
+.activity-mark {
+  flex: none;
+  width: 10px;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+  transition: color var(--motion-fast) ease;
+}
+
+.activity-row[data-status="running"] .activity-mark {
+  color: var(--accent);
+}
+
+.activity-row[data-status="failed"] .activity-mark {
+  color: var(--danger);
+}
+
+.activity-row[data-status="failed"] .activity-name {
+  color: var(--danger);
+}
+
+.activity-name {
+  flex: none;
+  max-width: 92px;
+  overflow: hidden;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--motion-fast) ease;
+}
+
+.activity-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-mute);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-time {
+  flex: none;
+  margin-left: auto;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.activity-more {
+  margin-top: 6px;
+  font-size: var(--text-2xs);
+}
+
+/*
+ * --- files touched -------------------------------------------------------
+ *
+ * The directory gives way before the name: `…/app.ts` is still the file the row
+ * is for, and two files in different folders are told apart by the tail. The
+ * counts keep a tabular figure so +12 and -3 line up between rows.
+ */
+.file-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.file-row:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.file-path {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.file-dir {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-mute);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-name {
+  flex: none;
+  color: var(--fg);
+}
+
+.file-counts {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.file-added {
+  color: var(--ok);
+}
+
+.file-removed {
+  color: var(--danger);
+}
+
+/*
+ * The overlay form, below the dock width.
+ *
+ * The column stays 48px -- opening the panel must not take the centre below
+ * 760 -- so the 288px surface floats to the left of its own strip, covering the
+ * strip and the transcript's right air. `right: 0` against the positioned
+ * `.contextdock` is the same edge the column has, which is why the panel does
+ * not move when the pane is opened: only its width changes.
+ *
+ * No transition on width or on a grid track. The panel is out of flow and
+ * arrives over the text, so the text does not reflow at all.
+ */
+.contextdock[data-docked="false"][data-state="open"] .context-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  width: var(--dock-w);
+  border-left: 1px solid var(--glass-edge);
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+  /* Its own width, and it floats over the centre -- cast left. */
+  --panel-cast: -18px;
+}
+
+/*
+ * The scrim for the overlay form.
+ *
+ * Covers the centre only. The nav is a dock at 1101-1399 and must stay
+ * operable, so the scrim starts at its right edge; at 900 and below the rail
+ * floats above this layer (z-index 5) and is not dimmed either. The top and
+ * bottom are the two chrome strips, which are the window's, not the centre's.
+ */
+.context-scrim {
+  position: absolute;
+  inset: var(--topbar-h) var(--context-w) var(--statusbar-h) var(--rail-w);
+  z-index: 3;
+  border: 0;
+  padding: 0;
+  background: rgba(8, 8, 8, 0.35);
+  backdrop-filter: blur(1.5px);
+  cursor: default;
+}
+
+/* With the nav docked, the scrim starts at the dock's edge rather than the
+   rail's -- otherwise it dims the nav it is supposed to leave alone. */
+@media (min-width: 1101px) {
+  .app[data-nav="open"] .context-scrim {
+    left: var(--dock-w);
+  }
+}
+
+/*
+ * At 900 and below neither compact form holds a column: they float in the
+ * reading column's air (see `shell.css`), so the scrim may start at 0 and the
+ * rail and the strip are painted above it.
+ */
+@media (max-width: 900px) {
+  .context-scrim {
+    left: 0;
+    right: 0;
+  }
+}
+
+/*
+ * A stopped turn's clock is gone rather than frozen: `turnStartedAt` is cleared
+ * with the turn, so there is no number to draw and the row keeps its height from
+ * the state word alone.
+ */

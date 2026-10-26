@@ -1,0 +1,141 @@
+/* --- the workspace switch -------------------------------------------------- */
+/*
+ * Agent | Code | Trajectory, in two forms: a labelled segmented control and the
+ * rail's single button with a menu.
+ *
+ * The labelled form lives in the nav's head (and in Code's explorer head until
+ * Phase 5 unifies it with the dock). It is built from the same parts as the
+ * sidebar's Chats/Files control and the composer's mode chip -- an `--input`
+ * track, a `--chip` selection, a stadium -- because all three answer "which of
+ * these is in front". It deliberately does **not** reuse `.topbar-modes`: that
+ * class is now the track toggle's alone, and a class named for the bar a control
+ * used to live in becomes a comment about a layout that no longer exists.
+ *
+ * Height 28 in total: 24 of target inside a 2px track, which is the height the
+ * sidebar's pane control uses. A 32px control in the 52px nav head would leave
+ * 10px above and below and read as a second bar; this leaves the head's own air
+ * intact.
+ */
+.viewswitch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  /* Content-wide even when it is a column child (the explorer head), so the
+     track does not stretch to the column and leave a dead end at its right. */
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  padding: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--input);
+}
+
+.viewswitch-option {
+  min-width: 0;
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-mute);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.viewswitch-option:hover:not(.is-active):not(:disabled) {
+  color: var(--fg);
+}
+
+.viewswitch-option:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.viewswitch-option.is-active {
+  background: var(--chip);
+  color: var(--fg);
+}
+
+/* No folder, so the code half has nothing to show. Dimmed rather than hidden:
+   the control exists, and its tooltip says what is missing. */
+.viewswitch-option:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/*
+ * The rail's form: one button, and this menu.
+ *
+ * Fixed and portalled to the body -- see `RailViewButton` for why a menu inside
+ * `.rail` cannot be positioned against the window. The width is declared rather
+ * than fitted: "Trajectory" and its check need about 150px, and a menu that
+ * resized itself around each state would twitch as the selection moved.
+ */
+.viewmenu {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 184px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--glass-panel-strong);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow: var(--shadow-1);
+  overflow-y: auto;
+}
+
+.viewmenu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  /* A menu row, not a control: the app's menus are columns of boxes, and a
+     column of stadiums inside a rounded panel is a column of pills. */
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.viewmenu-item:hover:not(.is-active):not(:disabled) {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.viewmenu-item.is-active {
+  background: var(--wash);
+  color: var(--fg);
+}
+
+.viewmenu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.viewmenu-check {
+  flex: none;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+}

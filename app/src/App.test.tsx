@@ -364,6 +364,30 @@ describe("the window boots against a core", () => {
     assert.equal(one(container, ".banner"), null, "the window opened with an error on it");
   });
 
+  test("the shell owns the run pane and the strip, not the centre column", async () => {
+    const { container } = await mount();
+    const app = one(container, ".app")!;
+
+    // The window's three columns and the two dock states. jsdom has no
+    // `matchMedia`, so this is the compact shell: a rail, a 48px run strip and
+    // no docked panel -- which is the state every other test in this file
+    // drives, and the one whose landmarks must stay stable.
+    assert.equal(app.getAttribute("data-nav"), "closed");
+    assert.equal(app.getAttribute("data-context"), "closed");
+    assert.ok(one(container, ".rail"), "the compact nav is missing");
+    assert.ok(one(container, ".contextdock"), "the run pane is missing");
+    assert.equal(
+      one(container, ".contextdock")!.getAttribute("data-docked"),
+      "false",
+      "the context pane claimed to be docked with no matchMedia to ask",
+    );
+
+    // The strip belongs to the window now. Nested under `.main` it stopped at
+    // the centre's edge, which in Code mode meant at the assistant's edge.
+    assert.ok(one(container, ".app > .statusbar"), "the status strip is not a shell child");
+    assert.equal(one(container, ".main > .statusbar"), null);
+  });
+
   test("a core that answers nothing is an error, not a silent window", async () => {
     // The negative of the same path, and the reason the table above is
     // exhaustive rather than aspirational.
@@ -586,7 +610,10 @@ describe("the folder button in the middle of a new chat", () => {
     // chat" -- and `sandbox.start` is what makes the pick real rather than
     // cosmetic, so it is asserted rather than assumed.
     const { container, transport, picked } = await mountWithPicker(
-      { "sandbox.start": { running: true, project: FOLDER } },
+      {
+        state: { ...BOOT.state, project: FOLDER },
+        "sandbox.start": { running: true, project: FOLDER },
+      },
       async () => FOLDER,
     );
 
@@ -1484,21 +1511,42 @@ describe("a chat-only provider is offered in Chat mode only", () => {
   };
 
   /**
-   * Press a mode pill.
+   * The composer's modes, as the chip's menu lists them.
    *
-   * Scoped to the Mode group, because the Track group beside it carries its
-   * own "Build" button: an unscoped find would press the toggle and mint a
+   * The mode is one chip with a menu rather than a row of pills -- see
+   * `ModeChip` -- so "what does the composer offer" is the menu's labels, which
+   * means opening it. A conversation with exactly one mode draws a static label
+   * and no menu, and that label is the whole answer.
+   */
+  const modeLabels = async (c: HTMLElement): Promise<string[]> => {
+    const chip = one(c, '.composer .modechip');
+    assert.ok(chip, "the composer has no mode chip");
+    if (chip.classList.contains("is-static")) {
+      return [(chip.textContent ?? "").trim()];
+    }
+    if (chip.getAttribute("aria-expanded") !== "true") await click(chip);
+    return texts(c, '.composer .modechip-option-label').map((t) => (t ?? "").trim());
+  };
+
+  /**
+   * Press a mode in the chip's menu.
+   *
+   * Scoped to the composer, because the Track toggle in the title bar carries
+   * its own "Build" button: an unscoped find would press the toggle and mint a
    * conversation instead of re-moding the open one.
    *
    * The same press a person makes, because the wiring under test is the
    * request the window sends, not the callback it calls.
    */
   const pressMode = async (c: HTMLElement, label: string) => {
-    const pill = all(c, '.mode-group[aria-label="Mode"] .mode').find(
-      (b) => (b.textContent ?? "").trim() === label,
+    const chip = one(c, ".composer .modechip");
+    assert.ok(chip, "the composer has no mode chip");
+    await click(chip);
+    const option = all(c, ".composer .modechip-option").find(
+      (b) => one(b, ".modechip-option-label")?.textContent === label,
     );
-    assert.ok(pill, `there is no "${label}" mode pill`);
-    await click(pill);
+    assert.ok(option, `there is no "${label}" mode in the chip's menu`);
+    await click(option);
     await wait(80);
   };
 
@@ -1562,9 +1610,7 @@ describe("a chat-only provider is offered in Chat mode only", () => {
       "the provider list was not re-read after the track changed",
     );
     assert.deepEqual(
-      all(container, '.mode-group[aria-label="Mode"] .mode').map((b) =>
-        (b.textContent ?? "").trim(),
-      ),
+      await modeLabels(container),
       ["Chat"],
       "the composer still offers working modes in a chat-track conversation",
     );
@@ -1602,9 +1648,7 @@ describe("a chat-only provider is offered in Chat mode only", () => {
       "opening the conversation re-moded instead of adopting the reply",
     );
     assert.deepEqual(
-      all(container, '.mode-group[aria-label="Mode"] .mode').map((b) =>
-        (b.textContent ?? "").trim(),
-      ),
+      await modeLabels(container),
       ["Chat"],
       "the composer still offers working modes in a chat-track conversation",
     );
@@ -1622,7 +1666,11 @@ describe("a chat-only provider is offered in Chat mode only", () => {
       },
     });
 
-    await pressMode(container, "Build");
+    // Plan, not Build: Build is the mode in force, and the chip reports a
+    // *change* -- pressing the mode you are already in is a no-op by design,
+    // where the old row of pills re-sent it. The fake replies "build" to any
+    // `mode.set`, so what comes back is still the switch this test is about.
+    await pressMode(container, "Plan");
     await wait(120);
 
     const banner = texts(container, ".banner").join(" ");
@@ -1640,7 +1688,7 @@ describe("a chat-only provider is offered in Chat mode only", () => {
       "mode.set": { mode: "build", label: "Build", writes: true },
     });
 
-    await pressMode(container, "Build");
+    await pressMode(container, "Plan");
     await wait(120);
 
     const banner = texts(container, ".banner").join(" ");
@@ -1697,8 +1745,24 @@ describe("Code mode takes over the window", () => {
       ...results,
     });
 
-  const modeButton = (c: HTMLElement, label: string) =>
-    all(c, ".topbar-mode").find((b) => b.textContent === label)!;
+  /**
+   * Press one of the switch's three segments, from wherever it currently is.
+   *
+   * The switch moved out of the title bar and into the nav's head, and in
+   * jsdom -- where no media query matches -- the nav starts closed. So a test
+   * that wants to leave Agent has to open the nav first, exactly as a user on a
+   * narrow window does: the rail's toggle is what puts the head, and the switch
+   * in it, on screen. Code draws the same switch in its explorer head, so the
+   * second half of the journey needs no toggle.
+   */
+  const switchTo = async (c: HTMLElement, label: string) => {
+    if (!one(c, ".viewswitch")) {
+      await click(one(c, ".rail-toggle")!);
+      await wait(20);
+    }
+    const option = all(c, ".viewswitch-option").find((b) => b.textContent === label)!;
+    await click(option);
+  };
 
   const rowNamed = (c: HTMLElement, name: string) =>
     all(c, ".tree-row").find((row) => one(row, ".tree-name")?.textContent === name)!;
@@ -1718,7 +1782,7 @@ describe("Code mode takes over the window", () => {
     assert.ok(all(container, ".tab-title").length > 0, "no chat tabs in agent mode");
     assert.ok(one(container, ".tab-new"), "the strip has no new-chat button in agent mode");
 
-    await click(modeButton(container, "Code"));
+    await switchTo(container, "Code");
     await wait(40);
 
     assert.equal(container.querySelector(".app")!.getAttribute("data-mode"), "code");
@@ -1739,16 +1803,18 @@ describe("Code mode takes over the window", () => {
   test("the trajectory tab shows the raw traffic, full width", async () => {
     const { container } = await mount();
 
-    await click(modeButton(container, "Trajectory"));
+    await switchTo(container, "Trajectory");
     await wait(40);
 
     assert.equal(
       container.querySelector(".app")!.getAttribute("data-mode"),
       "trajectory",
     );
-    // Full-bleed: the rail and the chat strip are not drawn, the same as Code --
-    // the whole window is the log.
-    assert.equal(one(container, ".rail"), null, "the rail is on screen in trajectory");
+    // The log takes the whole centre, and the strip goes with the conversation
+    // it lists -- but the rail stays: Trajectory is a workspace beside Agent,
+    // not a page that replaces the window, and the rail is the only way to
+    // bring the nav back to switch away again on a narrow window.
+    assert.ok(one(container, ".rail"), "trajectory lost the app's rail");
     assert.equal(all(container, ".tab-title").length, 0, "chat tabs are on screen");
     assert.ok(one(container, ".traj"), "the trajectory view did not mount");
     assert.ok(one(container, ".traj-empty"), "a fresh window has no traffic yet");
@@ -1756,7 +1822,7 @@ describe("Code mode takes over the window", () => {
 
   test("the helper can be put away without losing the conversation", async () => {
     const { container } = await mountCode();
-    await click(modeButton(container, "Code"));
+    await switchTo(container, "Code");
     await wait(40);
 
     const toggle = one(container, ".helper-toggle") as HTMLButtonElement;
@@ -1778,7 +1844,7 @@ describe("Code mode takes over the window", () => {
 
   test("the track toggle offers chatting beside the agent modes", async () => {
     const { container } = await mountCode();
-    await click(modeButton(container, "Code"));
+    await switchTo(container, "Code");
     await wait(40);
 
     assert.deepEqual(
@@ -1787,12 +1853,13 @@ describe("Code mode takes over the window", () => {
       ),
       ["Chat", "Build"],
     );
-    assert.deepEqual(
-      all(container, '.helper .mode-group[aria-label="Mode"] .mode').map(
-        (pill) => (pill.textContent ?? "").trim(),
-      ),
-      ["Build", "Plan"],
-    );
+    // The helper carries the conversation's one composer, so its chip is the
+    // same control in a different column -- and it offers the same modes.
+    await click(one(container, '.helper .modechip')!);
+    assert.deepEqual(texts(container, '.helper .modechip-option-label'), [
+      "Build",
+      "Plan",
+    ]);
   });
 
   test("the toggle mints in the other track instead of re-moding", async () => {
@@ -1809,7 +1876,7 @@ describe("Code mode takes over the window", () => {
         disconnected_provider: "",
       },
     });
-    await click(modeButton(container, "Code"));
+    await switchTo(container, "Code");
     await wait(40);
 
     const toggle = all(container, '.topbar-modes[aria-label="Track"] .topbar-mode').find(
@@ -1838,7 +1905,7 @@ describe("Code mode takes over the window", () => {
 
   test("the explorer lists the current project", async () => {
     const { container } = await mountCode();
-    await click(modeButton(container, "Code"));
+    await switchTo(container, "Code");
     await wait(40);
 
     assert.deepEqual(texts(container, ".code-explorer .tree-name"), [
@@ -1855,7 +1922,7 @@ describe("Code mode takes over the window", () => {
 
   test("a file opens beside the tree, which stays put", async () => {
     const { container } = await mountCode();
-    await click(modeButton(container, "Code"));
+    await switchTo(container, "Code");
     await wait(40);
 
     await click(rowNamed(container, "app.ts"));
@@ -1868,10 +1935,10 @@ describe("Code mode takes over the window", () => {
 
   test("going back brings the conversation, the rail and the tabs", async () => {
     const { container } = await mountCode();
-    await click(modeButton(container, "Code"));
+    await switchTo(container, "Code");
     await wait(40);
 
-    await click(modeButton(container, "Agent"));
+    await switchTo(container, "Agent");
     await wait(40);
 
     assert.equal(container.querySelector(".app")!.getAttribute("data-mode"), "agent");
@@ -1881,10 +1948,13 @@ describe("Code mode takes over the window", () => {
   });
 
   test("with no folder open there is no code half to enter", async () => {
-    // The switch is on the bar in both modes, so the disabled state is what
-    // says why nothing happens -- and its tooltip is the only explanation.
+    // The switch is in the nav's head in both modes, so the disabled state is
+    // what says why nothing happens -- and its tooltip is the only explanation.
     const { container } = await mount();
-    const code = modeButton(container, "Code");
+    await switchTo(container, "Code");
+    const code = all(container, ".viewswitch-option").find(
+      (b) => b.textContent === "Code",
+    )!;
 
     assert.equal((code as HTMLButtonElement).disabled, true);
     assert.match(code.getAttribute("title") ?? "", /project folder/i);
@@ -2133,6 +2203,212 @@ describe("the app's side of the desktop pet", () => {
   });
 });
 
+
+// --- the run pane, wired to the window ---------------------------------------
+describe("the run pane reads the core, and sends the reader back to work", () => {
+  const panes = (c: HTMLElement) => one(c, ".contextdock")!;
+  const strip = (c: HTMLElement) => one(c, ".context-strip") as HTMLButtonElement;
+  const headNamed = (c: HTMLElement, name: string) =>
+    all(c, ".context-section-head").find((head) =>
+      head.textContent?.includes(name),
+    )!;
+
+  test("the plan is read at boot; the meter only once the pane is open", async () => {
+    // The split is deliberate. The plan is the pane's content and is read with
+    // the window; the context size is a number nobody can see while the pane is
+    // shut, and one request per turn for a hidden value is traffic the phase is
+    // meant to remove.
+    const { container, transport } = await mount({
+      "plan.get": {
+        plan: {
+          todos: [{ text: "Read the brief", status: "completed" }],
+          goal: "Ship the pane",
+          goal_status: "active",
+          goal_note: "",
+        },
+        summary: "",
+        rendered: "",
+      },
+      "context.get": {
+        model: "stealth/space-bunny-alpha",
+        used: 62_000,
+        known: true,
+        window: 124_000,
+      },
+    });
+    await wait(40);
+
+    assert.ok(
+      transport.methods().includes("plan.get"),
+      "the plan was never read",
+    );
+    assert.equal(
+      transport.methods().includes("context.get"),
+      false,
+      "the meter was measured with the pane shut",
+    );
+
+    await click(strip(container));
+    await wait(60);
+
+    assert.ok(
+      transport.methods().includes("context.get"),
+      "opening the pane did not measure the context",
+    );
+    assert.equal(panes(container).getAttribute("data-state"), "open");
+    // jsdom matches no media query, so this is the overlay form: the pane must
+    // still be open, and must still be the thing the press turned on.
+    assert.equal(panes(container).getAttribute("data-docked"), "false");
+    assert.equal(
+      one(container, ".run-context-value")?.textContent,
+      "62k / 124k · 50%",
+    );
+    assert.equal(one(container, ".plan-goal-text")?.textContent, "Ship the pane");
+  });
+
+  test("a plan writer finishing is the moment the card re-reads the plan", async () => {
+    // The plan has no change event, so a `todo_write` completing is the only
+    // moment a card on screen can be stale. Once per write -- not once per tool
+    // call, which would be a `plan.get` for every grep in the turn.
+    let reads = 0;
+    const { container, transport } = await mount({
+      "plan.get": () => {
+        reads += 1;
+        return {
+          plan:
+            reads === 1
+              ? {
+                  todos: [{ text: "Old plan", status: "pending" }],
+                  goal: "",
+                  goal_status: "",
+                  goal_note: "",
+                }
+              : {
+                  todos: [
+                    { text: "Read the brief", status: "completed" },
+                    { text: "Draw the pane", status: "in_progress" },
+                  ],
+                  goal: "Ship the pane",
+                  goal_status: "active",
+                  goal_note: "",
+                },
+          summary: "",
+          rendered: "",
+        };
+      },
+    });
+    await wait(40);
+    assert.equal(reads, 1, "the boot read did not happen once");
+
+    await push(() => transport.emit(pushed("turn.started", { model: "m" }, "t1")));
+    await push(() =>
+      transport.emit(pushed("tool.started", { id: "c1", name: "todo_write" }, "t1", 2)),
+    );
+    // A second tool that does not write the plan, so the count below is about
+    // the writer rather than about tools in general.
+    await push(() =>
+      transport.emit(pushed("tool.started", { id: "c2", name: "grep" }, "t1", 3)),
+    );
+    await wait(40);
+    // The baseline is taken *after* the turn started: `busy` changing is its
+    // own reason to re-read (the turn's start is a boundary the plan can move
+    // at), so counting from boot would charge that read to the grep below.
+    const during = reads;
+
+    await push(() =>
+      transport.emit(pushed("tool.completed", { id: "c2", name: "grep", result: {} }, "t1", 4)),
+    );
+    await wait(40);
+    assert.equal(reads, during, "a tool that cannot change the plan re-read it");
+
+    await push(() =>
+      transport.emit(
+        pushed("tool.completed", { id: "c1", name: "todo_write", result: {} }, "t1", 5),
+      ),
+    );
+    await wait(60);
+    assert.equal(reads, during + 1, "todo_write finishing did not re-read the plan");
+
+    await push(() => transport.emit(pushed("turn.finished", {}, "t1", 6)));
+    await wait(40);
+
+    await click(strip(container));
+    await wait(40);
+    assert.deepEqual(texts(container, ".plan-text"), [
+      "Read the brief",
+      "Draw the pane",
+    ]);
+    assert.equal(one(container, ".plan-goal-text")?.textContent, "Ship the pane");
+  });
+
+  test("a touched file in the pane opens it in Code, by its whole path", async () => {
+    // The pane's files are a way back into the edit, not a list to admire. It is
+    // the whole path that is opened -- the row draws only the name and the
+    // folder beside it.
+    const FOLDER = "D:/work/api";
+    const { container, transport } = await mount({
+      state: { ...BOOT.state, project: FOLDER },
+      "files.tree": {
+        entries: [
+          { path: "src", kind: "dir" },
+          { path: "src/app.ts", kind: "file" },
+        ],
+        truncated: false,
+      },
+      "files.read": {
+        kind: "text",
+        path: "src/app.ts",
+        content: "const a = 1;\n",
+        total_lines: 2,
+        language: "typescript",
+        size: 13,
+      },
+    });
+    await wait(40);
+
+    await push(() => transport.emit(pushed("turn.started", { model: "m" }, "t1")));
+    await push(() =>
+      transport.emit(pushed("tool.started", { id: "c1", name: "write_file" }, "t1", 2)),
+    );
+    await push(() =>
+      transport.emit(
+        pushed(
+          "tool.completed",
+          {
+            id: "c1",
+            name: "write_file",
+            result: {
+              artifacts: [
+                { type: "file_change", data: { path: "src/app.ts", added: 4, removed: 1 } },
+              ],
+            },
+          },
+          "t1",
+          3,
+        ),
+      ),
+    );
+    await wait(60);
+
+    await click(strip(container));
+    await wait(40);
+    await click(headNamed(container, "Files"));
+    await wait(20);
+
+    const row = one(container, ".file-row") as HTMLButtonElement;
+    assert.ok(row, "the touched file is not in the pane");
+    await click(row);
+    await wait(80);
+
+    assert.equal(
+      container.querySelector(".app")!.getAttribute("data-mode"),
+      "code",
+      "opening a file did not bring Code to the front",
+    );
+    const read = transport.sent.find((request) => request.method === "files.read");
+    assert.deepEqual(read?.params, { path: "src/app.ts" });
+  });
+});
 
 // --- nothing but what the user is meant to read ------------------------------
 test("no stylesheet comment is rendered as text", async () => {

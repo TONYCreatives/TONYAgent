@@ -1,19 +1,16 @@
 /*
- * The trajectory: the raw event log, full width.
+ * The trajectory: the raw event log, across the centre.
  *
  * A debugging surface rather than a chat, so it is closer to a console than to
  * the transcript: monospace, dense, one row per event, diffs coloured the way
- * every diff is. It takes the whole main column -- the rail and the sidebar are
- * not rendered in this mode (see App), so the window is one column and `.main`
- * is pulled back to column 1, the same full-bleed move Code mode makes.
+ * every diff is.
+ *
+ * **No shell rules here.** It was a page with the window to itself, and this
+ * file pulled `.main` back to column 1 because nothing was beside it. Phase 2
+ * gives it the nav dock -- the same rail, the same list, the same 1101 step --
+ * so its columns are the shell's (`shell.css`) and every rule that moved `.main`
+ * would now move it into the nav's track. The only thing left here is the log.
  */
-
-.app[data-mode="trajectory"] {
-  grid-template-columns: minmax(0, 1fr);
-}
-.app[data-mode="trajectory"] .main {
-  grid-column: 1;
-}
 
 .traj {
   display: flex;

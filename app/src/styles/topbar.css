@@ -540,6 +540,103 @@
 }
 
 /*
+ * The run pill: the window's one live state.
+ *
+ * A ghost control, not a filled one, and the same 24px height as the track
+ * toggle beside it. The two are adjacent and deliberately not one group: the
+ * track is which kind of conversation this is, and the pill is what is happening
+ * in it. `--input` would make them read as one four-segment control, which is
+ * why the pill rests on nothing and only fills under the pointer.
+ *
+ * `max-width` is what keeps a tool name off the model chip: the detail is the
+ * one variable-width part, and a long tool name would otherwise push everything
+ * to its right along the bar mid-turn -- the same twitch the tab title's reserved
+ * spinner slot exists to prevent.
+ */
+.statuspill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  max-width: 240px;
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--fg-mute);
+  font: inherit;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.statuspill:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+/* The orb is the run card's -- see `.run-orb` -- so one state has one mark. */
+.statuspill .run-orb {
+  width: 6px;
+  height: 6px;
+}
+
+/*
+ * The compact form: the dot alone, in a view with no run panel.
+ *
+ * Not a square around a mark -- 28x24 keeps the bar's own height and gives the
+ * target more than the 6px it draws, so a click meant for the dot lands. The
+ * padding goes because there is no text to pad around.
+ */
+.statuspill.is-dot {
+  justify-content: center;
+  width: 28px;
+  padding: 0;
+}
+
+.statuspill-state {
+  flex: none;
+  color: var(--fg-dim);
+  /* The run's state is the one word in the bar whose colour *means* something,
+     and a turn goes idle -> working -> waiting -> idle on its own. Without this
+     the colour jumped between two frames while every other control in the bar
+     eased; `layout.test.ts` holds every state rule to that. */
+  transition: color var(--motion-fast) ease;
+}
+
+.statuspill[data-run="working"] .statuspill-state {
+  color: var(--fg);
+}
+
+.statuspill[data-run="waiting"] .statuspill-state {
+  color: var(--warn);
+}
+
+.statuspill[data-run="error"] .statuspill-state {
+  color: var(--danger);
+}
+
+.statuspill-sep {
+  flex: none;
+  color: var(--fg-mute);
+}
+
+/* The tool name, in mono: it is an identifier, not a word, and the transcript
+   draws the same thing in the same face. */
+.statuspill-detail {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-mute);
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  text-overflow: ellipsis;
+}
+
+/*
  * The bar's slack belongs to the divider, the new-chat action, the mode switch,
  * model selector and caption controls. Let the chat strip consume only what is
  * left; on narrow windows it becomes a compact scroller instead of forcing the
@@ -559,6 +656,17 @@
 
   .tabs {
     max-width: 30%;
+  }
+
+  /* The state word is the pill; the tool name is the detail. At 720 the word is
+     what a reader needs and the name is what they can open the panel for. */
+  .statuspill {
+    max-width: 160px;
+  }
+
+  .statuspill-detail,
+  .statuspill-sep {
+    display: none;
   }
 
   .tab-title {
@@ -596,6 +704,17 @@
   .chip {
     max-width: 104px;
     padding-inline: 7px;
+  }
+
+  /* A dot, and the name lives in `aria-label` and the tooltip -- which is what
+     `StatusPill` writes out rather than relying on the text it hides. */
+  .statuspill {
+    max-width: none;
+    padding-inline: 8px;
+  }
+
+  .statuspill-state {
+    display: none;
   }
 
   .win-btn {

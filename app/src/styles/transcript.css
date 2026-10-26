@@ -140,22 +140,28 @@
  * like a button on a surface with no other buttons on it is the one way this
  * could lie about being interactive.
  */
+/*
+ * The empty conversation's frame.
+ *
+ * A scroller now, and not a centred column. The launchpad can be taller than
+ * the panel at the window's 480px minimum -- a setup card, four suggestions and
+ * three recent chats are not four short blocks -- and a `justify-content:
+ * center` column that overflows clips its own top, which is where the mark and
+ * the wordmark are. The centring is `margin: auto` on `.empty-inner` instead:
+ * it centres when there is room and collapses to nothing when there is not.
+ *
+ * The horizontal inset is `--column-edge`, the composer's, so the launchpad's
+ * cards and the field below them share one edge. It used to be 28px, which was
+ * neither the composer's edge nor the transcript's line.
+ */
 .empty {
   flex: 1;
+  min-height: 0;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  /*
-   * Air, stated twice: 8px of it between the blocks, and 28 around them. The
-   * previous 6/24 was tight enough that the wordmark sat against the mark like a
-   * caption rather than above a subtitle, and the hints read as the fourth line
-   * of the paragraph rather than as the two keys they are.
-   */
-  gap: 8px;
+  overflow-y: auto;
   color: var(--fg-mute);
   text-align: center;
-  padding: 28px;
+  padding: 24px var(--column-edge);
 }
 
 /*

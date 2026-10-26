@@ -126,6 +126,96 @@
   color: var(--fg);
 }
 
+/*
+ * The workspace switch in the head, beside the toggle that closes the panel.
+ *
+ * Nothing is stretched: three natural-width segments at 12px come to about
+ * 190px, which is what the 288px head has left after its 16px insets and the
+ * 36px toggle. `min-width: 0` is there for a window narrower than this one can
+ * be, so the group would shrink rather than push the toggle out of the panel.
+ */
+.chatlist-head .viewswitch {
+  min-width: 0;
+}
+
+/*
+ * The chats pane's two actions, between the pane switch and the list.
+ *
+ * Inset by `--pad-row` and padded by the same, which is the panel's one edge
+ * again: a New chat row's glyph starts on the same pixel as a conversation's
+ * title. It appears in the Chats pane only -- a New chat button over a file
+ * tree would be a control for the thing that pane is not.
+ */
+.chatlist-start {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: none;
+  padding: 6px var(--pad-row) 2px;
+}
+
+.chatlist-new,
+.chatlist-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 34px;
+  padding: 0 var(--pad-row);
+  border: 0;
+  /* A row, like the conversation rows below it: the panel's rows are boxes and
+     its buttons are stadiums, and this is a row that happens to be pressable. */
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-base);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+/* The one filled row, because it is the pane's primary action: start a
+   conversation. `--input` is the field step, one above the panel, which is the
+   quietest fill that still reads as "this is a button" beside the list. */
+.chatlist-new {
+  background: var(--input);
+  color: var(--fg);
+}
+
+.chatlist-new:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.chatlist-action:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.chatlist-new:disabled,
+.chatlist-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* The slash, as a key: the character the composer's menu opens on, in a box of
+   its own so it reads as a mark rather than as punctuation in a sentence. */
+.chatlist-slash {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-xs);
+  background: var(--raised);
+  color: var(--fg-dim);
+  font-family: var(--mono);
+  font-size: var(--text-2xs);
+  line-height: 1;
+}
+
 .chatlist-toggle:active {
   transform: scale(0.94);
 }
@@ -289,6 +379,7 @@
  * behind itself.
  */
 .chatlist:not([data-pane="chats"]) .chatlist-label,
+.chatlist:not([data-pane="chats"]) .chatlist-start,
 .chatlist:not([data-pane="chats"]) .chatlist-rows,
 .chatlist:not([data-pane="chats"]) .chatlist-empty {
   display: none;
@@ -361,6 +452,14 @@
 .chatlist-act:disabled {
   opacity: 0.4;
   cursor: default;
+}
+
+/* The two foot entries that are toggles -- Usage and the pet -- say when their
+   subject is on screen. The same wash the rail uses for the same fact, so the
+   foot and the strip are one sidebar in two states rather than two toolbars. */
+.chatlist-act[aria-pressed="true"] {
+  background: var(--wash);
+  color: var(--fg);
 }
 
 /*
@@ -751,4 +850,38 @@
   margin-top: 5px;
   border-top: 1px solid var(--border-soft);
   color: var(--danger);
+}
+
+/*
+ * Docked: the same panel as column 1, at 1101 and above.
+ *
+ * One component, two positions. Below the dock width this is an overlay that
+ * starts at x=0 and covers the rail -- the collapsed and expanded states of one
+ * sidebar. At 1101 the centre can hold both, so the same panel becomes a track
+ * of the shell and the rail is not mounted beside it: there is no second surface
+ * to cover, and no scrim, because there is nothing behind it to dim.
+ *
+ * Opaque rather than frosted. The glass is reserved for surfaces that float;
+ * a 288x800 `backdrop-filter` over a scrolling transcript is the expensive kind
+ * of blur, and the material contrast is what makes a dock read as part of the
+ * frame instead of a sheet left over the page.
+ *
+ * No animation: there is no edge to slide in from when the panel *is* the edge.
+ * The dock is a state (`data-docked`), not a separate component, so the panel's
+ * own exit lifecycle does not need a second code path.
+ */
+@media (min-width: 1101px) {
+  .app > .chatlist[data-docked="true"] {
+    position: static;
+    grid-column: 1;
+    grid-row: 2;
+    width: 100%;
+    height: 100%;
+    border-right: 1px solid var(--border-soft);
+    background: var(--chrome);
+    background-image: none;
+    backdrop-filter: none;
+    box-shadow: none;
+    animation: none;
+  }
 }

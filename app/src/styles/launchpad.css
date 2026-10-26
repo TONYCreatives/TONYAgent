@@ -1,0 +1,243 @@
+/* --- the launchpad: the empty conversation --------------------------------- */
+/*
+ * The first screen of a chat, and the one surface in the window that is a
+ * *page* rather than a column: a mark, a setup card, four suggestions, the last
+ * few chats and two keys, centred in the reading column.
+ *
+ * **It scrolls, and the centring is `margin: auto`.** `.empty` used to be a
+ * centred flex column with no scroller, which was right while it was four short
+ * blocks and wrong the moment it could hold a setup card and a suggestion grid:
+ * at the window's 480px minimum the content is taller than the panel, and
+ * `justify-content: center` on an overflowing column clips the top -- the mark
+ * and the title would be the first things lost. An auto margin on the inner
+ * block centres when there is room and collapses to 0 when there is not, which
+ * is the one arrangement that behaves in both cases.
+ *
+ * Its width is the reading column's: `--measure` capped and `--column-edge`
+ * inset, so a suggestion card's left edge lands on the composer's border and a
+ * conversation title above it. The launchpad is part of that column, not a
+ * dashboard beside it.
+ */
+.empty-inner {
+  /* Auto rather than `justify-content` on the scroller -- see the note above. */
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  max-width: var(--measure);
+}
+
+/* One label style for the two sections, borrowed from every panel head: small,
+   spaced, uppercased, and muted -- it names a group rather than competing with
+   the title above it. */
+.launch-title {
+  margin: 0 0 8px;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+/*
+ * The setup card: what is missing, one row each.
+ *
+ * A card rather than four more lines of centred text, because it is a checklist
+ * and a checklist has an edge. `--surface` is the card step above the field,
+ * the same step the run card and the settings groups use, and the radius is the
+ * window's container radius -- this is a box holding rows, not a control.
+ *
+ * Max 560 rather than the full 760: it is a few short lines, and a 760px card
+ * with three rows in its left third reads as an empty table.
+ */
+.launch-setup {
+  width: 100%;
+  max-width: 560px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  text-align: left;
+}
+
+.launch-setup-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/*
+ * Label, hint and button on one line where there is room, and wrapped rather
+ * than squeezed where there is not. The hint takes the free space so the
+ * button lands on the card's right edge -- a column of actions on one edge is
+ * what makes three different sentences scan as three rows of one list.
+ */
+.launch-setup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.launch-setup-label {
+  flex: none;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.launch-setup-hint {
+  flex: 1 1 140px;
+  min-width: 0;
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+.launch-setup-row .btn {
+  flex: none;
+  margin-left: auto;
+}
+
+/*
+ * Four ways in, as a grid that decides its own columns.
+ *
+ * `auto-fit` rather than two columns: the same component is the empty state of
+ * the 760px Agent column *and* of the 400px assistant panel, and a second
+ * hand-picked breakpoint for the panel would be a window number answering a
+ * pane's question. At 240px a card holds a sentence of two lines; below that
+ * the grid falls to one column, which is where a card belongs in a narrow pane.
+ */
+.launch-suggestions {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px;
+}
+
+.launch-suggestions li {
+  min-width: 0;
+}
+
+.launch-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+  /* Three properties, because the card answers the pointer with all three: the
+     fill steps up, the edge lights, and the words come forward. */
+  transition:
+    background var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.launch-card:hover {
+  background: var(--input);
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+.launch-card-label {
+  min-width: 0;
+}
+
+/* The arrow is the only thing that moves, and it moves toward the field the
+   card fills: two pixels, the rail's own lift, not a slide. */
+.launch-card-arrow {
+  flex: none;
+  color: var(--fg-mute);
+  transition:
+    color var(--motion-fast) ease,
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.launch-card:hover .launch-card-arrow {
+  color: var(--fg);
+  transform: translateX(2px);
+}
+
+/*
+ * The last few chats, as rows rather than cards: they are a continuation, not
+ * an action the window is proposing, and the suggestions above are already the
+ * loudest things on the panel.
+ */
+.launch-recent {
+  width: 100%;
+  max-width: 520px;
+  margin-top: 12px;
+  text-align: left;
+}
+
+.launch-recent-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.launch-recent-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.launch-recent-row:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+/* Truncated, not wrapped: a title is one line in the sidebar and one line
+   here, and two rows of a long title would break the rhythm of the list. */
+.launch-recent-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launch-recent-when {
+  flex: none;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+}

@@ -83,6 +83,12 @@ interface Handlers {
   // the rail. Rendered only; their disabled logic mirrors `IconRail`.
   onSearch: () => void;
   onSettings: () => void;
+  // Phase 2's additions: the chats pane's two rows, and the two foot entries
+  // that joined Search and Settings so the foot is the whole rail.
+  onNewChat: () => void;
+  onSkills: () => void;
+  onUsage: () => void;
+  onPet: () => void;
 }
 
 let calls: Handlers & {
@@ -92,6 +98,10 @@ let calls: Handlers & {
   duplicated: string[];
   picks: number;
   dismissals: number;
+  newChats: number;
+  skills: number;
+  usage: number;
+  pet: number;
 };
 
 /** Mount the list. Cleaned up after each test by the shared harness. */
@@ -101,6 +111,8 @@ async function renderList(
   open = true,
   project = "",
   updateAvailable = false,
+  docked = false,
+  extra: Partial<React.ComponentProps<typeof ConversationList>> = {},
 ): Promise<HTMLElement> {
   calls = {
     onDismiss: () => {
@@ -123,17 +135,34 @@ async function renderList(
     },
     onSearch: () => {},
     onSettings: () => {},
+    onNewChat: () => {
+      calls.newChats += 1;
+    },
+    onSkills: () => {
+      calls.skills += 1;
+    },
+    onUsage: () => {
+      calls.usage += 1;
+    },
+    onPet: () => {
+      calls.pet += 1;
+    },
     renamed: [],
     opened: [],
     deleted: [],
     duplicated: [],
     picks: 0,
     dismissals: 0,
+    newChats: 0,
+    skills: 0,
+    usage: 0,
+    pet: 0,
   };
 
   return render(
     <ConversationList
       open={open}
+      docked={docked}
       conversations={rows}
       active={active}
       project={project}
@@ -150,6 +179,7 @@ async function renderList(
       hasProject={false}
       updateAvailable={updateAvailable}
       {...calls}
+      {...extra}
     />,
   );
 }
@@ -164,6 +194,15 @@ const menuItems = () =>
 
 // --- the head ----------------------------------------------------------------
 describe("the sidebar's head", () => {
+  test("docked, it has no scrim: there is nothing behind it to dim", async () => {
+    // Below the dock width the panel floats over the transcript and the scrim is
+    // what says "over". Docked, the panel *is* the column, and a scrim over the
+    // centre it sits beside would dim a surface the user is working in.
+    const container = await renderList([conversation()], "", true, "", false, true);
+    assert.equal(one(container, ".chatlist-scrim"), null);
+    assert.equal(one(container, ".chatlist")?.getAttribute("data-docked"), "true");
+  });
+
   test("carries the toggle and no logo", async () => {
     // The app's mark is the *window's*, and it lives in the title bar's top-left
     // corner now. This head is only on screen while the panel is open, so a mark
@@ -178,6 +217,69 @@ describe("the sidebar's head", () => {
       ["chatlist-toggle"],
     );
     assert.equal(one(container, ".chatlist-brand"), null);
+  });
+
+  test("the workspace switch sits after the toggle that closes the panel", async () => {
+    // The switch moved here from the title bar in Phase 2: the bar could not
+    // hold it and the run pill at the window's minimum width. It is *placed*
+    // rather than built here, the same arrangement the title bar has for the
+    // model picker, so this is the half that says where.
+    const container = await renderList([conversation()], "", true, "", false, false, {
+      viewSwitch: <span className="test-switch" />,
+    });
+    const head = one(container, ".chatlist-head")!;
+    assert.deepEqual(
+      [...head.children].map((element) => element.className.split(" ")[0]),
+      ["chatlist-toggle", "test-switch"],
+    );
+  });
+});
+
+// --- the chats pane's actions -----------------------------------------------
+describe("the chats pane's start", () => {
+  test("New chat and Skills are rows above the list, not another tab", async () => {
+    const container = await renderList([conversation()]);
+    const start = one(container, ".chatlist-start")!;
+    assert.ok(start, "the chats pane has no start block");
+    // The slash is the mark that says "this one writes a command", not part of
+    // the row's name -- it is `aria-hidden`, so it is stripped here the way the
+    // accessibility tree strips it. Without that the second label reads
+    // "/Skills", which is a different word.
+    const name = (button: HTMLButtonElement) =>
+      [...button.children]
+        .filter((child) => child.getAttribute("aria-hidden") !== "true")
+        .map((child) => (child.textContent ?? "").trim())
+        .join("");
+    assert.deepEqual([...start.querySelectorAll("button")].map(name), [
+      "New chat",
+      "Skills",
+    ]);
+    // Rows rather than a stadium: the panel's loudest object stays the
+    // conversation you are in.
+    assert.match(start.querySelector(".chatlist-new")!.className, /chatlist-new/);
+    assert.ok(one(start, ".chatlist-slash"), "Skills is not marked with the slash");
+  });
+
+  test("pressing them starts a chat and writes the slash", async () => {
+    const container = await renderList([conversation()]);
+    await click(one(container, ".chatlist-new")!);
+    await click(one(container, ".chatlist-action")!);
+    assert.equal(calls.newChats, 1);
+    assert.equal(calls.skills, 1);
+  });
+
+  test("an unreachable core disables both, because both need it", async () => {
+    const container = await renderList([conversation()], "", true, "", false, false, {
+      connected: false,
+    });
+    assert.equal(
+      (one(container, ".chatlist-new") as HTMLButtonElement).disabled,
+      true,
+    );
+    assert.equal(
+      (one(container, ".chatlist-action") as HTMLButtonElement).disabled,
+      true,
+    );
   });
 });
 
@@ -195,15 +297,37 @@ describe("the sidebar's foot", () => {
       b.getAttribute("aria-label"),
     );
 
-    assert.deepEqual(labels, ["Search project", "Settings"]);
+    assert.deepEqual(labels, [
+      "Search project",
+      "Usage dashboard",
+      "Show desktop pet",
+      "Settings",
+    ]);
     assert.equal(
       one(container, '.chatlist-act[aria-label="Clear conversation"]'),
       null,
       "the delete-a-chat button is back in the foot",
     );
-    // And no unnamed third control by another name: the foot is exactly the two
-    // buttons the rail also carries.
-    assert.equal(all(container, ".chatlist-foot button").length, 2);
+    // Phase 2 made the foot the whole rail: Usage and the pet joined Search and
+    // Settings, because a sidebar that hides the chart and the pet while it is
+    // open is two different toolbars depending on which state you are in.
+    assert.equal(all(container, ".chatlist-foot button").length, 4);
+  });
+
+  test("the two toggles say when their subject is on screen", async () => {
+    const container = await renderList([conversation()], "", true, "", false, false, {
+      usageOpen: true,
+      petOpen: true,
+    });
+    const usage = one(container, '.chatlist-act[aria-label="Usage dashboard"]')!;
+    const pet = one(container, '.chatlist-act[aria-label="Hide desktop pet"]')!;
+    assert.equal(usage.getAttribute("aria-pressed"), "true");
+    assert.equal(pet.getAttribute("aria-pressed"), "true");
+
+    await click(usage);
+    await click(pet);
+    assert.equal(calls.usage, 1);
+    assert.equal(calls.pet, 1);
   });
 
   test("the gear carries the update mark, because this foot is the rail here", async () => {

@@ -132,23 +132,21 @@ interface Props {
    */
   modelSelector?: ReactNode;
   /**
-   * Which half of the window is in front: the conversation or the code.
+   * The run's state, and the way into the run panel.
    *
-   * Here rather than in the rail because it is the same kind of choice the tab
-   * strip is -- "what am I looking at" -- and it is the one control that
-   * *leaves* the transcript, so it belongs beside the tabs it competes with.
-   * The rail answers "what can I do"; a mode lives with the view.
+   * **The pill is the window's one live indicator**, which is why it lives here
+   * rather than in the status strip: the strip reports the environment, and a
+   * busy word beside the provider made three places say "working" at once. A
+   * node rather than its own props so this file stays presentational and knows
+   * nothing about turns -- the same arrangement as `modelSelector`.
    *
-   * **`settings` lights no segment, and that is deliberate.** The page is not a
-   * view *of* the conversation the way these three are -- there is no transcript
-   * behind it to come back to by pressing one of them -- so the switch is honest
-   * about it: nothing is pressed while settings is up. The three still work as a
-   * way out, which is a second exit beside the page's own back control.
+   * It sits between the track toggle and the model chip: the track is what kind
+   * of conversation this is, the pill is what is happening in it, and the model
+   * is what it is talking to -- the bar reads left to right as those three
+   * questions. The view switch is not here any more; the nav owns it, because
+   * at the window's minimum width this bar could not hold both it and the pill.
    */
-  mode?: "agent" | "code" | "trajectory" | "settings";
-  onModeChange?: (mode: "agent" | "code" | "trajectory") => void;
-  /** True when a project is open, so the code half has something to show. */
-  canCode?: boolean;
+  status?: ReactNode;
   /**
    * Which track the open conversation belongs to: "chat" or "build".
    *
@@ -179,9 +177,7 @@ export function TopBar({
   onRename,
   controls,
   modelSelector,
-  mode = "agent",
-  onModeChange,
-  canCode = true,
+  status,
   track = "build",
   onTrackChange,
   chatLabel = "Chat",
@@ -438,9 +434,11 @@ export function TopBar({
       {/*
         The track toggle: which kind of conversation this is.
 
-        The same segmented-pill language as the view switch beside it, because
-        it is the same kind of choice -- one of two things in front -- and the
-        bar's own 8px gap is what keeps the two groups from reading as one.
+        The same segmented-pill language as the sidebar's Chats/Files control
+        and the composer's mode chip, because it is the same kind of choice --
+        one of two things in front. The bar's own 8px gap is what keeps it from
+        reading as one group with the status pill beside it.
+
         ChatGPT puts this toggle at the top from the start, and so does this:
         the kind of conversation is decided where conversations are opened,
         not buried in the composer's row of per-turn controls.
@@ -466,43 +464,7 @@ export function TopBar({
           ))}
         </div>
       )}
-      {/*
-        The mode switch. A segmented set rather than one toggle, because every
-        state is nameable and a button labelled with the state you are *not* in
-        is a button people press the wrong way round. Code is disabled with no
-        folder open -- a viewer with nothing to view is a dead end, and the
-        tooltip names the missing thing -- while Trajectory reads the same
-        traffic in every state, so it is never disabled.
-      */}
-      <div className="topbar-modes" role="group" aria-label="View">
-        <button
-          type="button"
-          className={`topbar-mode${mode === "agent" ? " is-active" : ""}`}
-          aria-pressed={mode === "agent"}
-          onClick={() => onModeChange?.("agent")}
-        >
-          Agent
-        </button>
-        <button
-          type="button"
-          className={`topbar-mode${mode === "code" ? " is-active" : ""}`}
-          aria-pressed={mode === "code"}
-          disabled={!canCode}
-          title={canCode ? "Read and edit this project's files" : "Choose a project folder first"}
-          onClick={() => onModeChange?.("code")}
-        >
-          Code
-        </button>
-        <button
-          type="button"
-          className={`topbar-mode${mode === "trajectory" ? " is-active" : ""}`}
-          aria-pressed={mode === "trajectory"}
-          title="Every event the agent produced, in order: calls, arguments, outputs and diffs"
-          onClick={() => onModeChange?.("trajectory")}
-        >
-          Trajectory
-        </button>
-      </div>
+      {status}
       {modelSelector}
       {controls && (
         <WindowControls

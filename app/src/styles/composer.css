@@ -123,22 +123,35 @@
   padding: 6px 12px 8px calc(var(--column-inset) - 1px);
 }
 
-/* Mode selector: one active pill among quiet inactive ones. */
-.mode-group {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 2px;
-  border-radius: var(--radius-pill);
-  background: var(--input);
+/*
+ * The composer's mode chip, and its menu.
+ *
+ * The wrapper is the positioning context; the menu is absolute within it and
+ * opens *upward* (`bottom: 100%`), because the composer is the last row of the
+ * column and a menu opening down would be off the window. It is the same
+ * mechanism as `.budget-popover` one control to the right, and the same reason.
+ *
+ * The chip itself is a field-like control rather than a selected pill: it reads
+ * "Build" and opens a list, so a fill would say "this is the chosen one of
+ * several on screen" when the others are not on screen at all. `--input` is the
+ * field step -- the same one the tool budget's trigger uses -- which is what
+ * makes it read as "a value you can change" rather than as a button.
+ */
+.modechip-wrap {
+  position: relative;
+  flex: none;
 }
 
-.mode {
+.modechip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   height: 26px;
-  padding: 0 12px;
+  max-width: 168px;
+  padding: 0 10px;
   border: 0;
   border-radius: var(--radius-pill);
-  background: transparent;
+  background: var(--input);
   color: var(--fg-dim);
   font: inherit;
   font-size: var(--text-sm);
@@ -149,32 +162,114 @@
     transform var(--motion-fast) var(--ease-out);
 }
 
-.mode:hover:not(.is-active) {
+.modechip:hover:not(:disabled),
+.modechip[aria-expanded="true"] {
+  background: var(--hover);
   color: var(--fg);
 }
 
-.mode:active {
-  transform: scale(0.96);
+.modechip:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
-.mode.is-active {
-  /* `--chip` and `--fg`, and not two hand-picked greys.
-   *
-   * This was #d0d0d0 on #141414: a near-white pill in a window whose darkest
-   * surface is #1a1a1a. It was the single brightest thing in the app by an
-   * order of magnitude, no token reached it, so no palette change could have
-   * touched it -- and being off-palette it read as an import from somewhere
-   * else rather than as a selected state.
-   *
-   * `--chip` is the raised step, which is what this is: a control that other
-   * things sit on. It is now the *only* selected thing that uses it -- the
-   * conversation row and the tab take the gradient wash, because they are states
-   * rather than controls -- and the distinction is deliberate rather than
-   * leftover. `layout.test.ts` holds all three to their own rule.
-   */
-  background: var(--chip);
+.modechip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.modechip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modechip-caret {
+  flex: none;
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+}
+
+/* A mode that cannot be changed is a label, not a dead button: it keeps the
+   field's step so the row's height does not move, and loses the caret. */
+.modechip.is-static {
+  cursor: default;
+}
+
+.modechip-menu {
+  position: absolute;
+  bottom: calc(100% + var(--menu-gap));
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 260px;
+  max-height: 320px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--glass-panel-strong);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  box-shadow: var(--shadow-1);
+  overflow-y: auto;
+}
+
+/*
+ * A menu row, not a pill: label over description, because the description is
+ * what tells Plan from Mission and it is not visible from the label. The
+ * selected row takes the wash -- a row is a state rather than a control, which
+ * is the same rule the conversation row follows, and the reason the old
+ * segmented pills' `--chip` does not come with it.
+ */
+.modechip-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: none;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.modechip-option:hover,
+.modechip-option:focus-visible {
+  background: var(--hover);
   color: var(--fg);
-  font-weight: 500;
+}
+
+.modechip-option.is-active {
+  background: var(--wash);
+  color: var(--fg);
+}
+
+.modechip-option-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.modechip-option-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.modechip-check {
+  color: var(--fg-mute);
+  font-size: var(--text-2xs);
+}
+
+.modechip-option-desc {
+  color: var(--fg-mute);
+  font-size: var(--text-xs);
+  line-height: 1.35;
 }
 
 .composer-spacer {

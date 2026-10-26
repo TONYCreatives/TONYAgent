@@ -46,6 +46,7 @@ import type { MenuBounds } from "./menuPlacement.js";
 import { FilesPane } from "./FileSidebar.js";
 import type { CoreTreeEntry, FileChange } from "./filetree.js";
 import { Gear } from "./Gear.js";
+import { when } from "./relativeTime.js";
 
 export interface ConversationSummary {
   id: string;
@@ -121,6 +122,16 @@ interface Props {
    * render one.
    */
   open: boolean;
+  /**
+   * The panel is a column of the shell rather than an overlay.
+   *
+   * At 1101 and above the open nav is docked at `--dock-w`, beside a centre
+   * that still holds the 760px reading column. A docked panel does not float
+   * over anything, so it has no scrim and no click-away: the head's toggle is
+   * the only way out, which is the right affordance for something that is a
+   * column rather than a sheet.
+   */
+  docked?: boolean;
   conversations: ConversationSummary[];
   /** The conversation currently open, or "" before the first is created. */
   active: string;
@@ -205,6 +216,31 @@ interface Props {
    * `SidebarPane`, and `SettingsPanel`, which is the window now.
    */
   searchPane?: ReactNode;
+  /**
+   * The workspace switch, built by the App and placed in the head.
+   *
+   * A node rather than a mode and a handler, so this file keeps knowing nothing
+   * about what a workspace is -- the same arrangement `TopBar` has had for the
+   * model picker since the bar started placing one.
+   */
+  viewSwitch?: ReactNode;
+  /**
+   * Start a conversation, in the folder already in force.
+   *
+   * The panel had no New chat button while the tab strip's "+" was the only
+   * place to mint one. That "+" is not on screen in Trajectory (tabs are
+   * Agent's), and the docked nav is now the workspace's front door rather than
+   * an optional overlay, so the action belongs where the list is.
+   */
+  onNewChat?: () => void;
+  /** Write `/` into the composer, which opens the skill menu. */
+  onSkills?: () => void;
+  /** The usage dashboard, as the rail's chart button toggles it. */
+  onUsage?: () => void;
+  usageOpen?: boolean;
+  /** The desktop pet, as the rail's pet button toggles it. */
+  onPet?: () => void;
+  petOpen?: boolean;
 }
 
 /**
@@ -224,27 +260,6 @@ interface Props {
  */
 export type SidebarPane = "chats" | "files" | "search";
 
-/**
- * Relative time, coarse on purpose.
- *
- * A sidebar is scanned, not read. "4m ago" answers the only question a scan
- * asks -- is this the one I was just in -- and a full timestamp is four times
- * the width for information nobody uses at that distance.
- */
-function when(timestamp: number): string {
-  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - timestamp));
-  if (seconds < 60) return "now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d`;
-  const weeks = Math.floor(days / 7);
-  if (weeks < 5) return `${weeks}w`;
-  return new Date(timestamp * 1000).toLocaleDateString();
-}
-
 interface Menu {
   id: string;
   /**
@@ -261,6 +276,7 @@ interface Menu {
 
 export function ConversationList({
   open,
+  docked = false,
   conversations,
   active,
   project,
@@ -287,6 +303,13 @@ export function ConversationList({
   treeLoading,
   hasProject,
   searchPane,
+  viewSwitch,
+  onNewChat,
+  onSkills,
+  onUsage,
+  usageOpen = false,
+  onPet,
+  petOpen = false,
 }: Props) {
   /** The conversation being renamed, or null. */
   const [editing, setEditing] = useState<string | null>(null);
@@ -449,27 +472,38 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
         dismiss target, not a control anyone navigates to, and it is reachable
         from the keyboard already through the rail toggle and Escape.
       */}
-      <button
-        type="button"
-        className="chatlist-scrim"
-        data-state={open ? "open" : "closed"}
-        onClick={onDismiss}
-        tabIndex={-1}
-        aria-label="Close conversations"
-      />
+      {/* No scrim while docked: there is nothing behind it to dim. */}
+      {!docked && (
+        <button
+          type="button"
+          className="chatlist-scrim"
+          data-state={open ? "open" : "closed"}
+          onClick={onDismiss}
+          tabIndex={-1}
+          aria-label="Close conversations"
+        />
+      )}
       <nav
       className="chatlist"
       data-state={open ? "open" : "closed"}
+      data-docked={docked ? "true" : "false"}
       data-pane={pane}
       aria-label="Conversations"
     >
       {/*
-        The sidebar's cap: the way back to the rail.
+        The sidebar's cap: the way back to the rail, and the workspace switch.
 
         This is the merge made visible -- the rail is the collapsed state of this
         one sidebar and this panel is its expanded state, so the control that
         puts it away sits here, at the top, exactly where the rail's toggle sits
         when the panel is not covering it.
+
+        The switch is here because it is the nav's own question -- what are you
+        looking at -- and because the top bar no longer has the width for it once
+        the run pill and the tab strip and the caption are counted. It is the
+        rail's *expanded* form of the same choice; the rail's compact form is a
+        menu, because three more 44px targets would push the gear off the strip
+        at the window's 480px minimum height.
 
         The app's mark used to be here too, beside the wordmark. Both moved to
         the title bar's top-left corner when it became clear that this head is
@@ -504,6 +538,7 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
             <path d="M21 4v16M15 4H3v16h12z" />
           </svg>
         </button>
+        {viewSwitch}
       </div>
 
       {pane === "search" ? (
@@ -563,11 +598,72 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
       )}
 
       {/*
-        There is no "New chat" button here any more. A conversation begins from
-        the tabs' "+" or, more usually, from simply typing -- the first message
-        files it and lists it -- so this panel is the user's chats rather than a
-        place to mint empty ones. Starting one on purpose is the "+" by the tabs.
+        The chats pane's two actions, under the pane switch rather than above
+        it: the tabs are the panel's first question (which list), and these two
+        belong to the list they switch to. Put above the tabs they would move
+        when the pane changed.
+
+        **New chat is back on purpose.** It left when the tab strip's "+" was
+        the one way to mint a conversation, and that reasoning held while this
+        panel was an overlay beside a visible strip. As a dock, and in
+        Trajectory where there is no strip at all, the list is the front door --
+        and a front door with no way in is the failure this fixes. Both rows are
+        quiet ones: a row is a row, not a stadium, and the panel's one loud
+        object is still the conversation you are in.
+
+        Skills writes `/` into the composer instead of opening anything of its
+        own. That is the whole feature: the field's own menu already lists the
+        skills, already filters as you type and already knows what the core
+        offers, and a second list in a 288px column would be a second place for
+        them to disagree. It also means no count is drawn here -- the list is
+        fetched when the menu needs it, and a number at boot would be a guess.
       */}
+      <div className="chatlist-start">
+        {onNewChat && (
+          <button
+            type="button"
+            className="chatlist-new"
+            onClick={onNewChat}
+            disabled={!connected || busy}
+            title={
+              connected
+                ? "Start a chat in this folder"
+                : "The backend is not running"
+            }
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            <span>New chat</span>
+          </button>
+        )}
+        {onSkills && (
+          <button
+            type="button"
+            className="chatlist-action"
+            onClick={onSkills}
+            disabled={!connected}
+            title="Put / in the composer to pick a skill"
+          >
+            {/* A slash in a box of its own: the command character, not a
+                glyph for "tools". It is the same mark the field's menu opens
+                on, so the button and the menu it leads to read as one idea. */}
+            <span className="chatlist-slash" aria-hidden="true">
+              /
+            </span>
+            <span>Skills</span>
+          </button>
+        )}
+      </div>
 
       {/*
         The folder this list is, named -- and the way to change it.
@@ -835,6 +931,43 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
             <path d="M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16zM21 21l-4.3-4.3" />
           </svg>
         </button>
+        {/*
+          Usage and the pet joined the foot in Phase 2, so it is the whole of
+          the rail's working actions rather than half of them. The bar above
+          was already the rail's stand-in for Search and Settings; a user who
+          opened the sidebar used to lose the chart and the pet without being
+          told they had, which is exactly the asymmetry that makes a strip feel
+          like two different strips depending on whether the panel is over it.
+        */}
+        {onUsage && (
+          <button
+            type="button"
+            className="chatlist-act"
+            onClick={onUsage}
+            disabled={!connected}
+            aria-pressed={usageOpen}
+            title="Usage dashboard"
+            aria-label="Usage dashboard"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M4 20h16M8 20v-7M12 20v-12M16 20v-4" />
+            </svg>
+          </button>
+        )}
+        {onPet && (
+          <button
+            type="button"
+            className="chatlist-act"
+            onClick={onPet}
+            aria-pressed={petOpen}
+            title={petOpen ? "Hide desktop pet" : "Show desktop pet"}
+            aria-label={petOpen ? "Hide desktop pet" : "Show desktop pet"}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M9 5h.01M15 5h.01M6 9h12M12 9v10" />
+            </svg>
+          </button>
+        )}
         <button
           type="button"
           className="chatlist-act"

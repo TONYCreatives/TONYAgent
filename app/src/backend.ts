@@ -70,6 +70,61 @@ export interface CoreRequest {
   params?: Record<string, unknown>;
 }
 
+/**
+ * One item of the core's task list, as `plan.get` returns it.
+ *
+ * The statuses are the core's three (`core/task_state.py`), not a boolean:
+ * "not done yet" and "being worked on right now" are different things to a
+ * reader deciding whether the agent is stuck.
+ */
+export interface PlanItem {
+  text: string;
+  status: "pending" | "in_progress" | "completed";
+}
+
+/** The plan for the open conversation -- a task list plus the goal. */
+export interface Plan {
+  todos: PlanItem[];
+  goal: string;
+  /** `active` / `complete` / `blocked`, or "" when there is no goal. */
+  goal_status: string;
+  goal_note: string;
+}
+
+/**
+ * `plan.get`'s reply.
+ *
+ * `rendered` is the block the model is actually shown, returned so a reader can
+ * display that rather than a second rendering of the same data that could
+ * disagree with it. The window draws the structured form; the rendered text is
+ * what a future "what the model sees" view would show.
+ */
+export interface PlanReply {
+  plan: Plan;
+  summary: string;
+  rendered: string;
+}
+
+/**
+ * `context.get`'s reply: how full the conversation is.
+ *
+ * Both numbers are the core's measurements and both may be absent, which is why
+ * `known` is a field of its own rather than being inferred from `used > 0`:
+ * `used` is the input side of the most recent request *as the provider reported
+ * it*, and a provider that reports no usage leaves it at 0. Drawing that as 0%
+ * of the window is worse than drawing nothing -- it is confidently wrong -- so
+ * the window tells "zero" and "unknown" apart.
+ *
+ * `window` is the model's own `context_length`. 0 means the provider publishes
+ * none, not that the context is empty.
+ */
+export interface ContextReply {
+  model: string;
+  used: number;
+  known: boolean;
+  window: number;
+}
+
 interface Pending {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
@@ -225,6 +280,25 @@ export interface CoreMethods {
    * move anything.
    */
   "conversations.move": { id: string; project: string };
+  /**
+   * The task list and goal for the open conversation.
+   *
+   * Read on demand rather than folded into `state`: that reply is about the
+   * session's mode, permission and sandbox, and adding a key to it would oblige
+   * every existing reader to know about a field it does not use. The workspace's
+   * Run panel refreshes this at the start and end of a turn, and on first paint,
+   * so a restored conversation shows the plan it was saved with.
+   */
+  "plan.get": Record<string, never>;
+  /**
+   * How full the conversation is, for the Run card's meter.
+   *
+   * Read on demand for the same reason `plan.get` is, and refreshed when the
+   * panel opens, when a turn starts and when it finishes: `used` moves with the
+   * requests a turn makes, so a value read once at boot would describe the
+   * conversation as it was an hour ago.
+   */
+  "context.get": Record<string, never>;
   /**
    * The skills a message may open with `/name`.
    *

@@ -1,0 +1,143 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>TONYAgent — workspace wireframe (Phase 0)</title>
+<!--
+  Boxes only: no colour, no type scale, no icons. This exists to prove the
+  arithmetic in design/AGENT_WORKSPACE_REFINE.md §4 and §7 before a component
+  is touched, and to show the overlay order at the two narrow steps.
+
+  The frames are literal: 1400, 1100 and 900 CSS pixels wide, with the dock
+  widths the plan names. The centre column is whatever is left, so it is the
+  measurement rather than a drawing of one.
+-->
+<style>
+  body {
+    margin: 0;
+    padding: 24px;
+    background: #f4f4f4;
+    color: #111;
+    font: 12px/1.4 ui-sans-serif, system-ui, sans-serif;
+  }
+  h1 { margin: 0 0 4px; font-size: 16px; }
+  p  { margin: 0 0 24px; max-width: 70ch; color: #444; }
+  .case { margin: 0 0 28px; }
+  .case h2 { margin: 0 0 6px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  .case .note { margin: 0 0 8px; color: #555; }
+  .frame {
+    display: grid;
+    grid-template-rows: 52px minmax(0, 1fr) 26px;
+    height: 420px;
+    border: 1px solid #999;
+    background: #fff;
+  }
+  .bar, .strip { grid-column: 1 / -1; border-bottom: 1px solid #ccc; display: flex; align-items: center; gap: 10px; padding: 0 10px; }
+  .strip { border-top: 1px solid #ccc; border-bottom: 0; grid-row: 3; }
+  .cols { position: relative; display: grid; grid-row: 2; grid-template-columns: var(--cols); min-height: 0; }
+  .pane { min-width: 0; border-right: 1px solid #ccc; padding: 8px; }
+  .pane:last-child { border-right: 0; border-left: 1px solid #ccc; }
+  .mid { border-right: 0; }
+  .pane b { display: block; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: #666; }
+  .pane span { display: block; margin-top: 4px; font: 11px/1.4 ui-monospace, monospace; }
+  .pane .field { margin-top: 14px; height: 48px; border: 1px solid #bbb; border-radius: 8px; }
+  .pane .rows { margin: 12px 0 0; padding: 0; list-style: none; }
+  .pane .rows li { height: 22px; margin-bottom: 6px; background: #eee; border-radius: 4px; }
+  .overlay { position: relative; }
+  .overlay .scrim {
+    position: absolute; inset: 0 0 0 var(--rail);
+    background: repeating-linear-gradient(45deg, #e6e6e6 0 4px, #f6f6f6 4px 8px);
+    border: 1px dashed #999;
+  }
+  .overlay .sheet {
+    position: absolute; top: 0; bottom: 0; left: var(--sheet-left);
+    width: 288px; border: 1px solid #666; background: #fafafa;
+  }
+  .chips { display: flex; gap: 4px; flex-wrap: wrap; }
+  .chip { border: 1px solid #aaa; border-radius: 999px; padding: 1px 7px; font-size: 10px; }
+  /*
+    Case widths. These are the only numbers; everything else is `minmax(0,1fr)`
+    so the centre is measured by the browser rather than written down twice.
+  */
+  .c1400 { --cols: 288px minmax(0, 1fr) 288px; }
+  .c1100 { --cols: 288px minmax(0, 1fr) 48px; }
+  .c900  { --cols: minmax(0, 1fr); }
+  .c900 .rail-float {
+    position: absolute; inset: 0 auto 0 0; width: 64px;
+    border-right: 1px solid #bbb; background: #f1f1f1; z-index: 2;
+  }
+  .c900 .strip-float {
+    position: absolute; inset: 0 0 0 auto; width: 48px;
+    border-left: 1px solid #bbb; background: #f1f1f1; z-index: 2;
+  }
+  .ruler { margin-top: 4px; font: 11px ui-monospace, monospace; color: #333; }
+</style>
+
+<h1>Workspace wireframe — Direction B, Phase 1</h1>
+<p>
+  Three boxes, the three widths that decide them. The centre is derived, not
+  drawn: 1400 − 288 − 288 = 824; 1100 − 288 − 48 = 764; 900 with both compact
+  forms floating = 900. The 1101 case is the important one to read beside 1100:
+  one pixel narrower and the nav becomes the 64px rail, so the centre jumps from
+  765 to 988. That is why the nav step is 1100 and not 900.
+</p>
+
+<div class="case">
+  <h2>1400 — both docks open</h2>
+  <p class="note">Nav 288 docked · centre 824 (760 column + 22 air + 10 gutter each side) · context 288 docked · status strip spans the window.</p>
+  <div class="frame c1400">
+    <div class="bar"><span class="chip">mark · 64</span><span class="chip">Agent | Code | Trajectory</span><span class="chip">tabs</span><span style="margin-left:auto" class="chip">status pill · model · caption</span></div>
+    <div class="cols">
+      <div class="pane"><b>Nav dock 288</b><span>New chat</span><span>Search…</span><ul class="rows"><li></li><li></li><li></li><li></li><li></li></ul></div>
+      <div class="pane mid"><b>Centre 824 — transcript 760</b><span>user turn</span><span>assistant prose</span><span>tool rows</span><div class="field"></div></div>
+      <div class="pane"><b>Context 288</b><span>● Run · 00:42</span><span>Plan 2/5</span><span>Activity</span><span>Files (3)</span></div>
+    </div>
+    <div class="strip"><span>● Connected</span><span>provider / model</span><span>Build</span><span style="margin-left:auto">12.4k tok · Logs</span></div>
+  </div>
+  <div class="ruler">288 + 824 + 288 = 1400</div>
+</div>
+
+<div class="case">
+  <h2>1100 — nav rail, context strip</h2>
+  <p class="note">Nav 64 in flow · centre 988 · context 48 strip · one-pixel wider the nav would still be docked, so this is the step that gives the column back.</p>
+  <div class="frame c1100">
+    <div class="bar"><span class="chip">mark · 64</span><span class="chip">tabs</span><span style="margin-left:auto" class="chip">status pill · model · caption</span></div>
+    <div class="cols">
+      <div class="pane"><b>Rail 64</b><span>◧</span><span>⌕</span><span>▥</span><span>⚙</span></div>
+      <div class="pane mid"><b>Centre 988 — transcript 760</b><span>assistant prose</span><span>tool rows</span><div class="field"></div></div>
+      <div class="pane"><b>Context strip 48</b><span>●</span><span>RUN</span></div>
+    </div>
+    <div class="strip"><span>● Connected</span><span>provider / model</span><span>Build</span><span style="margin-left:auto">Logs</span></div>
+  </div>
+  <div class="ruler">1100 − 64 − 48 = 988 · at 1101 with the nav docked: 1101 − 288 − 48 = 765</div>
+</div>
+
+<div class="case">
+  <h2>900 — both compact forms float</h2>
+  <p class="note">Centre 900 (760 column, 70px of air each side) · rail 64 floats in the left air · context strip 48 floats in the right air · the expanded forms are overlays.</p>
+  <div class="frame c900">
+    <div class="bar"><span class="chip">mark · 64</span><span class="chip">tabs</span><span style="margin-left:auto" class="chip">model · caption</span></div>
+    <div class="cols">
+      <div class="pane mid"><b>Centre 900 — transcript 760</b><span>assistant prose</span><span>tool rows</span><div class="field"></div></div>
+      <div class="rail-float"></div>
+      <div class="strip-float"></div>
+    </div>
+    <div class="strip"><span>● Connected</span><span>provider / model</span><span style="margin-left:auto">Logs</span></div>
+  </div>
+  <div class="ruler">900 − 0 − 0 = 900 · rail and strip overlay the air, not the text</div>
+</div>
+
+<div class="case">
+  <h2>Overlay order — 1100 and below</h2>
+  <p class="note">One scrim controller: whenever the expanded nav and the expanded context would both be overlays, opening one closes the other. At 1101–1399 the nav is docked, so the context opens over the centre while the nav stays.</p>
+  <div class="frame overlay c1100" style="--rail: 64px; --sheet-left: 0;">
+    <div class="bar"><span class="chip">mark · 64</span><span class="chip">tabs</span><span style="margin-left:auto" class="chip">model · caption</span></div>
+    <div class="cols">
+      <div class="pane"><b>Rail 64</b><span>◧</span></div>
+      <div class="pane mid" style="position:relative"><b>Centre 988</b><span>dimmed under the scrim</span><div class="field"></div></div>
+      <div class="pane"><b>Strip 48</b><span>●</span></div>
+      <div class="scrim"></div>
+      <div class="sheet" style="left:0"><b>Nav overlay 288</b><span>over the rail + transcript</span></div>
+    </div>
+    <div class="strip"><span>● Connected</span><span style="margin-left:auto">Logs</span></div>
+  </div>
+  <div class="ruler">scrim top = 52, bottom = 26, left = 64 (the rail stays operable); overlay = 288</div>
+</div>

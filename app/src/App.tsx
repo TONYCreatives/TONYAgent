@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TrajectoryView, captureEvent, type CapturedEvent } from "./TrajectoryView.js";
-import { CoreBackend } from "./backend.js";
+import {
+  CoreBackend,
+  type ContextReply,
+  type Plan,
+  type PlanItem,
+  type PlanReply,
+} from "./backend.js";
 import {
   applyEvent,
   appendUserMessage,
@@ -11,6 +17,8 @@ import {
 import type { ChatMessage, Role } from "./events.js";
 import { Composer, type ModeInfo } from "./Composer.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
+import { ContextPanel } from "./ContextPanel.js";
+import { isPlanWriter, lastPlanCall, turnActivity } from "./activity.js";
 import {
   ConversationList,
   type ConversationSummary,
@@ -24,6 +32,9 @@ import { FilesPane } from "./FileSidebar.js";
 import { changesFrom, type CoreTreeEntry } from "./filetree.js";
 import { DEFAULT_PALETTE } from "./highlight.js";
 import { IconRail } from "./IconRail.js";
+import { Launchpad } from "./Launchpad.js";
+import { StatusPill } from "./StatusPill.js";
+import { ViewSwitch } from "./ViewSwitch.js";
 import { Dashboard, type UsageSummary } from "./Dashboard.js";
 import { petDraw, petSet, petState } from "./pet.js";
 import { petStatus } from "./pet-status.js";
@@ -49,6 +60,7 @@ import { SettingsPanel, type CoreSettings, type DiagnosticsInfo, type KeyEntry, 
 import { StatusBar } from "./StatusBar.js";
 import { TopBar, type Tab } from "./TopBar.js";
 import { useDelayedUnmount, useLastValue } from "./useDelayedUnmount.js";
+import { useMediaQuery } from "./useMediaQuery.js";
 import { useWindowControls } from "./useWindowControls.js";
 
 /**
@@ -293,17 +305,30 @@ export function App({
   /**
    * Whether the conversation panel is open.
    *
-   * FALSE by default: an empty panel held 255px of the window open to report
-   * that there was nothing to report, and it covered the transcript while it
-   * did. Persisted, because a chrome preference that resets on every launch
-   * reads as broken.
+   * **Open by default on a window that can dock it, and that is the inverse of
+   * the rule this started with.** The old default was closed because the panel
+   * was an overlay: 255px of an empty list sat over the transcript to report
+   * that there was nothing to report. At 1101 and above it is a *track* now --
+   * the centre keeps its 765px at the narrowest dock and its 824 at 1400 -- and
+   * it holds the workspace switch, New chat and the project. A front door that
+   * is shut on every first launch is a window whose navigation has to be found
+   * before it can be used.
+   *
+   * Below 1101 the answer is still closed: the panel would be an overlay over a
+   * transcript that has no column to spare. A stored preference wins at every
+   * width, because a chrome preference that resets on every launch reads as
+   * broken -- but only once the user has actually said something.
    */
   const [railExpanded, setRailExpanded] = useState<boolean>(() => {
     try {
-      return localStorage.getItem("tonyagent.rail-expanded") === "1";
+      const stored = localStorage.getItem("tonyagent.rail-expanded");
+      if (stored !== null) return stored === "1";
     } catch {
-      return false;
+      // Private mode or storage disabled: fall through to the width's answer.
     }
+    return typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(min-width: 1101px)").matches
+      : false;
   });
 
   /**
@@ -316,6 +341,62 @@ export function App({
    * it exists rather than a plain conditional is in its own comment.
    */
   const conversationsMounted = useDelayedUnmount(railExpanded);
+
+  /**
+   * The context pane's expanded state.
+   *
+   * Not persisted, unlike the nav: the nav is where the user works and a
+   * preference for it is stable, while the run panel is opened to answer a
+   * question about one turn and should not reappear over the next launch's
+   * empty conversation.
+   */
+  const [contextOpen, setContextOpen] = useState(false);
+
+  /**
+   * The core's plan for the open conversation, and how full its context is.
+   *
+   * Both are read on demand rather than folded into `state` (see `plan.get`),
+   * and both keep their last value when a read fails: the panel is describing
+   * the turn, and an error banner over a plan is louder than the fact it
+   * reports. The empty shape is a plan with nothing in it, which is exactly
+   * what the card's own empty state says.
+   */
+  const [plan, setPlan] = useState<Plan>({
+    todos: [],
+    goal: "",
+    goal_status: "",
+    goal_note: "",
+  });
+  const [contextMeter, setContextMeter] = useState<ContextReply>({
+    model: "",
+    used: 0,
+    known: false,
+    window: 0,
+  });
+
+  /**
+   * Text a suggestion or the Skills row asked the composer to hold.
+   *
+   * The nonce is the request: two presses of the same suggestion produce the
+   * same sentence, so the sentence alone cannot say "again". Cleared by the
+   * composer once it has been applied, so a remount does not replay it.
+   */
+  const [prefill, setPrefill] = useState<{ text: string; nonce: number } | null>(null);
+
+  /**
+   * The two dock widths, as questions React asks instead of rules CSS writes.
+   *
+   * Below 1101 an open nav is an overlay and the rail must stay mounted under
+   * it; below 1400 an open context pane is an overlay and the column must stay
+   * 48px. Both are answers about what to *mount*, not merely where to paint, so
+   * they cannot be media queries alone.
+   *
+   * 1101 and 1400 rather than 1100 and 1400: the dock is the state at exactly
+   * the first width that can hold the 760px column beside it. See the ladder
+   * in tokens.css.
+   */
+  const wideNav = useMediaQuery("(min-width: 1101px)");
+  const wideContext = useMediaQuery("(min-width: 1400px)");
 
   /*
    * The caption buttons. Null when there is no window, so the bar draws nothing
@@ -571,6 +652,16 @@ export function App({
       if (event.type === "turn.finished" || event.type === "turn.failed") {
         void refreshConversationsRef.current();
       }
+      // The plan has no change event of its own. A plan writer finishing is the
+      // only moment it can differ from the card on screen, so that is when the
+      // window re-reads it -- once per write, not once per tool call.
+      if (
+        (event.type === "tool.completed" || event.type === "tool.failed") &&
+        typeof event.payload.name === "string" &&
+        isPlanWriter(event.payload.name)
+      ) {
+        void refreshPlanRef.current();
+      }
       if (event.type === "sandbox.status") {
         const status = event.payload.status;
         if (typeof status === "string") setSandbox(status);
@@ -779,6 +870,8 @@ export function App({
       setState((prev) => ({
         ...prev,
         busy: false,
+        // A send that never reached the core has no turn to time.
+        turnStartedAt: null,
         error: error instanceof Error ? error.message : String(error),
       }));
     }
@@ -789,6 +882,58 @@ export function App({
       /* The turn may already have ended; nothing to report. */
     });
   }, []);
+
+  /**
+   * The nav toggle, and the one-overlay rule.
+   *
+   * Below 1101 the expanded nav is an overlay and so is the context pane, so
+   * two open panes would stack two scrims over one centre and dim it twice. At
+   * 1101 and above the nav is docked, so the context may open beside it; at
+   * 1400 and above both are docked and neither can close the other.
+   */
+  const toggleNav = useCallback(() => {
+    if (!railExpanded && !wideNav && !wideContext) setContextOpen(false);
+    setRailExpanded(!railExpanded);
+  }, [railExpanded, wideNav, wideContext]);
+
+  const toggleContext = useCallback(() => {
+    if (!contextOpen && !wideNav && !wideContext) setRailExpanded(false);
+    setContextOpen(!contextOpen);
+  }, [contextOpen, wideNav, wideContext]);
+
+  /**
+   * The usage dashboard, from either form of the nav.
+   *
+   * **It lands in Agent**, because the dashboard is one of Agent's faces: the
+   * centre's precedence puts settings above trajectory above the dashboard, so
+   * a chart toggled from Trajectory would be switched on behind a page that is
+   * still in front. The rail is rendered in Trajectory now, which is what makes
+   * this reachable rather than theoretical.
+   *
+   * An overlay nav closes on the way there -- the chart is the thing to look at,
+   * not the list that opened it -- while a docked nav stays, because a dock is a
+   * column of the workspace and closing it is not this action's business.
+   */
+  const openUsage = useCallback(() => {
+    setMainMode("agent");
+    setUsageTab((open) => (open === "active" ? "open" : "active"));
+    if (!wideNav) setRailExpanded(false);
+  }, [wideNav]);
+
+  /*
+   * The one-overlay rule also has to survive a resize.
+   *
+   * The toggles above cover a user opening the second pane, but a window dragged
+   * from 1400 to 1000 makes both open panes overlays at once -- two scrims over
+   * one centre, dimmed twice, and the panel edges ambiguous. The nav is the
+   * primary workspace surface and the one the user was in first, so the context
+   * pane gives way; it can be reopened from its strip, which is still there.
+   */
+  useEffect(() => {
+    if (!wideNav && !wideContext && railExpanded && contextOpen) {
+      setContextOpen(false);
+    }
+  }, [wideNav, wideContext, railExpanded, contextOpen]);
 
   /**
    * Re-read the list from the core.
@@ -812,6 +957,85 @@ export function App({
   useEffect(() => {
     refreshConversationsRef.current = refreshConversations;
   }, [refreshConversations]);
+
+  /**
+   * Re-read the plan.
+   *
+   * Normalised rather than trusted: the reply crosses a process boundary, and a
+   * status this build does not know is a *row*, not a reason to lose the list.
+   * A missing plan leaves the previous one on screen; the first failure leaves
+   * the empty state, which is the truth ("no plan is known").
+   */
+  const refreshPlan = useCallback(async () => {
+    try {
+      const reply = (await backendRef.current!.call("plan.get")) as Partial<PlanReply> | null;
+      const next = reply?.plan;
+      if (!next || !Array.isArray(next.todos)) return;
+      const todos: PlanItem[] = next.todos
+        .filter((item): item is PlanItem => Boolean(item) && typeof item.text === "string")
+        .map((item) => ({
+          text: item.text,
+          status:
+            item.status === "completed" || item.status === "in_progress"
+              ? item.status
+              : "pending",
+        }));
+      setPlan({
+        todos,
+        goal: typeof next.goal === "string" ? next.goal : "",
+        goal_status: typeof next.goal_status === "string" ? next.goal_status : "",
+        goal_note: typeof next.goal_note === "string" ? next.goal_note : "",
+      });
+    } catch {
+      // A panel's meter is not worth an error banner; the last plan stays.
+    }
+  }, []);
+
+  const refreshPlanRef = useRef(refreshPlan);
+  useEffect(() => {
+    refreshPlanRef.current = refreshPlan;
+  }, [refreshPlan]);
+
+  /**
+   * Re-read the context meter.
+   *
+   * Guarded on `known` because the reply is a measurement, and a reply without
+   * one is not a zero: an unanswered call must leave the meter saying `unknown`
+   * rather than starting to draw 0%.
+   */
+  const refreshContextMeter = useCallback(async () => {
+    try {
+      const reply = (await backendRef.current!.call("context.get")) as Partial<ContextReply> | null;
+      if (!reply || typeof reply.known !== "boolean") return;
+      setContextMeter({
+        model: typeof reply.model === "string" ? reply.model : "",
+        used: typeof reply.used === "number" ? reply.used : 0,
+        known: reply.known,
+        window: typeof reply.window === "number" ? reply.window : 0,
+      });
+    } catch {
+      // Same rule as the plan: keep the last measurement, draw no banner.
+    }
+  }, []);
+
+  /**
+   * When the plan and the meter are re-read.
+   *
+   * At a turn's start and end -- `busy` is the window's copy of that edge -- and
+   * whenever the conversation changes, which is what makes a restored chat show
+   * the plan it was saved with. The meter is only read while the panel is open:
+   * it is a number nobody can see when the pane is shut, and a request per turn
+   * for a hidden value is the kind of traffic this phase is meant to stop.
+   */
+  useEffect(() => {
+    if (!connected) return;
+    void refreshPlan();
+  }, [connected, conversation, state.busy, refreshPlan]);
+
+  useEffect(() => {
+    if (!connected || !contextOpen) return;
+    void refreshContextMeter();
+  }, [connected, conversation, state.busy, contextOpen, refreshContextMeter]);
 
   /**
    * Read the project tree from the core.
@@ -1532,6 +1756,7 @@ export function App({
       // subagent's and be ignored -- a transcript that silently stops after a
       // conversation switch.
       activeTurnId: null,
+      turnStartedAt: null,
     }));
   }, []);
 
@@ -1547,6 +1772,35 @@ export function App({
    * deliberate. See `ConversationList` for why the sidebar closes at all.
    */
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+
+  /**
+   * Ask the composer to hold a sentence, and put the caret at its end.
+   *
+   * A request rather than a value: the field owns its text, and a suggestion is
+   * something that happens *to* the field rather than a prop that replaces it.
+   * The rAF gives the composer's own effect (which writes the text) a frame to
+   * land before the focus moves; focusing first would place the caret in a field
+   * that is about to change under it.
+   */
+  const prefillComposer = useCallback((text: string) => {
+    setPrefill((prev) => ({ text, nonce: (prev?.nonce ?? 0) + 1 }));
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }, []);
+
+  /**
+   * Skills, from the nav's row: put the slash in the field and get out of the
+   * way.
+   *
+   * The composer's own `/` menu does the rest -- it lists, filters and inserts --
+   * so this action is exactly one character. From Trajectory it first returns to
+   * Agent, because there is no composer behind the log; below 1101 it closes the
+   * overlay, because the field it just filled is underneath it.
+   */
+  const useSkills = useCallback(() => {
+    setMainMode("agent");
+    if (!wideNav) setRailExpanded(false);
+    prefillComposer("/");
+  }, [wideNav, prefillComposer]);
 
   /**
    * Close the conversation panel and hand the caret to the composer.
@@ -1571,9 +1825,15 @@ export function App({
    * its way out would scroll the departing panel back into view.
    */
   const closePanelToComposer = useCallback(() => {
-    setRailExpanded(false);
+    // The dock stays. Below 1101 the panel is an overlay covering the thing the
+    // user just chose, so it leaves; at 1101 and above it is a column of the
+    // workspace, and a column that closed itself every time a conversation was
+    // selected would be a sidebar nobody could keep open. The guard is here
+    // rather than at each caller because three of them (a tab, a row, New chat)
+    // share this routine and only one of them is about "get out of the way".
+    if (!wideNav) setRailExpanded(false);
     requestAnimationFrame(() => composerRef.current?.focus());
-  }, []);
+  }, [wideNav]);
 
   /**
    * Believe a reply about what mode is in force.
@@ -2463,6 +2723,75 @@ export function App({
   const codeMode = mainMode === "code";
   const trajectoryMode = mainMode === "trajectory";
   const settingsMode = mainMode === "settings";
+  const agentMode = !codeMode && !trajectoryMode && !settingsMode;
+  /**
+   * The two modes that own a nav.
+   *
+   * Trajectory gained the dock in Phase 2: it is a reading surface like the
+   * transcript -- the log is the conversation's raw form -- and leaving its left
+   * edge empty while the same chats are one click away in Agent made the window
+   * change shape rather than change page. Code still has its explorer, and
+   * Settings still has no app nav at all.
+   */
+  const navMode = agentMode || trajectoryMode;
+
+  /* Whether each open pane is a grid column or an overlay at this width. */
+  const navDocked = railExpanded && wideNav;
+  const contextDocked = contextOpen && wideContext;
+  const contextOverlay = contextOpen && !wideContext;
+
+  /**
+   * What the Run card reads.
+   *
+   * Memoised on the facts it derives from, so a render caused by a resize, a
+   * dialog or the panel's own tick does not rebuild it. The reducer copies the
+   * message list on each delta, so a streaming turn does rebuild it -- the cost
+   * is one pass over the turn's tool calls, which is nothing beside the copy the
+   * reducer has already made. Phase 3, when the feed shows rows rather than one
+   * state, can narrow the dependency to a tool signature.
+   */
+  const activity = useMemo(
+    () => turnActivity(state),
+    [
+      state.messages,
+      state.busy,
+      state.activeTurnId,
+      state.turnStartedAt,
+      state.pendingConfirm,
+      state.pendingAsk,
+      state.error,
+    ],
+  );
+  const runningStep = [...activity.steps].reverse().find((step) => step.status === "running");
+  const runDetail = runningStep ? `Running ${runningStep.name}` : "";
+
+  /** The call that wrote the plan, when it is still in the transcript. */
+  const planCallId = useMemo(
+    () => lastPlanCall(state.messages)?.id ?? null,
+    [state.messages],
+  );
+
+  /**
+   * Take the reader from a plan row to the call that wrote it.
+   *
+   * Below the dock width the panel is an overlay with a scrim, so it gets out of
+   * the way first -- the same rule choosing a conversation follows. The scroll
+   * waits a frame for that unmount, because scrolling to an element inside a
+   * container that is about to be hidden lands on a position that is no longer
+   * on screen.
+   *
+   * No smooth behaviour: the window's motion preference is a CSS one, and a
+   * scripted smooth scroll would ignore it.
+   */
+  const revealPlan = useCallback(() => {
+    if (planCallId === null) return;
+    if (!wideContext) setContextOpen(false);
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-call-id="${planCallId}"]`)
+        ?.scrollIntoView({ block: "center" });
+    });
+  }, [planCallId, wideContext]);
 
   /*
    * The pills the composer may draw: the track's share of the core's list.
@@ -2520,13 +2849,33 @@ export function App({
    */
   const conversationView = (
     <>
-      <MessageList
-        messages={state.messages}
-        busy={state.busy}
-        project={project}
-        onChooseFolder={() => void chooseFolder()}
-        canChooseFolder={connected && !state.busy}
-      />
+      {/*
+        Nothing said yet: the launchpad rather than an empty transcript. It is
+        placed by the App and not by `MessageList` because it needs the folder,
+        the provider, the model, the recent chats and a way to write into the
+        composer -- five things the transcript has no business carrying, and
+        five props a message list would have had to pass through to a child
+        that draws no messages.
+      */}
+      {state.messages.length === 0 ? (
+        <Launchpad
+          project={project}
+          connected={connected}
+          needsProvider={needsProvider}
+          model={model}
+          conversations={conversations}
+          activeId={conversation}
+          onChooseFolder={() => void chooseFolder()}
+          canChooseFolder={connected && !state.busy}
+          onOpen={(id) => void openConversation(id)}
+          onPrefill={prefillComposer}
+          // The Keys tab, because that is where a provider and its key are
+          // entered, and the page lands there rather than on its first section.
+          onSetup={() => openSettings("keys")}
+        />
+      ) : (
+        <MessageList messages={state.messages} busy={state.busy} />
+      )}
 
       {state.error && <div className="banner">{state.error}</div>}
 
@@ -2547,6 +2896,8 @@ export function App({
         onSkillsNeeded={loadSkills}
         onModeChange={changeMode}
         onSend={send}
+        prefill={prefill}
+        onPrefillApplied={() => setPrefill(null)}
         onCancel={cancel}
         maxToolCalls={maxToolCalls}
         budgetOpen={budgetOpen}
@@ -2558,7 +2909,19 @@ export function App({
   );
 
   return (
-    <div className="app" data-mode={mainMode}>
+    <div
+      className="app"
+      data-mode={mainMode}
+      /*
+        The two dock states, as attributes rather than two more classes.
+        `data-nav` is what lets the stylesheet size column 1 from one number and
+        lets the tests ask "is the nav docked at this width" without parsing a
+        media query; `data-context` is the same question for column 3. Neither
+        is a behaviour flag -- `App` has already decided what to mount.
+      */
+      data-nav={railExpanded ? "open" : "closed"}
+      data-context={contextOpen ? "open" : "closed"}
+    >
       {/*
         The title bar spans the window, not the transcript column.
 
@@ -2585,15 +2948,26 @@ export function App({
               ? USAGE_TAB
               : conversation
         }
-        mode={mainMode}
-        canCode={project !== ""}
         track={track}
         onTrackChange={trackChange}
         chatLabel={chatLabel}
         buildLabel={buildLabel}
-        onModeChange={(next) => {
-          setMainMode(next);
-        }}
+        /*
+          The run's one live state.
+
+          In Agent it is also the run panel's handle, and it is present while
+          idle so the answer to "what is happening" has somewhere to live. In
+          the other modes there is no panel to open, so a quiet window draws
+          nothing and a busy one draws a signpost back to Agent.
+        */
+        status={
+          <StatusPill
+            run={activity.run}
+            detail={runningStep?.name ?? ""}
+            panel={agentMode ? { open: contextOpen, onToggle: toggleContext } : undefined}
+            onReturn={() => setMainMode("agent")}
+          />
+        }
         onSelect={(id) => {
           if (id === USAGE_TAB) {
             setUsageTab("active");
@@ -2653,23 +3027,26 @@ export function App({
         below -- which is the difference between "a pane changed" and "the
         window changed".
       */}
-      {!codeMode && !trajectoryMode && !settingsMode && (
+      {navMode && !navDocked && (
         <IconRail
           connected={connected}
           busy={state.busy}
           messageCount={state.messages.length}
           expanded={railExpanded}
-          onToggle={() => setRailExpanded((open) => !open)}
+          onToggle={toggleNav}
           onCancel={cancel}
           dashboardOpen={usageTab === "active"}
-          onDashboard={() =>
-            setUsageTab((open) => (open === "active" ? "open" : "active"))
-          }
+          onDashboard={openUsage}
           petOpen={petOpen}
           onPet={() => void togglePet()}
           updateAvailable={Boolean(update?.available)}
           onSettings={() => openSettings()}
           onSearch={() => openSidebarPane("search")}
+          // The rail's own switch, because the nav it belongs to is closed at
+          // this width -- and in Trajectory that is the only way back out.
+          view={mainMode}
+          canCode={project !== ""}
+          onViewChange={(next) => setMainMode(next)}
         />
       )}
 
@@ -2682,9 +3059,29 @@ export function App({
         what tells the two apart, and the closed state is inert -- see
         `.chatlist[data-state="closed"]`.
       */}
-      {!codeMode && !trajectoryMode && !settingsMode && conversationsMounted && (
+      {navMode && conversationsMounted && (
         <ConversationList
           open={railExpanded}
+          docked={navDocked}
+          /*
+            The view switch, in the nav's head. Code carries its own copy in
+            the explorer head while its nav is still a column of files; Settings
+            renders none, because the page's back control is its way out and
+            the switch's three workspaces are not "views of" it.
+          */
+          viewSwitch={
+            <ViewSwitch
+              mode={mainMode}
+              canCode={project !== ""}
+              onChange={(next) => setMainMode(next)}
+            />
+          }
+          onNewChat={() => void startNewChat()}
+          onSkills={useSkills}
+          onUsage={openUsage}
+          usageOpen={usageTab === "active"}
+          onPet={() => void togglePet()}
+          petOpen={petOpen}
           conversations={conversations}
           active={conversation}
           project={project}
@@ -2756,6 +3153,21 @@ export function App({
             them also gives the path the whole width to be long in.
           */}
           <div className="code-explorer-head">
+            {/*
+              Code's copy of the workspace switch.
+
+              It is here rather than in the title bar because the nav owns the
+              switch now, and this head *is* Code's nav until Phase 5 moves the
+              explorer into the dock: same corner, same control, so the way out
+              of a mode is never a different corner in each mode. The title bar
+              has no room for it at the window's minimum width, which is the
+              whole reason it left.
+            */}
+            <ViewSwitch
+              mode={mainMode}
+              canCode={project !== ""}
+              onChange={(next) => setMainMode(next)}
+            />
             <span className="code-explorer-title">Explorer</span>
             {project === "" ? (
               <span className="code-explorer-project code-explorer-none">
@@ -3057,21 +3469,72 @@ export function App({
           </div>
         )}
 
-        <StatusBar
-          provider={provider}
-          model={model}
-          sandbox={sandbox}
-          connected={connected}
-          busy={state.busy}
-          needsProvider={needsProvider}
-          onConfigure={() => {
-            openSettings();
-          }}
-          logLines={logLines}
-          logsOpen={logsOpen}
-          onToggleLogs={() => setLogsOpen((open) => !open)}
-        />
       </div>
+
+      {/*
+        The context pane, and its scrim.
+
+        Rendered only in Agent mode: Code has its own assistant panel on the
+        right and Settings, Usage and Trajectory have no turn to report. The
+        scrim is a sibling rather than a child of the panel so the panel itself
+        stays above it -- and it is only mounted when the pane is an overlay,
+        because a docked pane has no "behind" to dismiss.
+
+        **After `.main` in the DOM**, which is also where it is on screen. The
+        grid puts it in column 3; the order here is what makes the tab sequence
+        go nav -> centre -> context -> strip, matching the visual order. Mounted
+        before the transcript it would have been the middle stop on the way to
+        the composer, which is the opposite of where the eye goes.
+      */}
+      {agentMode && contextOverlay && (
+        <button
+          type="button"
+          className="context-scrim"
+          onClick={() => setContextOpen(false)}
+          tabIndex={-1}
+          aria-label="Close the run panel"
+        />
+      )}
+      {agentMode && (
+        <ContextPanel
+          open={contextOpen}
+          docked={contextDocked}
+          run={activity.run}
+          startedAt={state.turnStartedAt}
+          detail={runDetail}
+          plan={plan}
+          planCallId={planCallId}
+          steps={activity.steps}
+          files={activity.files}
+          context={contextMeter}
+          onToggle={toggleContext}
+          onStop={cancel}
+          onOpenTrajectory={() => setMainMode("trajectory")}
+          onRevealPlan={revealPlan}
+          onOpenFile={(path) => void openFile(path)}
+        />
+      )}
+
+      {/*
+        The window's lower edge, and now the window's rather than the main
+        column's: it is a row of the shell, so it spans the nav, the centre and
+        the context pane instead of stopping at the editor's edge in Code mode.
+        That is also why it is after `.main` rather than inside it -- a grid item
+        cannot span tracks it is nested under.
+      */}
+      <StatusBar
+        provider={provider}
+        model={model}
+        sandbox={sandbox}
+        connected={connected}
+        needsProvider={needsProvider}
+        onConfigure={() => {
+          openSettings();
+        }}
+        logLines={logLines}
+        logsOpen={logsOpen}
+        onToggleLogs={() => setLogsOpen((open) => !open)}
+      />
     </div>
   );
 }

@@ -31,13 +31,17 @@ import { useEffect, type RefObject } from "react";
  *   would leave three window listeners attached for the rest of the session.
  * @param onClose Called for a press outside the surface, Escape, or the window
  *   losing focus. A cancel is a normal outcome, not an error.
- * @param surface The element that counts as "inside". Omit it and every press
- *   dismisses, which is only right for a surface with nothing to click.
+ * @param surface The element that counts as "inside", or several of them. Omit
+ *   it and every press dismisses, which is only right for a surface with
+ *   nothing to click. The rail's view menu is the reason this takes a list: its
+ *   anchor and its panel are two nodes in two different places -- the panel is
+ *   portalled out of the strip's `backdrop-filter` -- and a press on either one
+ *   is the surface being used.
  */
 export function useDismiss(
   open: boolean,
   onClose: () => void,
-  surface?: RefObject<HTMLElement | null>,
+  surface?: RefObject<HTMLElement | null> | Array<RefObject<HTMLElement | null>>,
 ): void {
   useEffect(() => {
     if (!open) return;
@@ -56,9 +60,12 @@ export function useDismiss(
       event.preventDefault();
       onClose();
     };
+    const surfaces = surface === undefined ? [] : Array.isArray(surface) ? surface : [surface];
     const onPointerDown = (event: PointerEvent) => {
-      const node = surface?.current;
-      if (node && event.target instanceof Node && node.contains(event.target)) {
+      if (
+        event.target instanceof Node &&
+        surfaces.some((ref) => ref.current?.contains(event.target as Node))
+      ) {
         return;
       }
       onClose();

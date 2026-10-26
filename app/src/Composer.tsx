@@ -15,6 +15,7 @@ import {
   slashToken,
   type SkillInfo,
 } from "./SkillPicker.js";
+import { ModeChip } from "./ModeChip.js";
 import { ToolBudgetControl } from "./ToolBudgetControl.js";
 
 /** One entry in the `mode.list` reply. */
@@ -75,6 +76,23 @@ interface Props {
    * needed, with no way for the user to tell which names are real.
    */
   onSkillsNeeded?: () => void;
+  /**
+   * Text to put in the field, and a nonce that says it is new.
+   *
+   * The launchpad's suggestions and the nav's Skills row both *prefill*, never
+   * send: the user can edit the sentence before it goes, which is the whole
+   * difference between a suggestion and a button that talks to the model. The
+   * nonce is what makes pressing the same suggestion twice work -- the text is
+   * equal both times, so text alone cannot say "this is a new request".
+   */
+  prefill?: { text: string; nonce: number } | null;
+  /**
+   * Said once the text is in the field, so the window can drop the request.
+   *
+   * Without it a remount (the Code assistant closing and opening) would replay
+   * the last prefill from state nobody asked to keep.
+   */
+  onPrefillApplied?: () => void;
 }
 
 export function Composer({
@@ -93,6 +111,8 @@ export function Composer({
   inputRef,
   skills = [],
   onSkillsNeeded,
+  prefill,
+  onPrefillApplied,
 }: Props) {
   const [text, setText] = useState("");
   // The files read so far. Held here rather than in the window because they
@@ -136,6 +156,33 @@ export function Composer({
   useEffect(() => {
     if (menuOpen) onSkillsNeeded?.();
   }, [menuOpen, onSkillsNeeded]);
+
+  /**
+   * Put requested text in the field, and the caret after it.
+   *
+   * Keyed on the nonce rather than on the text or the object: a fresh object
+   * with the same words is still a press, and a new render of the same request
+   * is not. The caret goes to the end because the text is a *starting point* --
+   * "Turn this idea into a plan: " is a sentence to finish, not a message to
+   * send.
+   */
+  useEffect(() => {
+    if (!prefill) return;
+    setText(prefill.text);
+    setSkillIndex(0);
+    setSkillsDismissed(false);
+    const field = inputRef?.current ?? null;
+    requestAnimationFrame(() => {
+      field?.focus();
+      const end = field?.value.length ?? 0;
+      field?.setSelectionRange(end, end);
+    });
+    onPrefillApplied?.();
+    // Deliberately only the nonce: the effect is a response to a *request*, and
+    // re-running it because the parent re-rendered would re-place the caret
+    // under a user who has already moved it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill?.nonce]);
 
   /**
    * Open a skill by name.
@@ -381,23 +428,21 @@ export function Composer({
         )}
 
         <div className="composer-row">
-          <div className="mode-group" role="group" aria-label="Mode">
-            {modes.map((m) => (
-              <button
-                key={m.name}
-                type="button"
-                className={`mode${m.name === mode ? " is-active" : ""}`}
-                // The description is the whole point of the mode, and the
-                // permission difference is not visible from the label.
-                title={m.description}
-                onClick={() => onModeChange(m.name)}
-                aria-pressed={m.name === mode}
-                disabled={disabled}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
+          {/*
+            One chip with a menu, rather than a pill per mode.
+
+            The row held four pills on the build track and they were the widest
+            thing in the field after the field itself -- they wrapped in the
+            400px assistant panel and ran out of room at the window's narrow end.
+            The chip says which mode is in force and opens the list on request,
+            which is the same choice at a third of the width. See `ModeChip`.
+          */}
+          <ModeChip
+            modes={modes}
+            mode={mode}
+            disabled={disabled}
+            onModeChange={onModeChange}
+          />
 
           {/*
             The tool budget sits beside the model rather than in the settings

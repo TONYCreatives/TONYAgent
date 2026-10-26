@@ -43,6 +43,9 @@ async function renderRail(over: Partial<React.ComponentProps<typeof IconRail>> =
       petOpen={false}
       onPet={() => {}}
       updateAvailable={false}
+      view="agent"
+      canCode
+      onViewChange={() => {}}
       {...over}
     />,
   );
@@ -200,8 +203,14 @@ describe("the rail is a strip of icons that never changes width", () => {
     const names = (c: HTMLElement) =>
       all(c, ".rail-btn:not(.rail-toggle)").map((b) => b.getAttribute("aria-label"));
 
+    // The view switch is the first name in the list because it is the first
+    // entry under the toggle, and it is the one thing on this strip that is
+    // never conditional: the window is always in some workspace, so a strip
+    // that dropped the control would drop the only way out of Trajectory at
+    // this width. Its label is the workspace it is showing.
     const idle = await renderRail({ messageCount: 0 });
     assert.deepEqual(names(idle), [
+      "View: Agent",
       "Search project",
       "Usage dashboard",
       "Show desktop pet",
@@ -210,6 +219,7 @@ describe("the rail is a strip of icons that never changes width", () => {
 
     const busy = await renderRail({ busy: true, messageCount: 4 });
     assert.deepEqual(names(busy), [
+      "View: Agent",
       "Stop generating",
       "Search project",
       "Usage dashboard",
@@ -239,8 +249,15 @@ describe("the rail is a strip of icons that never changes width", () => {
     // anything; a card that says "done" beside a stopped sandbox is the truth,
     // and a disabled control that could do its job is the fault this whole test
     // exists to catch. So it is excluded here and asserted live below.
+    //
+    // The view switch is the third exception, and the same argument: choosing a
+    // workspace is a local view change, so it works with no backend -- which is
+    // exactly when a trapped Trajectory would be worst.
     const container = await renderRail({ connected: false });
-    const needingCore = all(container, '.rail-btn:not(.rail-toggle):not([aria-label$="desktop pet"])');
+    const needingCore = all(
+      container,
+      '.rail-btn:not(.rail-toggle):not(.rail-view):not([aria-label$="desktop pet"])',
+    );
     assert.ok(needingCore.length > 0, "the rail rendered nothing to check");
     for (const button of needingCore) {
       assert.equal(
@@ -254,6 +271,11 @@ describe("the rail is a strip of icons that never changes width", () => {
         .disabled,
       false,
       "the pet needs no core to open a window",
+    );
+    assert.equal(
+      (one(container, ".rail-view") as HTMLButtonElement).disabled,
+      false,
+      "the view switch needs no core to change the view",
     );
     // And the one that must not be.
     assert.equal(

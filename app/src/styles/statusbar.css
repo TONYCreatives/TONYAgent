@@ -1,6 +1,17 @@
 
 /* --- status bar ---------------------------------------------------------- */
 .statusbar {
+  /*
+   * The window's lower edge, in the shell's third row and across every column.
+   *
+   * It used to be the last child of `.main`, so in Code mode it stopped at the
+   * assistant's edge and the panel ran to the bottom of the window under it --
+   * a strip that ends halfway across a window reads as a defect. A grid item of
+   * the shell is the honest arrangement: the bar belongs to the window, not to
+   * one of the three panes.
+   */
+  grid-column: 1 / -1;
+  grid-row: 3;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -99,10 +110,6 @@
   color: var(--fg-dim);
   font-size: var(--text-2xs);
   font-variant-numeric: tabular-nums;
-}
-
-.busy {
-  color: var(--accent);
 }
 
 /*

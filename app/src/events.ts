@@ -42,6 +42,17 @@ export interface ToolCall {
    */
   budget?: string;
   /**
+   * When this window saw the call start and finish.
+   *
+   * The window's own clock, for the same reason `turnStartedAt` is: the elapsed
+   * time the panel prints is a reading of what the user watched, not of a
+   * process on the other side of a pipe. Absent on a restored transcript, where
+   * the tool events were never saved -- the feed then omits the duration rather
+   * than inventing one.
+   */
+  startedAt?: number;
+  endedAt?: number;
+  /**
    * A subagent's own work, when this call asked for one.
    *
    * The child runs its own turn on the same bus, and every frame it emits
@@ -198,6 +209,17 @@ export interface ChatState {
    * no bubble and cannot end this turn. See the `turn.started` case.
    */
   activeTurnId: string | null;
+  /**
+   * When the running turn started, as this window's clock read it.
+   *
+   * `Date.now()` rather than the core's `started_at`, because the elapsed
+   * counter is a reading of this window's turn, not of the core's process: a
+   * frame can sit in the pipe, and a wall clock on the other side would drift
+   * from the timer drawing it. Null between turns and on a restored
+   * conversation, where there is no start to count from -- the Run card hides
+   * the clock rather than showing a number it made up.
+   */
+  turnStartedAt: number | null;
   /** Set when the core reports turn.failed or an error event arrives. */
   error: string | null;
   /** Non-null while a confirmation.requested is awaiting a response. */
@@ -233,6 +255,7 @@ export const initialState: ChatState = {
   messages: [],
   busy: false,
   activeTurnId: null,
+  turnStartedAt: null,
   error: null,
   pendingConfirm: null,
   pendingAsk: null,
@@ -548,6 +571,7 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
       next.busy = true;
       next.error = null;
       next.activeTurnId = turnId ?? nextId("a");
+      next.turnStartedAt = Date.now();
       // Create the assistant placeholder eagerly, keyed by the turn id, so the
       // first delta has somewhere to land. `message.started` also carries the
       // turn id, so both paths converge on the same message.
@@ -680,6 +704,7 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
             id: payloadString(payload, "id") ?? String(target.tools.length),
             name: payloadString(payload, "name") ?? "tool",
             status: "running",
+            startedAt: Date.now(),
             // Where this call falls in the prose so far. The model writes, then
             // asks for the tool, so this is the end of the words that asked for
             // it -- and the prose of the *next* pass lands after this mark, so
@@ -702,6 +727,10 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
       const call = target?.tools.find((t) => t.id === id) ?? target?.tools[target.tools.length - 1];
       if (target && call) {
         call.status = isFailure(payload.result) || type === "tool.failed" ? "failed" : "ok";
+        // Stamped once: a repeated completion for the same call (a restored
+        // batch, a duplicate frame) must not make the row look longer than the
+        // work was.
+        call.endedAt ??= Date.now();
         const detail = describeResult(payload.result);
         if (detail) call.detail = detail;
         // The same field the model reads in its own tool result, so the card
@@ -769,6 +798,7 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
       // the placeholder this turn owns to still be the one they land in.
       if (isForeignTurn(next, turnId)) return state;
       next.activeTurnId = null;
+      next.turnStartedAt = null;
       next.busy = false;
       // A cancelled turn is the one path that can end with a dialog still
       // outstanding -- the core settles both, but a turn the user stopped may
@@ -790,6 +820,7 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
       // banner mid-turn would report a failure the turn did not have.
       if (isForeignTurn(next, turnId)) return state;
       next.activeTurnId = null;
+      next.turnStartedAt = null;
       next.busy = false;
       next.error =
         payloadString(payload, "message") ?? payloadString(payload, "error") ?? "The turn failed.";
@@ -804,6 +835,7 @@ export function applyEvent(state: ChatState, event: CoreEvent): ChatState {
     case "error": {
       if (isForeignTurn(next, turnId)) return state;
       next.activeTurnId = null;
+      next.turnStartedAt = null;
       next.busy = false;
       next.error = payloadString(payload, "message") ?? "Backend error.";
       // Deliberately not clearing the dialogs here: `error` also arrives

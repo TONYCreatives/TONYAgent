@@ -33,6 +33,8 @@ import "./test-dom.js";
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
+import type { ReactNode } from "react";
+
 import { TopBar, type Tab } from "./TopBar.js";
 import { all, click, contextMenu, one, press, render, setValue, texts } from "./test-render.js";
 
@@ -62,11 +64,9 @@ async function bar(options: {
   busy?: boolean;
   tabs?: Tab[];
   active?: string;
-  mode?: "agent" | "code" | "trajectory";
-  canCode?: boolean;
-  onModeChange?: (mode: "agent" | "code" | "trajectory") => void;
   track?: string;
   onTrackChange?: (track: string) => void;
+  status?: ReactNode;
 } = {}): Promise<{ container: HTMLElement; calls: Calls & { tracks: string[] } }> {
   const calls: Calls & { tracks: string[] } = {
     minimized: 0,
@@ -89,13 +89,11 @@ async function bar(options: {
       onClose={(id) => calls.closedTabs.push(id)}
       onNewTab={() => (calls.newTabs += 1)}
       onRename={(id, title) => calls.renamed.push([id, title])}
-      mode={options.mode ?? "agent"}
-      canCode={options.canCode ?? true}
-      onModeChange={options.onModeChange}
       track={options.track}
       onTrackChange={
         options.onTrackChange ?? (options.track !== undefined ? (t) => calls.tracks.push(t) : undefined)
       }
+      status={options.status}
       controls={
         withCaption
           ? {
@@ -113,74 +111,6 @@ async function bar(options: {
 }
 
 const buttons = (container: HTMLElement) => all(container, ".win-btn");
-
-// --- the mode switch -------------------------------------------------------
-describe("the Agent / Code switch", () => {
-  const modes = (container: HTMLElement) => texts(container, ".topbar-mode");
-  const activeMode = (container: HTMLElement) =>
-    one(container, ".topbar-mode.is-active")!.textContent;
-
-  test("it names every state of the window", async () => {
-    // A single toggle labelled with the state you are *not* in is a control
-    // people press the wrong way round, so every state is named.
-    const { container } = await bar();
-    assert.deepEqual(modes(container), ["Agent", "Code", "Trajectory"]);
-    assert.equal(activeMode(container), "Agent");
-    assert.equal(
-      one(container, ".topbar-modes")!.getAttribute("aria-label"),
-      "View",
-      "a group of buttons needs a name",
-    );
-  });
-
-  test("it says which half is in front, both ways", async () => {
-    const agent = await bar({ mode: "agent" });
-    assert.equal(activeMode(agent.container), "Agent");
-    const code = await bar({ mode: "code" });
-    assert.equal(activeMode(code.container), "Code");
-  });
-
-  test("pressing a half asks for it", async () => {
-    const asked: string[] = [];
-    const { container } = await bar({ onModeChange: (next) => asked.push(next) });
-    const codeButton = all(container, ".topbar-mode").find((b) => b.textContent === "Code")!;
-
-    await click(codeButton);
-
-    assert.deepEqual(asked, ["code"]);
-    assert.equal(codeButton.getAttribute("aria-pressed"), "false", "the parent owns the state");
-  });
-
-  test("the code half is dimmed with no project, and says why", async () => {
-    const asked: string[] = [];
-    const { container } = await bar({ canCode: false, onModeChange: (m) => asked.push(m) });
-    const codeButton = all(container, ".topbar-mode").find((b) => b.textContent === "Code")!;
-
-    assert.equal((codeButton as HTMLButtonElement).disabled, true);
-    assert.match(codeButton.getAttribute("title") ?? "", /project folder/);
-    await click(codeButton);
-    assert.deepEqual(asked, [], "a disabled half must not be enterable");
-  });
-
-  test("trajectory is a third mode, and it is never disabled", async () => {
-    // Trajectory reads the event log, so it has nothing to do with a project
-    // folder: it is live whether or not one is open -- unlike the code half.
-    const asked: string[] = [];
-    const { container } = await bar({ canCode: false, onModeChange: (m) => asked.push(m) });
-    const button = all(container, ".topbar-mode").find((b) => b.textContent === "Trajectory")!;
-    assert.ok(button, "the trajectory mode is missing from the switch");
-    assert.equal((button as HTMLButtonElement).disabled, false, "trajectory is gated on canCode");
-    await click(button);
-    assert.deepEqual(asked, ["trajectory"]);
-  });
-
-  test("the switch is not a drag handle", async () => {
-    // The bar is the window's move handle, and a control that carried the class
-    // would move the window instead of changing the view.
-    const { container } = await bar();
-    assert.equal(one(container, ".topbar-modes")!.classList.contains("app-drag-region"), false);
-  });
-});
 
 // --- the track toggle ------------------------------------------------------
 describe("the Chat / Build toggle", () => {
@@ -215,6 +145,30 @@ describe("the Chat / Build toggle", () => {
 
     assert.deepEqual(calls.tracks, ["chat"]);
     assert.equal(chat.getAttribute("aria-pressed"), "false", "the parent owns the state");
+  });
+});
+
+// --- the run pill's slot ---------------------------------------------------
+describe("the run pill's slot", () => {
+  test("it sits between the track toggle and the window's own controls", async () => {
+    // The bar's order is the three questions it answers, left to right: what
+    // kind of conversation this is, what is happening in it, and what the window
+    // is bound to. The pill is placed, not built, here -- its own behaviour is
+    // in `StatusPill.test.tsx` -- and this is the half that says where.
+    const { container } = await bar({
+      track: "build",
+      status: <span className="test-status" />,
+    });
+    const pill = one(container, ".test-status")!;
+    assert.equal(
+      pill.previousElementSibling?.getAttribute("aria-label"),
+      "Track",
+      "the pill is not after the track toggle",
+    );
+    assert.ok(
+      pill.nextElementSibling?.classList.contains("window-controls"),
+      "the pill is not before the caption",
+    );
   });
 });
 

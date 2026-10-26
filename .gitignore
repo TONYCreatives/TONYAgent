@@ -77,3 +77,7 @@ app/src-tauri/icons/ios/
 # Probe outputs: the research scripts write these next to the repo, and they are
 # readings rather than sources.
 /.tmp-*
+
+# An assistant's own working notes for this checkout: session memory and daily
+# logs. Not part of the project, and not something a clone should inherit.
+/.workbuddy-ai/

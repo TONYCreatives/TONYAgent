@@ -362,25 +362,79 @@ describe("the app shell's rows", () => {
     assert.match(body(".main"), /grid-column:\s*2\b/);
   });
 
-  test("the shell has one column layout, because the rail never changes width", () => {
-    // The decisive structural fact, and the reason the conversation panel can
-    // animate at all. `.app.rail-open` used to widen column 1 to 307px, which
-    // made opening the sidebar a *layout* change: the transcript re-wrapped,
-    // and a grid track cannot be transitioned, so the track snapped while the
-    // content inside it tried to follow.
+  test("the shell is three columns, and the outer two are the workspace's", () => {
+    // Direction B's structural fact: the nav, the reading column, the context
+    // pane. The outer widths are tokens, so a dock can widen its own track from
+    // one number rather than from a rule that restates 288.
     //
-    // Asserted as the absence of the rule *and* of the class. A rule here
-    // reading `--rail-w-expanded` would silently undo the overlay, because
-    // opening the panel would start pushing the transcript again underneath a
-    // panel that is supposed to float over it.
+    // `.app.rail-open` still does not exist: the nav's state is `data-nav`, read
+    // only to size column 1. Opening a dock *does* change a grid track now, and
+    // the change is instant -- see the transition rule below and the note on
+    // `.app` -- but it is still not a class that moves the text on every frame.
     assert.doesNotMatch(SOURCE, /\.app\.rail-open/);
     assert.doesNotMatch(SOURCE, /\.sidecol/);
     assert.doesNotMatch(body(".app"), /rail-w-expanded/);
     assert.match(
       body(".app"),
-      /grid-template-columns:\s*var\(--rail-w\) minmax\(0, 1fr\) auto/,
-      "column 1 must be the rail and only the rail",
+      /grid-template-columns:\s*var\(--nav-w\) minmax\(0, 1fr\) var\(--context-w\)/,
+      "the shell must name a nav track, a centre and a context track",
     );
+  });
+
+  test("the nav docks at 1101 and the context at 1400, and nowhere else", () => {
+    // The two numbers the arithmetic decides. At 1101 the centre is
+    // 1101 - 288 - 48 = 765, still above the 760px column; at 1100 it would be
+    // 764, so that is the step the nav stops being docked. At 1400 the whole
+    // sum is exact: 288 + 824 + 288.
+    assert.match(
+      mediaBody("min-width: 1101px"),
+      /\.app\[data-nav="open"\]\s*\{[^}]*--nav-w:\s*var\(--dock-w\)/,
+    );
+    assert.match(
+      mediaBody("min-width: 1400px"),
+      /\.app\[data-context="open"\]\s*\{[^}]*--context-w:\s*var\(--dock-w\)/,
+    );
+    // 288 is written once, and both docks read it.
+    assert.match(STYLESHEET, /--dock-w:\s*var\(--list-w\)/);
+    assert.doesNotMatch(body(".app"), /288px/);
+  });
+
+  test("the status strip is a row of the window, not of the main column", () => {
+    // It used to be `.main`'s last child, so in Code mode it stopped at the
+    // assistant's edge and the panel ran under it. A shell row is the honest
+    // arrangement: the bar is the window's, and all three panes sit above it.
+    assert.match(baseBody(".statusbar"), /grid-column:\s*1\s*\/\s*-1/);
+    assert.match(baseBody(".statusbar"), /grid-row:\s*3\b/);
+    assert.match(
+      body(".app"),
+      /grid-template-rows:\s*var\(--topbar-h\)[^;]*var\(--statusbar-h\)/,
+    );
+  });
+
+  test("below 900 the compact forms float instead of taking a column", () => {
+    // 900 is where 64 + 48 would start squeezing the reading column rather than
+    // sitting in its air. Both leave the grid there, so the centre is the full
+    // window and the 64/48px land in the 70px of air either side of 760.
+    const narrow = mediaBody("max-width: 900px");
+    assert.match(narrow, /\.app\[data-mode="agent"\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+    assert.match(narrow, /\.app\[data-mode="agent"\] \.rail\s*\{[^}]*position:\s*absolute/);
+    assert.match(narrow, /\.app\[data-mode="agent"\] \.contextdock\s*\{[^}]*position:\s*absolute/);
+    // The centre keeps clear of the two floating strips, but only by the part
+    // the reading column was not already holding: the rail is 64 and the
+    // composer's own edge is 32, so 32 more is reserved on the left. Without
+    // this the 64px rail painted over the first 32px of the composer at 720.
+    assert.match(
+      narrow,
+      /padding-left:\s*calc\(var\(--rail-w\)\s*-\s*var\(--column-edge\)\)/,
+    );
+    assert.match(
+      narrow,
+      /padding-right:\s*calc\(var\(--context-w-collapsed\)\s*-\s*var\(--column-edge\)\)/,
+    );
+    // Scoped to Agent, explicitly: Code's explorer is its primary pane and
+    // keeps its own column, so the media block names the mode in every rule
+    // that moves a pane.
+    assert.doesNotMatch(narrow, /\.app\[data-mode="code"\]/);
   });
 
   test("the Files pane is a pane of the sidebar, not a surface of its own", () => {
@@ -1487,6 +1541,22 @@ describe("every state change has a transition to animate it", () => {
       // transition from a stylesheet, so requiring one would be requiring a
       // rule that does nothing.
       "::-webkit-scrollbar-thumb:hover",
+      // A dock becoming an overlay is a structural state, not a property fade:
+      // the panel stops being a grid track and starts being a sheet, and a
+      // transition on `height`/`background` would animate a reflow. The rule
+      // is written for the state, and the plan's rule is that a dock toggle
+      // reflows once, instantly.
+      '.app > .chatlist[data-docked="true"]',
+      // The rail leaving the grid at 900 is a breakpoint, not a hover. Height
+      // 100% -> auto is how it stops stretching a column that is no longer
+      // there; there is no in-between layout to interpolate. Trajectory is the
+      // same rule for the same reason now that it carries the same dock.
+      '.app[data-mode="agent"] .rail',
+      '.app[data-mode="trajectory"] .rail',
+      // The overlay form is displayed, not restyled: `display: none` to `flex`
+      // has no frame in between, so the background arrives with the panel.
+      // Phase 6 owns the reveal itself.
+      '.contextdock[data-docked="false"][data-state="open"] .context-panel',
     ];
 
     const gaps: string[] = [];
@@ -1855,10 +1925,24 @@ describe("one ladder, and one inset, for the whole window", () => {
       ),
     );
     assert.ok(widths.size > 0, "there are no media queries at all");
+    // Four compact steps, because 1100 and 1400 are dock *thresholds* and are
+    // written as the first width that can hold the dock rather than the last
+    // one that cannot. 1100 is therefore the default (the rail), and its
+    // boundary is the 1101 minimum below.
     assert.deepEqual(
       [...widths].sort((a, b) => a - b),
-      [420, 560, 720],
+      [420, 560, 720, 900],
       "a surface reflows at a width the ladder does not have",
+    );
+    const floors = new Set(
+      [...STYLESHEET.matchAll(/@media\s*\(\s*min-width:\s*(\d+)px\s*\)/g)].map((m) =>
+        Number(m[1]),
+      ),
+    );
+    assert.deepEqual(
+      [...floors].sort((a, b) => a - b),
+      [1101, 1400],
+      "a dock threshold is not on the ladder",
     );
   });
 
@@ -2221,19 +2305,16 @@ describe("permission and thinking read as one control in the settings panel", ()
     assert.match(body(".permchoice"), /width:\s*100%/);
   });
 
-  test("the selected mode pill is the palette's selected step, not a light box", () => {
-    // It was #d0d0d0 on #141414 -- the brightest thing in an app whose darkest
-    // surface is #1c1d1c -- and no token reached it, so nothing could have
-    // retinted it. It uses `--chip`, the raised step -- and it is now the only
-    // selected thing that does: the row and the tab take the wash, because a
-    // segmented control is a control that happens to be selected and those two
-    // are states. The distinction is the point, not an oversight.
-    // (It used to be the same `--chip` the conversation row, the tab pill and
-    // the selected rail item all shared, which is what made all four read as one
-    // "selected" rather than as four unrelated fills.)
-    assert.match(body(".mode.is-active"), /background:\s*var\(--chip\)/);
-    assert.match(body(".mode.is-active"), /color:\s*var\(--fg\)/);
-    assert.doesNotMatch(body(".mode.is-active"), /#[0-9a-fA-F]{3,8}/);
+  test("the selected mode row is a state, and takes the wash", () => {
+    // The mode is one chip with a menu now, so what can be "selected" is a row
+    // in that menu rather than a pill on screen beside its rivals. A row is a
+    // state -- the same thing the conversation row and the tab pill are -- so it
+    // takes `--wash` and not the segmented control's `--chip`. The value is a
+    // token rather than a literal for the reason the pills' was: a hex here is a
+    // colour nothing in the palette can retint.
+    assert.match(body(".modechip-option.is-active"), /background:\s*var\(--wash\)/);
+    assert.match(body(".modechip-option.is-active"), /color:\s*var\(--fg\)/);
+    assert.doesNotMatch(body(".modechip-option.is-active"), /#[0-9a-fA-F]{3,8}/);
   });
 
   test("the value is pushed to the far edge, so the eye finishes on the answer", () => {

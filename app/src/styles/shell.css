@@ -1,39 +1,80 @@
 
 /* --- app shell ----------------------------------------------------------- */
 /*
- * Three columns, and the first one never changes width: 56px of rail, the
- * transcript, and `auto` for the Files panel's reopen handle. That constancy is
- * the whole point of this layout. The conversation list used to be this grid's
- * second state -- `.app.rail-open` widened column 1 to 307px and the transcript
- * moved -- which meant opening the sidebar re-laid-out the transcript, and
- * re-laying-out a column of text is exactly what cannot be animated smoothly.
- * The list is an overlay now, so the grid has nothing to do when it opens and
- * the transcript stays where it was.
+ * Three columns, and the workspace owns what goes in the outer two: the nav on
+ * the left, the conversation in the middle, the agent's run on the right.
  *
- * So `.app.rail-open` is gone entirely. React still sets the class name off
- * `railExpanded` -- it is what the panel's own `data-state` animation is keyed
- * on -- but no rule in this file reads it, and `layout.test.ts` asserts that.
+ * The outer widths are tokens, not constants. `--nav-w` is 64 until the window
+ * is wide enough to dock the 288px nav *and* leave the reading column whole,
+ * which is exactly 1101; `--context-w` is 48 until the window can hold both
+ * 288px docks and the 824px centre, which is exactly 1400. Those two numbers
+ * are the ladder's new steps, and they are derived rather than chosen -- see
+ * `tokens.css`.
+ *
+ * Opening a dock *does* change a grid track, which is a change from the overlay
+ * era and a deliberate one. A user who collapses a dock is asking for the room;
+ * the centre reflows once, instantly, with no transition, because an animated
+ * track re-lays-out text on every frame. The overlay forms at 1100 and below
+ * still float, so there the text never moves at all.
+ *
+ * `.app.rail-open` is still gone: the nav's open state is `data-nav`, read here
+ * only to size column 1. `layout.test.ts` asserts the old class stays absent.
  */
 .app {
-  display: grid;
-  grid-template-columns: var(--rail-w) minmax(0, 1fr) auto;
   /*
-   * Two rows, because the window has no system title bar and `.topbar` is now
-   * the one. It spans all three columns (see `.topbar`) so the caption buttons
-   * sit at the right edge of the *window* rather than of the transcript column
-   * -- the Files panel overlays that column, and a caption inside it would be
-   * covered the moment the panel opened.
+   * The compact forms are the defaults, so a narrow window that has never
+   * opened a pane gets the rail and the strip without a media query firing.
+   * The docks then widen their own track at the two steps that can hold them.
+   */
+  --nav-w: var(--rail-w);
+  --context-w: var(--context-w-collapsed);
+  display: grid;
+  grid-template-columns: var(--nav-w) minmax(0, 1fr) var(--context-w);
+  /*
+   * Three rows, because the window has no system title bar and `.topbar` is
+   * the one, then the workspace, then the status strip -- which is now the
+   * window's rather than `.main`'s. It spans all three columns (see
+   * `.topbar` and `.statusbar`) so the caption buttons sit at the right edge
+   * of the *window* and the connection state is not hidden under a dock.
    *
    * Every in-flow child therefore names its row explicitly. With auto-placement
-   * the grid would fill row 1 first, so a build where the Files panel is not
-   * rendered at all would push the rail into the title bar's row and render the
-   * whole window 42px lower. Placement must not depend on which siblings exist.
+   * the grid would fill row 1 first, so a build with no nav would push the rail
+   * into the title bar's row and render the whole window 52px lower. Placement
+   * must not depend on which siblings exist.
    */
-  grid-template-rows: var(--topbar-h) minmax(0, 1fr);
+  grid-template-rows: var(--topbar-h) minmax(0, 1fr) var(--statusbar-h);
   height: 100%;
   overflow: hidden;
-  /* Positioning context for the conversation panel, the Files overlay and its scrim. */
+  /* Positioning context for the conversation panel, the run panel and its scrim. */
   position: relative;
+}
+
+/*
+ * The nav docks at 1101, not 1100.
+ *
+ * At 1101 the centre is 1101 - 288 - 48 = 765, still above the 760px column.
+ * At 1100 it is 1100 - 288 - 48 = 764 and the column would be compressed, so
+ * that is the width at which the nav becomes the rail. The media query is
+ * written as a minimum because the dock *is* the state at that first width;
+ * the compact rules below name 1100 as the step they start at.
+ */
+@media (min-width: 1101px) {
+  .app[data-nav="open"] {
+    --nav-w: var(--dock-w);
+  }
+}
+
+/*
+ * The context panel docks at 1400, where 288 + 288 + 824 is exact.
+ *
+ * Below it the column stays at its 48px strip and the expanded surface floats
+ * over the centre -- because opening it must not take the reading column below
+ * 760 just because someone asked to see the run.
+ */
+@media (min-width: 1400px) {
+  .app[data-context="open"] {
+    --context-w: var(--dock-w);
+  }
 }
 
 /*
@@ -84,6 +125,126 @@
  */
 .app[data-mode="code"] {
   grid-template-columns: var(--code-side-w) minmax(0, 1fr);
+}
+
+/*
+ * --- Trajectory: a page with the nav beside it -----------------------------
+ *
+ * Two tracks, not three. Trajectory has no run panel -- the log *is* the run --
+ * so the 48px context strip is not reserved for a pane that is never rendered;
+ * the page takes the space instead. The nav is the same dock Agent has, with the
+ * same 1101 threshold, and is rendered by the same component: the trajectory is
+ * a view of the conversation's traffic, so the conversations beside it are the
+ * same list.
+ *
+ * It was full-window in Phase 1, deliberately, while the nav was being built.
+ * This is the phase that gives it the dock; see `navMode` in `App`.
+ */
+.app[data-mode="trajectory"] {
+  grid-template-columns: var(--nav-w) minmax(0, 1fr);
+}
+
+/*
+ * At 900 and below neither compact form holds a column.
+ *
+ * 900 is where the rail and the strip stop sitting in the reading column's air
+ * and start squeezing it: at 901 the centre is 789 and the column still fits; at
+ * 900 it would be 788 with less air than the column needs. So both are lifted
+ * out of the grid and float over the full-width centre, and their 64 and 48px
+ * land in the air beside the 760px column rather than in its width.
+ *
+ * The rail is above `.main` (2) but below a scrim (3) and below the nav overlay
+ * (4): the nav panel covers the rail, as it does today, and a run overlay dims
+ * it until dismissed. The context pane stays at the panel's own layer.
+ *
+ * Scoped to Agent. Code's explorer is its primary pane and keeps its column; its
+ * assistant collapses by a container query on the editor -- see Phase 5.
+ */
+@media (max-width: 900px) {
+  .app[data-mode="agent"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app[data-mode="agent"] .main {
+    grid-column: 1;
+    /*
+     * The compact forms float *over* the centre, so the centre keeps their
+     * width clear -- but only the part the reading column was not already
+     * holding. The composer and the transcript each keep `--column-edge` of air
+     * inside their own box, so the rail needs `--rail-w - --column-edge` more
+     * and the strip needs `--context-w-collapsed - --column-edge` more.
+     *
+     * Reserving the full widths instead shortened the 760px column at 900 for
+     * no reason (it already had 70px of air each side) and shifted its centre
+     * 8px right of the line between the two panes. At 720 these values put the
+     * composer at x=64, flush with the rail and the strip, instead of 32px
+     * under it -- which is what the first version of this rule did.
+     */
+    padding-left: calc(var(--rail-w) - var(--column-edge));
+    padding-right: calc(var(--context-w-collapsed) - var(--column-edge));
+  }
+
+  /*
+   * Both compact forms stay grid items, so they do not need to know where row 2
+   * begins: `top: 0` is the title bar's lower edge, which is the static position
+   * their grid area gives them. The bottom is written as the strip's height
+   * rather than 0 because an out-of-flow grid child resolves that inset against
+   * the grid container, not against the row -- `bottom: 0` stretched both panes
+   * 26px under the status strip, which is what a first cut did.
+   */
+  .app[data-mode="agent"] .rail {
+    position: absolute;
+    top: 0;
+    bottom: var(--statusbar-h);
+    left: 0;
+    right: auto;
+    z-index: 2;
+    height: auto;
+  }
+
+  .app[data-mode="agent"] .contextdock {
+    position: absolute;
+    grid-column: 1;
+    grid-row: 2;
+    top: 0;
+    bottom: var(--statusbar-h);
+    right: 0;
+    left: auto;
+    z-index: 4;
+  }
+
+  /*
+   * Trajectory's compact form: the same floating rail over a full-width page.
+   *
+   * There is no strip to clear on the right, so the page reserves only the
+   * rail's width on the left.
+   *
+   * **The rail's width, not `--rail-w - --column-edge`.** The agent form subtracts
+   * the edge because the composer and the transcript carry that inset inside
+   * their own boxes, so the centre keeps its air. The log has no centred column
+   * to carry it: its head and its rows pad by 16px from whatever edge the page
+   * gives them, so a 32px inset put the first 16px of every row -- the event
+   * name, the one thing a row is -- under the opaque strip. Measured at 720:
+   * the head started at x=48 with the rail ending at 64.
+   */
+  .app[data-mode="trajectory"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .app[data-mode="trajectory"] .main {
+    grid-column: 1;
+    padding-left: var(--rail-w);
+  }
+
+  .app[data-mode="trajectory"] .rail {
+    position: absolute;
+    top: 0;
+    bottom: var(--statusbar-h);
+    left: 0;
+    right: auto;
+    z-index: 2;
+    height: auto;
+  }
 }
 
 /*
