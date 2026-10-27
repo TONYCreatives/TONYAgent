@@ -232,6 +232,19 @@
 }
 
 /*
+ * The step, arriving: the node fades in on the row's mount, on the same
+ * 160ms as every other arrival. The row itself does not travel -- kept to
+ * opacity, so a step that lands while the reader watches does not move text.
+ *
+ * Anything mounting live is already `running`, and the running node has its
+ * own pulse; this rule stands aside for it (a later equal-specificity rule
+ * would otherwise still the pulse) and covers the settled arrivals instead.
+ */
+.tool-unit .tool-node:not([data-status="running"]) {
+  animation: node-in var(--motion-base) var(--ease-out) both;
+}
+
+/*
  * The row itself: name, summary, budget, duration, caret.
  *
  * A `<button>` because it opens something, and reset to a line so the row still
@@ -450,4 +463,9 @@
   width: 1px;
   background: var(--border);
   pointer-events: none;
+  /* The line grows down the gutter as the turn adds calls: 240ms from the
+     top, once per mount. Exempt from the transition audit for the reason
+     written beside it there -- drawn-or-not, not restyled. */
+  transform-origin: top;
+  animation: spine-grow var(--motion-slow) var(--ease-out) both;
 }

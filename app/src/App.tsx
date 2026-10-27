@@ -3032,6 +3032,13 @@ export function App({
       */
       data-helper={helperOpen ? "open" : "closed"}
       data-explorer={explorerOpen ? "open" : "closed"}
+      /*
+        The turn's state, as an attribute for the same reason: the lit pane
+        edge while working is a property of the shell, not of any one card, so
+        the stylesheet needs to ask the window, not the run card. Read from the
+        same `activity.run` the pill and the card draw.
+      */
+      data-run={activity.run}
     >
       {/*
         The title bar spans the window, not the transcript column.

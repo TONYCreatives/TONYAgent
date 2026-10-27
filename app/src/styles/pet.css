@@ -108,8 +108,8 @@
 }
 
 .pet[data-mood="working"] .pet-dot {
-  background: var(--accent);
-  animation: pet-pulse 1.4s ease-in-out infinite;
+  background: var(--signal);
+  animation: pet-pulse var(--motion-ambient) ease-in-out infinite;
 }
 
 .pet[data-mood="waiting"] .pet-dot {
@@ -222,9 +222,15 @@
   }
 }
 
-/* Idle: breathing, slowly enough to be a resting rhythm rather than a pulse. */
+/*
+ * Idle: breathing, slowly enough to be a resting rhythm rather than a pulse.
+ *
+ * On `--motion-ambient`, the same 3.2s the status orb breathes on: the pet
+ * outside the window and the orb inside it are one presence, so they keep one
+ * rhythm. Waiting and asleep keep their own.
+ */
 .pet[data-pose="idle"] .pet-body {
-  animation: pet-breathe 3.4s ease-in-out infinite;
+  animation: pet-breathe var(--motion-ambient) ease-in-out infinite;
 }
 
 @keyframes pet-breathe {

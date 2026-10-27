@@ -99,10 +99,10 @@
   letter-spacing: 0.06em;
 }
 
-/* The largest type in the window, and the scale's largest is 16px -- so this
-   is the top of it rather than a number of its own. */
+/* The dashboard's totals, in the display step: these are the numbers the page
+   is, and the scale's largest is 16px outside this surface. */
 .usage-tile-value {
-  font-size: var(--text-xl);
+  font-size: var(--text-2xl);
   font-weight: 600;
   /* Digits that do not shift as the number changes, so the row does not jitter
      when the period is switched. */

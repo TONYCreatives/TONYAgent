@@ -503,6 +503,15 @@
   min-height: 0;
   border-left: 1px solid var(--border-soft);
   background: var(--surface);
+  transition: border-color var(--motion-fast) ease;
+}
+
+/*
+ * Code's column carries the same signal line as the run panel's: while the
+ * agent is working, the inner edge is the place, and the pill owns the fact.
+ */
+.app[data-run="working"] .helper {
+  border-left-color: var(--signal);
 }
 
 /* The panel's head, and it holds the same box as the explorer's over there. */

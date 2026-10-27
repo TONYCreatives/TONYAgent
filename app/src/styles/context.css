@@ -21,6 +21,9 @@
   min-height: 0;
   border-left: 1px solid var(--border-soft);
   background: var(--chrome);
+  /* The signal line while a turn runs eases in rather than snapping: the edge
+     is a state the column is in, and the audit holds every state to that. */
+  transition: border-color var(--motion-fast) ease;
 }
 
 /*
@@ -90,6 +93,21 @@
   flex: 1;
   min-height: 0;
   padding: 0;
+  /* Lit from inside while the panel has the eye: the dock is opaque, so the
+     edge is a hairline rather than a glow -- one surface, one line. */
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
+
+/*
+ * The signal line, on the dock's inner edge, while the agent is working.
+ *
+ * One live surface (the top-bar pill) owns the *fact*; this owns the *place*:
+ * the column the run card lives in carries 1px of signal on the edge that
+ * faces the work. Idle, the edge is the same `--border-soft` every other dock
+ * carries, because a line that never goes out stops being a signal.
+ */
+.app[data-run="working"] .contextdock {
+  border-left-color: var(--signal);
 }
 
 /*
@@ -188,7 +206,7 @@
 }
 
 .run-card[data-run="working"] {
-  border-left-color: var(--accent);
+  border-left-color: var(--signal);
 }
 
 .run-card[data-run="waiting"] {
@@ -218,12 +236,18 @@
 }
 
 /*
- * The one live mark in the pane. White while working, because the window's
- * signal is still the accent until Phase 6 introduces a live hue; amber and red
- * stay meaning what they mean everywhere else -- waiting and failed.
+ * The one live mark in the pane. Signal while working -- the window's live
+ * hue since Phase 6 (the white fill was the accent standing in for it before
+ * the family existed); amber and red stay meaning what they mean everywhere
+ * else -- waiting and failed.
+ *
+ * While a turn runs the orb breathes on `--motion-ambient`, the one ambient
+ * loop the window allows, shared with the desktop pet. Under reduced motion
+ * it is a still lit dot: the state without the breathing.
  */
 .run-orb[data-run="working"] {
-  background: var(--accent);
+  background: var(--signal);
+  animation: signal-breathe var(--motion-ambient) ease-in-out infinite;
 }
 
 .run-orb[data-run="waiting"] {
@@ -299,6 +323,15 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   transition: color var(--motion-fast) ease;
+}
+
+/*
+ * Live numbers, in the dimmed signal step: in/out and context % are secondary
+ * text of a live turn, on `--surface`, where the step holds past 4.5:1. Idle,
+ * they are the card's measurements and stay dimmed grey.
+ */
+.run-card[data-run="working"] .run-tokens-value {
+  color: var(--signal-dim);
 }
 
 /* `unknown` dims, the same as the meter's. A number the provider did not report
@@ -760,6 +793,9 @@
   box-shadow: var(--shadow-2);
   /* Its own width, and it floats over the centre -- cast left. */
   --panel-cast: -18px;
+  /* The one arrival a pane gets, and only in the form that floats: the grid
+     track never animates, so a docked toggle reflows instantly instead. */
+  animation: pane-reveal var(--motion-slow) var(--ease-out) both;
 }
 
 /*

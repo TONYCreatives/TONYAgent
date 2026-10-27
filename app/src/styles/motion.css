@@ -130,3 +130,62 @@
   50%,
   100% { opacity: 0; }
 }
+
+/*
+ * The status orb, while a turn is running: one slow breath, and only one.
+ *
+ * 3.2s (`--motion-ambient`), shared with the desktop pet, because the orb in
+ * the window and the pet outside it are the same presence. A glow that swells
+ * and releases rather than a blink: blinking says "alert", breathing says
+ * "alive", and a lamp that blinked for the length of a turn would train the
+ * eye to look away from it. The resting rule keeps the signal fill, so under
+ * reduced motion the orb is a still lit dot -- the state without the breathing.
+ */
+@keyframes signal-breathe {
+  0%,
+  100% { box-shadow: 0 0 0 0 rgb(120 227 255 / 0); }
+  50% { box-shadow: 0 0 12px 2px var(--signal-glow); }
+}
+
+/*
+ * A tool step, arriving: the node fades in where the run's next line starts.
+ *
+ * 160ms, the same as every other arrival. The row itself already rises on the
+ * transcript's own rule; this is the mark inside it, kept to opacity so a step
+ * that arrives while the reader is looking at it does not travel.
+ */
+@keyframes node-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/*
+ * The run spine, growing down the gutter as the turn adds calls.
+ *
+ * 240ms from the top, because the line is a history that extends downward --
+ * it grows from where the run started, not from its middle. Runs once per
+ * mount; a turn that lengthened its spine on every token would shimmer for
+ * the whole run.
+ */
+@keyframes spine-grow {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+/*
+ * The context panel, arriving as an overlay: it casts left over the centre.
+ *
+ * 240ms, the slow step, because it travels a panel's width. The grid track
+ * never animates -- a docked pane toggles instantly -- so this is the one
+ * arrival a pane gets, and only in the form that floats.
+ */
+@keyframes pane-reveal {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}

@@ -73,6 +73,15 @@
  */
 :root[data-motion="reduced"] .tool-node[data-status="running"],
 :root[data-motion="reduced"] .stream-caret,
+/*
+ * Phase 6's own four, same kind: the orb keeps its signal fill, the arriving
+ * node keeps its place in the gutter, the spine keeps its line, and the panel
+ * keeps its overlay -- each loses only how it moves.
+ */
+:root[data-motion="reduced"] .run-orb[data-run="working"],
+:root[data-motion="reduced"] .tool-unit .tool-node:not([data-status="running"]),
+:root[data-motion="reduced"] .tools[data-spine="true"]::before,
+:root[data-motion="reduced"] .contextdock[data-docked="false"][data-state="open"] .context-panel,
 :root[data-motion="reduced"] .chatrow {
   animation: none;
 }
@@ -201,10 +210,16 @@
   /*
    * The spine's live node and the streaming caret, for the same reason as the
    * block above: the signal fill and the drawn bar are the information, and the
-   * pulse and the blink are only how it moves.
+   * pulse and the blink are only how it moves. Phase 6's four join them -- the
+   * orb, the arriving node, the growing spine and the revealing panel -- each
+   * keeping its state and losing only its movement.
    */
   :root:not([data-motion="full"]) .tool-node[data-status="running"],
   :root:not([data-motion="full"]) .stream-caret,
+  :root:not([data-motion="full"]) .run-orb[data-run="working"],
+  :root:not([data-motion="full"]) .tool-unit .tool-node:not([data-status="running"]),
+  :root:not([data-motion="full"]) .tools[data-spine="true"]::before,
+  :root:not([data-motion="full"]) .contextdock[data-docked="false"][data-state="open"] .context-panel,
   :root:not([data-motion="full"]) .chatrow {
     animation: none;
   }

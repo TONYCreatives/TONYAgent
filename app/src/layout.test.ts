@@ -564,7 +564,7 @@ describe("the palette is ours", () => {
     // place that has to know they are lengths at all.
     const px = (name: string) => parseFloat(tokenRaw(name)!);
     for (const [label, names] of [
-      ["type", ["text-2xs", "text-xs", "text-sm", "text-base", "text-md", "text-lg", "text-xl"]],
+      ["type", ["text-2xs", "text-xs", "text-sm", "text-base", "text-md", "text-lg", "text-xl", "text-2xl", "text-display"]],
       ["radius", ["radius-xs", "radius-sm", "radius-md", "radius-lg"]],
     ] as const) {
       const values = names.map((n) => px(n));
@@ -664,6 +664,36 @@ describe("the palette is ours", () => {
     );
   });
 
+  test("signal carries the live state, legibly, on every surface it lands on", () => {
+    // §5.1's table, asserted rather than quoted: `--signal` is small text on
+    // the pane (8px spine nodes) and on chips, so it holds the 4.5 floor
+    // everywhere it can land. Pin the values, not just the floor -- a drift
+    // of 0.1 is a different hue, and the table is the contract.
+    const signal = tokens("signal")!;
+    assert.equal(contrast(signal, tokens("bg")!).toFixed(2), "11.79");
+    assert.equal(contrast(signal, tokens("raised")!).toFixed(2), "8.56");
+    assert.equal(contrast(signal, tokens("chip")!).toFixed(2), "7.36");
+    // `--signal-dim` is secondary live text and graphics, on the two darker
+    // surfaces only. On a chip it is 3.97:1, under the small-text floor -- so
+    // the token's contract forbids small text there, and this test holds the
+    // pairing nobody may add: the only rules that set it as a colour are the
+    // pill's detail (on `--chrome`) and the run card's numbers (on
+    // `--surface`), each past 4.5:1 in its own ground.
+    const dim = tokens("signal-dim")!;
+    assert.equal(contrast(dim, tokens("bg")!).toFixed(2), "6.36");
+    assert.equal(contrast(dim, tokens("raised")!).toFixed(2), "4.62");
+    assert.equal(contrast(dim, tokens("chrome")!).toFixed(2), "5.53");
+    assert.equal(contrast(dim, tokens("surface")!).toFixed(2), "5.95");
+    assert.ok(contrast(dim, tokens("chip")!) < 4.5, "--signal-dim reads as text on a chip now");
+    const dimText = RULES.filter((rule) =>
+      rule.body.split(";").some((decl) => /^\s*color\s*:\s*var\(--signal-dim\)/.test(decl)),
+    ).map((rule) => rule.selectors.join(", "));
+    assert.deepEqual(
+      dimText.sort(),
+      ['.run-card[data-run="working"] .run-tokens-value', '.statuspill[data-run="working"] .statuspill-detail'],
+    );
+  });
+
   test("the only chroma left in the window is meaning", () => {
     // This used to assert that the accent and --ok were far apart on the wheel:
     // a blue accent and a green status dot were both "a colour", and a success
@@ -676,7 +706,7 @@ describe("the palette is ours", () => {
     // a colour reads as grey with a cast rather than as a signal, which is the
     // failure mode this palette would have if the status colours were faded
     // toward the neutrals later.
-    for (const name of ["ok", "danger", "warn", "traj-add", "traj-del"]) {
+    for (const name of ["ok", "danger", "warn", "signal", "signal-dim", "traj-add", "traj-del"]) {
       const carried = chroma(tokens(name)!);
       assert.ok(
         carried >= 24,
@@ -2667,8 +2697,13 @@ describe("the first-run panel", () => {
       "--text-xs and --text-sm are the same size",
     );
 
-    // The wordmark and the line keep the steps they already had.
-    assert.match(body(".empty h1"), /font-size:\s*var\(--text-lg\)/);
+    // The wordmark and the line keep their steps: the mark takes the display
+    // clamp (28 floor, 34 ceiling, viewport between), the line stays base.
+    assert.match(
+      body(".empty h1"),
+      /font-size:\s*clamp\(var\(--text-2xl\),\s*4vw,\s*var\(--text-display\)\)/,
+    );
+    assert.match(body(".empty h1"), /letter-spacing:\s*-0\.015em/);
     assert.match(body(".empty p"), /font-size:\s*var\(--text-base\)/);
   });
 

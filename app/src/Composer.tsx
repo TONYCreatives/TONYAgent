@@ -296,7 +296,15 @@ export function Composer({
   };
 
   return (
-    <div className="composer">
+    <div
+      className="composer"
+      /*
+       * The running state, as an attribute on the field's own box: the bloom
+       * while a turn runs is a property of the composer, not of the send
+       * button, so the stylesheet asks the composer rather than the row.
+       */
+      data-busy={busy}
+    >
       <div className="composer-inner">
         <textarea
           ref={inputRef}

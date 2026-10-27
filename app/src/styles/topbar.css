@@ -634,6 +634,17 @@
   font-family: var(--mono);
   font-size: var(--text-2xs);
   text-overflow: ellipsis;
+  transition: color var(--motion-fast) ease;
+}
+
+/*
+ * The live tool name, in the dimmed signal step: it is secondary text of a
+ * live turn, which is the one text job `--signal-dim` exists for. On `--chrome`
+ * it holds 5.5:1 -- graphics-and-dark-surfaces only, never small text on a
+ * chip, per the token's own contract.
+ */
+.statuspill[data-run="working"] .statuspill-detail {
+  color: var(--signal-dim);
 }
 
 /*

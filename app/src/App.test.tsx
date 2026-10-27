@@ -399,6 +399,7 @@ describe("the window boots against a core", () => {
     // drives, and the one whose landmarks must stay stable.
     assert.equal(app.getAttribute("data-nav"), "closed");
     assert.equal(app.getAttribute("data-context"), "closed");
+    assert.equal(app.getAttribute("data-run"), "idle");
     assert.ok(one(container, ".rail"), "the compact nav is missing");
     assert.ok(one(container, ".contextdock"), "the run pane is missing");
     assert.equal(

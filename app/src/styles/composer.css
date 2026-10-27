@@ -63,6 +63,24 @@
 }
 
 /*
+ * The field, while a turn is running: a signal bloom over the resting shadow.
+ *
+ * A focused-but-idle field stays white -- signal means "live", not "focused".
+ * The bloom is the one place a glow is allowed to be visible: 1px of signal
+ * for the edge, 48px of wash for the air around it, and the white border stays
+ * underneath so the field never stops saying where typing goes. `border-color`
+ * is what changes, so the base rule's own transition carries it; the shadow
+ * arrives with the state, the way the scrim's own paint does.
+ */
+.composer[data-busy="true"] .composer-inner {
+  border-color: var(--accent);
+  box-shadow:
+    var(--shadow-1),
+    0 0 0 1px var(--signal),
+    0 0 48px var(--signal-glow);
+}
+
+/*
  * The field says it is focused its own way, so the generic ring stays off it.
  *
  * **A text input always matches `:focus-visible`, even on a mouse click** -- that

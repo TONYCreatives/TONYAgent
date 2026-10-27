@@ -689,6 +689,14 @@
    * leaving should never be something to wait for.
    */
   --motion-slow: 240ms;
+  /*
+   * Ambient, and only for the one pulse that is allowed to loop: the working
+   * orb breathes on 3.2s, and so does the desktop pet, because they are the
+   * same presence in two places. Nothing in the UI *state* reads this token --
+   * arrivals and exits stay on the fast ladder above -- which is what keeps a
+   * breathing lamp from teaching every hover to breathe with it.
+   */
+  --motion-ambient: 3200ms;
   /* Decelerating: entering elements arrive quickly and settle. */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   /* Accelerating: leaving elements leave without dawdling. */
@@ -719,7 +727,7 @@
    * must still render rather than vanish.
    */
   /*
-   * Type, in seven steps, and every one of them has a rule that uses it.
+   * Type, in nine steps, and every one of them has a rule that uses it.
    *
    * There were fourteen sizes and they were not fourteen roles. Four of them
    * (8.5, 9, 9.5, 10px) are marks rather than reading: carets, badges, counts
@@ -739,6 +747,17 @@
   --text-md: 14px;
   --text-lg: 16px;
   --text-xl: 20px;
+  /*
+   * Display, and only for the two surfaces that are dashboards rather than
+   * reading: the launchpad's headline and the usage tiles' totals. 28 and 34
+   * are the only steps above the 20px the app otherwise tops out at, which is
+   * why they are separate names rather than continuations nobody asked for --
+   * a third display step would be a size looking for a surface. The launchpad
+   * takes them as a clamp against the viewport (see transcript.css), so a
+   * 560px window does not get a 34px headline over a 448px column.
+   */
+  --text-2xl: 28px;
+  --text-display: 34px;
 
   /*
    * Two faces, split by what the text *is* rather than by where it sits: prose
@@ -788,6 +807,14 @@
   --glass-panel: rgb(36 36 36 / 0.75);
   --glass-panel-strong: rgb(42 42 42 / 0.82);
   --glass-edge: rgb(255 255 255 / 0.1);
+  /*
+   * The launchpad's dot grid: 2% white, one token because the colour audit
+   * owns every raw colour in the cascade and this is a colour with no other
+   * use. Two percent so the field reads as space rather than texture -- above
+   * about 6% the dots compete with the suggestion cards for the eye, which is
+   * the ceiling the grain above is held to for the same reason.
+   */
+  --dot-grid: rgb(255 255 255 / 0.02);
   --glass-blur: 22px;
   --glass-saturate: 100%;
   /*
