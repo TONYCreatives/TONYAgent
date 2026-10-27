@@ -102,7 +102,7 @@ const FILES: Record<string, { content: string; language: string }> = {
       "        margin: 0;",
       "      }",
       "      .app[data-mode='code'] {",
-      "        grid-template-columns: var(--code-side-w) minmax(0, 1fr) !important;",
+      "        grid-template-columns: var(--dock-w) minmax(0, 1fr) var(--code-helper-w) !important;",
       "      }",
       "    </style>",
       "  </head>",

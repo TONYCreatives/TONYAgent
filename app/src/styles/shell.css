@@ -107,58 +107,93 @@
  * --- Code mode: the window becomes an editor ------------------------------
  *
  * The mode switch is not a pane swap. Agent mode is a conversation with a rail
- * beside it; Code mode is a project with an explorer beside it, and the two
- * want different *columns* -- which is the point of doing it here rather than
- * inside `.main`.
+ * beside it; Code mode is a project with an explorer beside it.
  *
- * The template is rewritten rather than the rail hidden, because column 1 is
- * `--rail-w` wide (64px) and a file tree in a 64px track is not a file tree.
- * Two tracks: the explorer, then everything else. `.main` keeps its explicit
- * `grid-column: 2`, which is what makes the swap safe -- the same reason the
- * rule above exists, and the failure it prevents (a viewer auto-placed into
- * the collapsed track and therefore invisible) is exactly what happens if
- * somebody "simplifies" this by deleting the rail instead.
+ * **Phase 5 unifies the two grids.** Code used to rewrite the template into two
+ * tracks -- 268px of explorer and everything else -- with the assistant in a
+ * flex row inside `.main`. It is now the same three-column shell Agent has: the
+ * explorer in the nav's column at `--dock-w`, the editor in the middle, the
+ * assistant in the context column at its own 400px. Three numbers, three
+ * columns, one grid, and the assistant is a column of the *window* rather than
+ * a row inside one of its panes.
  *
- * The rail and the conversation panel are not rendered at all in this mode
- * (see `App`): an overlay floating over an editor is a panel with nothing to
- * say, and a rail of chat actions beside a file tree is two sidebars.
+ * The one thing that did not converge is the *policy*. Agent's nav is a rail
+ * from 1100 down; Code's explorer is the mode's primary pane and holds its 288
+ * until 900. That difference is why the two sets of rules are written separately
+ * rather than sharing a `--nav-w`.
  */
 .app[data-mode="code"] {
-  grid-template-columns: var(--code-side-w) minmax(0, 1fr);
+  --explorer-w: var(--dock-w);
+  --helper-w: var(--code-helper-w);
+  grid-template-columns: var(--explorer-w) minmax(0, 1fr) var(--helper-w);
+}
+
+/* Put away, the assistant's track is its strip -- the same 48px the run panel
+   collapses to, at the same edge of the same window. */
+.app[data-mode="code"][data-helper="closed"] {
+  --helper-w: var(--context-w-collapsed);
 }
 
 /*
- * --- Trajectory: a page with the nav beside it -----------------------------
+ * The assistant gives way before the editor loses its reading width.
  *
- * Two tracks, not three. Trajectory has no run panel -- the log *is* the run --
- * so the 48px context strip is not reserved for a pane that is never rendered;
- * the page takes the space instead. The nav is the same dock Agent has, with the
- * same 1101 threshold, and is rendered by the same component: the trajectory is
- * a view of the conversation's traffic, so the conversations beside it are the
- * same list.
+ * 1247 is `--dock-w` + `--code-helper-w` + 560 - 1: at 1248 the editor is
+ * exactly 560 with both panels docked, and one pixel under that the assistant
+ * floats over the file instead of taking a column from it.
  *
- * It was full-window in Phase 1, deliberately, while the nav was being built.
- * This is the phase that gives it the dock; see `navMode` in `App`.
+ * A container query, not a window breakpoint: `#root` below is the query
+ * container, so this rule asks about the shell's own width rather than the
+ * viewport's, and the number derives from the editor's 560px floor plus the
+ * two docks beside it. A grid *track* is a property of the shell, so the query
+ * has to be answerable where the shell lives -- the editor's own
+ * `container-type` (see `code-viewer.css`) cannot restyle its sibling column,
+ * which is why the container is the shell's parent and the threshold carries
+ * the docks with it. No new `@media` step, so the window ladder stays six.
+ *
+ * Floated, it keeps its 400px, its own toggle, and its shadow -- a cast panel,
+ * like the conversation list over the transcript. No scrim: it is the file's
+ * companion, and dimming the file to read the question about it is the wrong way
+ * round.
  */
-.app[data-mode="trajectory"] {
-  grid-template-columns: var(--nav-w) minmax(0, 1fr);
+#root {
+  container-type: inline-size;
+}
+
+@container (max-width: 1247px) {
+  .app[data-mode="code"] {
+    grid-template-columns: var(--explorer-w) minmax(0, 1fr);
+  }
+
+  /* Scoped by mode for the same reason the 900 block is: the base rule is a
+     single class further down the file, and it names column 3. */
+  .app[data-mode="code"] .helper {
+    /* Out of the grid: with two tracks there is no third to be placed in, and an
+       absolutely positioned child that still named column 3 would ask the grid
+       for a track that is not there. */
+    grid-column: auto;
+    grid-row: auto;
+    position: absolute;
+    top: var(--topbar-h);
+    right: 0;
+    bottom: var(--statusbar-h);
+    width: var(--helper-w);
+    z-index: 3;
+    box-shadow: var(--shadow-2);
+  }
 }
 
 /*
- * At 900 and below neither compact form holds a column.
+ * The explorer gives way at 900, after the assistant already has.
  *
- * 900 is where the rail and the strip stop sitting in the reading column's air
- * and start squeezing it: at 901 the centre is 789 and the column still fits; at
- * 900 it would be 788 with less air than the column needs. So both are lifted
- * out of the grid and float over the full-width centre, and their 64 and 48px
- * land in the air beside the 760px column rather than in its width.
+ * At 901 the editor is 613 with the assistant floated and nothing else taking a
+ * column, so there is no width to win by shrinking the tree; at 900 there is.
+ * The explorer keeps its dock -- it is the mode's primary pane -- and becomes a
+ * floating 288 panel over the editor, with a 48px strip holding its toggle in
+ * the column it used to fill. That strip is the difference between "the tree can
+ * be put away" and "the tree is gone and there is no way to ask for it back".
  *
- * The rail is above `.main` (2) but below a scrim (3) and below the nav overlay
- * (4): the nav panel covers the rail, as it does today, and a run overlay dims
- * it until dismissed. The context pane stays at the panel's own layer.
- *
- * Scoped to Agent. Code's explorer is its primary pane and keeps its column; its
- * assistant collapses by a container query on the editor -- see Phase 5.
+ * The rail and the conversation panel are not rendered in this mode at all (see
+ * `App`): a rail of chat actions beside a file tree is two sidebars.
  */
 @media (max-width: 900px) {
   .app[data-mode="agent"] {
@@ -245,6 +280,74 @@
     z-index: 2;
     height: auto;
   }
+
+  .app[data-mode="code"] {
+    grid-template-columns: var(--context-w-collapsed) minmax(0, 1fr);
+  }
+
+  /*
+   * Scoped with `.app[data-mode="code"]`, and not because the rules need the
+   * mode: the base rules for these three live further down this file, and a
+   * single-class override loses to a single-class rule that comes after it. The
+   * mode in the selector is what makes the order here irrelevant, which is the
+   * same reason every other rule in this block names it.
+   */
+  .app[data-mode="code"] .code-explorer {
+    position: absolute;
+    top: var(--topbar-h);
+    left: 0;
+    bottom: var(--statusbar-h);
+    width: var(--dock-w);
+    z-index: 4;
+    box-shadow: var(--shadow-2);
+    animation: slide-in-left var(--motion-base) var(--ease-out) both;
+  }
+
+  .app[data-mode="code"] .code-explorer[data-state="closed"] {
+    display: none;
+  }
+
+  .app[data-mode="code"] .code-strip {
+    display: flex;
+  }
+
+  /* The strip is behind the panel while it is open: two toggles for one state is
+     one toggle too many. */
+  .app[data-mode="code"][data-explorer="open"] .code-strip {
+    display: none;
+  }
+
+  .app[data-mode="code"] .code-scrim {
+    display: block;
+    position: absolute;
+    /* Top bar to status bar, and the full width: the strip is behind the panel
+       by then, and a scrim that left 48px undimmed would be a bright seam down
+       the left edge of a dimmed window. */
+    inset: var(--topbar-h) 0 var(--statusbar-h) 0;
+    z-index: 3;
+    animation: scrim-in var(--motion-slow) var(--ease-out) both;
+  }
+
+  .app[data-mode="code"] .code-scrim[data-state="closed"] {
+    display: none;
+  }
+}
+
+/*
+ * --- Trajectory: a page with the nav beside it -----------------------------
+ *
+ * Two tracks, not three. Trajectory has no run panel -- the log *is* the run --
+ * so the 48px context strip is not reserved for a pane that is never rendered;
+ * the page takes the space instead. The nav is the same dock Agent has, with the
+ * same 1101 threshold, and is rendered by the same component: the trajectory is
+ * a view of the conversation's traffic, so the conversations beside it are the
+ * same list.
+ *
+ * It was full-window in Phase 1, deliberately, while the nav was being built.
+ * This is the phase that gives it the dock; see `navMode` in `App`.
+ */
+.app[data-mode="trajectory"] {
+  grid-template-columns: var(--nav-w) minmax(0, 1fr);
 }
 
 /*
@@ -381,56 +484,25 @@
  *
  * The file, and the conversation that is about it, side by side.
  *
- * A row inside `.main` rather than a third column of the window's grid. The
- * grid belongs to the shell -- the title bar, the status bar and the dialog
- * scrim all span it -- and a third column would have put the assistant *beside*
- * the status bar instead of above it, so the bar would have stopped at the
- * editor's edge and the panel would have run to the bottom of the window under
- * it. `.main` is already the column that owns the viewer, the status bar and
- * the overlays, so the split belongs inside it.
- */
-.code-split {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  /* The positioning context for the narrow-window rule at the foot of this
-     file, which floats the panel over the file rather than taking a column
-     from it. */
-  position: relative;
-}
-
-/*
- * The panel: a header, and the transcript and field below it.
+ * A column of the shell grid now, not a row inside `.main`. It was a flex row
+ * there for one reason -- with the panel in a column of its own the status bar
+ * stopped at the editor's edge -- and that reason is gone: the status bar spans
+ * the window since Phase 1. What is left is the position, and column 3 is where
+ * this window puts a panel beside the work.
  *
- * `flex: none` with a width of its own, so the *file* is what absorbs a wider
- * window -- the panel holds a column of text, which has a width it wants and no
- * use for more.
- *
- * There is no transition on this width, and the omission is the same one
- * `shell.css` states for the conversation list: animating a docked column
- * re-lays-out the code beside it on every frame, and a file reflowing under the
- * pointer reads as the editor being dragged rather than as a panel arriving. The
- * list can slide because it floats; this one cannot because it does not.
+ * The track sizes it, so there is no width here and no state-dependent width
+ * either: `--helper-w` is the token, `.app[data-helper="closed"]` is the 48px
+ * strip, and both are properties of the grid rather than of this box.
  */
 .helper {
   display: flex;
   flex-direction: column;
-  flex: none;
-  width: var(--code-helper-w);
+  grid-column: 3;
+  grid-row: 2;
+  min-width: 0;
   min-height: 0;
   border-left: 1px solid var(--border-soft);
   background: var(--surface);
-}
-
-/*
- * Put away: the strip the toggle sits in, and nothing else.
- *
- * `--rail-w`, which is the width this window already gives a panel that is not
- * showing -- 44px of target with air either side. The header stays (see `App`),
- * so the strip is never empty and the way back is never hidden.
- */
-.helper[data-state="closed"] {
-  width: var(--rail-w);
 }
 
 /* The panel's head, and it holds the same box as the explorer's over there. */
@@ -507,28 +579,68 @@
 }
 
 /*
- * A window too narrow for three columns: the explorer, the file and the panel.
+ * --- the explorer's strip, below 900 --------------------------------------
  *
- * The assistant gives way, and it is the right one to: the tree and the file are
- * what the mode is *for*, and the panel is the one of the three that can be put
- * away without losing anything. It does not disappear, though -- it floats over
- * the file, the way the conversation list floats over the transcript in Agent
- * mode, so a narrow window can still ask about what it is reading. Its own
- * width, cast to the left (`--panel-cast`, which exists for exactly this: a
- * right-edge panel), and above the viewer's own sticky rows.
+ * The 48px column the explorer collapses to when it floats. Written as the run
+ * panel's strip, because it is the same thing at the other edge: a vertical word
+ * and a target, saying what is behind it.
  *
- * 720 is the ladder's first step, and the number is not arbitrary here: it is
- * where the chrome starts giving up air, and 268 of explorer plus 400 of panel
- * plus a file with nothing left in it is the same statement in pixels. The
- * closed strip keeps the rule too -- it is 44px of a file rather than 400, but
- * a strip that vanished at 720 would take its own toggle with it.
+ * `display: none` by default: above 900 the tree is a column of its own and a
+ * strip beside it would be a toggle for something already on screen.
  */
-@media (max-width: 720px) {
-  .helper {
-    position: absolute;
-    inset: 0 0 0 auto;
-    z-index: 2;
-    --panel-cast: -18px;
-    box-shadow: var(--shadow-2);
-  }
+.code-strip {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  grid-column: 1;
+  grid-row: 2;
+  width: 100%;
+  min-height: 0;
+  padding: 14px 0;
+  border: 0;
+  border-right: 1px solid var(--border-soft);
+  background: var(--surface);
+  color: var(--fg-mute);
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+
+.code-strip:hover {
+  background: var(--hover);
+  color: var(--fg);
+}
+
+.code-strip-label {
+  writing-mode: vertical-rl;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/*
+ * The scrim for the floating explorer, and only for it: the assistant casts
+ * without one, because it is the file's companion rather than something the
+ * window stopped for. `display: none` above 900, where the tree is a column.
+ *
+ * Its paint lives here rather than in the media rule that shows it, for a reason
+ * worth writing down: a selector that names a `[data-]` attribute reads to
+ * `layout.test.ts`'s repaint audit as a *state*, and a colour declared there has
+ * to be a colour the same element transitions between. A scrim has no such
+ * transition -- it arrives with the panel -- so the colour is stated once, on
+ * the element, and the media rule only decides whether it is displayed.
+ */
+.code-scrim {
+  display: none;
+  border: 0;
+  padding: 0;
+  /* The conversation panel's scrim, exactly: one dimming surface in this
+     window, wherever it is used. */
+  background: rgba(8, 8, 8, 0.35);
+  backdrop-filter: blur(1.5px);
+  cursor: default;
 }

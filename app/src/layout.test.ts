@@ -431,10 +431,17 @@ describe("the app shell's rows", () => {
       narrow,
       /padding-right:\s*calc\(var\(--context-w-collapsed\)\s*-\s*var\(--column-edge\)\)/,
     );
-    // Scoped to Agent, explicitly: Code's explorer is its primary pane and
-    // keeps its own column, so the media block names the mode in every rule
-    // that moves a pane.
-    assert.doesNotMatch(narrow, /\.app\[data-mode="code"\]/);
+    // Scoped to Agent, explicitly: the Agent forms float over a full-width
+    // centre. Code is in this block too, and for the same reason at the same
+    // step -- its explorer floats from 900 down, after its assistant already
+    // has (see the 1247 rule) -- but its three rules are its own, because the
+    // explorer is a panel with a 48px strip here while Agent's nav is a rail.
+    assert.match(narrow, /\.app\[data-mode="code"\]\s*\{[^}]*grid-template-columns:\s*var\(--context-w-collapsed\)/);
+    assert.match(
+      narrow,
+      /\.app\[data-mode="code"\] \.code-explorer\s*\{[^}]*position:\s*absolute[^}]*width:\s*var\(--dock-w\)/,
+    );
+    assert.match(narrow, /\.app\[data-mode="code"\] \.code-strip\s*\{[^}]*display:\s*flex/);
   });
 
   test("the Files pane is a pane of the sidebar, not a surface of its own", () => {
@@ -1939,6 +1946,12 @@ describe("one ladder, and one inset, for the whole window", () => {
     // written as the first width that can hold the dock rather than the last
     // one that cannot. 1100 is therefore the default (the rail), and its
     // boundary is the 1101 minimum below.
+    // 1247 is the capacity threshold for Code's assistant, and it is a
+    // *container* query on `#root` rather than a compaction step: it is
+    // `--dock-w` + `--code-helper-w` + 560 - 1, the last width at which Code's
+    // editor still has its reading width with the explorer and the assistant
+    // both docked. It is written as a *maximum* container because what it
+    // decides is when the assistant stops docking. See `shell.css`.
     assert.deepEqual(
       [...widths].sort((a, b) => a - b),
       [420, 560, 720, 900],
@@ -1963,6 +1976,12 @@ describe("one ladder, and one inset, for the whole window", () => {
     // number that looked like a breakpoint and was not one.
     assert.match(STYLESHEET, /@container\s*\(max-width:\s*440px\)/);
     assert.doesNotMatch(STYLESHEET, /@media[^{]*max-width:\s*440px/);
+    // Code's assistant collapses the same way: 1247 is `--dock-w` (288) plus
+    // `--code-helper-w` (400) plus the editor's 560 floor minus one, asked of
+    // the `#root` container so the shell's own grid can answer it. A window
+    // breakpoint here would grow the ladder for one mode.
+    assert.match(STYLESHEET, /@container\s*\(max-width:\s*1247px\)/);
+    assert.doesNotMatch(STYLESHEET, /@media[^{]*max-width:\s*1247px/);
   });
 
   test("every panel puts its content on the same edge", () => {

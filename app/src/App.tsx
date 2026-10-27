@@ -530,6 +530,20 @@ export function App({
    * state it was left in last week is a preference nobody remembers setting.
    */
   const [helperOpen, setHelperOpen] = useState(true);
+  /**
+   * Whether Code's explorer is showing, where it is a panel rather than a column.
+   *
+   * Above 900 the tree *is* a column of the shell and this flag changes nothing
+   * -- a dock is not something you put away in this window unless you are out of
+   * room, and the 48px strip that carries the toggle does not exist there. At
+   * 900 and below it is a floating 288 panel over the editor, and this is the
+   * one thing that decides whether it is there.
+   *
+   * Open by default: arriving in Code at a narrow width and finding no tree is
+   * the worst first minute this mode can offer, and the overlay closes itself
+   * when a file is chosen (see `openFile`).
+   */
+  const [explorerOpen, setExplorerOpen] = useState(true);
   /** Guards a slow read from overwriting a file the user has moved on from. */
   const viewerPathRef = useRef("");
   /**
@@ -1154,6 +1168,10 @@ export function App({
       // Three because the nav block has room for three and a "recent files"
       // list long enough to scroll is a file tree with worse ordering.
       setRecentFiles((seen) => [path, ...seen.filter((p) => p !== path)].slice(0, 3));
+      // The tree puts itself away where it is a panel (below 900): it was the
+      // way to the file, and it now covers the file. Above 900 this changes an
+      // attribute nothing reads, because there the tree is a column.
+      setExplorerOpen(false);
       await loadFile(path);
     },
     [loadFile],
@@ -3010,6 +3028,13 @@ export function App({
       */
       data-nav={railExpanded ? "open" : "closed"}
       data-context={contextOpen ? "open" : "closed"}
+      /*
+        Code mode's two panels, as attributes for the same reason: `data-helper`
+        sizes column 3 (`--helper-w` is 400 or 48) and `data-explorer` is what
+        hides the strip while its panel is covering the column it sits in.
+      */
+      data-helper={helperOpen ? "open" : "closed"}
+      data-explorer={explorerOpen ? "open" : "closed"}
     >
       {/*
         The title bar spans the window, not the transcript column.
@@ -3223,15 +3248,48 @@ export function App({
       )}
 
       {/*
-        Code mode's left column: the current project, as a tree.
+        Code mode's left edge: the strip that holds the tree's toggle, the tree
+        itself, and the scrim the floating form is dismissed by.
 
-        The same `FilesPane` the sidebar shows, in a column of its own rather
-        than in an overlay -- which is the whole difference the mode makes. It
-        is fed by the same tree state, so the two places a file can be opened
-        from cannot disagree about what the project contains.
+        All three are rendered at every width and it is the stylesheet that
+        decides which form is live -- the strip is `display: none` above 900 and
+        so is the scrim, and the tree is a column there and a panel below it.
+        That is deliberate rather than lazy: the tree's *contents* are App state
+        (entries, changes, filter), so putting the panel away cannot lose any of
+        it, and a JS branch on the window's width would be a second copy of a
+        breakpoint that already exists in CSS.
       */}
       {codeMode && (
-        <aside className="code-explorer" aria-label="Project files">
+        <>
+          <button
+            type="button"
+            className="code-strip"
+            onClick={() => setExplorerOpen((open) => !open)}
+            aria-expanded={explorerOpen}
+            title={explorerOpen ? "Hide the file tree" : "Show the file tree"}
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.7"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            </svg>
+            <span className="code-strip-label">Files</span>
+          </button>
+
+          <aside
+            className="code-explorer"
+            data-state={explorerOpen ? "open" : "closed"}
+            aria-label="Project files"
+            aria-hidden={explorerOpen ? undefined : true}
+          >
           {/*
             Two rows, and each one is a row.
 
@@ -3316,6 +3374,14 @@ export function App({
             hasProject={project !== ""}
           />
         </aside>
+
+          <div
+            className="code-scrim"
+            data-state={explorerOpen ? "open" : "closed"}
+            onClick={() => setExplorerOpen(false)}
+            aria-hidden="true"
+          />
+        </>
       )}
 
       <div className="main">
@@ -3408,133 +3474,60 @@ export function App({
           <TrajectoryView events={trajectory} />
         ) : codeMode ? (
           /*
-            The code half: the file, and the assistant beside it.
+            The code half: the file, with the assistant in the column beside it.
 
-            **The assistant panel is the change here.** Code mode used to end at
-            the file -- the composer went with the transcript, because a text
-            field under a file offers a message for a conversation that is not
-            on screen. That was right about the *window* and wrong about the
-            work: reading a file is exactly when the question about it arrives,
-            and the only way to ask was to leave the file you were asking about.
-            So the conversation is docked on the right instead -- the same
-            transcript, the same composer, the file still open beside them.
-
-            Everything inside `.code-split` is that pair. The shell around it
-            -- the title bar, the status bar, the dialogs and the log strip --
-            belongs to `.main`, which is why this is a row *inside* the column
-            rather than a third grid column of the window: with the panel in
-            its own column the status bar stopped at the editor's edge, and a
-            strip that ends halfway across a window reads as a defect rather
-            than as a decision.
+            **The assistant is a column of the window now.** It used to be a flex
+            row inside this pane, which was the right shape while the status bar
+            belonged to `.main` -- with the panel in a column of its own the bar
+            stopped at the editor's edge. The bar spans the window since Phase 1,
+            so the reason is gone and the panel is where this window puts a panel
+            beside the work: column 3, rendered below `.main` rather than inside
+            it.
 
             With no file open this is a signpost rather than a blank pane: the
             project is there, the tree is one click away, and an empty surface
             that explains nothing is the dead end this replaces.
           */
-          <div className="code-split">
-            {viewerPath === "" ? (
-              <div className="code-empty">
-                <p>
-                  {project === ""
-                    ? "Choose a project folder to browse its files."
-                    : "Pick a file from the explorer to read it here."}
-                </p>
-                {/*
-                  No "open the tree" button any more: the tree *is* the column
-                  beside this pane, so a button that revealed it would be a
-                  control for something already on screen. What is left is the
-                  one thing the mode cannot do on its own -- choose a folder.
-                */}
-                {project === "" && (
-                  <button type="button" className="btn" onClick={() => void chooseFolder()}>
-                    Choose folder...
-                  </button>
-                )}
-              </div>
-            ) : (
-              <CodeViewer
-                path={viewerPath}
-                file={viewerFile}
-                loading={viewerLoading}
-                error={viewerError}
-                readOnly={readOnly}
-                locked={state.busy}
-                onToggleReadOnly={(next) => setReadOnly(next)}
-                saving={viewerSaving}
-                onSave={(content) => void saveFile(content)}
-                onDirtyChange={(dirty) => {
-                  viewerDirtyRef.current = dirty;
-                }}
-                onDiscard={discardFile}
-                palette={palette}
-                onPalette={setPalette}
-                onClose={closeViewer}
-                onOpenExternal={(path) => void openExternal(path)}
-              />
-            )}
-
-            {/*
-              The assistant: a header with the one control that puts it away,
-              and the conversation below it.
-
-              Docked rather than floating, and put away by a click rather than
-              by a breakpoint: a panel that vanishes when the window narrows is
-              a panel whose state the user did not choose, and the toggle is how
-              this window has always answered "I need the width" -- see the
-              rail. A narrow window keeps it too, over the file rather than
-              beside it; see the media query in `shell.css`.
-
-              The header stays when the panel is away, and that is the whole
-              reason the toggle lives in it rather than in the file header: the
-              control that put the panel away is inside the panel, so a closed
-              state that unmounted everything would hide its own way back. What
-              goes away is the *body*, which is also why reopening starts at the
-              end of the conversation -- `MessageList` pins to the bottom when it
-              mounts, and a scroller left in a hidden subtree would have come
-              back where it was, or at the top.
-            */}
-            <aside
-              className="helper"
-              data-state={helperOpen ? "open" : "closed"}
-              aria-label="Assistant"
-            >
-              <div className="helper-head">
-                <span className="helper-title">Assistant</span>
-                <button
-                  type="button"
-                  className="helper-toggle"
-                  onClick={() => setHelperOpen((open) => !open)}
-                  title={helperOpen ? "Hide the assistant" : "Show the assistant"}
-                  aria-label={helperOpen ? "Hide the assistant" : "Show the assistant"}
-                  aria-expanded={helperOpen}
-                >
-                  {/*
-                    A frame with a divider: on the right when the panel is
-                    shown, pushed against the edge when it is away. The rail's
-                    toggle is the mirror of this and not the same drawing,
-                    because the two name opposite edges -- and `currentColor`
-                    with `strokeWidth` is the rail's own frame, so the two read
-                    as one family.
-                  */}
-                  <svg
-                    width="17"
-                    height="17"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.7"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d={HELPER_GLYPH[helperOpen ? "open" : "closed"]} />
-                  </svg>
+          viewerPath === "" ? (
+            <div className="code-empty">
+              <p>
+                {project === ""
+                  ? "Choose a project folder to browse its files."
+                  : "Pick a file from the explorer to read it here."}
+              </p>
+              {/*
+                No "open the tree" button any more: the tree *is* the column
+                beside this pane, so a button that revealed it would be a
+                control for something already on screen. What is left is the
+                one thing the mode cannot do on its own -- choose a folder.
+              */}
+              {project === "" && (
+                <button type="button" className="btn" onClick={() => void chooseFolder()}>
+                  Choose folder...
                 </button>
-              </div>
-
-              {helperOpen && <div className="helper-body">{conversationView}</div>}
-            </aside>
-          </div>
+              )}
+            </div>
+          ) : (
+            <CodeViewer
+              path={viewerPath}
+              file={viewerFile}
+              loading={viewerLoading}
+              error={viewerError}
+              readOnly={readOnly}
+              locked={state.busy}
+              onToggleReadOnly={(next) => setReadOnly(next)}
+              saving={viewerSaving}
+              onSave={(content) => void saveFile(content)}
+              onDirtyChange={(dirty) => {
+                viewerDirtyRef.current = dirty;
+              }}
+              onDiscard={discardFile}
+              palette={palette}
+              onPalette={setPalette}
+              onClose={closeViewer}
+              onOpenExternal={(path) => void openExternal(path)}
+            />
+          )
         ) : usageTab === "active" ? (
           <Dashboard
             connected={connected}
@@ -3577,6 +3570,62 @@ export function App({
         )}
 
       </div>
+
+      {/*
+        Code mode's assistant, in the context column.
+
+        After `.main` in the DOM, which is also where it is on screen -- the tab
+        order is nav -> centre -> assistant -> strip, the same order the Agent
+        window keeps for its run panel. The panel is the conversation, so it is
+        rendered here rather than passed into `.main`: column 3 is the window's
+        "beside the work" column, whichever mode is in front.
+
+        The header stays when the panel is away, which is the whole reason the
+        toggle lives in it rather than in the file header: the control that put
+        the panel away is inside the panel, so a closed state that unmounted
+        everything would hide its own way back. What goes away is the *body*,
+        which is also why reopening starts at the end of the conversation --
+        `MessageList` pins to the bottom when it mounts, and a scroller left in a
+        hidden subtree would have come back where it was, or at the top.
+      */}
+      {codeMode && (
+        <aside className="helper" data-state={helperOpen ? "open" : "closed"} aria-label="Assistant">
+          <div className="helper-head">
+            <span className="helper-title">Assistant</span>
+            <button
+              type="button"
+              className="helper-toggle"
+              onClick={() => setHelperOpen((open) => !open)}
+              title={helperOpen ? "Hide the assistant" : "Show the assistant"}
+              aria-label={helperOpen ? "Hide the assistant" : "Show the assistant"}
+              aria-expanded={helperOpen}
+            >
+              {/*
+                A frame with a divider: on the right when the panel is shown,
+                pushed against the edge when it is away. The rail's toggle is the
+                mirror of this and not the same drawing, because the two name
+                opposite edges -- and `currentColor` with `strokeWidth` is the
+                rail's own frame, so the two read as one family.
+              */}
+              <svg
+                width="17"
+                height="17"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d={HELPER_GLYPH[helperOpen ? "open" : "closed"]} />
+              </svg>
+            </button>
+          </div>
+
+          {helperOpen && <div className="helper-body">{conversationView}</div>}
+        </aside>
+      )}
 
       {/*
         The context pane, and its scrim.

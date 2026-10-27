@@ -515,17 +515,14 @@
    */
   --context-w-collapsed: 48px;
   /*
-   * The project explorer's width, in Code mode.
-   *
-   * Its own number rather than `--list-w`, because the two columns hold
-   * different things and are sized by different evidence: the conversation list
-   * is sized so a chat title does not truncate a character early, and this one
-   * so a *path* does not -- `src/tonyagent/tools/browser_tools.py` at 13px is
-   * the longest thing this project has to show, and the indentation guides eat
-   * an indent step each level. Narrower than the chat list on purpose: code
-   * needs the width more than a list of titles does.
+   * The project explorer used to have a number of its own here (268px), sized by
+   * the longest path this project has to show. It is `--dock-w` now, because
+   * Phase 5 moves the explorer into the nav's column: one dock width for the
+   * whole window, and 288 rather than 268 means no path that fitted yesterday
+   * starts truncating today. The reading is unchanged -- the widest thing the
+   * column holds is still `src/tonyagent/tools/browser_tools.py` plus its guide
+   * steps, and 288 holds it with more room, not less.
    */
-  --code-side-w: 268px;
   /*
    * The settings page's section column.
    *
@@ -552,10 +549,12 @@
    * Its own number rather than a share of the window: when the window grows it
    * is the *file* beside the panel that should get the width.
    *
-   * Put away it is `--rail-w`, and that is not a coincidence: a panel that is
-   * not showing is a strip holding its own 44px toggle with air either side, and
-   * this window already has one of those. It needs no token of its own for the
-   * same reason it needs no second number -- see `.helper` in `shell.css`.
+   * Put away it is `--context-w-collapsed`, the same 48px the run panel's strip
+   * uses -- and that is the point of Phase 5 rather than a coincidence: the
+   * assistant and the context panel are the same column in two modes, so their
+   * compact forms are one number. It used to be `--rail-w` here, which made
+   * Code's strip a 64px rail while Agent's was a 48px one, four pixels apart at
+   * the same edge of the same window.
    */
   --code-helper-w: 400px;
   /* Sized to what it holds: one row of 13px text, the model chip and the
