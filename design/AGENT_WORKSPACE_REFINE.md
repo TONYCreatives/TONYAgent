@@ -1,10 +1,12 @@
 # TONYAgent — Agent Workspace Refine
 
-**Status:** Phases 0–3 landed (2026-10-23 to 2026-10-25) — see
-[PHASE_0_1_HANDOFF.md](PHASE_0_1_HANDOFF.md), [PHASE_2_HANDOFF.md](PHASE_2_HANDOFF.md)
-and [PHASE_3_HANDOFF.md](PHASE_3_HANDOFF.md) for what shipped, the measured gates
-and the deliberate deviations. Phases 4–7 are still a proposal. **Phase 8 (the
-icon system, §5.6) was added 2026-10-26** and runs after Phase 5 and before
+**Status:** Phases 0–8 landed (October 2026) — see
+[PHASE_0_1_HANDOFF.md](PHASE_0_1_HANDOFF.md), [PHASE_2_HANDOFF.md](PHASE_2_HANDOFF.md),
+[PHASE_3_HANDOFF.md](PHASE_3_HANDOFF.md), [PHASE_4_HANDOFF.md](PHASE_4_HANDOFF.md),
+[PHASE_5_HANDOFF.md](PHASE_5_HANDOFF.md), [PHASE_6_HANDOFF.md](PHASE_6_HANDOFF.md)
+and [PHASE_8_HANDOFF.md](PHASE_8_HANDOFF.md) for what shipped, the measured gates
+and the deliberate deviations. The plan below is the record of what was built.
+**Phase 8 (the icon system, §5.6) was added 2026-10-26** and ran after Phase 5 and before
 Phase 7, because screenshots of glyphs that are about to be redrawn are wasted.
 **Date:** 2026-10-22
 **Scope:** the desktop window (`app/` + `src/tonyagent/window/`), not the core protocol.

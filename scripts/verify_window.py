@@ -212,8 +212,9 @@ def probe(window: webview.Window, core: CoreProcess, bridge: Bridge) -> None:
     ))
 
     # The settings gear in both places, as the page has it. `fill`/`stroke` is
-    # the whole distinction: it is the one glyph here that is filled rather than
-    # stroked, because at 17px an outline gear reads as a sun.
+    # the whole distinction: since Phase 8 it is stroked in the registry's
+    # frame like every other glyph (one cog outline, hub as second subpath),
+    # never below 16px where the teeth would read as a sun.
     window.evaluate_js("document.querySelector('.rail-toggle')?.click()")
     time.sleep(0.8)
     check("the settings gear", lambda: window.evaluate_js(

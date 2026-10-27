@@ -1,15 +1,21 @@
 # NEXT_SESSION.md — TONYAgent Handoff
 
 **Project:** TONYAgent — local-first desktop AI agent
-**Last updated:** 2026-10-22, after **the AirLLM / chat-only pass and the
+**Last updated:** 2026-10-27, after **the agent-workspace refine, Phases 4–8**
+— the transcript draws a run (tool rows, air-gutter spine, inline approval),
+Code mode is the same three-column shell (container-query assistant collapse),
+the interface glyphs come from one registry at one drawn weight, and the
+finish is in (signal, display type, ambient motion, pet as the orb's presence).
+See "2026-10-27: workspace refine complete" below.
+**Current state:** **41 tools, 4 providers** (`airllm`, `opencode-go`,
+`opencode-zen`, `openrouter`), version **0.4.1**. Re-measured 2026-10-27:
+**Python 1690 passed / 24 skipped / 1 env-fail** (Docker daemon, pre-existing),
+**TypeScript 1215 passed** (app suite, incl. 97 icon + signal assertions).
+**Was:** 2026-10-22, after **the AirLLM / chat-only pass and the
 workspace-refine plan** — the local provider is registered and gated to Chat
 mode, the page-API gate matches the bridge again, and a reviewable plan for the
 next UI pass lives at `design/AGENT_WORKSPACE_REFINE.md`. See "2026-10-22:
 AirLLM, chat-only, and the refine plan" below.
-**Current state:** **41 tools, 4 providers** (`airllm`, `opencode-go`,
-`opencode-zen`, `openrouter`), version **0.4.1**. HEAD is `a049019`; the working
-tree is clean. Re-measured 2026-10-22: **Python 1685 passed / 24 skipped**
-(`-m "not docker"`), **TypeScript 996 passed** (160 suites).
 **Was:** 2026-10-13, after **the documentation-and-layout pass** -- the README and
 PROJECT_SUMMARY brought back in line with the pywebview app that actually ships, and the
 layout's six breakpoints and five panel insets reduced to one ladder and two tokens.
@@ -353,6 +359,67 @@ Ten phases of work landed since the MSVC blocker was cleared:
 These phases were written against the Tkinter UI, which is no longer in the source:
 the shell is `tonyagent.window` (pywebview) and the Tkinter modules are gone. See
 sections 1.3-1.6 and 1.13-1.17 for what each phase changed and why.
+
+---
+
+## 2026-10-27: workspace refine complete (Phases 4–8)
+
+**What landed, in three commits.**
+
+- `d374f9e` — **Phase 5: Code mode unification.** The explorer into the nav
+  dock at `--dock-w` (268 deleted), the assistant into the context column at
+  400px, `code-split` gone — the shell owns all three tracks in both modes.
+  The assistant floats at a `@container (max-width: 1247px)` query on `#root`
+  (288 + 400 + 560 − 1), not a seventh window breakpoint: a grid track is a
+  property of the shell, so the editor's own container cannot restyle it, and
+  the threshold carries the docks with it. The explorer holds its dock to 901.
+  Measured: 288+712+400 at 1400, 288+812 floated at 1100, 48+852 floated at
+  900; editor ≥560 whenever docked.
+- `9b0bd9e` — **Phase 8: icon system.** `app/src/icons.tsx` with 23 names at
+  12/14/16/20 and one drawn weight (1.5px via 3.0/2.57/2.25/1.8), `icons.test.ts`
+  with 97 assertions (frame, weight ±0.1 from the DOM, `<svg>` in exactly four
+  files, no duplicated path data, no size off the ladder). The gear is stroked
+  (same one-path cog, hub as second subpath, never below 16px); stop and menu
+  stay solid with written reasons; the rail's stop joins the composer's filled
+  mark. Weight chosen from `design-preview/icons-sheet.png` (regenerable via
+  `scripts/gen_icons_sheet.py`); manual in `design/ICONS.md`; `Gear.tsx`,
+  `FolderIcon`, `EyeIcon`, `TrashIcon`, `DropIcon` deleted. 1214 app tests
+  green, `layout.test.ts` untouched.
+- `8e9b800` — **Phase 6: polish.** Signal spent everywhere it was seeded for:
+  breathing orb (`signal-breathe`, 3.2s `--motion-ambient` shared with the
+  pet), working edges on both docks via shell `data-run`, `signal-dim` for
+  secondary live text with the chip pairing forbidden by test, composer bloom
+  (1px + 48px) while running, launchpad dot grid (`--dot-grid`) + display
+  headline (28–34 clamp), usage totals at `--text-2xl`, pet as the orb's
+  presence (signal dot, ambient rhythm). Motion table completed with `node-in`,
+  `spine-grow`, `pane-reveal` — never a grid track; all four cancelled under
+  reduced motion. Contrast table pinned: 11.79/8.56/7.36 and
+  6.36/4.62/5.95/5.53.
+
+**Phase 7 (this pass): docs and verification.** README feature notes, shortcut
+table (four real bindings; the five imaginary ones deleted), Screenshots
+section, `design-preview/baseline/` re-captured at five widths over a replayed
+turn, plan status header current, `verify_window.py` gear comment updated to
+the stroked form. Gates: typecheck clean, 1215 app tests green, Python 1690
+passed / 24 skipped / 1 Docker-daemon env failure, reduced-motion audit clean,
+working state read from the live build (orb signal-breathe 3.2s, edge + bloom
+in signal, still dot under reduce), headline 34px at 1400.
+
+**Two things the next session should know.**
+
+- The live-turn gate ran against the loopback provider (`airllm`,
+  `deepseek-v4.1-flash`, bound, Chat mode): the configured OpenRouter identity
+  has no key in this context's keyring (`x:` and `custom:` entries exist;
+  neither is bound to a usable provider), so a hosted turn would need the user
+  to add a key in Settings first. `scripts/live_turn_check.py` is the harness;
+  the measured turn replied `pinecone` to a one-word prompt with
+  in=429/out=3/reasoning=0. (The gateway is flaky with these synthetic ids —
+  two runs returned empty content with no usage; the harness reads the
+  session record, not the bus, and a re-run lands.)
+- `verify_window.py` opens a real window with the core up (~1 min, watchdog
+  closes it): fully green, including the model-menu placements, the stroked
+  gear report, and the 15-request core round trip. Headless geometry at five
+  widths is covered by `capture_window.py --measure` instead.
 
 ---
 

@@ -43,13 +43,12 @@ so keeping them would have meant a second catalogue implementation returning
 - Built with **React** in a native window: the interface is HTML and CSS, rendered by the system webview with no browser around it (`pywebview`, in `src/tonyagent/window/`)
 - **Dark theme** with shared design tokens for colour, spacing, typography, borders and motion
 - Real-time streaming chat with token-by-token display
-- Tool call visualization and confirmation dialogs
-- Responsive layout with collapsible sidebar
+- Tool calls draw as a run, not a log: one line per call with a status node in the gutter, a spine joining the calls of a turn, and a permission card above the composer (the modal stays for destructive confirmation, with Enter/Escape parity)
+- Three-pane agent workspace: persistent navigation on the left (chats, project, skills), the conversation in the centre, the run panel on the right (status, plan, activity, files touched). The panes dock at wide widths and collapse to a rail and a strip, then to overlays, as the window narrows
 - **Code viewer**: browse the project tree and open any file — source with syntax highlighting, images, Markdown rendered or as source, CSV/TSV as a grid. Three colour palettes (VSCode's Dark+, Light+ and Monokai). Read-only by default with a per-file toggle; **locked while a turn is running**, so a file cannot be typed into while the agent is writing it. When you do edit and save, the change is written atomically and the next message tells the agent which file and which lines changed, so its picture of your code is never stale
-- **Agent / Code switch** in the top bar. Code mode is the whole window rather than a pane: the chat rail and tab strip are replaced by a persistent **project explorer** on the left and the editor filling the rest. The same conversation and composer move into a collapsible **Assistant panel** on the right, so leaving the transcript for the project does not mean losing either
-- **Two tracks:** a conversation is either a **Chat** (plain conversation) or a **Build** (the working modes). The composer draws only the open track's modes, and crossing tracks mints a new conversation in the other track rather than converting the one you are in, so nothing is cleared and no chat changes what it was written as.
-- **Composer modes:** the composer offers the core's Chat mode first for plain conversation. Chat has no project, browser, shell, or mutation tools: nothing is read, run, or changed. Build, Plan, Mission, and Skills remain available from the same pills.
-- **Trajectory and Usage views:** the title bar opens a full **Trajectory** view of the turn's events (the debugging view behind the transcript) and a **Usage** dashboard for requests, tokens, reasoning and spend over a chosen window. Settings is a full-window page with its own section nav, not a dialog.
+- **Agent / Code workspaces** from the switch in the navigation header. Code mode is the same three-column shell: the project explorer moves into the nav's column, the editor takes the centre, and the same conversation and composer move into the **Assistant panel** in the context column, so leaving the transcript for the project does not mean losing either. The assistant floats over the file before the editor loses its reading width; session tabs stay in Agent
+- **Two tracks:** a conversation is either a **Chat** (plain conversation) or a **Build** (the working modes), switched in the title bar. The composer offers one mode chip with a popover (Chat / Build / Plan / Mission / Skills) for the open track, and crossing tracks mints a new conversation in the other track rather than converting the one you are in, so nothing is cleared and no chat changes what it was written as.
+- **Trajectory and Usage:** the run card opens a full **Trajectory** view of the turn's events (the debugging view behind the transcript). **Usage** is a tab of Agent with request, token, reasoning and spend figures over a chosen window — the rail opens it beside the chat, and its close returns to the conversation. Settings is a full-window page with its own section nav, not a dialog.
 - **Desktop pet**: a small always-on-top **circle** that says what the turn is doing right now — "Thinking", "Running read_file", "Needs your approval" — so a long turn can run while you are in another window. It is cut to a circle with a window region *and* has its system shadow turned off: the region takes the corners away, and DWM would otherwise paint the drop shadow to the window's rectangle and fill those corners back in with a dark halo. The corners are really gone — the desktop shows through, and a click there goes to whatever is behind instead of to the pet. The character is the app's own mark, and it *behaves*: it blinks, it works at a keyboard while the agent works, it hops when it wants you, and it falls asleep if nothing has happened for a while. Drag it anywhere by its artwork — the OS's own move loop, so it snaps like a normal window — and it comes back where you left it. It never takes focus (asking for attention must not steal the keyboard) and clicking it brings the app back. It is off until you turn it on from the rail
 - **Account view**: the usage panel counts what *this app* sent, which is not your provider's real total. One button opens your provider's own dashboard — activity, credits, API keys — in a browser window the app owns, with a persistent sign-in profile. It is a closed set of views, and the agent has no tool that can reach it
 
@@ -104,6 +103,15 @@ Node.js and the browser tools need Playwright -- when the distro has neither,
 What the WSL backend does **not** have is per-container memory/CPU limits;
 that is what Docker's cgroups provide. If you run both, Docker remains the
 backend to prefer.
+
+---
+
+## Screenshots
+
+The agent workspace at 1400px (both panes docked) and at 900px (rail and strip, expanded forms as overlays) — captures from the built app in Chromium over a replayed turn. The full set at five widths lives in `design-preview/baseline/` (see `design-preview/README.md` for how they are taken), and the icon sheet in `design-preview/icons-sheet.png`.
+
+![Agent workspace at 1400px](design-preview/baseline/1400x900.png)
+![Agent workspace at 900px](design-preview/baseline/900x700.png)
 
 ---
 
@@ -329,30 +337,27 @@ Keys are **never written to config files**. Add and manage them in Settings; val
 
 ### Tool Confirmation Dialog
 
-When the AI wants to execute a potentially destructive action (file deletion, shell command), you'll see a confirmation dialog:
+When the AI wants to execute a potentially destructive action (file deletion, shell command), you'll see a permission card above the composer:
 
+```text
+NEEDS PERMISSION · execute_command
+rm -rf dist/ — working dir /project
+
+[Allow]  [Deny]
 ```
-┌─────────────────────────────────────────┐
-│  Confirm Tool Execution                 │
-├─────────────────────────────────────────┤
-│  Tool: execute_command                  │
-│  Command: rm -rf dist/                  │
-│  Working Dir: /project                  │
-│                                         │
-│  [Allow]  [Allow Always]  [Deny]        │
-└─────────────────────────────────────────┘
-```
+
+Enter allows and Escape denies. Destructive confirmation keeps the modal dialog as well, for the one prompt where a misclick has consequences.
 
 ### Keyboard Shortcuts
 
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+N` | New chat |
-| `Ctrl+O` | Open folder |
-| `Ctrl+,` | Settings |
-| `Ctrl+Shift+P` | Command palette |
-| `Esc` | Stop generation |
-| `Ctrl+Enter` | Send message |
+Only these exist — a table of keys that do nothing would be worse than no table:
+
+| Keys | Action |
+|------|--------|
+| `Enter` | Send message |
+| `Shift+Enter` | New line in the composer |
+| `Escape` | Close sidebar / leave Settings / deny the permission card (`Enter` allows it) |
+| `Ctrl+S` / `Cmd+S` | Save the open file in Code mode |
 
 ---
 
