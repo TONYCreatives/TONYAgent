@@ -1,30 +1,32 @@
-# Workspace refine — phase status audit, 26 October 2026
+# Workspace refine — phase status, 27 October 2026
 
-Where `design/AGENT_WORKSPACE_REFINE.md` actually stands in the tree, checked
-against the code rather than against the handoffs. Written because Phases 0–3
-were landed by a previous pass that stopped without committing, so "done" needed
-re-establishing from evidence.
+Where `design/AGENT_WORKSPACE_REFINE.md` stands in the tree, checked
+against the code rather than against the handoffs. Written 26 October because
+Phases 0–3 were landed by a previous pass that stopped without committing, so
+"done" needed re-establishing from evidence; updated 27 October when Phases
+4–8 landed in `d374f9e`, `9b0bd9e`, `8e9b800` and `1f27eb1`.
 
 ## Headline
 
-**Phases 0–3 are in the tree and committed. Phases 4–7 are not started.**
-They were landed by a previous pass that stopped without committing; they are now
-in `0e58172`, with this audit and the GUI review in `d14df30`. The three holes
-below — per-turn tokens, the nav's project and skills blocks, and Phase 0's
-baselines — are still open, and closing them is the first job of the next pass
-(see `design/NEXT_SESSION_PROMPT.md`).
+**Phases 0–8 are in the tree and committed.** The three holes the 26 October
+audit named are closed: per-turn tokens ride `turn.usage` (Run card renders
+in/out, strip shows the turn total, `unknown` where the provider reported
+nothing); the nav has its project block (folder, `Change…`, up to three recent
+files) and its skills block (count from `list_skills`, `Manage` into
+Settings); Phase 0's baselines were captured and re-captured at the end of
+the pass. Details per phase live in the handoffs, not here.
 
 | Phase | Status | Evidence |
 |---|---|---|
-| 0 — contract, data, baselines | **done except baselines** | tokens, wireframe, `plan.get` types, turn clock, `activity.ts` |
-| 1 — shell, status strip, docks | **done** | grid measured today at 1400 / 1100 / 760 |
-| 2 — nav, top bar, launchpad, mode chip | **done, two blocks short** | `ViewSwitch`, `StatusPill`, `Launchpad`, `ModeChip` |
-| 3 — context panel | **done except per-turn tokens** | `ContextPanel`, `RunCard`, `PlanCard`, `ActivityFeed`, `FilesTouched` |
-| 4 — run spine, tool rows, inline approval | **not started** | no `run-spine`, no gutter, no inline approval, no caret |
-| 5 — Code mode unification | **not started** | still `--code-side-w: 268`, `--code-helper-w: 400`, no `AssistantPanel.tsx` |
-| 6 — signal, material, display type, motion | **not started** | no `--signal` token; palette still achromatic |
-| 7 — docs, screenshots, handoff | **not started** | `NEXT_SESSION.md` last written 22 Oct; `design-preview/` still 4 Oct |
-| 8 — icon system (added 26 Oct) | **not started** | 31 inline `<svg>` across 13 files, 8 sizes, 4 stroke weights, 5 duplicated paths, no registry |
+| 0 — contract, data, baselines | done | tokens, wireframe, `plan.get` types, turn clock, `activity.ts`, `design-preview/baseline/` at five widths |
+| 1 — shell, status strip, docks | done | grid measured at 1400 / 1101 / 1100 / 901 / 900 |
+| 2 — nav, top bar, launchpad, mode chip | done | `ViewSwitch`, `StatusPill`, `Launchpad`, `ModeChip`, project + skills blocks |
+| 3 — context panel | done | `ContextPanel`, Run/Plan/Activity/Files, `turn.usage` wiring |
+| 4 — run spine, tool rows, inline approval | done | `PHASE_4_HANDOFF.md`: spine in the air gutter, one-line rows, `ApprovalCard` |
+| 5 — Code mode unification | done | `PHASE_5_HANDOFF.md`: three-column shell, `@container 1247px` assistant collapse |
+| 6 — signal, material, display type, motion | done | `PHASE_6_HANDOFF.md`: breathing orb, dim secondary text, contrast table |
+| 7 — docs, screenshots, handoff | done | `PHASE_7_HANDOFF.md`: README, baselines, `NEXT_SESSION.md`, live turn |
+| 8 — icon system | done | `PHASE_8_HANDOFF.md`: `icons.tsx`, `ICONS.md`, `icons-sheet.png` |
 
 ## Phase 0 — contract, data, baselines
 
@@ -40,14 +42,8 @@ Present:
 - `turnStartedAt` stamped in `events.ts`; `activity.ts` with `turnActivity()`
   and its unit tests.
 
-Missing:
-
-- **The baselines.** Phase 0 asks for captures at 1600×1000, 1400×900,
-  1100×800, 900×700 and 560×700 into `design-preview/`. Every file in
-  `design-preview/` is dated 4 October and shows the old blue-accent design.
-  Nothing was captured, so there is no "before" to compare the redesign
-  against — and the folder now actively misleads, because those images are what
-  the README still shows.
+Closed 27 October: `design-preview/baseline/` holds five widths, re-captured
+at the end of the pass, so the published captures are the finished window.
 
 ## Phase 1 — the three-column shell
 
@@ -77,14 +73,9 @@ three chats), `ModeChip.tsx` (one chip plus popover, replacing the five pills),
 the top bar reduced to mark + tabs + track toggle + pill + model + caption,
 Trajectory carrying the nav dock, and `relativeTime.ts`.
 
-Missing against §6.2, both deliberate:
-
-- **The project block.** The nav has a folder row that opens the picker and
-  nothing else: no branch, no recent files (max 3). Branch is not on the wire,
-  so this needs a data decision before it can be built.
-- **The skills block.** The nav has a `Skills` row that writes `/` into the
-  composer. The plan's version shows a count and a `Manage` control into
-  Settings. The row is the more useful half; the count is not there.
+Closed 27 October: the project block (folder, `Change…`, up to three recent
+files — branch is not on the wire and stays omitted) and the skills block
+(count from `list_skills`, `Manage` into Settings → App).
 
 Also short of the plan, and already recorded as a Phase 2 deviation: Search
 stayed in the nav's foot rather than becoming a row under the switch, `New chat`
@@ -99,63 +90,41 @@ sticky Run card with its three honest meter states, the Plan / Activity / Files
 accordion, `aria-live` only on the run sentence, and the boot / turn-boundary
 reads for `plan.get` and `context.get`.
 
-Missing against §6.6 and the phase's own exit gate:
+Closed 27 October: `turn.usage` is on the wire (emitted at turn end, summed
+from the turn's requests); the Run card renders in/out and the strip shows the
+turn total, `unknown` where the provider reported nothing.
 
-- **Per-turn tokens.** There is no `turn.usage` event and no `usage.turn` RPC in
-  the tree — `grep` finds neither. The Run card can therefore show the context
-  meter only when the core reports a window, and never shows in/out for the
-  turn. The phase's exit gate ("correct during a live turn") is met for state,
-  plan, activity and files, and unmet for tokens.
-- The status strip's token count and context percentage (§6.7) depend on the
-  same missing event, so the strip reports connection, provider and sandbox
-  only.
+## Phases 4–8 — landed 27 October
 
-## Phases 4–7 — nothing in the tree
+- **Phase 4:** run spine in the 22px air gutter, one-line tool rows, inline
+  approval card above the composer (modal kept for destructive), streaming
+  caret, error banner linking to Diagnostics. See `PHASE_4_HANDOFF.md`.
+- **Phase 5:** shell owns all three tracks in both modes; assistant floats at
+  `@container 1247px`; explorer docked to 901. See `PHASE_5_HANDOFF.md`.
+- **Phase 6:** signal spent (breathing orb, working edges, dim secondary
+  text, composer bloom), display type, ambient motion shared with the pet.
+  See `PHASE_6_HANDOFF.md`.
+- **Phase 7:** README, screenshots, `NEXT_SESSION.md`, live turn. See
+  `PHASE_7_HANDOFF.md`.
+- **Phase 8:** one registry, one weight, no duplicated paths. See
+  `PHASE_8_HANDOFF.md` and `ICONS.md`.
 
-- **Phase 4:** no run spine, no agent gutter in the 22px air, no tool-row
-  rewrite, no inline approval card above the composer, no streaming caret, and
-  the error banner does not link to Diagnostics. Tool calls are still the flat
-  cards they were before this pass.
-- **Phase 5:** Code still uses its own row — `268px` explorer, editor,
-  `400px` assistant — and there is no `AssistantPanel.tsx`. The context panel is
-  not rendered in Code.
-- **Phase 6:** `--signal` does not exist. The palette is the achromatic ladder
-  plus white accent, so the working state has no colour of its own, the docks
-  are not yet given their final material, and the display type steps
-  (`--text-2xl`, `--text-display`) are absent.
-- **Phase 7:** `NEXT_SESSION.md` (22 Oct) predates every phase; the README still
-  describes and shows the old design; no screenshots were captured at any point
-  in the pass. The plan's own handoff rule — "screenshots committed, handoff
-  current" — is unmet.
-- **Phase 8:** added 26 October and not started. The spec is §5.6 of the plan;
-  the numbers behind it were read from `app/src/*.tsx` and are in that section's
-  table.
-
-## Test state today
+## Test state, 27 October
 
 - `tsc --noEmit` — clean.
-- `npm test` — **1076 tests, 1074 pass, 1 cancelled**. The cancelled one is the
-  transition audit in `layout.test.ts` ("no interactive state repaints itself in
-  a single frame"), cancelled at 40 ms under full-suite concurrency; it passes
-  in isolation in 372 ms. Flaky under load, not a failing assertion.
+- `npm test` — **1215 pass, 0 fail** (was 1076/1074+1 cancelled at the audit;
+  the flaky transition audit is green in-suite now).
 - `python scripts/audit_reduced_motion.py` — clean.
-- Python suite not re-run here; the previous handoffs record 1685 passed,
-  24 skipped, 1 environmental Docker failure.
+- Python suite: **1690 passed, 24 skipped, 1 failed** — only the pre-existing
+  Docker-daemon integration failure (`test_start_ping_exec_stop`, needs a
+  daemon this machine does not run).
 
-## What has to happen next, in order
+## What remains
 
-1. ~~Commit Phases 0–3.~~ Done: `0e58172` carries the phase work, `d14df30`
-   the review documents. The tree is clean.
-2. **Decide per-turn usage.** Either a `turn.usage` event from the core or a
-   `usage.turn` RPC; until one exists the Run card's token row and the strip's
-   token count cannot be finished. This is the only unfinished item inside
-   Phases 0–3.
-3. **Phase 4.** The transcript is now the least finished surface in the window,
-   and the run panel beside it reports on work the transcript draws flat.
-4. **Phase 5**, then **Phase 8** (the icon system — it must land before the
-   screenshots, so that Phase 7 photographs glyphs that are finished), then
-   **Phase 7** (screenshots, README, `NEXT_SESSION.md`, and removing the 4
-   October captures from `design-preview/`), and **Phase 6** last — polish is
-   the cheapest thing to redo and the most expensive to redo twice.
-5. Optional, small: the project block needs a branch source before it can be
-   built; the skills block needs a count from `list_skills`.
+The refine is done. What the next session should know is in `NEXT_SESSION.md`
+("2026-10-27: workspace refine complete"): a hosted-model turn needs a key in
+Settings first, and `verify_window.py` opens a real window. Open threads that
+predate this pass — the WSL `exclude`/`force` flags, the Tkinter-era
+`verify.log` at the repo root, the `custom:` keyring entry with no configured
+provider behind it — are untouched on purpose and listed there or in the code
+where they live.
