@@ -32,6 +32,7 @@ import { ActivityFeed } from "./ActivityFeed.js";
 import { FilesTouched } from "./FilesTouched.js";
 import { PlanCard } from "./PlanCard.js";
 import { RunCard } from "./RunCard.js";
+import { Icon } from "./icons.js";
 import type { ActivityStep, RunState, TouchedFile } from "./activity.js";
 import type { ContextReply, Plan } from "./backend.js";
 import type { TurnUsage } from "./events.js";
@@ -194,18 +195,7 @@ export function ContextPanel({
             aria-label="Hide the run panel"
             title="Hide the run panel"
           >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              aria-hidden="true"
-            >
-              <path d="M6 6l12 12M18 6L6 18" />
-            </svg>
+            <Icon name="close" size={16} />
           </button>
         </div>
 

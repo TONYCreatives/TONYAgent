@@ -19,7 +19,7 @@
 
 import type { ReactNode } from "react";
 
-import { Gear } from "./Gear.js";
+import { Icon } from "./icons.js";
 import { RailViewButton, type ViewMode } from "./ViewSwitch.js";
 
 interface Props {
@@ -68,72 +68,37 @@ interface Props {
 }
 
 /**
- * One glyph, in the rail's own frame.
+ * One glyph, in the rail's own 20px frame.
  *
- * A function returning a node rather than a component wrapping children, and the
- * difference is not stylistic: the gear is a *solid* silhouette and cannot be
- * nested inside this svg. A nested `<svg width="20">` is sized in the parent's
- * user units, so inside a `viewBox="0 0 24 24"` it would come out 20/24 of the
- * box. So every entry carries a complete node and this is how the stroked ones
- * are built.
- *
- * **20px and a 2px stroke, up from 17 and 1.7.** The target is 44px, so 17 was
- * 39% of it -- a small mark floating in a big disc -- while the sidebar's foot
- * was already 17 in 38px, which is 45%. 20 in 44 is that same 45%, so the two
- * states of one sidebar fill their buttons alike.
- *
- * The stroke is in the frame's own units, so what lands on screen is
- * `strokeWidth * size / 24`. 2 at 20px draws 1.67px against 1.2px before, and
- * that is the half of "bigger and thicker" a size alone cannot do: a glyph that
- * grew 18% and kept its stroke would draw 1.42px -- the same 18% more line -- and
- * read exactly as thin as it does now.
- *
- * Inline SVG so the rail needs no icon dependency or network fetch.
+ * The frame lives in the registry now (`icons.tsx`): every entry below names
+ * a concept and a ladder size, and the module owns the stroke, the colour and
+ * the weight. What this file keeps is the *choice* -- which concept each
+ * control draws -- because that is the rail's own vocabulary, not the
+ * registry's. See `icons.tsx` for the grid, the weight table and the forces
+ * that fixed them.
  */
-function glyph(children: ReactNode): ReactNode {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {children}
-    </svg>
-  );
-}
 
-const PATHS = {
-  stop: "M6 6h12v12H6z",
-  search: "M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16zM21 21l-4.3-4.3",
-  // A baseline with three bars over it, which is the whole idea of the view
-  // and is not the same shape as anything else in this strip.
-  usage: "M4 20h16M8 20v-7M12 20v-12M16 20v-4",
-  terminal: "M4 17l6-5-6-5M12 19h8",
-  // Panel with the divider nearer the left edge: matches the reference's
-  // toggle, which shows the sidebar "attached on the left".
-  toggleOpen: "M3 4v16M9 4h12v16H9z",
-  toggleClosed: "M21 4v16M15 4H3v16h12z",
-  // The app's own T, with eyes: the pet is drawn from the same two strokes
-  // everywhere else, and this strip is the one place a 17px version of it is
-  // needed. The two `h.01` ticks are dots -- the round linecap turns a zero-length
-  // horizontal segment into one -- sitting above the crossbar as eyes.
-  pet: "M9 5h.01M15 5h.01M6 9h12M12 9v10",
+/**
+ * The three workspaces, in the rail's own 20px frame.
+ *
+ * One current-view button needs all three, because the menu shows the choice
+ * rather than only the state -- the glyph has to change when the menu does.
+ * A bubble, a pair of angle brackets and a trace: three shapes that are told
+ * apart at a glance in a 20px strip, and none of them is the usage chart's
+ * baseline or the search mark beside them.
+ */
+const VIEW_GLYPHS: Record<ViewMode, ReactNode> = {
+  agent: <Icon name="agent" size={20} />,
+  code: <Icon name="code" size={20} />,
+  trajectory: <Icon name="trajectory" size={20} />,
 };
 
 interface Item {
   key: string;
   /**
-   * The whole glyph, already drawn -- see `glyph`.
-   *
-   * A node rather than a path string, because the gear is not a stroked path at
-   * all: it is a filled silhouette, and it is the one entry that cannot go
-   * through the shared frame.
+   * The whole glyph, already drawn -- an `<Icon>` from the registry, which
+   * owns the frame, the weight and the colour. What this file chooses is the
+   * concept per control, because that is the rail's vocabulary.
    */
   icon: ReactNode;
   label: string;
@@ -158,23 +123,6 @@ interface Item {
   active?: boolean;
   badge?: number;
 }
-
-/**
- * The three workspaces, drawn in the rail's own frame.
- *
- * One current-view button needs all three, because the menu shows the choice
- * rather than only the state -- the glyph has to change when the menu does.
- * A bubble, a pair of angle brackets and a trace: three shapes that are told
- * apart at a glance in a 20px strip, and none of them is the usage chart's
- * baseline or the search mark beside them.
- */
-const VIEW_GLYPHS: Record<ViewMode, ReactNode> = {
-  agent: glyph(
-    <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
-  ),
-  code: glyph(<path d="M9 8l-5 4 5 4M15 8l5 4-5 4" />),
-  trajectory: glyph(<path d="M3 12h3l2-6 3.5 12L15 10l2 2h4" />),
-};
 
 export function IconRail({
   connected,
@@ -212,7 +160,7 @@ export function IconRail({
   if (busy) {
     items.push({
       key: "stop",
-      icon: glyph(<path d={PATHS.stop} />),
+      icon: <Icon name="stop" size={20} />,
       label: "Stop generating",
       onClick: onCancel,
       disabled: false,
@@ -222,7 +170,7 @@ export function IconRail({
   }
   items.push({
     key: "search",
-    icon: glyph(<path d={PATHS.search} />),
+    icon: <Icon name="search" size={20} />,
     label: "Search project",
     onClick: onSearch,
     disabled: !connected,
@@ -233,7 +181,7 @@ export function IconRail({
   // the strip is reserved for the one entry that is always there.
   items.push({
     key: "usage",
-    icon: glyph(<path d={PATHS.usage} />),
+    icon: <Icon name="usage" size={20} />,
     label: "Usage dashboard",
     onClick: onDashboard,
     disabled: !connected,
@@ -250,7 +198,7 @@ export function IconRail({
   // failure this file was written to avoid.
   items.push({
     key: "pet",
-    icon: glyph(<path d={PATHS.pet} />),
+    icon: <Icon name="pet" size={20} />,
     label: petOpen ? "Hide desktop pet" : "Show desktop pet",
     onClick: onPet,
     disabled: false,
@@ -273,10 +221,10 @@ export function IconRail({
    */
   const settings: Item = {
     key: "settings",
-    // The same 20px the stroked entries above are drawn at. The gear is a solid
-    // silhouette rather than a frame with a stroke, so it carries its own size
-    // -- see `Gear`, which is drawn at 17px in the composer's row and 20 here.
-    icon: <Gear size={20} />,
+    // The same 20px every other entry is drawn at: the registry draws the gear
+    // stroked like the rest now (see `icons.tsx` for why the solid form left),
+    // so it needs no size of its own.
+    icon: <Icon name="gear" size={20} />,
     label: "Settings",
     // The dot says a version is waiting without the panel being opened; the
     // tooltip says what the mark means, because a dot on a gear is not
@@ -321,7 +269,7 @@ export function IconRail({
         aria-label={expanded ? "Close sidebar" : "Open sidebar"}
         aria-expanded={expanded}
       >
-        {glyph(<path d={expanded ? PATHS.toggleClosed : PATHS.toggleOpen} />)}
+        {<Icon name={expanded ? "dockClosed" : "dockOpen"} size={20} />}
       </button>
 
       {/* The nav's switch, in its collapsed form: which workspace is in front,

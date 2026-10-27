@@ -13,7 +13,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { Gear } from "./Gear.js";
+import { Icon } from "./icons.js";
 import { useDelayedUnmount } from "./useDelayedUnmount.js";
 import { useDismiss } from "./useDismiss.js";
 
@@ -173,17 +173,15 @@ export function ToolBudgetControl({
       >
         {/*
           The sidebar's gear, not a glyph of this control's own.
-         
+
           It was four ticks around a dot -- a dial, which is what the thing
           *is* and not what it opens. A gear is the window's own word for "a
           setting you can change", and this button opens a popover that changes
-          one, so it says the same thing the rail's Settings does.
-         
-          A node rather than a path: `Gear` is a filled silhouette and cannot be
-          nested inside a stroked svg of a different viewBox -- see the note on
-          `glyph` in `IconRail`, which has the same constraint.
+          one, so it says the same thing the rail's Settings does. Drawn at 16
+          rather than the rail's 20: its neighbours here are text chips, so it
+          is sized to their cap height rather than to a rail button.
         */}
-        <Gear />
+        <Icon name="gear" size={16} />
       </button>
 
       {mounted && (

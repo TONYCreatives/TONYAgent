@@ -17,6 +17,7 @@ import {
 } from "./SkillPicker.js";
 import { ModeChip } from "./ModeChip.js";
 import { ToolBudgetControl } from "./ToolBudgetControl.js";
+import { Icon } from "./icons.js";
 
 /** One entry in the `mode.list` reply. */
 export interface ModeInfo {
@@ -476,18 +477,7 @@ export function Composer({
             title="Attach an image or a text file"
             aria-label="Attach a file"
           >
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              aria-hidden="true"
-            >
-              <path d="M12 5v14M5 12h14" />
-            </svg>
+            <Icon name="plus" size={14} />
           </button>
           <input
             ref={fileInputRef}
@@ -518,15 +508,7 @@ export function Composer({
               aria-label="Stop"
               title="Stop"
             >
-              <svg
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                aria-hidden="true"
-              >
-                <rect x="6" y="6" width="12" height="12" rx="1.5" />
-              </svg>
+              <Icon name="stop" size={12} />
             </button>
           ) : (
             <button
@@ -540,20 +522,7 @@ export function Composer({
               aria-label="Send"
               title="Send"
             >
-              <svg
-                width="15"
-                height="15"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <line x1="22" y1="2" x2="11" y2="13" />
-                <polygon points="22 2 15 22 11 13 2 9 22 2" />
-              </svg>
+              <Icon name="send" size={14} />
             </button>
           )}
         </div>

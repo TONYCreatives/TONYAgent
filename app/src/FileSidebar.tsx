@@ -19,6 +19,7 @@
 import { useMemo, useState } from "react";
 
 import { buildTree, type CoreTreeEntry, type FileChange } from "./filetree.js";
+import { Icon } from "./icons.js";
 
 interface Props {
   entries: CoreTreeEntry[];
@@ -43,36 +44,11 @@ function Caret({ open }: { open: boolean }) {
 function Glyph({ kind }: { kind: "dir" | "file" }) {
   if (kind === "dir") {
     return (
-      <svg
-        className="tree-icon"
-        width="13"
-        height="13"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-      </svg>
+      <Icon name="folder" size={12} className="tree-icon" />
     );
   }
   return (
-    <svg
-      className="tree-icon"
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.8"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-      <path d="M14 3v5h5" />
-    </svg>
+    <Icon name="file" size={12} className="tree-icon" />
   );
 }
 
@@ -108,18 +84,7 @@ export function FilesPane({
   return (
     <div className="files-pane" aria-label="Files">
       <label className="sidebar-filter">
-        <svg
-          width="13"
-          height="13"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          aria-hidden="true"
-        >
-          <path d="M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16zM21 21l-4.3-4.3" />
-        </svg>
+        <Icon name="search" size={12} />
         <input
           value={filter}
           onChange={(event) => onFilterChange(event.target.value)}

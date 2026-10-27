@@ -45,7 +45,7 @@ import { placeFixedMenu, pointerBounds } from "./menuPlacement.js";
 import type { MenuBounds } from "./menuPlacement.js";
 import { FilesPane } from "./FileSidebar.js";
 import type { CoreTreeEntry, FileChange } from "./filetree.js";
-import { Gear } from "./Gear.js";
+import { Icon } from "./icons.js";
 import { when } from "./relativeTime.js";
 
 export interface ConversationSummary {
@@ -560,19 +560,7 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
             18px against the rail's 17, which is two drawings of one control at
             two sizes; both are 20 now.
           */}
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M21 4v16M15 4H3v16h12z" />
-          </svg>
+          <Icon name="dockClosed" size={20} />
         </button>
         {viewSwitch}
       </div>
@@ -594,19 +582,7 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
             title="Back to chats"
             aria-label="Back to chats"
           >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.9"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M15 18l-6-6 6-6" />
-            </svg>
+            <Icon name="back" size={16} />
           </button>
           <span className="chatlist-subhead-title">Search</span>
         </div>
@@ -671,18 +647,7 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
                 : "The backend is not running"
             }
           >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              aria-hidden="true"
-            >
-              <path d="M12 5v14M5 12h14" />
-            </svg>
+            <Icon name="plus" size={14} />
             <span>New chat</span>
           </button>
         )}
@@ -769,17 +734,7 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
                     aria-haspopup="menu"
                     aria-expanded={menu?.id === conversation.id}
                   >
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                      aria-hidden="true"
-                    >
-                      <circle cx="5" cy="12" r="1.7" />
-                      <circle cx="12" cy="12" r="1.7" />
-                      <circle cx="19" cy="12" r="1.7" />
-                    </svg>
+                    <Icon name="menu" size={12} />
                   </button>
                 </>
               )}
@@ -916,19 +871,7 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
             onClick={onChooseProject}
             title={project || "Choose a project folder"}
           >
-            <svg
-              width="13"
-              height="13"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.7"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-            </svg>
+            <Icon name="folder" size={12} />
             <span className="chatlist-folder-name">
               {projectLabel || "All chats"}
             </span>
@@ -1034,9 +977,7 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
           {/* The rail's Search, one rung lower: the same drawing at the same
               size, because it is the same control in the sidebar's other
               state. */}
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16zM21 21l-4.3-4.3" />
-          </svg>
+          <Icon name="search" size={20} />
         </button>
         {/*
           Usage and the pet joined the foot in Phase 2, so it is the whole of
@@ -1056,9 +997,7 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
             title="Usage dashboard"
             aria-label="Usage dashboard"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M4 20h16M8 20v-7M12 20v-12M16 20v-4" />
-            </svg>
+            <Icon name="usage" size={20} />
           </button>
         )}
         {onPet && (
@@ -1070,9 +1009,7 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
             title={petOpen ? "Hide desktop pet" : "Show desktop pet"}
             aria-label={petOpen ? "Hide desktop pet" : "Show desktop pet"}
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M9 5h.01M15 5h.01M6 9h12M12 9v10" />
-            </svg>
+            <Icon name="pet" size={20} />
           </button>
         )}
         <button
@@ -1083,7 +1020,7 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
           title={updateAvailable ? "Settings \u2014 a new version is available" : "Settings"}
           aria-label="Settings"
         >
-          <Gear size={20} />
+          <Icon name="gear" size={20} />
           {/* The same mark the rail's gear carries, for the same reason. */}
           {updateAvailable && <span className="rail-dot" aria-hidden="true" />}
         </button>

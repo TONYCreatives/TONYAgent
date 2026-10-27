@@ -377,10 +377,9 @@ recommended for live state because it collides with warning.
 ### 5.4 Shape and iconography
 
 - Keep the existing radius ladder. Controls stay stadiums; rows stay boxes.
-- New icons are 1.6–1.8px strokes, 16/18/20px, same family as the rail. No filled
-  icons except status dots and the send glyph. **This sentence was never
-  enforced and the code already contradicts it** — see §5.6, which replaces it
-  with a real spec and Phase 8, which applies it.
+- New icons are drawn in the registry (`app/src/icons.tsx`) at 12/14/16/20 in
+  one stroked family — see §5.6 and `design/ICONS.md` for the grid, the weight
+  table and the rules that replaced this sentence.
 - The navigation pane's sections use a 1px rule + label, not cards. Cards are
   reserved for the context panel's facts (Run, Plan, Activity, Files).
 

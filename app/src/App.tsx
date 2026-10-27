@@ -32,6 +32,7 @@ import { diffLines, type LineRange } from "./diff.js";
 import { FilesPane } from "./FileSidebar.js";
 import { changesFrom, type CoreTreeEntry } from "./filetree.js";
 import { DEFAULT_PALETTE } from "./highlight.js";
+import { Icon } from "./icons.js";
 import { IconRail } from "./IconRail.js";
 import { Launchpad } from "./Launchpad.js";
 import { StatusPill } from "./StatusPill.js";
@@ -128,10 +129,6 @@ function splitFolder(path: string): [string, string] {
   return cut === -1 ? ["", path] : [path.slice(0, cut + 1), path.slice(cut + 1)];
 }
 
-const HELPER_GLYPH: Record<"open" | "closed", string> = {
-  open: "M3 4h18v16H3zM15 4v16",
-  closed: "M3 4h18v16H3zM19 4v16",
-};
 
 export function App({
   backend: injected,
@@ -3268,19 +3265,7 @@ export function App({
             aria-expanded={explorerOpen}
             title={explorerOpen ? "Hide the file tree" : "Show the file tree"}
           >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.7"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-            </svg>
+            <Icon name="folder" size={14} />
             <span className="code-strip-label">Files</span>
           </button>
 
@@ -3328,19 +3313,7 @@ export function App({
               </span>
             ) : (
               <span className="code-explorer-project" title={project}>
-                <svg
-                  className="code-explorer-folder"
-                  width="13"
-                  height="13"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.8"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                </svg>
+                <Icon name="folder" size={12} className="code-explorer-folder" />
                 {/*
                   The path is one run of text, in one child, for two reasons.
 
@@ -3604,22 +3577,10 @@ export function App({
                 A frame with a divider: on the right when the panel is shown,
                 pushed against the edge when it is away. The rail's toggle is the
                 mirror of this and not the same drawing, because the two name
-                opposite edges -- and `currentColor` with `strokeWidth` is the
-                rail's own frame, so the two read as one family.
+                opposite edges -- which is why the registry holds both pairs
+                (`assistantOpen/Closed` here, `dockOpen/Closed` there).
               */}
-              <svg
-                width="17"
-                height="17"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.7"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d={HELPER_GLYPH[helperOpen ? "open" : "closed"]} />
-              </svg>
+              <Icon name={helperOpen ? "assistantOpen" : "assistantClosed"} size={16} />
             </button>
           </div>
 

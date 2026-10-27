@@ -30,8 +30,11 @@ app/dist/
 # was none, because this rule had kept the 4 October ones out of the repo too.
 # A baseline that is not committed is not a baseline. The folder is ignored
 # except for the captures the plan names and the two files that describe them.
+# Phase 8's icon sheet is the same kind of exception: the weight table is
+# argued from it, and a PNG nobody can open is not evidence.
 design-preview/*
 !design-preview/baseline/
+!design-preview/icons-sheet.png
 !design-preview/index.html
 !design-preview/README.md
 

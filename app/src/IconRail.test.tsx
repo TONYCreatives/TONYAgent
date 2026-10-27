@@ -6,14 +6,18 @@
  * ticks -- which is what you get by writing a gear as "a body and some teeth"
  * instead of as a shape, and it reads as a sun. It was then redrawn as one
  * continuous *outline* around the teeth, which helped and was not enough: at the
- * 17px the rail draws it, a thin ring around a thin hub ring is still two rings,
- * and it still read as brightness rather than as settings.
+ * 17px the rail drew it, a thin ring around a thin hub ring was still two
+ * rings, and it still read as brightness rather than as settings. So it was
+ * filled for a while, which is what Windows itself does for this control.
  *
- * So it is filled now, which is what Windows itself does for this control, and
- * what is asserted is the thing that makes it a gear rather than a sun: one
- * path, filled rather than stroked, with the hub cut out of it rather than
- * drawn on top. All three are checkable from the markup and all three are what
- * regressed each time.
+ * Phase 8 stroked it again, without going back to the sun: the teeth are part
+ * of the edge -- one closed cog outline, teeth joined to the body, the hub as
+ * the path's second subpath rather than a circle drawn on top -- and it is
+ * never drawn below 16px, where the teeth clear the grid's 2-unit minimum.
+ * What is asserted is the same property as before, in its stroked form: one
+ * path, stroked in the registry's frame at the table weight, hub carried by
+ * the same path rather than a second element. All three are checkable from
+ * the markup and all three are what regressed each time.
  *
  * Everything else here is the rail's standing contract, gathered because the
  * gear change was the first time this component's markup was edited since it
@@ -56,10 +60,10 @@ const settingsButton = (c: HTMLElement) =>
   one(c, '.rail-btn[aria-label="Settings"]')!;
 
 describe("the settings button's glyph", () => {
-  test("it is one filled silhouette, not a ring with marks around it", async () => {
-    // A sun is concentric circles with marks radiating outward; a ring is a
-    // thin outline around thin teeth. This is neither: it is one closed shape
-    // with the teeth as part of its edge.
+  test("it is one stroked cog outline, not a ring with marks around it", async () => {
+    // A sun is concentric circles with marks radiating outward. This is
+    // neither: it is one closed shape with the teeth as part of its edge,
+    // stroked in the registry's frame like every other glyph in the strip.
     const container = await renderRail();
     const svg = one(settingsButton(container), "svg")!;
     const shapes = [...svg.children].map((node) => node.tagName.toLowerCase());
@@ -69,22 +73,22 @@ describe("the settings button's glyph", () => {
       !shapes.includes("circle"),
       "the gear is built from circles, which is what made it read as a sun",
     );
-    assert.equal(svg.getAttribute("fill"), "currentColor");
-    assert.equal(svg.getAttribute("stroke"), "none");
+    assert.equal(svg.getAttribute("fill"), "none");
+    assert.equal(svg.getAttribute("stroke"), "currentColor");
   });
 
-  test("the hub is a hole in it, not a circle drawn on top", async () => {
-    // `evenodd` and a second subpath. Under the default rule a second subpath
-    // wound the same way would *fill*, and the gear would come out as a solid
-    // blob -- which reads as a flower rather than as a cog.
+  test("the hub rides in the same path, not in a circle drawn on top", async () => {
+    // A stroked path has no winding to cut a hole with, so "the hub" here is
+    // the path's second subpath: the same element draws the cog and its hub
+    // ring, and a second element would be the sun's separate rings again.
     const container = await renderRail();
     const svg = one(settingsButton(container), "svg")!;
     const d = one(settingsButton(container), "svg path")!.getAttribute("d") ?? "";
 
-    assert.equal(svg.getAttribute("fill-rule"), "evenodd");
+    assert.equal(svg.getAttribute("stroke-width"), "1.8");
     assert.ok(
       (d.match(/[Mm]/g) ?? []).length >= 2,
-      "the path has one subpath, so there is nothing for the hub to be cut out of",
+      "the path has one subpath, so the hub is not riding in it",
     );
   });
 
@@ -305,14 +309,16 @@ describe("the rail draws no mark of its own", () => {
       0,
       "the rail is drawing the app's mark again",
     );
-    // And not in some other box either. Every glyph the rail does draw is a
-    // `path` -- the toggle, search and stop are stroked outlines and the gear is
-    // one filled silhouette -- so a `rect` inside the strip can only be the
-    // mark's two strokes.
+    // And not in some other box either. The mark draws on a 1024-unit canvas
+    // (`MARK_VIEWBOX`), while every registry glyph draws on 24 -- so a 1024
+    // canvas inside the strip can only be the mark come back in a new box.
+    // (This used to count `rect`s, back when every rail glyph was a `path`;
+    // the registry's `stop` is a rect now, so the guard names the mark's own
+    // canvas instead of the element type.)
     assert.equal(
-      all(container, ".rail svg rect").length,
+      all(container, '.rail svg[viewBox="0 0 1024 1024"]').length,
       0,
-      "the mark's rects are inside the rail, so the glyph came back in a new box",
+      "the mark's canvas is inside the rail, so the glyph came back in a new box",
     );
     // The head is the toggle: nothing above it but the strip's own padding.
     const strip = one(container, ".rail")!;

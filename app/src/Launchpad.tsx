@@ -27,6 +27,7 @@
  */
 
 import { AppMark } from "./AppMark.js";
+import { Icon } from "./icons.js";
 import type { ConversationSummary } from "./ConversationList.js";
 import { when } from "./relativeTime.js";
 
@@ -110,26 +111,6 @@ const BLANK_PROMPTS: Suggestion[] = [
 function folderName(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? path;
-}
-
-function FolderIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-    </svg>
-  );
 }
 
 /** One missing thing, and the control that fixes it (when there is one). */
@@ -242,20 +223,7 @@ export function Launchpad({
                   onClick={() => onPrefill(suggestion.text)}
                 >
                   <span className="launch-card-label">{suggestion.label}</span>
-                  <svg
-                    className="launch-card-arrow"
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M5 12h14M13 6l6 6-6 6" />
-                  </svg>
+                  <Icon name="forward" size={14} />
                 </button>
               </li>
             ))}
@@ -287,7 +255,7 @@ export function Launchpad({
 
         {!folderInCard && (
           <div className="empty-folder">
-            <FolderIcon className="empty-folder-icon" />
+            <Icon name="folder" size={16} className="empty-folder-icon" />
             <p className="empty-folder-name" title={project || undefined}>
               {project ? folderName(project) : "No project folder"}
             </p>
