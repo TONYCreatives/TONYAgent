@@ -257,10 +257,15 @@ describe("the rail is a strip of icons that never changes width", () => {
     // The view switch is the third exception, and the same argument: choosing a
     // workspace is a local view change, so it works with no backend -- which is
     // exactly when a trapped Trajectory would be worst.
+    //
+    // Settings is the fourth: the page is local and degrades section by
+    // section with no core, so gating it would lock the explanation of a
+    // missing key behind the key. A disabled control that could do its job is
+    // the fault this whole test exists to catch.
     const container = await renderRail({ connected: false });
     const needingCore = all(
       container,
-      '.rail-btn:not(.rail-toggle):not(.rail-view):not([aria-label$="desktop pet"])',
+      '.rail-btn:not(.rail-toggle):not(.rail-view):not([aria-label$="desktop pet"]):not([aria-label="Settings"])',
     );
     assert.ok(needingCore.length > 0, "the rail rendered nothing to check");
     for (const button of needingCore) {
@@ -280,6 +285,11 @@ describe("the rail is a strip of icons that never changes width", () => {
       (one(container, ".rail-view") as HTMLButtonElement).disabled,
       false,
       "the view switch needs no core to change the view",
+    );
+    assert.equal(
+      (one(container, '.rail-btn[aria-label="Settings"]') as HTMLButtonElement).disabled,
+      false,
+      "settings is a local page that degrades on its own",
     );
     // And the one that must not be.
     assert.equal(

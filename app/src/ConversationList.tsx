@@ -1016,7 +1016,9 @@ const [openMenuAt, setOpenMenuAt] = useState<Menu | null>(null);
           type="button"
           className="chatlist-act"
           onClick={onSettings}
-          disabled={!connected}
+          // The rail's gear, ungated for the rail's reason: the page is local
+          // and degrades on its own, so it opens with no core too.
+          disabled={false}
           title={updateAvailable ? "Settings \u2014 a new version is available" : "Settings"}
           aria-label="Settings"
         >

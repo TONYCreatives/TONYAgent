@@ -232,7 +232,11 @@ export function IconRail({
     hint: updateAvailable ? "Settings \u2014 a new version is available" : undefined,
     dot: updateAvailable,
     onClick: onSettings,
-    disabled: !connected,
+    // Not gated on `connected`: Settings is a local page, and the page that
+    // explains a missing key, a dead sandbox or a broken provider has to open
+    // in exactly the state where it is needed. The page degrades on its own --
+    // every section reads nothing and disables its own controls with no core.
+    disabled: false,
   };
 
   /** One entry of the strip. Shared, so the pinned gear is drawn like the rest. */
